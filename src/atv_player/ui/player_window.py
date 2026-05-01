@@ -261,6 +261,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
         self._playback_prepare_request_id = 0
+        self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
@@ -346,6 +347,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.wide_button = self._create_icon_button("grid.svg", "宽屏", "W")
         self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏", "Enter")
         self.wide_button.setCheckable(True)
+        if self.config is not None:
+            self.wide_button.setChecked(bool(self.config.player_wide_mode))
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
@@ -523,6 +526,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.main_splitter.setStretchFactor(1, 1)
         self._restore_main_splitter_state()
         self._sidebar_sizes = self.main_splitter.sizes()
+        if self.wide_button.isChecked():
+            self._restore_saved_splitter_on_next_wide_exit = bool(
+                self.config is not None and self.config.player_main_splitter_state
+            )
+            self.main_splitter.setSizes([1, 0])
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1525,12 +1533,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._append_log(f"播放失败: {exc}")
 
     def _toggle_wide_mode(self) -> None:
-        if self.wide_button.isChecked():
+        is_wide_mode = self.wide_button.isChecked()
+        if self.config is not None and self.config.player_wide_mode != is_wide_mode:
+            self.config.player_wide_mode = is_wide_mode
+            self._save_config()
+        if is_wide_mode:
             self._remember_sidebar_sizes()
             self._apply_visibility_state()
             self.main_splitter.setSizes([1, 0])
             return
         self._apply_visibility_state()
+        if (
+            self._restore_saved_splitter_on_next_wide_exit
+            and self.config is not None
+            and self.config.player_main_splitter_state
+        ):
+            self._restore_saved_splitter_on_next_wide_exit = False
+            restored = self.main_splitter.restoreState(to_qbytearray(self.config.player_main_splitter_state))
+            if restored and not self._has_collapsed_main_splitter_sizes():
+                self._remember_sidebar_sizes()
+                return
         self.main_splitter.setSizes(self._restoreable_sidebar_sizes())
 
     def _seek_relative(self, seconds: int) -> None:
