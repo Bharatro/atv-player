@@ -25,6 +25,7 @@ class AppConfig:
     last_player_paused: bool = False
     player_volume: int = 100
     player_muted: bool = False
+    player_wide_mode: bool = False
     preferred_parse_key: str = ""
     preferred_danmaku_enabled: bool = True
     preferred_danmaku_line_count: int = 1
