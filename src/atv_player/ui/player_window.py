@@ -676,7 +676,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None:
             return
         for item in self.session.playlist:
-            self.playlist.addItem(QListWidgetItem(item.title))
+            widget_item = QListWidgetItem(item.title)
+            widget_item.setToolTip(item.title)
+            self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
 
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:

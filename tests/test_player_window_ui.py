@@ -1228,6 +1228,27 @@ def test_player_window_next_and_previous_stay_within_active_group(qtbot) -> None
     assert video.load_calls[-1][0] == "http://b/1.m3u8"
 
 
+def test_player_window_playlist_items_show_full_title_in_tooltip(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    long_title = "和AI玩猜历史人物游戏，又被它给耍了 - 超长标题完整版"
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV1ebREBmEha", vod_name="历史人物"),
+        playlist=[PlayItem(title=long_title, url="http://b/1.m3u8", play_source="BiliBili")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.playlist.count() == 1
+    assert window.playlist.item(0).text() == long_title
+    assert window.playlist.item(0).toolTip() == long_title
+
+
 def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
