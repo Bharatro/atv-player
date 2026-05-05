@@ -488,6 +488,56 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(7) == "播放记录"
 
 
+def test_main_window_restores_last_selected_main_tab_on_startup(qtbot) -> None:
+    douban_controller = RecordingDoubanController()
+    browse_controller = RecordingBrowseController()
+    history_controller = RecordingHistoryController()
+    window = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=RecordingDoubanController(),
+        live_controller=RecordingDoubanController(),
+        emby_controller=RecordingDoubanController(),
+        jellyfin_controller=RecordingDoubanController(),
+        browse_controller=browse_controller,
+        history_controller=history_controller,
+        player_controller=FakePlayerController(),
+        config=AppConfig(last_selected_tab="history"),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.nav_tabs.currentWidget() is window.history_page
+    assert douban_controller.category_calls == 0
+    assert browse_controller.load_calls == []
+    assert history_controller.load_calls == [(1, 100)]
+
+
+def test_main_window_remembers_selected_main_tab(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.nav_tabs.setCurrentWidget(window.history_page)
+
+    assert config.last_selected_tab == "history"
+    assert saved["count"] >= 1
+
+
 def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(

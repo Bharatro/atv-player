@@ -528,8 +528,33 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             if current_index >= 0:
                 self.nav_tabs.setCurrentIndex(current_index)
                 return
+        if not self._global_search_active and self._restore_saved_tab_selection(definitions):
+            return
         if self.nav_tabs.count() > 0:
             self.nav_tabs.setCurrentIndex(0)
+
+    def _restore_saved_tab_selection(self, definitions: list[_TabDefinition]) -> bool:
+        selected_key = getattr(self.config, "last_selected_tab", "douban") or "douban"
+        for index, definition in enumerate(definitions):
+            if definition.key == selected_key:
+                self.nav_tabs.setCurrentIndex(index)
+                return True
+        return False
+
+    def _tab_key_for_widget(self, widget: QWidget | None) -> str | None:
+        if widget is None:
+            return None
+        for definition in self._all_tab_definitions():
+            if definition.page is widget:
+                return definition.key
+        return None
+
+    def _remember_selected_tab(self, widget: QWidget) -> None:
+        selected_key = self._tab_key_for_widget(widget)
+        if selected_key is None or self.config.last_selected_tab == selected_key:
+            return
+        self.config.last_selected_tab = selected_key
+        self._save_config()
 
     def _sync_global_search_action_state(self) -> None:
         has_keyword = bool(self.global_search_edit.text().strip())
@@ -548,6 +573,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         if self._global_search_active:
             return
+        self._remember_selected_tab(widget)
         if widget is self.douban_page:
             self.douban_page.ensure_loaded()
             return

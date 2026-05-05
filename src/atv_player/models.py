@@ -33,6 +33,7 @@ class AppConfig:
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None
     browse_content_splitter_state: bytes | None = None
+    last_selected_tab: str = "douban"
 
 
 @dataclass(slots=True)

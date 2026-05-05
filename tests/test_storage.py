@@ -224,6 +224,7 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
         token="token-123",
         vod_token="vod-123",
         last_path="/Movies",
+        last_selected_tab="history",
         last_active_window="player",
         last_playback_mode="folder",
         last_playback_path="/Movies",
@@ -615,6 +616,60 @@ def test_settings_repository_migrates_missing_player_wide_mode_column(tmp_path: 
     saved = repo.load_config()
 
     assert saved.player_wide_mode is False
+
+
+def test_settings_repository_migrates_missing_last_selected_tab_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                last_path TEXT NOT NULL,
+                last_active_window TEXT NOT NULL DEFAULT 'main',
+                last_playback_source TEXT NOT NULL DEFAULT 'browse',
+                last_playback_source_key TEXT NOT NULL DEFAULT '',
+                last_playback_mode TEXT NOT NULL DEFAULT '',
+                last_playback_path TEXT NOT NULL DEFAULT '',
+                last_playback_vod_id TEXT NOT NULL DEFAULT '',
+                last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
+                last_player_paused INTEGER NOT NULL DEFAULT 0,
+                player_volume INTEGER NOT NULL DEFAULT 100,
+                player_muted INTEGER NOT NULL DEFAULT 0,
+                player_wide_mode INTEGER NOT NULL DEFAULT 0,
+                preferred_parse_key TEXT NOT NULL DEFAULT '',
+                preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
+                preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
+                main_window_geometry BLOB,
+                player_window_geometry BLOB,
+                player_main_splitter_state BLOB,
+                browse_content_splitter_state BLOB
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, last_path,
+                last_active_window, last_playback_source, last_playback_source_key,
+                last_playback_mode, last_playback_path, last_playback_vod_id,
+                last_playback_clicked_vod_id, last_player_paused, player_volume,
+                player_muted, player_wide_mode, preferred_parse_key,
+                preferred_danmaku_enabled, preferred_danmaku_line_count,
+                main_window_geometry, player_window_geometry,
+                player_main_splitter_state, browse_content_splitter_state
+            )
+            VALUES (1, 'http://127.0.0.1:4567', 'alice', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, 0, '', 1, 1, NULL, NULL, NULL, NULL)
+            """
+        )
+
+    repo = SettingsRepository(db_path)
+
+    assert repo.load_config().last_selected_tab == "douban"
 
 
 def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) -> None:
