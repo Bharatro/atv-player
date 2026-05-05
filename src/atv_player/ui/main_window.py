@@ -503,7 +503,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.global_search_clear_button.setEnabled(self._global_search_active or has_keyword)
 
     def _handle_global_search_text_changed(self) -> None:
-        if not self.global_search_edit.text().strip() and self._global_search_active and not self._global_search_in_progress:
+        if not self.global_search_edit.text().strip() and self._global_search_active:
             self._clear_global_search()
             return
         self._sync_global_search_action_state()
@@ -545,8 +545,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self.history_page.ensure_loaded()
 
     def _handle_douban_search_requested(self, keyword: str) -> None:
-        self.nav_tabs.setCurrentWidget(self.browse_page)
-        self.browse_page.search_keyword(keyword)
+        self.global_search_edit.setText(keyword)
+        self._start_global_search()
 
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
@@ -689,6 +689,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _clear_global_search(self) -> None:
         if not self._global_search_active and not self.global_search_edit.text().strip():
             return
+        if self._global_search_active:
+            self._global_search_request_id += 1
         self._global_search_active = False
         self._global_search_in_progress = False
         self._global_search_keyword = ""

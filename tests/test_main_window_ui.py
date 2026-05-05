@@ -553,6 +553,49 @@ def test_main_window_clear_global_search_restores_original_tabs_and_titles(qtbot
     qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == original_titles)
 
 
+def test_main_window_clearing_search_text_during_in_progress_search_restores_main_tabs(qtbot) -> None:
+    telegram = AsyncKeywordSearchController({"庆余年": ([_vod("Telegram One")], 12)})
+    plugin_controller = AsyncKeywordSearchController({"庆余年": ([_vod("Plugin One")], 1)})
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-a", "title": "红果短剧", "controller": plugin_controller, "search_enabled": False},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    original_titles = [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: telegram.search_calls == [("庆余年", 1)])
+    assert window.nav_tabs.count() == 0
+
+    window.global_search_edit.clear()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == original_titles)
+    assert window.global_search_status_label.text() == ""
+
+    telegram.release("庆余年")
+    plugin_controller.release("庆余年")
+    qtbot.wait(100)
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == original_titles
+
+
 def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),

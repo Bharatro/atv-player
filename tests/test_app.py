@@ -912,7 +912,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
     assert callable(window.browse_page._save_config)
 
 
-def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, monkeypatch) -> None:
+def test_main_window_starts_global_search_from_douban_signal(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
@@ -926,13 +926,13 @@ def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, m
     qtbot.addWidget(window)
     window.show()
 
-    searched = []
-    monkeypatch.setattr(window.browse_page, "search_keyword", lambda keyword: searched.append(keyword))
+    started_keywords: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
 
     window.douban_page.search_requested.emit("霸王别姬")
 
-    assert window.nav_tabs.currentWidget() is window.browse_page
-    assert searched == ["霸王别姬"]
+    assert started_keywords == ["霸王别姬"]
+    assert window.global_search_edit.text() == "霸王别姬"
 
 
 def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) -> None:
