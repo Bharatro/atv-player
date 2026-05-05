@@ -59,6 +59,11 @@ class _EmptyEmbyController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyBilibiliController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
 class _EmptyJellyfinController(_EmptyDoubanController):
     def build_request(self, vod_id: str):
         raise ValueError(f"没有可播放的项目: {vod_id}")
@@ -144,6 +149,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             save_config=None,
             douban_controller=None,
             telegram_controller=None,
+            bilibili_controller=None,
             live_controller=None,
             live_source_manager=None,
             emby_controller=None,
@@ -153,6 +159,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             spider_plugins=None,
             plugin_manager=None,
             drive_detail_loader=None,
+            show_bilibili_tab: bool = False,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
             show_feiniu_tab: bool = True,
@@ -188,6 +195,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             click_action="open",
             search_enabled=True,
         )
+        self.bilibili_page = None
+        if show_bilibili_tab:
+            self.bilibili_page = PosterGridPage(
+                bilibili_controller or _EmptyBilibiliController(),
+                click_action="open",
+                search_enabled=True,
+                folder_navigation_enabled=True,
+            )
         self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
@@ -223,6 +238,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.pansou_page = PosterGridPage(pansou_controller, click_action="open")
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
@@ -319,8 +335,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._static_tab_definitions = [
             _TabDefinition("douban", "豆瓣电影", self.douban_page),
             _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
-            _TabDefinition("live", "网络直播", self.live_page),
         ]
+        if self.bilibili_page is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller)
+            )
+        self._static_tab_definitions.append(_TabDefinition("live", "网络直播", self.live_page))
         if self.emby_page is not None:
             self._static_tab_definitions.append(_TabDefinition("emby", "Emby", self.emby_page, self.emby_controller))
         if self.jellyfin_page is not None:
@@ -380,6 +400,18 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        if self.bilibili_page is not None:
+            bilibili_page = self.bilibili_page
+            bilibili_page.item_open_requested.connect(self._handle_bilibili_item_open_requested)
+            bilibili_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index, page=bilibili_page: self._handle_media_breadcrumb_requested(
+                    page,
+                    self.bilibili_controller,
+                    node_id,
+                    kind,
+                    index,
+                )
+            )
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         self.live_page.folder_breadcrumb_requested.connect(
             lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
@@ -431,6 +463,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
+        if self.bilibili_page is not None:
+            self.bilibili_page.unauthorized.connect(self.logout_requested.emit)
         self.live_page.unauthorized.connect(self.logout_requested.emit)
         if self.emby_page is not None:
             self.emby_page.unauthorized.connect(self.logout_requested.emit)
@@ -520,6 +554,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if widget is self.telegram_page:
             self.telegram_page.ensure_loaded()
             return
+        if widget is self.bilibili_page and self.bilibili_page is not None:
+            self.bilibili_page.ensure_loaded()
+            return
         if widget is self.live_page:
             self.live_page.ensure_loaded()
             return
@@ -554,6 +591,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _handle_telegram_open_requested(self, vod_id: str) -> None:
         self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
+
+    def _handle_bilibili_item_open_requested(self, item) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            if self.bilibili_page is not None:
+                self._open_media_folder(self.bilibili_page, self.bilibili_controller, item)
+            return
+        vod_id = item.vod_id
+        self._start_open_request(lambda: self.bilibili_controller.build_request(vod_id))
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -863,6 +908,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         if record.source_kind == "emby":
             self._start_open_request(lambda: self.emby_controller.build_request(record.key))
+            return
+        if record.source_kind == "bilibili":
+            self._start_open_request(lambda: self.bilibili_controller.build_request(record.key))
             return
         if record.source_kind == "jellyfin":
             self._start_open_request(lambda: self.jellyfin_controller.build_request(record.key))
@@ -1224,6 +1272,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return self.live_controller.build_request(vod_id)
         if source == "emby":
             return self.emby_controller.build_request(vod_id)
+        if source == "bilibili":
+            return self.bilibili_controller.build_request(vod_id)
         if source == "jellyfin":
             return self.jellyfin_controller.build_request(vod_id)
         if source == "plugin":

@@ -18,6 +18,7 @@ class ProxySession:
     playlist_url: str
     headers: dict[str, str]
     segments: list[PlaylistSegment] = field(default_factory=list)
+    dash_assets: list[str] = field(default_factory=list)
     cached_playlist_text: str | None = None
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)

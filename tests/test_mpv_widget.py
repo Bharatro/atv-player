@@ -218,6 +218,32 @@ def test_mpv_widget_loads_m3u8_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/dash/test-token.mpd")
+
+    assert widget._player.calls == [
+        (
+            "http://127.0.0.1:2323/dash/test-token.mpd",
+            "replace",
+            None,
+            {"demuxer_lavf_o_add": "allowed_extensions=ALL"},
+        )
+    ]
+
+
 def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_headers(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

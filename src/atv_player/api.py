@@ -185,6 +185,36 @@ class ApiClient:
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")
 
+    def list_bilibili_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/bilibili/{self._vod_token}")
+
+    def list_bilibili_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id, "pg": page}
+        if filters:
+            params.update(filters)
+        return self._request(
+            "GET",
+            f"/bilibili/{self._vod_token}",
+            params=params,
+        )
+
+    def search_bilibili_items(self, keyword: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"wd": keyword}
+        if page > 1:
+            params["pg"] = page
+        return self._request("GET", f"/bilibili/{self._vod_token}", params=params)
+
+    def get_bilibili_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/bilibili/{self._vod_token}", params={"ids": vod_id})
+
+    def get_bilibili_playback_source(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/play/{self._vod_token}", params={"bvid": vod_id, "dash": True})
+
     def list_emby_items(
         self,
         category_id: str,

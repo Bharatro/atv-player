@@ -161,6 +161,10 @@ def _is_remote_proxy_candidate_url(url: str) -> bool:
         return "." in hostname
 
 
+def _is_dash_data_uri(url: str) -> bool:
+    return url.startswith("data:application/dash+xml;base64,")
+
+
 def _resolve_first_variant_url(text: str, playlist_url: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for index, line in enumerate(lines):
@@ -188,6 +192,8 @@ class M3U8AdFilter:
         self._proxy_server = proxy_server or LocalHlsProxyServer(get=get)
 
     def should_prepare(self, url: str) -> bool:
+        if _is_dash_data_uri(url):
+            return True
         return _is_remote_proxy_candidate_url(url)
 
     def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
@@ -195,6 +201,8 @@ class M3U8AdFilter:
             return url
         self._proxy_server.start()
         normalized_headers = normalize_media_request_headers(url, headers)
+        if _is_dash_data_uri(url):
+            return self._proxy_server.create_dash_url(url, headers=normalized_headers)
         if _is_disguised_media_url(url):
             return self._proxy_server.create_media_url(url, headers=normalized_headers)
         if _is_extensionless_remote_url(url):

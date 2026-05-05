@@ -14,6 +14,7 @@ from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.douban_controller import DoubanController
+from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.controllers.emby_controller import EmbyController
 from atv_player.controllers.feiniu_controller import FeiniuController
 from atv_player.controllers.jellyfin_controller import JellyfinController
@@ -262,6 +263,20 @@ class AppCoordinator(QObject):
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
+        bilibili_controller = BilibiliController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("bilibili", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "bilibili",
+                vod_id,
+                payload,
+                source_name="B站",
+            ),
+        )
         emby_controller = EmbyController(
             self._api_client,
             playback_history_loader=None
@@ -310,7 +325,8 @@ class AppCoordinator(QObject):
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
-            "Show main window emby=%s jellyfin=%s feiniu=%s spider_plugins=%s",
+            "Show main window bilibili=%s emby=%s jellyfin=%s feiniu=%s spider_plugins=%s",
+            bool(capabilities.get("bilibili")),
             bool(capabilities.get("emby")),
             bool(capabilities.get("jellyfin")),
             bool(capabilities.get("feiniu")),
@@ -324,6 +340,7 @@ class AppCoordinator(QObject):
             save_config=lambda: self.repo.save_config(config),
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
+            bilibili_controller=bilibili_controller,
             live_controller=live_controller,
             live_source_manager=live_source_manager,
             emby_controller=emby_controller,
@@ -333,6 +350,7 @@ class AppCoordinator(QObject):
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
+            show_bilibili_tab=bool(capabilities.get("bilibili")),
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
             show_feiniu_tab=bool(capabilities.get("feiniu")),
@@ -387,7 +405,7 @@ class AppCoordinator(QObject):
         threading.Thread(target=refresh_sources, daemon=True).start()
 
     def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
-        default_capabilities = {"emby": True, "jellyfin": True, "feiniu": True, "pansou": False}
+        default_capabilities = {"bilibili": False, "emby": True, "jellyfin": True, "feiniu": True, "pansou": False}
         get_capabilities = getattr(api_client, "get_capabilities", None)
         if not callable(get_capabilities):
             return default_capabilities
@@ -400,6 +418,7 @@ class AppCoordinator(QObject):
             logger.warning("Load capabilities returned invalid payload, fallback to defaults")
             return default_capabilities
         capabilities = dict(default_capabilities)
+        capabilities["bilibili"] = bool(response.get("bilibili", capabilities["bilibili"]))
         capabilities["emby"] = bool(response.get("emby", capabilities["emby"]))
         capabilities["jellyfin"] = bool(response.get("jellyfin", capabilities["jellyfin"]))
         capabilities["feiniu"] = bool(response.get("feiniu", capabilities["feiniu"]))

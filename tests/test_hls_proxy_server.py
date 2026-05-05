@@ -1,4 +1,5 @@
 import errno
+from io import BytesIO
 
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.proxy.server import LocalHlsProxyServer
@@ -32,6 +33,34 @@ def test_m3u8_ad_filter_leaves_non_m3u8_url_unchanged() -> None:
     ad_filter = M3U8AdFilter()
 
     assert ad_filter.should_prepare("https://media.example/video.mp4") is False
+
+
+def test_m3u8_ad_filter_treats_dash_data_uri_as_proxy_candidate() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def create_dash_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/dash/dash-token.mpd"
+
+        def close(self) -> None:
+            return None
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
+    url = "data:application/dash+xml;base64,PE1QRD48L01QRD4="
+
+    prepared = ad_filter.prepare(url, {"Referer": "https://www.bilibili.com/"})
+
+    assert ad_filter.should_prepare(url) is True
+    assert prepared == "http://127.0.0.1:2323/dash/dash-token.mpd"
+    assert server.started is True
+    assert server.calls == [(url, {"Referer": "https://www.bilibili.com/"})]
 
 
 def test_m3u8_ad_filter_treats_remote_png_media_url_as_proxy_candidate() -> None:
@@ -259,6 +288,330 @@ def test_local_hls_proxy_server_returns_404_for_missing_token() -> None:
     assert status == 404
     assert headers == []
     assert body == b"missing proxy session"
+
+
+def test_local_hls_proxy_server_returns_decoded_dash_manifest_for_data_uri() -> None:
+    server = LocalHlsProxyServer()
+    mpd_url = server.create_dash_url("data:application/dash+xml;base64,PE1QRD48UGVyaW9kLz48L01QRD4=", {})
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body == b"<MPD><Period/></MPD>"
+
+
+def test_local_hls_proxy_server_uses_mpd_suffix_for_dash_manifest_url() -> None:
+    server = LocalHlsProxyServer()
+
+    mpd_url = server.create_dash_url("data:application/dash+xml;base64,PE1QRD48L01QRD4=", {})
+
+    assert mpd_url.startswith(f"http://{server.host}:{server.port}/dash/")
+    assert mpd_url.endswith(".mpd")
+
+
+def test_local_hls_proxy_server_escapes_bare_ampersands_in_dash_manifest() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = "<MPD><BaseURL>https://media.example/video.m4s?x=1&y=2</BaseURL></MPD>"
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body == (
+        f"<MPD><BaseURL>http://127.0.0.1:2323/dash/asset/{token}/0.m4s</BaseURL></MPD>".encode("utf-8")
+    )
+    assert server._registry.get(token).dash_assets == ["https://media.example/video.m4s?x=1&y=2"]
+
+
+def test_local_hls_proxy_server_does_not_double_escape_existing_entities_in_baseurl() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = "<MPD><BaseURL>https://media.example/video.m4s?x=1&amp;y=2</BaseURL></MPD>"
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body == (
+        f"<MPD><BaseURL>http://127.0.0.1:2323/dash/asset/{token}/0.m4s</BaseURL></MPD>".encode("utf-8")
+    )
+    assert server._registry.get(token).dash_assets == ["https://media.example/video.m4s?x=1&y=2"]
+
+
+def test_local_hls_proxy_server_escapes_entity_like_fragments_inside_baseurl() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = "<MPD><BaseURL>https://media.example/video.m4s?foo=1&abc=123&bar=2</BaseURL></MPD>"
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body == (
+        f"<MPD><BaseURL>http://127.0.0.1:2323/dash/asset/{token}/0.m4s</BaseURL></MPD>".encode("utf-8")
+    )
+    assert server._registry.get(token).dash_assets == ["https://media.example/video.m4s?foo=1&abc=123&bar=2"]
+
+
+def test_local_hls_proxy_server_rewrites_dash_baseurl_to_local_asset_proxy() -> None:
+    server = LocalHlsProxyServer()
+    raw_url = "https://media.example/video.m4s?foo=1&bar=2"
+    raw_xml = f"<MPD><BaseURL>{raw_url}</BaseURL></MPD>"
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body == (
+        f"<MPD><BaseURL>http://127.0.0.1:2323/dash/asset/{token}/0.m4s</BaseURL></MPD>".encode("utf-8")
+    )
+    assert server._registry.get(token).dash_assets == [raw_url]
+
+
+def test_local_hls_proxy_server_keeps_only_first_video_and_audio_dash_representations() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v1" bandwidth="300">
+        <BaseURL>https://media.example/video-1.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v2" bandwidth="200">
+        <BaseURL>https://media.example/video-2.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="100">
+        <BaseURL>https://media.example/audio-1.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a2" bandwidth="50">
+        <BaseURL>https://media.example/audio-2.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    body_text = body.decode("utf-8")
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert body_text.count("<AdaptationSet") == 2
+    assert "video-2.m4s" not in body_text
+    assert "audio-2.m4s" not in body_text
+    assert f"/dash/asset/{token}/0.m4s" in body_text
+    assert f"/dash/asset/{token}/1.m4s" in body_text
+    assert server._registry.get(token).dash_assets == [
+        "https://media.example/video-1.m4s",
+        "https://media.example/audio-1.m4s",
+    ]
+
+
+def test_local_hls_proxy_server_proxies_dash_asset_with_range_headers() -> None:
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.content = b"abc"
+            self.headers = {
+                "Content-Type": "video/iso.segment",
+                "Content-Range": "bytes 0-2/3",
+                "Accept-Ranges": "bytes",
+            }
+            self.status_code = 206
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        requests.append((url, headers))
+        return FakeResponse()
+
+    server = LocalHlsProxyServer(get=fake_get)
+    payload = "data:application/dash+xml;base64,PE1QRD48QmFzZVVSTD5odHRwczovL21lZGlhLmV4YW1wbGUvdmlkZW8ubTRzP2Zv bz0xJmJhcj0yPC9CYXNlVVJMPjwvTVBEPg==".replace(" ", "")
+    mpd_url = server.create_dash_url(
+        payload,
+        {
+            "Cookie": "SESSDATA=demo;bili_jct=demo2",
+            "Referer": "https://www.bilibili.com/",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    status, headers, body = server.handle_request(
+        "GET",
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=0-2"},
+    )
+
+    assert status == 206
+    assert headers == [
+        ("Content-Type", "video/iso.segment"),
+        ("Content-Range", "bytes 0-2/3"),
+        ("Accept-Ranges", "bytes"),
+    ]
+    assert body == b"abc"
+    assert requests == [
+        (
+            "https://media.example/video.m4s?foo=1&bar=2",
+            {
+                "Cookie": "SESSDATA=demo;bili_jct=demo2",
+                "Referer": "https://www.bilibili.com/",
+                "User-Agent": "Mozilla/5.0",
+                "Range": "bytes=0-2",
+            },
+        )
+    ]
+
+
+def test_local_hls_proxy_server_synthesizes_partial_content_when_origin_ignores_range() -> None:
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.content = b"0123456789"
+            self.headers = {
+                "Content-Type": "video/iso.segment",
+            }
+            self.status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        requests.append((url, headers))
+        return FakeResponse()
+
+    server = LocalHlsProxyServer(get=fake_get)
+    payload = "data:application/dash+xml;base64,PE1QRD48QmFzZVVSTD5odHRwczovL21lZGlhLmV4YW1wbGUvdmlkZW8ubTRzPC9CYXNlVVJMPjwvTVBEPg=="
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    status, headers, body = server.handle_request(
+        "GET",
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=2-5"},
+    )
+
+    assert status == 206
+    assert headers == [
+        ("Content-Type", "video/iso.segment"),
+        ("Content-Range", "bytes 2-5/10"),
+        ("Accept-Ranges", "bytes"),
+    ]
+    assert body == b"2345"
+    assert requests == [
+        (
+            "https://media.example/video.m4s",
+            {
+                "Referer": "https://www.bilibili.com/",
+                "Range": "bytes=2-5",
+            },
+        )
+    ]
+
+
+def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_full_body() -> None:
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {
+            "Content-Type": "video/iso.segment",
+            "Content-Length": "6",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self) -> bytes:
+            yield b"abc"
+            yield b"def"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append((method, url, headers))
+        return FakeStreamResponse()
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(stream=fake_stream)
+    payload = "data:application/dash+xml;base64,PE1QRD48QmFzZVVSTD5odHRwczovL21lZGlhLmV4YW1wbGUvdmlkZW8ubTRzPC9CYXNlVVJMPjwvTVBEPg=="
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    handler = FakeHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=0-5"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert handler.headers == [
+        ("Content-Type", "video/iso.segment"),
+        ("Content-Length", "6"),
+    ]
+    assert handler.ended is True
+    assert handler.wfile.getvalue() == b"abcdef"
+    assert calls == [
+        (
+            "GET",
+            "https://media.example/video.m4s",
+            {
+                "Referer": "https://www.bilibili.com/",
+                "Range": "bytes=0-5",
+            },
+        )
+    ]
 
 
 def test_local_hls_proxy_server_returns_repaired_bytes_for_direct_media_url() -> None:

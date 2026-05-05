@@ -886,6 +886,48 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     ]
 
 
+def test_player_window_rewrites_dash_data_uri_to_local_proxy_url(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/dash/proxy-dash-1.mpd"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                headers={"Referer": "https://www.bilibili.com/"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/proxy-dash-1.mpd", 0)])
+
+    assert filter_service.calls == [
+        (
+            "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+            {"Referer": "https://www.bilibili.com/"},
+        )
+    ]
+
+
 def test_player_window_logs_proxy_prepare_failure_and_plays_original_url(qtbot) -> None:
     class FailingM3U8AdFilter:
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:

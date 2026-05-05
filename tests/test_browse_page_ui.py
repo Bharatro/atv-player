@@ -1505,7 +1505,7 @@ def test_history_page_loads_history_outside_main_thread(qtbot) -> None:
     assert page.table.item(0, 0).text() == "Movie"
 
 
-def test_history_page_formats_emby_jellyfin_and_feiniu_source_labels(qtbot) -> None:
+def test_history_page_formats_emby_jellyfin_feiniu_and_bilibili_source_labels(qtbot) -> None:
     class Controller:
         def load_page(self, page: int, size: int):
             return [
@@ -1557,17 +1557,34 @@ def test_history_page_formats_emby_jellyfin_and_feiniu_source_labels(qtbot) -> N
                     source_kind="feiniu",
                     source_name="飞牛影视",
                 ),
-            ], 3
+                HistoryRecord(
+                    id=0,
+                    key="BV1xx411c7mD",
+                    vod_name="B站视频",
+                    vod_pic="",
+                    vod_remarks="第1话",
+                    episode=0,
+                    episode_url="",
+                    position=5000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=4,
+                    source_kind="bilibili",
+                    source_name="B站",
+                ),
+            ], 4
 
     page = HistoryPage(Controller())
     qtbot.addWidget(page)
 
     page.load_history()
-    qtbot.waitUntil(lambda: page.table.rowCount() == 3, timeout=1000)
+    qtbot.waitUntil(lambda: page.table.rowCount() == 4, timeout=1000)
 
     assert page.table.item(0, 5).text() == "Emby"
     assert page.table.item(1, 5).text() == "Jellyfin"
     assert page.table.item(2, 5).text() == "飞牛影视"
+    assert page.table.item(3, 5).text() == "B站"
 
 
 def test_history_page_uses_latest_async_load_result(qtbot) -> None:

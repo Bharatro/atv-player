@@ -145,6 +145,25 @@ class FakeFeiniuController(FakeDoubanController):
         return [VodItem(vod_id="fn-child-1", vod_name="Episode 1", vod_tag="file")], 1
 
 
+class FakeBilibiliController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.folder_calls: list[str] = []
+
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="B站视频"),
+            playlist=[PlayItem(title="第1话", url="", vod_id="BVep-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="BVchild-1", vod_name="第1话", vod_tag="file")], 1
+
+
 class AsyncRequestController(FakeDoubanController):
     def __init__(self, request_factory) -> None:
         super().__init__()
@@ -464,7 +483,7 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(2) == "网络直播"
     assert window.nav_tabs.tabText(3) == "Emby"
     assert window.nav_tabs.tabText(4) == "Jellyfin"
-    assert window.nav_tabs.tabText(5) == "Feiniu"
+    assert window.nav_tabs.tabText(5) == "飞牛影视"
     assert window.nav_tabs.tabText(6) == "文件浏览"
     assert window.nav_tabs.tabText(7) == "播放记录"
 
@@ -639,6 +658,36 @@ def test_main_window_hides_emby_jellyfin_and_feiniu_tabs_when_disabled(qtbot) ->
     assert window.nav_tabs.tabText(2) == "网络直播"
     assert window.nav_tabs.tabText(3) == "文件浏览"
     assert window.nav_tabs.tabText(4) == "播放记录"
+
+
+def test_main_window_inserts_bilibili_tab_immediately_after_telegram(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        bilibili_controller=FakeBilibiliController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=FakeFeiniuController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:7] == [
+        "豆瓣电影",
+        "电报影视",
+        "B站",
+        "网络直播",
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+    ]
 
 
 def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtbot) -> None:
@@ -1276,6 +1325,25 @@ def test_main_window_enables_search_controls_for_feiniu_page(qtbot) -> None:
     assert window.feiniu_page.keyword_edit.isHidden() is False
 
 
+def test_main_window_enables_search_controls_for_bilibili_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        bilibili_controller=FakeBilibiliController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+
+    assert window.bilibili_page.keyword_edit.isHidden() is False
+
+
 def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> None:
     controller = FakeEmbyController()
     window = MainWindow(
@@ -1336,6 +1404,39 @@ def test_main_window_opens_player_from_feiniu_card_signal(qtbot, monkeypatch) ->
     qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Feiniu Movie"
     assert opened[0][0].source_vod_id == "1-5001"
+    assert opened[0][1] is False
+
+
+def test_main_window_opens_player_from_bilibili_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeBilibiliController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        bilibili_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+
+    window.bilibili_page.item_open_requested.emit(VodItem(vod_id="BV1xx411c7mD", vod_name="第1话", vod_tag="file"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0][0].vod.vod_name == "B站视频"
+    assert opened[0][0].source_vod_id == "BV1xx411c7mD"
     assert opened[0][1] is False
 
 
@@ -1406,6 +1507,41 @@ def test_main_window_feiniu_folder_click_loads_folder_in_current_tab(qtbot, monk
     assert controller.folder_calls == ["folder-1"]
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "fn-child-1"
+
+
+def test_main_window_bilibili_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
+    controller = FakeBilibiliController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        bilibili_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    shown = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(
+        window.bilibili_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+
+    window.bilibili_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="第一季", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
+    assert opened == []
+    assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
+    assert shown[0][0][0].vod_id == "BVchild-1"
 
 
 def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> None:
@@ -2309,6 +2445,55 @@ def test_main_window_opens_jellyfin_history_detail_asynchronously(qtbot, monkeyp
     assert opened[0].source_vod_id == "jf-1"
 
 
+def test_main_window_opens_bilibili_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(lambda vod_id: _make_telegram_request(vod_id, vod_name="B站视频"))
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        bilibili_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="BV1xx411c7mD",
+            vod_name="B站视频",
+            vod_pic="",
+            vod_remarks="第1话",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="bilibili",
+            source_name="B站",
+        )
+    )
+    _wait_for_request_call(qtbot, controller, "BV1xx411c7mD")
+    controller.finish_request("BV1xx411c7mD", request=_make_telegram_request("BV1xx411c7mD", vod_name="B站视频"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "B站视频"
+    assert opened[0].source_vod_id == "BV1xx411c7mD"
+
+
 def test_main_window_shows_error_when_plugin_history_source_is_missing(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -2854,7 +3039,7 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
             self.vod_token = vod_token
 
         def get_capabilities(self) -> dict[str, bool]:
-            return {"emby": False, "jellyfin": True, "pansou": False}
+            return {"emby": False, "jellyfin": True, "bilibili": True, "pansou": False}
 
     class FakeMainWindow:
         logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
@@ -2877,6 +3062,7 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
     assert isinstance(window, FakeMainWindow)
     assert window.kwargs["show_emby_tab"] is False
     assert window.kwargs["show_jellyfin_tab"] is True
+    assert window.kwargs["show_bilibili_tab"] is True
 
 
 def test_app_coordinator_show_main_injects_pansou_controller_when_capability_enabled(monkeypatch) -> None:
@@ -2964,7 +3150,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
             self.vod_token = vod_token
 
         def get_capabilities(self) -> dict[str, bool]:
-            return {"emby": True, "jellyfin": True, "feiniu": True}
+            return {"emby": True, "jellyfin": True, "feiniu": True, "bilibili": True}
 
     captured: dict[str, object] = {}
 
@@ -2990,6 +3176,11 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
             captured["feiniu_loader"] = playback_history_loader
             captured["feiniu_saver"] = playback_history_saver
 
+    class RecordingBilibiliController:
+        def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
+            captured["bilibili_loader"] = playback_history_loader
+            captured["bilibili_saver"] = playback_history_saver
+
     class RecordingHistoryController:
         def __init__(self, api_client, playback_history_repository=None) -> None:
             captured["history_repository"] = playback_history_repository
@@ -3007,6 +3198,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     monkeypatch.setattr(app_module, "EmbyController", RecordingEmbyController)
     monkeypatch.setattr(app_module, "JellyfinController", RecordingJellyfinController)
     monkeypatch.setattr(app_module, "FeiniuController", RecordingFeiniuController)
+    monkeypatch.setattr(app_module, "BilibiliController", RecordingBilibiliController)
     monkeypatch.setattr(app_module, "HistoryController", RecordingHistoryController)
     monkeypatch.setattr(app_module, "MainWindow", DummyMainWindow)
 
@@ -3026,7 +3218,58 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     assert callable(captured["jellyfin_saver"])
     assert callable(captured["feiniu_loader"])
     assert callable(captured["feiniu_saver"])
+    assert callable(captured["bilibili_loader"])
+    assert callable(captured["bilibili_saver"])
     assert captured["window_kwargs"]["show_feiniu_tab"] is True
+    assert captured["window_kwargs"]["show_bilibili_tab"] is True
+
+
+def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = FakeBilibiliController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="bilibili",
+        last_playback_mode="detail",
+        last_playback_vod_id="BV1xx411c7mD",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        bilibili_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert window.player_window.opened[0][0]["vod"].vod_name == "B站视频"
+    assert window.player_window.opened[0][1] is True
 
 
 def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:

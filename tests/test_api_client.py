@@ -194,6 +194,19 @@ def test_api_client_gets_capabilities_with_feiniu() -> None:
     assert client.get_capabilities()["feiniu"] is True
 
 
+def test_api_client_gets_capabilities_with_bilibili() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"bilibili": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_capabilities()["bilibili"] is True
+
+
 def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "DELETE"
@@ -753,6 +766,85 @@ def test_api_client_lists_feiniu_categories() -> None:
     client.list_feiniu_categories()
 
     assert seen == {"path": "/feiniu/Harold", "query": ""}
+
+
+def test_api_client_lists_bilibili_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_bilibili_categories()
+
+    assert seen == {"path": "/bilibili/Harold", "query": ""}
+
+
+def test_api_client_lists_bilibili_items_with_filters() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_bilibili_items("bangumi", page=2, filters={"season_status": "1"})
+
+    assert seen_queries == ["t=bangumi&pg=2&season_status=1"]
+
+
+def test_api_client_gets_bilibili_detail_by_ids() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_bilibili_detail("BV1xx411c7mD")
+
+    assert seen == {"path": "/bilibili/Harold", "query": "ids=BV1xx411c7mD"}
+
+
+def test_api_client_gets_bilibili_playback_source() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"url": "https://stream.example/1.m3u8"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_bilibili_playback_source("BV1xx411c7mD")
+
+    assert seen == {"path": "/play/Harold", "query": "bvid=BV1xx411c7mD&dash=true"}
 
 
 def test_api_client_gets_feiniu_playback_source() -> None:

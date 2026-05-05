@@ -197,9 +197,10 @@ class MpvWidget(QWidget):
         player["http-header-fields"] = header_fields
 
     def _loadfile_options(self, url: str) -> dict[str, str]:
-        if ".m3u8" not in url.lower():
+        lowered = url.lower()
+        if ".m3u8" not in lowered and ".mpd" not in lowered:
             return {}
-        # Some HLS sources disguise transport stream segments with image suffixes.
+        # Some HLS/DASH sources use fragment URLs mpv would otherwise reject by extension.
         return {"demuxer_lavf_o_add": "allowed_extensions=ALL"}
 
     def _player_property(self, name: str, default: object | None = None) -> object | None:
