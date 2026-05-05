@@ -37,6 +37,21 @@ class AppConfig:
 
 
 @dataclass(slots=True)
+class ExternalSubtitleOption:
+    name: str
+    lang: str
+    url: str
+    format: str = ""
+    source: str = ""
+
+
+@dataclass(slots=True)
+class ExternalSubtitleSelection:
+    source: str
+    option_url: str
+
+
+@dataclass(slots=True)
 class PlayItem:
     title: str
     url: str
@@ -47,6 +62,7 @@ class PlayItem:
     duration_seconds: int = 0
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     dash_video_id: str = ""
     play_source: str = ""
     media_title: str = ""

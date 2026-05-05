@@ -268,6 +268,29 @@ def test_load_playback_item_loads_direct_bilibili_danmaku_xml_from_payload() -> 
     ]
 
 
+def test_load_playback_item_maps_bilibili_subtitles_from_playback_payload() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": "http://127.0.0.1:2323/dash/demo.mpd",
+        "header": {"Referer": "https://www.bilibili.com/video/BV1xx411c7mD"},
+        "subs": [
+            {"url": "", "name": "关闭", "lang": "", "format": "application/x-subrip"},
+            {"url": "http://127.0.0.1:4567/subtitles?lang=zh", "name": "中文", "lang": "ai-zh", "format": "application/x-subrip"},
+            {"url": "http://127.0.0.1:4567/subtitles?lang=en", "name": "English", "lang": "ai-en", "format": "application/x-subrip"},
+        ],
+    }
+    controller = BilibiliController(api)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD")
+
+    controller.load_playback_item(item)
+
+    assert item.url == "http://127.0.0.1:2323/dash/demo.mpd"
+    assert [(sub.name, sub.lang, sub.url, sub.format) for sub in item.external_subtitles] == [
+        ("中文 [B站]", "ai-zh", "http://127.0.0.1:4567/subtitles?lang=zh", "application/x-subrip"),
+        ("English [B站]", "ai-en", "http://127.0.0.1:4567/subtitles?lang=en", "application/x-subrip"),
+    ]
+
+
 def test_build_request_splits_bilibili_routes_by_play_source_without_cross_group_id_corruption() -> None:
     api = FakeApiClient()
     api.detail_payload = {

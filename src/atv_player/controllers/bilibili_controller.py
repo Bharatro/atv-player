@@ -10,7 +10,14 @@ import httpx
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_categories, _map_item
 from atv_player.controllers.telegram_search_controller import _parse_playlist
-from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import (
+    DoubanCategory,
+    ExternalSubtitleOption,
+    HistoryRecord,
+    OpenPlayerRequest,
+    PlayItem,
+    VodItem,
+)
 
 _JAVA_MAP_HEADER_ENTRY_RE = re.compile(r"(?:^|,\s*)([A-Za-z0-9-]+)=(.*?)(?=,\s*[A-Za-z0-9-]+=|$)")
 _BILIBILI_DANMAKU_URL_RE = re.compile(r"^https?://comment\.bilibili\.com/\d+\.xml(?:\?.*)?$", re.IGNORECASE)
@@ -92,6 +99,37 @@ class BilibiliController:
         item.selected_danmaku_title = (item.media_title or item.title).strip()
         item.danmaku_error = ""
 
+    def _normalize_bilibili_subtitle_name(self, value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text in {"关闭", "关闭字幕", "off", "OFF"}:
+            return ""
+        return f"{text} [B站]"
+
+    def _parse_bilibili_subtitles(self, payload: dict[str, object]) -> list[ExternalSubtitleOption]:
+        raw_subs = payload.get("subs")
+        if not isinstance(raw_subs, list):
+            return []
+        subtitles: list[ExternalSubtitleOption] = []
+        for raw_sub in raw_subs:
+            if not isinstance(raw_sub, dict):
+                continue
+            url = str(raw_sub.get("url") or "").strip()
+            name = self._normalize_bilibili_subtitle_name(raw_sub.get("name"))
+            if not url or not name:
+                continue
+            subtitles.append(
+                ExternalSubtitleOption(
+                    name=name,
+                    lang=str(raw_sub.get("lang") or "").strip(),
+                    url=url,
+                    format=str(raw_sub.get("format") or "").strip(),
+                    source="bilibili",
+                )
+            )
+        return subtitles
+
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_bilibili_categories()
         return _map_categories(payload)
@@ -163,6 +201,7 @@ class BilibiliController:
             raise ValueError(f"没有可用的播放地址: {item.title}")
         item.url = play_url
         item.headers = _parse_bilibili_headers(payload.get("header") or {})
+        item.external_subtitles = self._parse_bilibili_subtitles(payload)
         self._load_bilibili_danmaku(item, payload)
 
     def _route_name(self, routes: list[str], group_index: int) -> str:

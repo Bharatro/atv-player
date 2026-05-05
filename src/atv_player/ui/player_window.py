@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
-from atv_player.models import PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
+from atv_player.models import ExternalSubtitleOption, ExternalSubtitleSelection, PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.async_guard import AsyncGuardMixin
@@ -176,6 +177,14 @@ class AudioPreference:
     lang: str = ""
     is_default: bool = False
     is_forced: bool = False
+
+
+@dataclass(slots=True)
+class UnifiedSubtitleOption:
+    label: str
+    mode: str
+    track_id: int | None = None
+    external_subtitle: ExternalSubtitleOption | None = None
 
 
 @dataclass(slots=True)
@@ -365,8 +374,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
         self._subtitle_tracks: list[SubtitleTrack] = []
+        self._unified_primary_subtitle_options: list[UnifiedSubtitleOption] = []
         self._subtitle_preference = SubtitlePreference()
         self._secondary_subtitle_preference = SecondarySubtitlePreference()
+        self._primary_external_subtitle_selection: ExternalSubtitleSelection | None = None
+        self._secondary_external_subtitle_selection: ExternalSubtitleSelection | None = None
+        self._primary_external_subtitle_track_id: int | None = None
+        self._secondary_external_subtitle_track_id: int | None = None
+        self._primary_external_subtitle_path: Path | None = None
+        self._secondary_external_subtitle_path: Path | None = None
         self._main_subtitle_position = 50
         self._secondary_subtitle_position = 50
         self._secondary_subtitle_position_supported = False
@@ -979,6 +995,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._invalidate_play_item_resolution()
         self._clear_manual_subtitle_switch_refresh()
+        self._clear_external_subtitle_tracks()
         self._clear_active_danmaku()
         self._reset_danmaku_combo()
         self._video_quality_options = []
@@ -1791,15 +1808,69 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             is_forced=track.is_forced,
         )
 
+    def _current_item_external_subtitles(self) -> list[ExternalSubtitleOption]:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return []
+        return list(current_item.external_subtitles)
+
+    def _find_current_item_external_subtitle(self, url: str) -> ExternalSubtitleOption | None:
+        return next((subtitle for subtitle in self._current_item_external_subtitles() if subtitle.url == url), None)
+
+    def _current_primary_external_subtitle(self) -> ExternalSubtitleOption | None:
+        selection = self._primary_external_subtitle_selection
+        if selection is None:
+            return None
+        return self._find_current_item_external_subtitle(selection.option_url)
+
+    def _remove_external_subtitle_track(self, track_id: int | None) -> None:
+        if track_id is None or not hasattr(self.video, "remove_subtitle_track"):
+            return
+        self.video.remove_subtitle_track(track_id)
+
+    def _clear_primary_external_subtitle(self) -> None:
+        self._remove_external_subtitle_track(self._primary_external_subtitle_track_id)
+        self._primary_external_subtitle_selection = None
+        self._primary_external_subtitle_track_id = None
+        self._primary_external_subtitle_path = None
+
+    def _clear_secondary_external_subtitle(self) -> None:
+        self._remove_external_subtitle_track(self._secondary_external_subtitle_track_id)
+        self._secondary_external_subtitle_selection = None
+        self._secondary_external_subtitle_track_id = None
+        self._secondary_external_subtitle_path = None
+
+    def _clear_external_subtitle_tracks(self) -> None:
+        self._clear_primary_external_subtitle()
+        self._clear_secondary_external_subtitle()
+
+    def _build_primary_subtitle_options(self, tracks: list[SubtitleTrack]) -> list[UnifiedSubtitleOption]:
+        options: list[UnifiedSubtitleOption] = []
+        for track in tracks:
+            options.append(UnifiedSubtitleOption(label=track.label, mode="track", track_id=track.id))
+        for subtitle in self._current_item_external_subtitles():
+            options.append(
+                UnifiedSubtitleOption(
+                    label=subtitle.name,
+                    mode="external",
+                    external_subtitle=subtitle,
+                )
+            )
+        return options
+
     def _populate_subtitle_combo(self, tracks: list[SubtitleTrack]) -> None:
+        self._unified_primary_subtitle_options = self._build_primary_subtitle_options(tracks)
         self.subtitle_combo.blockSignals(True)
         self.subtitle_combo.clear()
         self.subtitle_combo.addItem("字幕", ("auto", None))
-        if tracks:
+        if self._unified_primary_subtitle_options:
             self.subtitle_combo.addItem("关闭字幕", ("off", None))
-            for track in tracks:
-                self.subtitle_combo.addItem(track.label, ("track", track.id))
-        self.subtitle_combo.setEnabled(bool(tracks))
+            for option in self._unified_primary_subtitle_options:
+                self.subtitle_combo.addItem(
+                    option.label,
+                    (option.mode, option.track_id, option.external_subtitle),
+                )
+        self.subtitle_combo.setEnabled(bool(self._unified_primary_subtitle_options))
         self.subtitle_combo.setCurrentIndex(0)
         self.subtitle_combo.blockSignals(False)
 
@@ -1886,6 +1957,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _apply_subtitle_preference(self) -> None:
         self.subtitle_combo.blockSignals(True)
         try:
+            current_external_subtitle = self._current_primary_external_subtitle()
+            if current_external_subtitle is not None and self._primary_external_subtitle_track_id is not None:
+                self.video.apply_subtitle_mode("track", track_id=self._primary_external_subtitle_track_id)
+                for index in range(self.subtitle_combo.count()):
+                    item_data = self.subtitle_combo.itemData(index)
+                    if (
+                        isinstance(item_data, tuple)
+                        and len(item_data) == 3
+                        and item_data[0] == "external"
+                        and getattr(item_data[2], "url", None) == current_external_subtitle.url
+                    ):
+                        self.subtitle_combo.setCurrentIndex(index)
+                        return
+                self._clear_primary_external_subtitle()
+            elif self._subtitle_preference.mode == "external":
+                self._subtitle_preference = SubtitlePreference()
+
             if self._subtitle_preference.mode == "off":
                 self.video.apply_subtitle_mode("off")
                 if self.subtitle_combo.count() > 1:
@@ -1910,6 +1998,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _sync_subtitle_combo_to_preference(self) -> None:
         self.subtitle_combo.blockSignals(True)
         try:
+            current_external_subtitle = self._current_primary_external_subtitle()
+            if current_external_subtitle is not None:
+                for index in range(self.subtitle_combo.count()):
+                    item_data = self.subtitle_combo.itemData(index)
+                    if (
+                        isinstance(item_data, tuple)
+                        and len(item_data) == 3
+                        and item_data[0] == "external"
+                        and getattr(item_data[2], "url", None) == current_external_subtitle.url
+                    ):
+                        self.subtitle_combo.setCurrentIndex(index)
+                        return
+                self._clear_primary_external_subtitle()
+            elif self._subtitle_preference.mode == "external":
+                self._subtitle_preference = SubtitlePreference()
             if self._subtitle_preference.mode == "off":
                 self.subtitle_combo.setCurrentIndex(1 if self.subtitle_combo.count() > 1 else 0)
                 return
@@ -1970,6 +2073,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         return best_track
 
     def _apply_secondary_subtitle_preference(self) -> None:
+        if self._secondary_external_subtitle_selection is not None and self._secondary_external_subtitle_track_id is not None:
+            subtitle = self._find_current_item_external_subtitle(self._secondary_external_subtitle_selection.option_url)
+            if subtitle is not None:
+                self.video.apply_secondary_subtitle_mode("track", track_id=self._secondary_external_subtitle_track_id)
+                return
+            self._clear_secondary_external_subtitle()
+        elif self._secondary_subtitle_preference.mode == "external":
+            self._secondary_subtitle_preference = SecondarySubtitlePreference()
         if self._secondary_subtitle_preference.mode == "off":
             self.video.apply_secondary_subtitle_mode("off")
             return
@@ -2469,16 +2580,41 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         item_data = self.subtitle_combo.itemData(index)
         if item_data is None:
             return
-        mode, track_id = item_data
+        if isinstance(item_data, tuple) and len(item_data) == 3:
+            mode, track_id, external_subtitle = item_data
+        else:
+            mode, track_id = item_data
+            external_subtitle = None
         if mode == "auto":
             self._subtitle_preference = SubtitlePreference()
             self._mark_manual_subtitle_switch_refresh()
             self.video.apply_subtitle_mode("auto")
+            self._clear_primary_external_subtitle()
             return
         if mode == "off":
             self._subtitle_preference = SubtitlePreference(mode="off")
             self._mark_manual_subtitle_switch_refresh()
             self.video.apply_subtitle_mode("off")
+            self._clear_primary_external_subtitle()
+            return
+        if mode == "external" and external_subtitle is not None:
+            previous_track_id = self._primary_external_subtitle_track_id
+            try:
+                loaded_track_id, subtitle_path = self._load_bilibili_external_subtitle(external_subtitle, secondary=False)
+                self._mark_manual_subtitle_switch_refresh()
+                self.video.apply_subtitle_mode("track", track_id=loaded_track_id)
+            except Exception as exc:
+                self._append_log(f"字幕切换失败: {exc}")
+                return
+            self._subtitle_preference = SubtitlePreference(mode="external")
+            self._primary_external_subtitle_selection = ExternalSubtitleSelection(
+                source=external_subtitle.source,
+                option_url=external_subtitle.url,
+            )
+            self._primary_external_subtitle_track_id = loaded_track_id
+            self._primary_external_subtitle_path = subtitle_path
+            if previous_track_id != loaded_track_id:
+                self._remove_external_subtitle_track(previous_track_id)
             return
         track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
         if track is None:
@@ -2486,6 +2622,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._remember_track_preference(track)
         self._mark_manual_subtitle_switch_refresh()
         self.video.apply_subtitle_mode("track", track_id=track_id)
+        self._clear_primary_external_subtitle()
 
     def _change_danmaku_selection(self, index: int) -> None:
         if index < 0 or not self._current_play_item_danmaku_xml():
@@ -2895,16 +3032,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         menu = QMenu("主字幕", parent)
         group = QActionGroup(menu)
         group.setExclusive(True)
+        primary_external_subtitle = self._current_primary_external_subtitle()
 
         auto_action = menu.addAction("自动选择")
         auto_action.setCheckable(True)
-        auto_action.setChecked(self._subtitle_preference.mode == "auto")
+        auto_action.setChecked(primary_external_subtitle is None and self._subtitle_preference.mode == "auto")
         auto_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("auto", None))
         group.addAction(auto_action)
 
         off_action = menu.addAction("关闭字幕")
         off_action.setCheckable(True)
-        off_action.setChecked(self._subtitle_preference.mode == "off")
+        off_action.setChecked(primary_external_subtitle is None and self._subtitle_preference.mode == "off")
         off_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("off", None))
         group.addAction(off_action)
 
@@ -2921,6 +3059,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
             group.addAction(action)
 
+        for subtitle in self._current_item_external_subtitles():
+            action = menu.addAction(subtitle.name)
+            action.setCheckable(True)
+            action.setChecked(
+                self._primary_external_subtitle_selection is not None
+                and self._primary_external_subtitle_selection.option_url == subtitle.url
+            )
+            action.triggered.connect(
+                lambda _checked=False, subtitle_url=subtitle.url: self._set_primary_subtitle_from_menu(
+                    "external",
+                    subtitle_url,
+                )
+            )
+            group.addAction(action)
+
         return menu
 
     def _build_secondary_subtitle_menu(self, parent: QWidget) -> QMenu:
@@ -2930,7 +3083,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         off_action = menu.addAction("关闭次字幕")
         off_action.setCheckable(True)
-        off_action.setChecked(self._secondary_subtitle_preference.mode == "off")
+        off_action.setChecked(
+            self._secondary_external_subtitle_selection is None and self._secondary_subtitle_preference.mode == "off"
+        )
         off_action.triggered.connect(lambda: self._set_secondary_subtitle_from_menu("off", None))
         group.addAction(off_action)
 
@@ -2944,6 +3099,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
             action.triggered.connect(
                 lambda _checked=False, track_id=track.id: self._set_secondary_subtitle_from_menu("track", track_id)
+            )
+            group.addAction(action)
+
+        for subtitle in self._current_item_external_subtitles():
+            action = menu.addAction(subtitle.name)
+            action.setCheckable(True)
+            action.setChecked(
+                self._secondary_external_subtitle_selection is not None
+                and self._secondary_external_subtitle_selection.option_url == subtitle.url
+            )
+            action.triggered.connect(
+                lambda _checked=False, subtitle_url=subtitle.url: self._set_secondary_subtitle_from_menu(
+                    "external",
+                    subtitle_url,
+                )
             )
             group.addAction(action)
 
@@ -3071,7 +3241,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.subtitle_combo.setCurrentIndex(1)
             return
         for index in range(self.subtitle_combo.count()):
-            if self.subtitle_combo.itemData(index) == ("track", track_id):
+            item_data = self.subtitle_combo.itemData(index)
+            if item_data == ("track", track_id):
+                self.subtitle_combo.setCurrentIndex(index)
+                return
+            if (
+                isinstance(item_data, tuple)
+                and len(item_data) == 3
+                and item_data[0] == mode
+                and ((mode == "track" and item_data[1] == track_id) or (mode == "external" and getattr(item_data[2], "url", None) == track_id))
+            ):
                 self.subtitle_combo.setCurrentIndex(index)
                 return
 
@@ -3097,12 +3276,31 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _set_secondary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
         try:
             if mode == "off":
-                self._secondary_subtitle_preference = SecondarySubtitlePreference()
                 self.video.apply_secondary_subtitle_mode("off")
+                self._secondary_subtitle_preference = SecondarySubtitlePreference()
+                self._clear_secondary_external_subtitle()
+                return
+            if mode == "external":
+                subtitle = self._find_current_item_external_subtitle(str(track_id or ""))
+                if subtitle is None:
+                    return
+                previous_track_id = self._secondary_external_subtitle_track_id
+                loaded_track_id, subtitle_path = self._load_bilibili_external_subtitle(subtitle, secondary=True)
+                self.video.apply_secondary_subtitle_mode("track", track_id=loaded_track_id)
+                self._secondary_subtitle_preference = SecondarySubtitlePreference(mode="external")
+                self._secondary_external_subtitle_selection = ExternalSubtitleSelection(
+                    source=subtitle.source,
+                    option_url=subtitle.url,
+                )
+                self._secondary_external_subtitle_track_id = loaded_track_id
+                self._secondary_external_subtitle_path = subtitle_path
+                if previous_track_id != loaded_track_id:
+                    self._remove_external_subtitle_track(previous_track_id)
                 return
             track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
             if track is None:
                 return
+            self.video.apply_secondary_subtitle_mode("track", track_id=track.id)
             self._secondary_subtitle_preference = SecondarySubtitlePreference(
                 mode="track",
                 title=track.title,
@@ -3110,9 +3308,37 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 is_default=track.is_default,
                 is_forced=track.is_forced,
             )
-            self.video.apply_secondary_subtitle_mode("track", track_id=track.id)
+            self._clear_secondary_external_subtitle()
         except Exception as exc:
             self._append_log(f"次字幕切换失败: {exc}")
+
+    def _write_external_subtitle_file(self, text: str, suffix: str) -> Path:
+        temp_file = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=suffix, delete=False)
+        try:
+            temp_file.write(text)
+        finally:
+            temp_file.close()
+        return Path(temp_file.name)
+
+    def _fetch_external_subtitle_text(self, subtitle: ExternalSubtitleOption) -> str:
+        current_item = self._current_play_item()
+        headers = {} if current_item is None else dict(current_item.headers)
+        response = httpx.get(subtitle.url, headers=headers, timeout=10.0, follow_redirects=True)
+        return str(getattr(response, "text", "") or "")
+
+    def _load_bilibili_external_subtitle(
+        self,
+        subtitle: ExternalSubtitleOption,
+        *,
+        secondary: bool,
+    ) -> tuple[int | None, Path]:
+        text = self._fetch_external_subtitle_text(subtitle)
+        if not text.strip():
+            raise ValueError("字幕内容为空")
+        suffix = ".srt" if subtitle.format.endswith("subrip") else ".txt"
+        subtitle_path = self._write_external_subtitle_file(text, suffix)
+        track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=secondary)
+        return track_id, subtitle_path
 
     def _set_subtitle_position_from_menu(self, value: int, secondary: bool) -> None:
         clamped = max(0, min(int(value), 100))
