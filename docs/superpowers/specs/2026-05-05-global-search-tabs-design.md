@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add a global search box to the main window header on the same row as `插件管理`. Submitting a keyword should search `电报影视`, `Emby`, `Jellyfin`, `飞牛影视`, and every enabled spider plugin that supports search in parallel.
+Add a global search box to the main window header on the same row as `插件管理`. Submitting a keyword should search `电报影视`, `Emby`, `Jellyfin`, `飞牛影视`, and every enabled spider plugin in parallel.
 
 The main window should enter a temporary global-search mode:
 
@@ -17,7 +17,7 @@ This should be implemented as orchestration in `MainWindow`, not as a new search
 
 - Add a top-level search input to the main window header.
 - Keep the search input on the same row as `插件管理`.
-- Search all supported media sources in parallel from one keyword submission.
+- Search all supported media sources and all enabled spider plugins in parallel from one keyword submission.
 - Show only tabs with results while global-search mode is active.
 - Show result counts in tab titles during global-search mode.
 - Ignore stale results when a newer search starts before an older one completes.
@@ -54,9 +54,7 @@ Global search should query these sources when available:
 - `Emby`
 - `Jellyfin`
 - `飞牛影视`
-- every enabled spider plugin whose controller supports search
-
-Spider plugins that do not support search must be skipped without surfacing an error.
+- every enabled spider plugin
 
 `豆瓣电影`, `网络直播`, `文件浏览`, and `播放记录` do not participate in global search and should not appear in global-search mode.
 
@@ -102,8 +100,8 @@ The main window already creates tabs from a mix of fixed pages and dynamic spide
 
 - page widget
 - base title
-- whether the tab is eligible for global search
-- the controller used for global search when eligible
+- whether the tab participates in global search
+- the controller used for global search when applicable
 - stable ordering position
 
 The original tab-definition list is the source of truth for restoration.
@@ -117,7 +115,7 @@ Result tabs should keep their original relative order. They should not be sorted
 Global search should reuse the project’s existing threaded UI pattern:
 
 - increment a request counter in `MainWindow`
-- start one background worker per searchable source
+- start one background worker per searchable source and enabled spider plugin
 - call `controller.search_items(keyword, 1)` in each worker
 - emit completion signals back to the Qt main thread
 
@@ -202,8 +200,7 @@ If a source later succeeds in a newer round, its tab should appear again normall
 Add focused main-window tests for:
 
 - header renders the global search input and buttons on the same row as `插件管理`
-- global search fans out to all supported sources
-- unsupported plugins are skipped
+- global search fans out to all supported sources and enabled spider plugins
 - only tabs with results remain visible in global-search mode
 - visible tab titles include result counts
 - visible tab order matches original tab order
