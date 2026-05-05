@@ -192,6 +192,17 @@ class AsyncKeywordSearchController(FakeStaticController):
         self._events.setdefault(keyword, threading.Event()).set()
 
 
+class SearchableResolveController(SearchableController):
+    def __init__(self, items: list[VodItem], resolved_path: str, total: int | None = None) -> None:
+        super().__init__(items, total=total)
+        self.resolved_path = resolved_path
+        self.resolve_calls: list[str] = []
+
+    def resolve_search_result(self, item: VodItem) -> str:
+        self.resolve_calls.append(item.vod_id)
+        return self.resolved_path
+
+
 def _vod(name: str, vod_id: str | None = None, remarks: str = "") -> VodItem:
     return VodItem(vod_id=vod_id or name, vod_name=name, vod_pic="", vod_remarks=remarks)
 
@@ -251,7 +262,9 @@ def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) 
     window.show()
 
     assert window.global_search_edit.parentWidget() is not None
-    assert window.global_search_container.maximumWidth() == 640
+    assert window.global_search_container.width() == 400
+    assert window.global_search_container.minimumWidth() == 400
+    assert window.global_search_container.maximumWidth() == 400
     assert window.global_search_edit.placeholderText() == "搜索"
     assert window.global_search_edit.isClearButtonEnabled() is True
     assert window.global_search_edit.styleSheet()
@@ -386,6 +399,70 @@ def test_main_window_switching_result_tabs_keeps_global_search_results(qtbot) ->
     assert window.emby_page.category_list.isHidden() is True
     assert emby.load_categories_calls == 0
     assert emby.load_items_calls == []
+
+
+def test_main_window_global_search_includes_pansou_when_enabled(qtbot) -> None:
+    pansou = SearchableController([_vod("盘搜结果", vod_id="pan-1")], total=1)
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        pansou_controller=pansou,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["盘搜(1)"])
+    assert pansou.search_calls == [("庆余年", 1)]
+
+
+def test_main_window_opening_pansou_result_restores_browse_tab_and_path(qtbot, monkeypatch) -> None:
+    pansou = SearchableResolveController([_vod("盘搜结果", vod_id="pan-1")], resolved_path="/Movies/Resolved", total=1)
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        pansou_controller=pansou,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    shown_paths: list[str] = []
+    monkeypatch.setattr(window, "show_browse_path", lambda path: shown_paths.append(path))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["盘搜(1)"])
+
+    item = _vod("盘搜结果", vod_id="pan-1")
+    window._handle_pansou_item_open_requested(item)
+
+    qtbot.waitUntil(lambda: shown_paths == ["/Movies/Resolved"])
+    assert pansou.resolve_calls == ["pan-1"]
+    assert "文件浏览" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
 
 
 def test_main_window_ignores_stale_global_search_results(qtbot) -> None:

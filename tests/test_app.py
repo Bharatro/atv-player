@@ -2879,6 +2879,60 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
     assert window.kwargs["show_jellyfin_tab"] is True
 
 
+def test_app_coordinator_show_main_injects_pansou_controller_when_capability_enabled(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+        def get_capabilities(self) -> dict[str, bool]:
+            return {"emby": False, "jellyfin": False, "feiniu": False, "pansou": True}
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+
+    window = coordinator._show_main()
+
+    assert isinstance(window, FakeMainWindow)
+    assert window.kwargs["pansou_controller"] is not None
+
+
 def test_app_coordinator_show_main_injects_shared_local_playback_history_repository(monkeypatch, tmp_path) -> None:
     class FakeRepo:
         def __init__(self) -> None:

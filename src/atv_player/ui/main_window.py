@@ -119,6 +119,7 @@ class _TabDefinition:
     title: str
     page: QWidget
     search_controller: Any | None = None
+    global_search_only: bool = False
 
 
 @dataclass(slots=True)
@@ -148,6 +149,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             emby_controller=None,
             jellyfin_controller=None,
             feiniu_controller=None,
+            pansou_controller=None,
             spider_plugins=None,
             plugin_manager=None,
             drive_detail_loader=None,
@@ -216,12 +218,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 folder_navigation_enabled=True,
             )
         self.history_page = HistoryPage(history_controller)
+        self.pansou_page = None
+        if pansou_controller is not None:
+            self.pansou_page = PosterGridPage(pansou_controller, click_action="open")
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
         self.feiniu_controller = feiniu_controller or _EmptyFeiniuController()
+        self.pansou_controller = pansou_controller
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
@@ -244,6 +250,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._plugin_open_request_signals.failed,
             self._handle_plugin_open_request_failed,
         )
+        self._pansou_resolve_request_id = 0
+        self._pansou_resolve_request_signals = _AsyncRequestSignals()
+        self._connect_async_signal(
+            self._pansou_resolve_request_signals.succeeded,
+            self._handle_pansou_resolve_succeeded,
+        )
+        self._connect_async_signal(
+            self._pansou_resolve_request_signals.failed,
+            self._handle_pansou_resolve_failed,
+        )
         self._media_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._media_request_signals.succeeded, self._handle_media_load_succeeded)
         self._connect_async_signal(self._media_request_signals.failed, self._handle_media_load_failed)
@@ -263,7 +279,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_in_progress = False
         self._global_search_keyword = ""
 
-        self.global_search_container.setMaximumWidth(640)
+        self.global_search_container.setFixedWidth(400)
         self.global_search_edit.setPlaceholderText("搜索")
         self.global_search_edit.setClearButtonEnabled(True)
         self.global_search_edit.setStyleSheet(
@@ -315,6 +331,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._static_tab_definitions.append(
                 _TabDefinition("feiniu", "飞牛影视", self.feiniu_page, self.feiniu_controller)
             )
+        if self.pansou_page is not None and self.pansou_controller is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition(
+                    "pansou",
+                    "盘搜",
+                    self.pansou_page,
+                    self.pansou_controller,
+                    global_search_only=True,
+                )
+            )
         self._trailing_tab_definitions = [
             _TabDefinition("browse", "文件浏览", self.browse_page),
             _TabDefinition("history", "播放记录", self.history_page),
@@ -353,7 +379,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
-        self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
+        self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         self.live_page.folder_breadcrumb_requested.connect(
             lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
@@ -400,6 +426,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                     index,
                 )
             )
+        if self.pansou_page is not None:
+            self.pansou_page.item_open_requested.connect(self._handle_pansou_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
@@ -410,6 +438,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
         if self.feiniu_page is not None:
             self.feiniu_page.unauthorized.connect(self.logout_requested.emit)
+        if self.pansou_page is not None:
+            self.pansou_page.unauthorized.connect(self.logout_requested.emit)
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -435,7 +465,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _visible_tab_definitions(self) -> list[_TabDefinition]:
         if not self._global_search_active:
-            return self._all_tab_definitions()
+            return [
+                definition
+                for definition in self._all_tab_definitions()
+                if not definition.global_search_only
+            ]
         return [definition for definition in self._all_tab_definitions() if definition.key in self._global_search_results]
 
     def _global_search_title_overrides(self) -> dict[str, str]:
@@ -516,22 +550,17 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
-        self._open_item_immediately(
-            item,
-            source_kind="telegram",
-            build_fn=lambda: self.telegram_controller.build_request(vod_id),
-        )
+        self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
+
+    def _handle_telegram_open_requested(self, vod_id: str) -> None:
+        self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
             self._open_media_folder(self.live_page, self.live_controller, item)
             return
         vod_id = item.vod_id
-        self._open_item_immediately(
-            item,
-            source_kind="live",
-            build_fn=lambda: self.live_controller.build_request(vod_id),
-        )
+        self._start_open_request(lambda: self.live_controller.build_request(vod_id))
 
     def _handle_emby_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -539,11 +568,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self._open_media_folder(self.emby_page, self.emby_controller, item)
             return
         vod_id = item.vod_id
-        self._open_item_immediately(
-            item,
-            source_kind="emby",
-            build_fn=lambda: self.emby_controller.build_request(vod_id),
-        )
+        self._start_open_request(lambda: self.emby_controller.build_request(vod_id))
 
     def _handle_jellyfin_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -551,11 +576,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self._open_media_folder(self.jellyfin_page, self.jellyfin_controller, item)
             return
         vod_id = item.vod_id
-        self._open_item_immediately(
-            item,
-            source_kind="jellyfin",
-            build_fn=lambda: self.jellyfin_controller.build_request(vod_id),
-        )
+        self._start_open_request(lambda: self.jellyfin_controller.build_request(vod_id))
 
     def _handle_feiniu_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -563,11 +584,26 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self._open_media_folder(self.feiniu_page, self.feiniu_controller, item)
             return
         vod_id = item.vod_id
-        self._open_item_immediately(
-            item,
-            source_kind="feiniu",
-            build_fn=lambda: self.feiniu_controller.build_request(vod_id),
-        )
+        self._start_open_request(lambda: self.feiniu_controller.build_request(vod_id))
+
+    def _handle_pansou_item_open_requested(self, item) -> None:
+        if self.pansou_controller is None:
+            return
+        self._pansou_resolve_request_id += 1
+        request_id = self._pansou_resolve_request_id
+        self.global_search_status_label.setText("打开中...")
+
+        def run() -> None:
+            try:
+                path = self.pansou_controller.resolve_search_result(item)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._pansou_resolve_request_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._pansou_resolve_request_signals.succeeded.emit(request_id, path)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _searchable_tab_definitions(self) -> list[_TabDefinition]:
         return [definition for definition in self._all_tab_definitions() if definition.search_controller is not None]
@@ -737,11 +773,6 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         self._start_plugin_open_request(build_request)
 
-    def _open_item_immediately(self, item: Any, *, source_kind: str, source_key: str = "", build_fn) -> None:
-        placeholder_request = self._build_placeholder_player_request(item, source_kind=source_kind, source_key=source_key)
-        self._open_player_immediately(placeholder_request)
-        self._start_open_request(build_fn)
-
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
             return
@@ -895,6 +926,18 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if request_id != self._plugin_open_request_id:
             return
         self._append_player_status_log(f"详情加载失败: {message}")
+
+    def _handle_pansou_resolve_succeeded(self, request_id: int, path: str) -> None:
+        if request_id != self._pansou_resolve_request_id:
+            return
+        self._clear_global_search()
+        self.show_browse_path(path)
+
+    def _handle_pansou_resolve_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._pansou_resolve_request_id:
+            return
+        self.global_search_status_label.setText("")
+        self.show_error(message)
 
     def _start_media_load(
         self,

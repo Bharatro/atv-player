@@ -278,6 +278,22 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.category_list.isHidden() is True
 
 
+def test_poster_grid_page_hides_search_controls_in_external_results_mode(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(ExternalResultController(), click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    assert page._search_controls_container is not None
+    assert page._search_controls_container.isHidden() is False
+
+    page.show_external_results(items=[VodItem(vod_id="s1", vod_name="全局搜索结果")], total=1, page=1)
+
+    assert page._search_controls_container.isHidden() is True
+
+    page.clear_external_results()
+
+    qtbot.waitUntil(lambda: page._search_controls_container is not None and page._search_controls_container.isHidden() is False)
+
+
 def test_poster_grid_page_can_render_external_empty_state(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(ExternalResultController(), click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)

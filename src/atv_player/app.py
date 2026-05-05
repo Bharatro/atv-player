@@ -21,6 +21,7 @@ from atv_player.controllers.live_controller import LiveController
 from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
+from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
@@ -304,6 +305,7 @@ class AppCoordinator(QObject):
             ),
         )
         browse_controller = BrowseController(self._api_client)
+        pansou_controller = PansouController(browse_controller) if bool(capabilities.get("pansou")) else None
         history_controller = HistoryController(self._api_client, self._playback_history_repository)
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
@@ -327,6 +329,7 @@ class AppCoordinator(QObject):
             emby_controller=emby_controller,
             jellyfin_controller=jellyfin_controller,
             feiniu_controller=feiniu_controller,
+            pansou_controller=pansou_controller,
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
@@ -384,7 +387,7 @@ class AppCoordinator(QObject):
         threading.Thread(target=refresh_sources, daemon=True).start()
 
     def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
-        default_capabilities = {"emby": True, "jellyfin": True, "feiniu": True}
+        default_capabilities = {"emby": True, "jellyfin": True, "feiniu": True, "pansou": False}
         get_capabilities = getattr(api_client, "get_capabilities", None)
         if not callable(get_capabilities):
             return default_capabilities
@@ -400,6 +403,7 @@ class AppCoordinator(QObject):
         capabilities["emby"] = bool(response.get("emby", capabilities["emby"]))
         capabilities["jellyfin"] = bool(response.get("jellyfin", capabilities["jellyfin"]))
         capabilities["feiniu"] = bool(response.get("feiniu", capabilities["feiniu"]))
+        capabilities["pansou"] = bool(response.get("pansou", capabilities["pansou"]))
         return capabilities
 
     def _handle_login_succeeded(self) -> None:
