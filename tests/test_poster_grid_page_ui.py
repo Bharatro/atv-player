@@ -113,6 +113,16 @@ class SearchableDoubanController(FakeDoubanController):
         return self.search_results
 
 
+class ExternalResultController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.load_items_calls = 0
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        self.load_items_calls += 1
+        return super().load_items(category_id, page, filters)
+
+
 class FilterablePosterController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -246,6 +256,48 @@ def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     assert page.clear_button.isHidden() is False
     assert page.search_button.isEnabled() is False
     assert page.clear_button.isEnabled() is False
+
+
+def test_poster_grid_page_can_render_external_results_without_controller_reload(qtbot) -> None:
+    controller = ExternalResultController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    baseline_calls = controller.load_items_calls
+    page.show_external_results(
+        items=[VodItem(vod_id="s1", vod_name="全局搜索结果", vod_pic="", vod_remarks="HD")],
+        total=9,
+        page=1,
+        empty_message="无搜索结果",
+    )
+
+    assert controller.load_items_calls == baseline_calls
+    assert [button.text() for button in page.card_buttons] == ["全局搜索结果\nHD"]
+    assert page.page_label.text() == "第 1 / 1 页"
+    assert page.status_label.text() == ""
+
+
+def test_poster_grid_page_can_render_external_empty_state(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(ExternalResultController(), click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    page.show_external_results(items=[], total=0, page=1, empty_message="无搜索结果")
+
+    assert page.card_buttons == []
+    assert page.status_label.text() == "无搜索结果"
+
+
+def test_poster_grid_page_can_leave_external_result_mode_and_return_to_category_state(qtbot) -> None:
+    controller = ExternalResultController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    page.show_external_results(items=[VodItem(vod_id="s1", vod_name="全局搜索结果")], total=1, page=1)
+    page.clear_external_results()
+
+    qtbot.waitUntil(lambda: controller.load_items_calls >= 2)
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "霸王别姬\n9.6")
+    assert page.card_buttons[0].text() == "霸王别姬\n9.6"
 
 
 def test_poster_grid_page_enables_search_and_clear_only_with_keyword(qtbot) -> None:

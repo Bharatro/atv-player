@@ -9,6 +9,8 @@ from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -94,6 +96,11 @@ class _SessionOpenSignals(QObject):
     failed = Signal(int, str, bool)
 
 
+class _GlobalSearchSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
 @dataclass(slots=True)
 class _MediaLoadResult:
     page: PosterGridPage
@@ -102,6 +109,23 @@ class _MediaLoadResult:
     empty_message: str
     push_breadcrumb: tuple[str, str] | None = None
     trim_breadcrumbs_to: int | None = None
+
+
+@dataclass(slots=True)
+class _TabDefinition:
+    key: str
+    title: str
+    page: QWidget
+    search_controller: Any | None = None
+
+
+@dataclass(slots=True)
+class _GlobalSearchResult:
+    key: str
+    title: str
+    page: PosterGridPage
+    items: list[Any]
+    total: int
 
 
 class MainWindow(QMainWindow, AsyncGuardMixin):
@@ -140,7 +164,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._drive_detail_loader = drive_detail_loader
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
+        self._static_tab_definitions: list[_TabDefinition] = []
+        self._trailing_tab_definitions: list[_TabDefinition] = []
+        self._plugin_tab_definitions: list[_TabDefinition] = []
         self.nav_tabs = QTabWidget()
+        self.global_search_edit = QLineEdit()
+        self.global_search_button = QPushButton("搜索")
+        self.global_search_clear_button = QPushButton("清空")
+        self.global_search_status_label = QLabel("")
         self.plugin_manager_button = QPushButton("插件管理")
         self.live_source_manager_button = QPushButton("直播源管理")
         self.logout_button = QPushButton("退出登录")
@@ -218,30 +249,59 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._session_open_signals = _SessionOpenSignals()
         self._connect_async_signal(self._session_open_signals.succeeded, self._handle_session_open_succeeded)
         self._connect_async_signal(self._session_open_signals.failed, self._handle_session_open_failed)
+        self._global_search_signals = _GlobalSearchSignals()
+        self._connect_async_signal(self._global_search_signals.succeeded, self._handle_global_search_succeeded)
+        self._connect_async_signal(self._global_search_signals.failed, self._handle_global_search_failed)
+        self._global_search_request_id = 0
+        self._global_search_pending_keys: set[str] = set()
+        self._global_search_results: dict[str, _GlobalSearchResult] = {}
+        self._global_search_active = False
+        self._global_search_in_progress = False
+        self._global_search_keyword = ""
 
-        self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
-        self.nav_tabs.addTab(self.telegram_page, "电报影视")
-        self.nav_tabs.addTab(self.live_page, "网络直播")
+        self.global_search_edit.setPlaceholderText("搜索电报影视、Emby、Jellyfin、飞牛影视和插件")
+        self.global_search_status_label.setWordWrap(True)
+        self.global_search_clear_button.setEnabled(False)
+
+        self._static_tab_definitions = [
+            _TabDefinition("douban", "豆瓣电影", self.douban_page),
+            _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
+            _TabDefinition("live", "网络直播", self.live_page),
+        ]
         if self.emby_page is not None:
-            self.nav_tabs.addTab(self.emby_page, "Emby")
+            self._static_tab_definitions.append(_TabDefinition("emby", "Emby", self.emby_page, self.emby_controller))
         if self.jellyfin_page is not None:
-            self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
+            self._static_tab_definitions.append(
+                _TabDefinition("jellyfin", "Jellyfin", self.jellyfin_page, self.jellyfin_controller)
+            )
         if self.feiniu_page is not None:
-            self.nav_tabs.addTab(self.feiniu_page, "飞牛影视")
-        self.nav_tabs.addTab(self.browse_page, "文件浏览")
-        self.nav_tabs.addTab(self.history_page, "播放记录")
+            self._static_tab_definitions.append(
+                _TabDefinition("feiniu", "飞牛影视", self.feiniu_page, self.feiniu_controller)
+            )
+        self._trailing_tab_definitions = [
+            _TabDefinition("browse", "文件浏览", self.browse_page),
+            _TabDefinition("history", "播放记录", self.history_page),
+        ]
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
-        header_layout = QHBoxLayout()
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.plugin_manager_button)
-        header_layout.addWidget(self.live_source_manager_button)
-        header_layout.addWidget(self.logout_button)
+        self.global_search_button.clicked.connect(self._start_global_search)
+        self.global_search_clear_button.clicked.connect(self._clear_global_search)
+        self.global_search_edit.returnPressed.connect(self._start_global_search)
+        self.global_search_edit.textChanged.connect(self._handle_global_search_text_changed)
+        self.header_layout = QHBoxLayout()
+        self.header_layout.addWidget(self.global_search_edit, 1)
+        self.header_layout.addWidget(self.global_search_button)
+        self.header_layout.addWidget(self.global_search_clear_button)
+        self.header_layout.addWidget(self.global_search_status_label, 1)
+        self.header_layout.addStretch(1)
+        self.header_layout.addWidget(self.plugin_manager_button)
+        self.header_layout.addWidget(self.live_source_manager_button)
+        self.header_layout.addWidget(self.logout_button)
         container = QWidget()
         container_layout = QVBoxLayout(container)
-        container_layout.addLayout(header_layout)
+        container_layout.addLayout(self.header_layout)
         container_layout.addWidget(self.nav_tabs)
         self.setCentralWidget(container)
         self.setWindowTitle("alist-tvbox Desktop Player")
@@ -321,11 +381,57 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.help_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.help_shortcut.activated.connect(self._show_shortcut_help)
 
+        self._refresh_visible_tabs()
+        self._sync_global_search_action_state()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
         self.nav_tabs.setCurrentWidget(self.browse_page)
+
+    def _all_tab_definitions(self) -> list[_TabDefinition]:
+        return [*self._static_tab_definitions, *self._plugin_tab_definitions, *self._trailing_tab_definitions]
+
+    def _visible_tab_definitions(self) -> list[_TabDefinition]:
+        if not self._global_search_active:
+            return self._all_tab_definitions()
+        return [definition for definition in self._all_tab_definitions() if definition.key in self._global_search_results]
+
+    def _global_search_title_overrides(self) -> dict[str, str]:
+        return {
+            key: f"{result.title}({result.total})"
+            for key, result in self._global_search_results.items()
+        }
+
+    def _refresh_visible_tabs(self) -> None:
+        current_widget = self.nav_tabs.currentWidget()
+        definitions = self._visible_tab_definitions()
+        title_overrides = self._global_search_title_overrides() if self._global_search_active else {}
+
+        self.nav_tabs.blockSignals(True)
+        self.nav_tabs.clear()
+        for definition in definitions:
+            self.nav_tabs.addTab(definition.page, title_overrides.get(definition.key, definition.title))
+        self.nav_tabs.blockSignals(False)
+
+        if current_widget is not None:
+            current_index = self.nav_tabs.indexOf(current_widget)
+            if current_index >= 0:
+                self.nav_tabs.setCurrentIndex(current_index)
+                return
+        if self.nav_tabs.count() > 0:
+            self.nav_tabs.setCurrentIndex(0)
+
+    def _sync_global_search_action_state(self) -> None:
+        has_keyword = bool(self.global_search_edit.text().strip())
+        self.global_search_button.setEnabled(has_keyword)
+        self.global_search_clear_button.setEnabled(self._global_search_active or has_keyword)
+
+    def _handle_global_search_text_changed(self) -> None:
+        if not self.global_search_edit.text().strip() and self._global_search_active and not self._global_search_in_progress:
+            self._clear_global_search()
+            return
+        self._sync_global_search_action_state()
 
     def _handle_tab_changed(self, index: int) -> None:
         widget = self.nav_tabs.widget(index)
@@ -420,17 +526,114 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             build_fn=lambda: self.feiniu_controller.build_request(vod_id),
         )
 
+    def _searchable_tab_definitions(self) -> list[_TabDefinition]:
+        return [definition for definition in self._all_tab_definitions() if definition.search_controller is not None]
+
+    def _start_global_search(self) -> None:
+        keyword = self.global_search_edit.text().strip()
+        if not keyword:
+            return
+        searchable = self._searchable_tab_definitions()
+        if not searchable:
+            self.global_search_status_label.setText("无可搜索来源")
+            return
+        self._global_search_request_id += 1
+        request_id = self._global_search_request_id
+        self._global_search_active = True
+        self._global_search_in_progress = True
+        self._global_search_keyword = keyword
+        self._global_search_results = {}
+        self._global_search_pending_keys = {definition.key for definition in searchable}
+        self.global_search_status_label.setText("搜索中...")
+        self._sync_global_search_action_state()
+        for definition in searchable:
+            threading.Thread(
+                target=self._run_global_search,
+                args=(request_id, definition, keyword),
+                daemon=True,
+            ).start()
+
+    def _run_global_search(self, request_id: int, definition: _TabDefinition, keyword: str) -> None:
+        controller = definition.search_controller
+        if controller is None:
+            if self._is_window_alive():
+                self._global_search_signals.failed.emit(request_id, definition.key)
+            return
+        try:
+            items, total = controller.search_items(keyword, 1)
+        except Exception:
+            if self._is_window_alive():
+                self._global_search_signals.failed.emit(request_id, definition.key)
+            return
+        if self._is_window_alive():
+            self._global_search_signals.succeeded.emit(
+                request_id,
+                _GlobalSearchResult(
+                    key=definition.key,
+                    title=definition.title,
+                    page=cast(PosterGridPage, definition.page),
+                    items=list(items),
+                    total=total,
+                ),
+            )
+
+    def _handle_global_search_succeeded(self, request_id: int, result: _GlobalSearchResult) -> None:
+        if request_id != self._global_search_request_id:
+            return
+        if result.items:
+            result.page.show_external_results(result.items, result.total, page=1, empty_message="无搜索结果")
+            self._global_search_results[result.key] = result
+        else:
+            self._global_search_results.pop(result.key, None)
+        self._finish_global_search_result(result.key)
+
+    def _handle_global_search_failed(self, request_id: int, key: str) -> None:
+        if request_id != self._global_search_request_id:
+            return
+        self._global_search_results.pop(key, None)
+        self._finish_global_search_result(key)
+
+    def _finish_global_search_result(self, key: str) -> None:
+        self._global_search_pending_keys.discard(key)
+        if self._global_search_pending_keys:
+            return
+        self._global_search_in_progress = False
+        self._refresh_visible_tabs()
+        if self.nav_tabs.count() > 0:
+            self.nav_tabs.setCurrentIndex(0)
+            self._handle_tab_changed(0)
+            self.global_search_status_label.setText("")
+        else:
+            self.global_search_status_label.setText("无搜索结果")
+        self._sync_global_search_action_state()
+
+    def _clear_global_search(self) -> None:
+        if not self._global_search_active and not self.global_search_edit.text().strip():
+            return
+        self._global_search_active = False
+        self._global_search_in_progress = False
+        self._global_search_keyword = ""
+        self._global_search_results = {}
+        self._global_search_pending_keys = set()
+        self.global_search_edit.blockSignals(True)
+        self.global_search_edit.clear()
+        self.global_search_edit.blockSignals(False)
+        self.global_search_status_label.setText("")
+        for definition in self._all_tab_definitions():
+            if isinstance(definition.page, PosterGridPage):
+                definition.page.clear_external_results()
+        self._refresh_visible_tabs()
+        self._sync_global_search_action_state()
+
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:
-            index = self.nav_tabs.indexOf(page)
-            if index >= 0:
-                self.nav_tabs.removeTab(index)
             page.deleteLater()
         self._plugin_pages = []
-        insert_index = self.nav_tabs.indexOf(self.browse_page)
+        self._plugin_tab_definitions = []
         for definition in self._plugin_definitions:
             controller = cast(_PluginController, _plugin_value(definition, "controller"))
             plugin_id = str(_plugin_value(definition, "id") or "")
+            title = str(_plugin_value(definition, "title") or "插件")
             page = PosterGridPage(
                 controller,
                 click_action="open",
@@ -444,9 +647,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 )
             )
             page.unauthorized.connect(self.logout_requested.emit)
-            self.nav_tabs.insertTab(insert_index, page, str(_plugin_value(definition, "title") or "插件"))
             self._plugin_pages.append((page, controller, plugin_id))
-            insert_index += 1
+            self._plugin_tab_definitions.append(
+                _TabDefinition(f"plugin:{plugin_id}", title, page, controller)
+            )
+        self._refresh_visible_tabs()
 
     def _build_placeholder_player_request(
         self, item: Any, *, source_kind: str = "plugin", source_key: str = "",

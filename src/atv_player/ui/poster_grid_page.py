@@ -139,6 +139,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
+        self._external_results_active = False
+        self._external_empty_message = "暂无内容"
         self._search_row: QHBoxLayout | None = None
         self.category_list = QListWidget()
         self.keyword_edit = QLineEdit()
@@ -289,6 +291,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
 
     def load_items(self, category_id: str, page: int) -> None:
+        self._external_results_active = False
         self._items_request_id += 1
         request_id = self._items_request_id
         active_filters = dict(self._category_filter_state.get(category_id, {}))
@@ -543,6 +546,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.next_page_button.setEnabled(self.current_page < total_pages)
 
     def previous_page(self) -> None:
+        if self._external_results_active:
+            return
         if self.current_page <= 1:
             return
         self.current_page -= 1
@@ -554,6 +559,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.load_items(self.selected_category_id, self.current_page)
 
     def next_page(self) -> None:
+        if self._external_results_active:
+            return
         total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
         if self.current_page >= total_pages:
             return
@@ -571,6 +578,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         keyword = self.keyword_edit.text().strip()
         if not keyword:
             return
+        self._external_results_active = False
         self._search_mode = True
         self._search_keyword = keyword
         self.current_page = 1
@@ -581,6 +589,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def clear_search(self) -> None:
         if not self._search_enabled:
             return
+        self._external_results_active = False
         self.keyword_edit.clear()
         self._search_mode = False
         self._search_keyword = ""
@@ -591,6 +600,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.load_items(self.selected_category_id, self.current_page)
 
     def _refresh_current_view(self) -> None:
+        if self._external_results_active:
+            self.show_items(
+                self.items,
+                len(self.items),
+                page=1,
+                empty_message=self._external_empty_message,
+            )
+            return
         if self._search_mode and self._search_keyword:
             self._search_items(self._search_keyword, self.current_page)
         elif self.selected_category_id:
@@ -634,6 +651,27 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.status_label.setText("" if self.items else empty_message)
         self._render_cards()
         self._update_pagination()
+
+    def show_external_results(
+        self,
+        items,
+        total: int,
+        page: int = 1,
+        empty_message: str = "无搜索结果",
+    ) -> None:
+        self._external_results_active = True
+        self._external_empty_message = empty_message
+        rendered_items = list(items)
+        self.show_items(rendered_items, len(rendered_items), page=page, empty_message=empty_message)
+
+    def clear_external_results(self) -> None:
+        if not self._external_results_active:
+            return
+        self._external_results_active = False
+        self._external_empty_message = "暂无内容"
+        if self.selected_category_id:
+            self.current_page = 1
+            self.load_items(self.selected_category_id, self.current_page)
 
     def reset_folder_breadcrumbs_to_root(self) -> None:
         if not self._folder_navigation_enabled:

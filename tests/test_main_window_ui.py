@@ -135,6 +135,51 @@ class AsyncRestoreController(FakeStaticController):
         self._event.set()
 
 
+class SearchableController(FakeStaticController):
+    def __init__(self, items: list[VodItem], total: int | None = None) -> None:
+        self.items = list(items)
+        self.total = len(items) if total is None else total
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return list(self.items), self.total
+
+
+class KeywordSearchableController(FakeStaticController):
+    def __init__(self, results_by_keyword: dict[str, tuple[list[VodItem], int]]) -> None:
+        self.results_by_keyword = {
+            keyword: (list(items), total) for keyword, (items, total) in results_by_keyword.items()
+        }
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return self.results_by_keyword.get(keyword, ([], 0))
+
+
+class AsyncKeywordSearchController(FakeStaticController):
+    def __init__(self, results_by_keyword: dict[str, tuple[list[VodItem], int]]) -> None:
+        self.results_by_keyword = {
+            keyword: (list(items), total) for keyword, (items, total) in results_by_keyword.items()
+        }
+        self.search_calls: list[tuple[str, int]] = []
+        self._events: dict[str, threading.Event] = {}
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        event = self._events.setdefault(keyword, threading.Event())
+        assert event.wait(timeout=5), f"search for {keyword} was never released"
+        return self.results_by_keyword.get(keyword, ([], 0))
+
+    def release(self, keyword: str) -> None:
+        self._events.setdefault(keyword, threading.Event()).set()
+
+
+def _vod(name: str, vod_id: str | None = None, remarks: str = "") -> VodItem:
+    return VodItem(vod_id=vod_id or name, vod_name=name, vod_pic="", vod_remarks=remarks)
+
+
 def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
@@ -162,13 +207,169 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "网络直播",
         "Emby",
         "Jellyfin",
-        "Feiniu",
+        "飞牛影视",
         "红果短剧",
         "短剧二号",
         "文件浏览",
         "播放记录",
     ]
     assert window.plugin_manager_button.text() == "插件管理"
+
+
+def test_main_window_places_global_search_controls_before_plugin_manager(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.global_search_edit.parentWidget() is not None
+    assert window.global_search_button.text() == "搜索"
+    assert window.global_search_clear_button.text() == "清空"
+    assert window.header_layout.indexOf(window.global_search_edit) < window.header_layout.indexOf(window.plugin_manager_button)
+
+
+def test_main_window_global_search_shows_only_tabs_with_results_and_count_titles(qtbot) -> None:
+    telegram = SearchableController([_vod("Telegram One")], total=12)
+    emby = SearchableController([])
+    jellyfin = SearchableController([_vod("Jellyfin One")], total=3)
+    feiniu = SearchableController([])
+    plugin_controller = SearchableController([_vod("Plugin One"), _vod("Plugin Two")], total=2)
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=jellyfin,
+        feiniu_controller=feiniu,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-a", "title": "红果短剧", "controller": plugin_controller, "search_enabled": False},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(
+        lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+            "电报影视(12)",
+            "Jellyfin(3)",
+            "红果短剧(2)",
+        ]
+    )
+    assert telegram.search_calls == [("庆余年", 1)]
+    assert emby.search_calls == [("庆余年", 1)]
+    assert jellyfin.search_calls == [("庆余年", 1)]
+    assert feiniu.search_calls == [("庆余年", 1)]
+    assert plugin_controller.search_calls == [("庆余年", 1)]
+
+
+def test_main_window_ignores_stale_global_search_results(qtbot) -> None:
+    telegram = AsyncKeywordSearchController(
+        {
+            "旧关键词": ([_vod("旧结果")], 1),
+            "新关键词": ([], 0),
+        }
+    )
+    emby = KeywordSearchableController(
+        {
+            "旧关键词": ([], 0),
+            "新关键词": ([_vod("新结果")], 1),
+        }
+    )
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("旧关键词")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: telegram.search_calls == [("旧关键词", 1)])
+
+    window.global_search_edit.setText("新关键词")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: telegram.search_calls == [("旧关键词", 1), ("新关键词", 1)])
+
+    telegram.release("新关键词")
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["Emby(1)"])
+
+    telegram.release("旧关键词")
+    qtbot.wait(100)
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["Emby(1)"]
+    assert emby.search_calls == [("旧关键词", 1), ("新关键词", 1)]
+
+
+def test_main_window_clear_global_search_restores_original_tabs_and_titles(qtbot) -> None:
+    telegram = SearchableController([_vod("Telegram One")], total=4)
+    plugin_controller = SearchableController([_vod("Plugin One")], total=1)
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-a", "title": "红果短剧", "controller": plugin_controller, "search_enabled": False},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    original_titles = [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+    qtbot.waitUntil(
+        lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+            "电报影视(4)",
+            "红果短剧(1)",
+        ]
+    )
+
+    window.global_search_clear_button.click()
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == original_titles)
 
 
 def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot) -> None:
@@ -579,7 +780,28 @@ def test_main_window_reapplies_saved_geometry_when_no_player_return_state(qtbot,
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
-def test_main_window_ignores_async_open_request_after_window_deletion(qtbot) -> None:
+def test_main_window_ignores_async_open_request_after_window_deletion(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
     controller = AsyncOpenController()
     window = MainWindow(
         telegram_controller=controller,
@@ -591,7 +813,8 @@ def test_main_window_ignores_async_open_request_after_window_deletion(qtbot) -> 
     destroyed = {"count": 0}
     window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
 
-    window._handle_telegram_open_requested("vod-1")
+    item = VodItem(vod_id="vod-1", vod_name="Movie")
+    window._handle_telegram_item_open_requested(item)
     qtbot.waitUntil(lambda: controller.calls == ["vod-1"], timeout=1000)
 
     window.deleteLater()
