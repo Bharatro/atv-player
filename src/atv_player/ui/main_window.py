@@ -2,10 +2,11 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -14,7 +15,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QStyle,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -24,6 +24,7 @@ from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import HistoryRecord, OpenPlayerRequest, VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
+from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
@@ -131,6 +132,7 @@ class _GlobalSearchResult:
 
 class MainWindow(QMainWindow, AsyncGuardMixin):
     logout_requested = Signal()
+    _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
 
     def __init__(
             self,
@@ -261,7 +263,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_in_progress = False
         self._global_search_keyword = ""
 
-        self.global_search_container.setMaximumWidth(520)
+        self.global_search_container.setMaximumWidth(640)
         self.global_search_edit.setPlaceholderText("搜索")
         self.global_search_edit.setClearButtonEnabled(True)
         self.global_search_edit.setStyleSheet(
@@ -279,9 +281,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             """
         )
         self.global_search_button.setText("")
-        self.global_search_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
-        )
+        self.global_search_button.setIcon(load_icon(self._SEARCH_ICON_PATH))
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_button.setStyleSheet(
             """
@@ -478,6 +478,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         widget = self.nav_tabs.widget(index)
         if widget is None:
             return
+        if self._global_search_active:
+            return
         if widget is self.douban_page:
             self.douban_page.ensure_loaded()
             return
@@ -586,6 +588,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_results = {}
         self._global_search_pending_keys = {definition.key for definition in searchable}
         self.global_search_status_label.setText("搜索中...")
+        self._refresh_visible_tabs()
         self._sync_global_search_action_state()
         for definition in searchable:
             threading.Thread(
@@ -624,6 +627,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if result.items:
             result.page.show_external_results(result.items, result.total, page=1, empty_message="无搜索结果")
             self._global_search_results[result.key] = result
+            self._refresh_visible_tabs()
         else:
             self._global_search_results.pop(result.key, None)
         self._finish_global_search_result(result.key)
@@ -632,6 +636,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if request_id != self._global_search_request_id:
             return
         self._global_search_results.pop(key, None)
+        self._refresh_visible_tabs()
         self._finish_global_search_result(key)
 
     def _finish_global_search_result(self, key: str) -> None:
@@ -639,10 +644,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._global_search_pending_keys:
             return
         self._global_search_in_progress = False
-        self._refresh_visible_tabs()
         if self.nav_tabs.count() > 0:
-            self.nav_tabs.setCurrentIndex(0)
-            self._handle_tab_changed(0)
             self.global_search_status_label.setText("")
         else:
             self.global_search_status_label.setText("无搜索结果")
