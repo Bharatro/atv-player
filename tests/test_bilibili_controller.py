@@ -2,6 +2,11 @@ from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem
 
 
+class TextResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
 class FakeApiClient:
     def __init__(self) -> None:
         self.category_payload = {"class": []}
@@ -222,6 +227,47 @@ def test_load_playback_item_parses_java_map_style_header_string() -> None:
     }
 
 
+def test_load_playback_item_loads_direct_bilibili_danmaku_xml_from_payload() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": "http://127.0.0.1:2323/dash/demo.mpd",
+        "header": {
+            "Referer": "https://www.bilibili.com/video/BV1xx411c7mD",
+            "User-Agent": "Mozilla/5.0 Test",
+            "Cookie": "SESSDATA=test",
+        },
+        "danmaku": "https://comment.bilibili.com/38086313137.xml",
+    }
+    seen: list[tuple[str, dict[str, str], float, bool]] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> TextResponse:
+        seen.append((url, headers, timeout, follow_redirects))
+        return TextResponse('<?xml version="1.0" encoding="UTF-8"?><i><d p="1,1,25,16777215">测试弹幕</d></i>')
+
+    controller = BilibiliController(api, http_get=fake_get)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD", media_title="孤独摇滚")
+
+    controller.load_playback_item(item)
+
+    assert item.url == "http://127.0.0.1:2323/dash/demo.mpd"
+    assert item.danmaku_xml == '<?xml version="1.0" encoding="UTF-8"?><i><d p="1,1,25,16777215">测试弹幕</d></i>'
+    assert item.selected_danmaku_provider == "bilibili"
+    assert item.selected_danmaku_url == "https://comment.bilibili.com/38086313137.xml"
+    assert item.selected_danmaku_title == "孤独摇滚"
+    assert seen == [
+        (
+            "https://comment.bilibili.com/38086313137.xml",
+            {
+                "Referer": "https://www.bilibili.com/video/BV1xx411c7mD",
+                "User-Agent": "Mozilla/5.0 Test",
+                "Cookie": "SESSDATA=test",
+            },
+            10.0,
+            True,
+        )
+    ]
+
+
 def test_build_request_splits_bilibili_routes_by_play_source_without_cross_group_id_corruption() -> None:
     api = FakeApiClient()
     api.detail_payload = {
@@ -257,6 +303,26 @@ def test_build_request_splits_bilibili_routes_by_play_source_without_cross_group
         "116458038368774-37773577100",
     ]
     assert [item.vod_id for item in request.playlists[2]] == ["BV1ebREBmEha", "BV1YgRKBGELF"]
+    assert request.vod.detail_style == "bilibili"
+
+
+def test_resolve_playlist_item_marks_bilibili_detail_style() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV1ebREBmEha",
+                "vod_name": "和AI玩猜历史人物游戏，又被它给耍了",
+                "vod_content": "发布于2026-05-02 17:26:35",
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    resolved = controller.resolve_playlist_item(PlayItem(title="视频", url="", vod_id="BV1ebREBmEha"))
+
+    assert resolved is not None
+    assert resolved.detail_style == "bilibili"
 
 
 def test_load_playback_item_raises_when_vod_id_missing() -> None:

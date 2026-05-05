@@ -2078,6 +2078,55 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
     )
 
 
+def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="BV1ebREBmEha",
+            vod_name="和AI玩猜历史人物游戏，又被它给耍了",
+            detail_style="bilibili",
+            type_name=" / ",
+            vod_year="",
+            vod_area="",
+            vod_lang="",
+            vod_remarks="339万播放 04:20",
+            vod_director="混饭达人",
+            vod_actor="",
+            vod_content="发布于2026-05-02 17:26:35",
+            dbid=0,
+        ),
+        playlist=[PlayItem(title="视频", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.metadata_view.toPlainText() == (
+        "名称: 和AI玩猜历史人物游戏，又被它给耍了\n"
+        "类型:  /\n"
+        "评分: 339万播放 04:20\n"
+        "导演: 混饭达人\n"
+        "演员:\n"
+        "\n"
+        "简介:\n"
+        "发布于2026-05-02 17:26:35"
+    )
+
+
 def test_player_window_renders_live_metadata_with_five_live_fields(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:

@@ -210,10 +210,10 @@ class ApiClient:
         return self._request("GET", f"/bilibili/{self._vod_token}", params=params)
 
     def get_bilibili_detail(self, vod_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/bilibili/{self._vod_token}", params={"ids": vod_id})
+        return self._request("GET", f"/bilibili/{self._vod_token}", params={"ids": vod_id}, headers={"X-CLIENT": "gui"})
 
     def get_bilibili_playback_source(self, vod_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/play/{self._vod_token}", params={"bvid": vod_id, "dash": True})
+        return self._request("GET", f"/play/{self._vod_token}", params={"bvid": vod_id, "dash": True}, headers={"X-CLIENT": "gui"})
 
     def list_emby_items(
         self,

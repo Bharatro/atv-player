@@ -387,6 +387,39 @@ def test_bilibili_resolve_uses_browser_headers_for_season_request() -> None:
     assert "cookie" not in season_headers
 
 
+def test_bilibili_resolve_accepts_direct_comment_xml_url() -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def fake_get(url: str, **kwargs):
+        seen.append((url, kwargs))
+        if url == "https://comment.bilibili.com/38086313137.xml":
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">直连弹幕</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://comment.bilibili.com/38086313137.xml")
+
+    assert len(records) == 1
+    assert records[0].content == "直连弹幕"
+    assert seen == [
+        (
+            "https://comment.bilibili.com/38086313137.xml",
+            {
+                "headers": {
+                    "user-agent": "Mozilla/5.0",
+                    "referer": "https://www.bilibili.com/",
+                },
+                "timeout": 10.0,
+                "follow_redirects": True,
+            },
+        )
+    ]
+
+
 def test_bilibili_resolve_prefers_cached_candidate_cid_and_parses_xml() -> None:
     def fake_get(url: str, **kwargs):
         if "x/web-interface/nav" in url:

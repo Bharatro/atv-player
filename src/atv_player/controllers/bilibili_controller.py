@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable
+
+import httpx
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_categories, _map_item
@@ -10,6 +13,9 @@ from atv_player.controllers.telegram_search_controller import _parse_playlist
 from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
 _JAVA_MAP_HEADER_ENTRY_RE = re.compile(r"(?:^|,\s*)([A-Za-z0-9-]+)=(.*?)(?=,\s*[A-Za-z0-9-]+=|$)")
+_BILIBILI_DANMAKU_URL_RE = re.compile(r"^https?://comment\.bilibili\.com/\d+\.xml(?:\?.*)?$", re.IGNORECASE)
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_bilibili_headers(headers: object) -> dict[str, str]:
@@ -45,10 +51,46 @@ class BilibiliController:
         api_client,
         playback_history_loader: Callable[[str], HistoryRecord | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+        http_get: Callable[..., object] = httpx.get,
     ) -> None:
         self._api_client = api_client
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
+        self._http_get = http_get
+
+    def _is_bilibili_danmaku_url(self, value: object) -> bool:
+        return isinstance(value, str) and _BILIBILI_DANMAKU_URL_RE.match(value.strip()) is not None
+
+    def _build_danmaku_headers(self, headers: dict[str, str]) -> dict[str, str]:
+        if not headers:
+            return {}
+        allowed = {"referer", "user-agent", "cookie"}
+        return {key: value for key, value in headers.items() if key.lower() in allowed and value}
+
+    def _load_bilibili_danmaku(self, item: PlayItem, payload: dict[str, object]) -> None:
+        danmaku_url = str(payload.get("danmaku") or "").strip()
+        if not self._is_bilibili_danmaku_url(danmaku_url):
+            return
+        headers = self._build_danmaku_headers(item.headers)
+        try:
+            response = self._http_get(
+                danmaku_url,
+                headers=headers,
+                timeout=10.0,
+                follow_redirects=True,
+            )
+        except Exception as exc:
+            item.danmaku_error = str(exc)
+            logger.warning("Bilibili danmaku fetch failed vod_id=%s url=%s error=%s", item.vod_id, danmaku_url, exc)
+            return
+        xml_text = str(getattr(response, "text", "") or "").strip()
+        if not xml_text:
+            return
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = "bilibili"
+        item.selected_danmaku_url = danmaku_url
+        item.selected_danmaku_title = (item.media_title or item.title).strip()
+        item.danmaku_error = ""
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_bilibili_categories()
@@ -101,7 +143,9 @@ class BilibiliController:
             return None
         try:
             payload = self._api_client.get_bilibili_detail(item.vod_id)
-            return _map_vod_item(payload["list"][0])
+            detail = _map_vod_item(payload["list"][0])
+            detail.detail_style = "bilibili"
+            return detail
         except (KeyError, IndexError):
             return None
 
@@ -119,6 +163,7 @@ class BilibiliController:
             raise ValueError(f"没有可用的播放地址: {item.title}")
         item.url = play_url
         item.headers = _parse_bilibili_headers(payload.get("header") or {})
+        self._load_bilibili_danmaku(item, payload)
 
     def _route_name(self, routes: list[str], group_index: int) -> str:
         route = routes[group_index] if group_index < len(routes) else ""
@@ -156,6 +201,7 @@ class BilibiliController:
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_bilibili_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
+        detail.detail_style = "bilibili"
         playlists = self._build_playlists(detail)
         if not playlists and detail.items:
             playlists = [list(detail.items)]

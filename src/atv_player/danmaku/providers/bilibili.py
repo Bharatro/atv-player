@@ -18,6 +18,7 @@ from atv_player.danmaku.utils import normalize_name, similarity_score
 
 _SEARCH_TYPE_PRIORITY = {"media_bangumi": 0, "media_ft": 1}
 _RISK_CONTROL_CODES = {-352, -412}
+_DIRECT_COMMENT_XML_RE = re.compile(r"^https?://comment\.bilibili\.com/\d+\.xml(?:\?.*)?$", re.IGNORECASE)
 _BROWSER_HEADERS = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "referer": "https://www.bilibili.com/",
@@ -117,6 +118,14 @@ class BilibiliDanmakuProvider:
         return items
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
+        if _DIRECT_COMMENT_XML_RE.match(page_url):
+            xml_text = self._get(
+                page_url,
+                headers={"user-agent": "Mozilla/5.0", "referer": "https://www.bilibili.com/"},
+                timeout=10.0,
+                follow_redirects=True,
+            ).text
+            return self._parse_xml_records(xml_text)
         candidate = self._metadata_by_url.get(page_url) or self._candidate_from_page_url(page_url)
         cid = self._resolve_cid(candidate)
         xml_text = self._get(

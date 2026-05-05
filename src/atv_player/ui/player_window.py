@@ -1017,6 +1017,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             ("演员", vod.vod_actor),
             ("豆瓣ID", str(vod.dbid) if vod.dbid else ""),
         ]
+        if getattr(vod, "detail_style", "") == "bilibili":
+            rows = [
+                (label, value)
+                for label, value in rows
+                if label not in {"年代", "地区", "语言", "豆瓣ID"}
+            ]
         lines = [f"{label}: {value}".rstrip() for label, value in rows]
         lines.append("")
         lines.append("简介:")
