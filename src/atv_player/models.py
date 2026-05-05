@@ -39,12 +39,14 @@ class AppConfig:
 class PlayItem:
     title: str
     url: str
+    original_url: str = ""
     path: str = ""
     index: int = 0
     size: int = 0
     duration_seconds: int = 0
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    dash_video_id: str = ""
     play_source: str = ""
     media_title: str = ""
     parse_required: bool = False
@@ -61,6 +63,16 @@ class PlayItem:
     selected_danmaku_provider: str = ""
     selected_danmaku_title: str = ""
     danmaku_error: str = ""
+
+
+@dataclass(slots=True)
+class VideoQualityOption:
+    id: str
+    label: str
+    width: int = 0
+    height: int = 0
+    bandwidth: int = 0
+    codecs: str = ""
 
 
 @dataclass(slots=True)

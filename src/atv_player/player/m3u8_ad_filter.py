@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from atv_player.models import VideoQualityOption
 from atv_player.paths import app_cache_dir
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
@@ -196,12 +197,23 @@ class M3U8AdFilter:
             return True
         return _is_remote_proxy_candidate_url(url)
 
-    def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+    def prepare(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        dash_video_id: str | None = None,
+    ) -> str:
         if not self.should_prepare(url):
             return url
         self._proxy_server.start()
         normalized_headers = normalize_media_request_headers(url, headers)
         if _is_dash_data_uri(url):
+            if dash_video_id:
+                return self._proxy_server.create_dash_url(
+                    url,
+                    headers=normalized_headers,
+                    selected_video_id=dash_video_id,
+                )
             return self._proxy_server.create_dash_url(url, headers=normalized_headers)
         if _is_disguised_media_url(url):
             return self._proxy_server.create_media_url(url, headers=normalized_headers)
@@ -235,6 +247,41 @@ class M3U8AdFilter:
 
     def close(self) -> None:
         self._proxy_server.close()
+
+    def dash_video_qualities(self, prepared_url: str) -> list[VideoQualityOption]:
+        codec_names = {
+            "AVC1": "AVC",
+            "HEV1": "HEVC",
+            "HVC1": "HEVC",
+            "AV01": "AV1",
+        }
+        qualities: list[VideoQualityOption] = []
+        for representation in self._proxy_server.dash_video_representations(prepared_url):
+            label_parts: list[str] = []
+            if representation.height > 0:
+                label_parts.append(f"{representation.height}P")
+            elif representation.width > 0:
+                label_parts.append(f"{representation.width}W")
+            codec = representation.codecs.split(".", 1)[0].upper() if representation.codecs else ""
+            codec_label = codec_names.get(codec, codec)
+            if codec_label:
+                label_parts.append(codec_label)
+            if representation.bandwidth > 0:
+                label_parts.append(f"{representation.bandwidth / 1_000_000:.1f} Mbps")
+            qualities.append(
+                VideoQualityOption(
+                    id=representation.id,
+                    label=" ".join(label_parts) or representation.id,
+                    width=representation.width,
+                    height=representation.height,
+                    bandwidth=representation.bandwidth,
+                    codecs=representation.codecs,
+                )
+            )
+        return qualities
+
+    def selected_dash_video_quality(self, prepared_url: str) -> str | None:
+        return self._proxy_server.selected_dash_video_representation_id(prepared_url)
 
     def _prepare(self, url: str, headers: dict[str, str], depth: int, visited: set[str]) -> str:
         if not self.should_prepare(url):

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWid
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import AppConfig, PlayItem, PlaybackLoadResult, VodItem
+from atv_player.models import AppConfig, PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
@@ -674,7 +674,11 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
         lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", True, 120)]
     )
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
-    qtbot.waitUntil(lambda: window._danmaku_source_option_list is not None and window._danmaku_source_option_list.count() == 1)
+    qtbot.waitUntil(
+        lambda: window._danmaku_source_option_list is not None
+        and window._danmaku_source_option_list.count() == 1
+        and window._danmaku_source_option_list.item(0).text() == "刷新结果"
+    )
     assert window._danmaku_source_option_list.item(0).text() == "刷新结果"
 
 
@@ -949,6 +953,160 @@ def test_player_window_logs_proxy_prepare_failure_and_plays_original_url(qtbot) 
     qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/path/index.m3u8", 0)])
 
     assert "port 2323 busy" in window.log_view.toPlainText()
+
+
+def test_player_window_populates_dash_video_quality_options_after_prepare(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str], str | None]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            self.calls.append((url, dict(headers or {}), dash_video_id))
+            return "http://127.0.0.1:2323/dash/proxy-dash-1.mpd"
+
+        def dash_video_qualities(self, prepared_url: str) -> list[VideoQualityOption]:
+            assert prepared_url == "http://127.0.0.1:2323/dash/proxy-dash-1.mpd"
+            return [
+                VideoQualityOption(id="v1080", label="1080P AVC 2.8 Mbps", width=1920, height=1080, bandwidth=2800000),
+                VideoQualityOption(id="v720", label="720P AVC 1.2 Mbps", width=1280, height=720, bandwidth=1200000),
+            ]
+
+        def selected_dash_video_quality(self, prepared_url: str) -> str | None:
+            assert prepared_url == "http://127.0.0.1:2323/dash/proxy-dash-1.mpd"
+            return "v1080"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                headers={"Referer": "https://www.bilibili.com/"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/proxy-dash-1.mpd", 0)])
+
+    assert filter_service.calls == [
+        (
+            "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+            {"Referer": "https://www.bilibili.com/"},
+            None,
+        )
+    ]
+    assert [window.video_quality_combo.itemData(index) for index in range(window.video_quality_combo.count())] == [
+        "v1080",
+        "v720",
+    ]
+    assert window.video_quality_combo.currentData() == "v1080"
+    assert window.video_quality_combo.isEnabled() is True
+
+
+def test_player_window_switches_dash_video_quality_with_position_and_pause_preserved(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str], str | None]] = []
+            self.selected_by_url = {
+                "http://127.0.0.1:2323/dash/proxy-dash-1080.mpd": "v1080",
+                "http://127.0.0.1:2323/dash/proxy-dash-720.mpd": "v720",
+            }
+
+        def should_prepare(self, url: str) -> bool:
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            self.calls.append((url, dict(headers or {}), dash_video_id))
+            selected = dash_video_id or "v1080"
+            return f"http://127.0.0.1:2323/dash/proxy-dash-{selected.removeprefix('v')}.mpd"
+
+        def dash_video_qualities(self, prepared_url: str) -> list[VideoQualityOption]:
+            return [
+                VideoQualityOption(id="v1080", label="1080P AVC 2.8 Mbps", width=1920, height=1080, bandwidth=2800000),
+                VideoQualityOption(id="v720", label="720P AVC 1.2 Mbps", width=1280, height=720, bandwidth=1200000),
+            ]
+
+        def selected_dash_video_quality(self, prepared_url: str) -> str | None:
+            return self.selected_by_url[prepared_url]
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                headers={"Referer": "https://www.bilibili.com/"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = FakeVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/proxy-dash-1080.mpd", False, 0)])
+    window.is_playing = False
+
+    window.video_quality_combo.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 2)
+    assert filter_service.calls == [
+        (
+            "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+            {"Referer": "https://www.bilibili.com/"},
+            None,
+        ),
+        (
+            "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+            {"Referer": "https://www.bilibili.com/"},
+            "v720",
+        ),
+    ]
+    assert video.load_calls[-1] == ("http://127.0.0.1:2323/dash/proxy-dash-720.mpd", True, 93)
+    assert window.video_quality_combo.currentData() == "v720"
 
 
 def test_player_window_rewrites_resolved_m3u8_after_detail_lookup(qtbot) -> None:
@@ -2880,6 +3038,58 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "重置",
     ]
     assert [action.text() for action in _submenu_actions(menu, "音轨")] == ["自动选择", "国语 (默认)", "English Dub"]
+
+
+def test_player_window_builds_video_context_menu_with_dash_quality_submenu(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            selected = dash_video_id or "v1080"
+            return f"http://127.0.0.1:2323/dash/{selected}.mpd"
+
+        def dash_video_qualities(self, prepared_url: str) -> list[VideoQualityOption]:
+            return [
+                VideoQualityOption(id="v1080", label="1080P AVC 2.8 Mbps", width=1920, height=1080, bandwidth=2800000),
+                VideoQualityOption(id="v720", label="720P AVC 1.2 Mbps", width=1280, height=720, bandwidth=1200000),
+            ]
+
+        def selected_dash_video_quality(self, prepared_url: str) -> str | None:
+            return "v1080" if prepared_url.endswith("v1080.mpd") else "v720"
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FakeM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                headers={"Referer": "https://www.bilibili.com/"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://127.0.0.1:2323/dash/v1080.mpd", 0)])
+
+    menu = window._build_video_context_menu()
+
+    assert "清晰度" in [action.text() for action in menu.actions()]
+    assert [action.text() for action in _submenu_actions(menu, "清晰度")] == [
+        "1080P AVC 2.8 Mbps",
+        "720P AVC 1.2 Mbps",
+    ]
 
 
 def test_player_window_context_menu_video_info_action_calls_video_layer(qtbot) -> None:

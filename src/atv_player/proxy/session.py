@@ -13,12 +13,28 @@ class PlaylistSegment:
 
 
 @dataclass(slots=True)
+class DashRepresentation:
+    id: str
+    bandwidth: int = 0
+    width: int = 0
+    height: int = 0
+    codecs: str = ""
+    mime_type: str = ""
+    base_url: str = ""
+
+
+@dataclass(slots=True)
 class ProxySession:
     token: str
     playlist_url: str
     headers: dict[str, str]
     segments: list[PlaylistSegment] = field(default_factory=list)
     dash_assets: list[str] = field(default_factory=list)
+    dash_manifest_payload: bytes | None = None
+    dash_video_representations: list[DashRepresentation] = field(default_factory=list)
+    dash_audio_representations: list[DashRepresentation] = field(default_factory=list)
+    selected_dash_video_id: str = ""
+    selected_dash_audio_id: str = ""
     cached_playlist_text: str | None = None
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)

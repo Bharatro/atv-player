@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
-from atv_player.models import PlayItem, PlaybackLoadResult, VodItem
+from atv_player.models import PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.async_guard import AsyncGuardMixin
@@ -193,6 +193,9 @@ class _PendingPlaybackPrepare:
     previous_index: int
     start_position_seconds: int
     pause: bool
+    source_url: str
+    requested_dash_video_id: str = ""
+    previous_dash_video_id: str = ""
 
 
 @dataclass(slots=True)
@@ -204,6 +207,7 @@ class _PendingPlaybackLoader:
 
 
 class PlayerWindow(QWidget, AsyncGuardMixin):
+    _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
@@ -377,6 +381,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.subtitle_combo.setEnabled(False)
         self.danmaku_combo = QComboBox()
         self._reset_danmaku_combo()
+        self._video_quality_options: list[VideoQualityOption] = []
+        self.video_quality_combo = QComboBox()
+        self._reset_video_quality_combo()
         self._audio_tracks: list[AudioTrack] = []
         self._audio_preference = AudioPreference()
         self.audio_combo = QComboBox()
@@ -480,6 +487,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
         control_group_layout.addWidget(self.danmaku_combo)
+        control_group_layout.addWidget(self.video_quality_combo)
         control_group_layout.addWidget(self.audio_combo)
         control_group_layout.addWidget(self.parse_combo)
         control_group_layout.addWidget(self.opening_spin)
@@ -549,6 +557,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.speed_combo.currentTextChanged.connect(self._change_speed)
         self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
         self.danmaku_combo.currentIndexChanged.connect(self._change_danmaku_selection)
+        self.video_quality_combo.currentIndexChanged.connect(self._change_video_quality_selection)
         self.audio_combo.currentIndexChanged.connect(self._change_audio_selection)
         self.parse_combo.currentIndexChanged.connect(self._change_parse_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
@@ -970,6 +979,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._clear_manual_subtitle_switch_refresh()
         self._clear_active_danmaku()
         self._reset_danmaku_combo()
+        self._video_quality_options = []
+        self._reset_video_quality_combo()
         self._refresh_parse_combo_enabled_state()
         if not self._prepare_current_play_item(
             previous_index=self.current_index if previous_index is None else previous_index,
@@ -1237,28 +1248,48 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         previous_index: int,
         start_position_seconds: int,
         pause: bool,
+        dash_video_id: str | None = None,
     ) -> bool:
         if self.session is None:
             return False
         current_item = self.session.playlist[self.current_index]
+        source_url = current_item.original_url or current_item.url
+        if source_url.startswith(self._DASH_DATA_URI_PREFIX) and not current_item.original_url:
+            current_item.original_url = source_url
         should_prepare = getattr(self._m3u8_ad_filter, "should_prepare", None)
         if callable(should_prepare):
-            if not should_prepare(current_item.url):
+            if not should_prepare(source_url):
                 return False
-        elif ".m3u8" not in current_item.url.lower():
+        elif ".m3u8" not in source_url.lower():
             return False
         self._playback_prepare_request_id += 1
         request_id = self._playback_prepare_request_id
+        requested_dash_video_id = dash_video_id if dash_video_id is not None else current_item.dash_video_id
         self._pending_playback_prepare = _PendingPlaybackPrepare(
             index=self.current_index,
             previous_index=previous_index,
             start_position_seconds=start_position_seconds,
             pause=pause,
+            source_url=source_url,
+            requested_dash_video_id=requested_dash_video_id,
+            previous_dash_video_id=current_item.dash_video_id,
         )
 
         def prepare() -> None:
             try:
-                prepared_url = self._m3u8_ad_filter.prepare(current_item.url, current_item.headers)
+                if requested_dash_video_id:
+                    try:
+                        prepared_url = self._m3u8_ad_filter.prepare(
+                            source_url,
+                            current_item.headers,
+                            dash_video_id=requested_dash_video_id,
+                        )
+                    except TypeError as exc:
+                        if "dash_video_id" not in str(exc):
+                            raise
+                        prepared_url = self._m3u8_ad_filter.prepare(source_url, current_item.headers)
+                else:
+                    prepared_url = self._m3u8_ad_filter.prepare(source_url, current_item.headers)
             except Exception as exc:
                 if self._is_window_alive():
                     self._playback_prepare_signals.failed.emit(request_id, str(exc))
@@ -1377,7 +1408,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_prepare.index:
             return
         current_item = self.session.playlist[self.current_index]
+        if pending_prepare.source_url.startswith(self._DASH_DATA_URI_PREFIX):
+            current_item.original_url = pending_prepare.source_url
+        if pending_prepare.requested_dash_video_id:
+            current_item.dash_video_id = pending_prepare.requested_dash_video_id
         current_item.url = prepared_url
+        self._refresh_video_quality_state(prepared_url)
         try:
             self._start_current_item_playback(
                 start_position_seconds=pending_prepare.start_position_seconds,
@@ -1396,6 +1432,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         if self.session is None or self.current_index != pending_prepare.index:
             return
+        current_item = self.session.playlist[self.current_index]
+        current_item.dash_video_id = pending_prepare.previous_dash_video_id
+        self._refresh_video_quality_state(current_item.url)
         self._append_log(f"播放代理失败，继续播放原地址: {message}")
         try:
             self._start_current_item_playback(
@@ -1627,6 +1666,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.danmaku_combo.setEnabled(enabled)
         self.danmaku_combo.blockSignals(False)
 
+    def _reset_video_quality_combo(self) -> None:
+        self.video_quality_combo.blockSignals(True)
+        self.video_quality_combo.clear()
+        self.video_quality_combo.addItem("清晰度", None)
+        self.video_quality_combo.setCurrentIndex(0)
+        self.video_quality_combo.setEnabled(False)
+        self.video_quality_combo.blockSignals(False)
+
     def _reset_audio_combo(self) -> None:
         self.audio_combo.blockSignals(True)
         self.audio_combo.clear()
@@ -1758,6 +1805,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.audio_combo.setEnabled(len(tracks) > 1)
         self.audio_combo.setCurrentIndex(0)
         self.audio_combo.blockSignals(False)
+
+    def _populate_video_quality_combo(
+        self,
+        qualities: list[VideoQualityOption],
+        selected_quality_id: str | None,
+    ) -> None:
+        self.video_quality_combo.blockSignals(True)
+        self.video_quality_combo.clear()
+        if not qualities:
+            self.video_quality_combo.addItem("清晰度", None)
+            self.video_quality_combo.setCurrentIndex(0)
+            self.video_quality_combo.setEnabled(False)
+            self.video_quality_combo.blockSignals(False)
+            return
+        selected_index = 0
+        for index, quality in enumerate(qualities):
+            self.video_quality_combo.addItem(quality.label, quality.id)
+            if quality.id == selected_quality_id:
+                selected_index = index
+        self.video_quality_combo.setCurrentIndex(selected_index)
+        self.video_quality_combo.setEnabled(len(qualities) > 1)
+        self.video_quality_combo.blockSignals(False)
 
     def _remember_audio_track_preference(self, track: AudioTrack) -> None:
         self._audio_preference = AudioPreference(
@@ -2362,6 +2431,30 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._reset_audio_combo()
             self._append_log(f"音轨切换失败: {exc}")
 
+    def _refresh_video_quality_state(self, prepared_url: str | None = None) -> None:
+        current_item = self._current_play_item()
+        if current_item is None:
+            self._video_quality_options = []
+            self._reset_video_quality_combo()
+            return
+        source_url = current_item.original_url or current_item.url
+        if not source_url.startswith(self._DASH_DATA_URI_PREFIX):
+            self._video_quality_options = []
+            self._reset_video_quality_combo()
+            return
+        qualities_getter = getattr(self._m3u8_ad_filter, "dash_video_qualities", None)
+        selected_getter = getattr(self._m3u8_ad_filter, "selected_dash_video_quality", None)
+        if not callable(qualities_getter) or not callable(selected_getter):
+            self._video_quality_options = []
+            self._reset_video_quality_combo()
+            return
+        target_url = prepared_url or current_item.url
+        self._video_quality_options = list(qualities_getter(target_url))
+        selected_quality_id = selected_getter(target_url) or current_item.dash_video_id or None
+        if selected_quality_id is not None:
+            current_item.dash_video_id = selected_quality_id
+        self._populate_video_quality_combo(self._video_quality_options, selected_quality_id)
+
     def _change_subtitle_selection(self, index: int) -> None:
         if index < 0:
             return
@@ -2400,6 +2493,29 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._append_log(f"弹幕切换失败: {exc}")
             self._clear_active_danmaku()
             self._reset_danmaku_combo(enabled=True, current_index=1)
+
+    def _change_video_quality_selection(self, index: int) -> None:
+        if index < 0 or self.session is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        target_quality_id = self.video_quality_combo.itemData(index)
+        if not isinstance(target_quality_id, str) or not target_quality_id:
+            return
+        if target_quality_id == current_item.dash_video_id:
+            return
+        source_url = current_item.original_url or current_item.url
+        if not source_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return
+        try:
+            start_position_seconds = int(self.video.position_seconds() or 0)
+        except Exception:
+            start_position_seconds = 0
+        self._start_playback_prepare(
+            previous_index=self.current_index,
+            start_position_seconds=start_position_seconds,
+            pause=not self.is_playing,
+            dash_video_id=target_quality_id,
+        )
 
     def _change_audio_selection(self, index: int) -> None:
         if index < 0:
@@ -2506,6 +2622,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
         menu.addMenu(self._build_audio_menu(menu))
+        if self._video_quality_options:
+            menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
         action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
@@ -2874,6 +2992,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         return menu
 
+    def _build_video_quality_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("清晰度", parent)
+        if not self._video_quality_options:
+            menu.setEnabled(False)
+            return menu
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current_quality_id = self.video_quality_combo.currentData()
+        for quality in self._video_quality_options:
+            action = menu.addAction(quality.label)
+            action.setCheckable(True)
+            action.setChecked(current_quality_id == quality.id)
+            action.triggered.connect(
+                lambda _checked=False, quality_id=quality.id: self._set_video_quality_from_menu(quality_id)
+            )
+            group.addAction(action)
+        menu.setEnabled(len(self._video_quality_options) > 1)
+        return menu
+
     def _build_danmaku_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("弹幕配置", parent)
         menu.setEnabled(self.danmaku_combo.isEnabled())
@@ -2937,6 +3074,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         for index in range(self.audio_combo.count()):
             if self.audio_combo.itemData(index) == ("track", track_id):
                 self.audio_combo.setCurrentIndex(index)
+                return
+
+    def _set_video_quality_from_menu(self, quality_id: str) -> None:
+        for index in range(self.video_quality_combo.count()):
+            if self.video_quality_combo.itemData(index) == quality_id:
+                self.video_quality_combo.setCurrentIndex(index)
                 return
 
     def _set_danmaku_from_menu(self, index: int) -> None:

@@ -16,7 +16,7 @@ import httpx
 
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
-from atv_player.proxy.session import ProxySession, ProxySessionRegistry
+from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
 from atv_player.request_headers import normalize_media_request_headers
 
 logger = logging.getLogger(__name__)
@@ -52,53 +52,133 @@ def _sanitize_dash_manifest(payload: bytes) -> bytes:
     return _BASE_URL_RE.sub(replace_base_url, text).encode("utf-8")
 
 
+def _dash_namespace_prefix(root: ET.Element) -> str:
+    namespace_match = re.match(r"\{([^}]+)\}", root.tag)
+    namespace = namespace_match.group(1) if namespace_match else ""
+    return f"{{{namespace}}}" if namespace else ""
+
+
+def _dash_child_elements(parent: ET.Element, prefix: str, local_name: str) -> list[ET.Element]:
+    return [child for child in parent if child.tag == f"{prefix}{local_name}"]
+
+
+def _dash_adaptation_content_type(adaptation_set: ET.Element, prefix: str) -> str:
+    content_type = str(adaptation_set.attrib.get("contentType") or "").strip().lower()
+    if content_type:
+        return content_type
+    for component in _dash_child_elements(adaptation_set, prefix, "ContentComponent"):
+        content_type = str(component.attrib.get("contentType") or "").strip().lower()
+        if content_type:
+            return content_type
+    representation = next(iter(_dash_child_elements(adaptation_set, prefix, "Representation")), None)
+    if representation is None:
+        return ""
+    mime_type = str(representation.attrib.get("mimeType") or "").strip().lower()
+    if mime_type.startswith("video/"):
+        return "video"
+    if mime_type.startswith("audio/"):
+        return "audio"
+    return ""
+
+
+def _dash_representation_from_element(representation: ET.Element, base_url: str) -> DashRepresentation:
+    def int_attr(name: str) -> int:
+        try:
+            return int(str(representation.attrib.get(name) or "0").strip() or "0")
+        except ValueError:
+            return 0
+
+    return DashRepresentation(
+        id=str(representation.attrib.get("id") or "").strip(),
+        bandwidth=int_attr("bandwidth"),
+        width=int_attr("width"),
+        height=int_attr("height"),
+        codecs=str(representation.attrib.get("codecs") or "").strip(),
+        mime_type=str(representation.attrib.get("mimeType") or "").strip(),
+        base_url=base_url,
+    )
+
+
+def _video_representation_sort_key(representation: DashRepresentation) -> tuple[int, int, int]:
+    return (representation.height, representation.width, representation.bandwidth)
+
+
+def _parse_dash_session_metadata(
+    payload: bytes,
+    session: ProxySession,
+    *,
+    selected_video_id: str | None = None,
+) -> None:
+    root = ET.fromstring(payload)
+    prefix = _dash_namespace_prefix(root)
+    session.dash_video_representations = []
+    session.dash_audio_representations = []
+
+    for period in [element for element in root.iter() if element.tag == f"{prefix}Period"]:
+        for adaptation_set in _dash_child_elements(period, prefix, "AdaptationSet"):
+            content_type = _dash_adaptation_content_type(adaptation_set, prefix)
+            if content_type not in {"video", "audio"}:
+                continue
+            for representation in _dash_child_elements(adaptation_set, prefix, "Representation"):
+                base_url_element = next(iter(_dash_child_elements(representation, prefix, "BaseURL")), None)
+                base_url = unescape((base_url_element.text or "").strip()) if base_url_element is not None else ""
+                parsed_representation = _dash_representation_from_element(representation, base_url)
+                if content_type == "video":
+                    session.dash_video_representations.append(parsed_representation)
+                else:
+                    session.dash_audio_representations.append(parsed_representation)
+
+    available_video_ids = {representation.id for representation in session.dash_video_representations}
+    requested_video_id = (selected_video_id or "").strip()
+    if requested_video_id and requested_video_id in available_video_ids:
+        session.selected_dash_video_id = requested_video_id
+    elif session.dash_video_representations:
+        session.selected_dash_video_id = max(
+            session.dash_video_representations,
+            key=_video_representation_sort_key,
+        ).id
+    else:
+        session.selected_dash_video_id = ""
+
+    available_audio_ids = {representation.id for representation in session.dash_audio_representations}
+    if session.selected_dash_audio_id and session.selected_dash_audio_id in available_audio_ids:
+        return
+    session.selected_dash_audio_id = (
+        session.dash_audio_representations[0].id if session.dash_audio_representations else ""
+    )
+
+
 def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url: str) -> bytes:
     root = ET.fromstring(payload)
     session.dash_assets = []
-    namespace_match = re.match(r"\{([^}]+)\}", root.tag)
-    namespace = namespace_match.group(1) if namespace_match else ""
-    prefix = f"{{{namespace}}}" if namespace else ""
-
-    def child_elements(parent: ET.Element, local_name: str) -> list[ET.Element]:
-        return [child for child in parent if child.tag == f"{prefix}{local_name}"]
-
-    def adaptation_content_type(adaptation_set: ET.Element) -> str:
-        content_type = str(adaptation_set.attrib.get("contentType") or "").strip().lower()
-        if content_type:
-            return content_type
-        for component in child_elements(adaptation_set, "ContentComponent"):
-            content_type = str(component.attrib.get("contentType") or "").strip().lower()
-            if content_type:
-                return content_type
-        representation = next(iter(child_elements(adaptation_set, "Representation")), None)
-        if representation is None:
-            return ""
-        mime_type = str(representation.attrib.get("mimeType") or "").strip().lower()
-        if mime_type.startswith("video/"):
-            return "video"
-        if mime_type.startswith("audio/"):
-            return "audio"
-        return ""
+    prefix = _dash_namespace_prefix(root)
+    namespace = prefix[1:-1] if prefix else ""
 
     periods = [element for element in root.iter() if element.tag == f"{prefix}Period"]
     for period in periods:
-        kept_video = False
-        kept_audio = False
-        for adaptation_set in list(child_elements(period, "AdaptationSet")):
-            content_type = adaptation_content_type(adaptation_set)
+        for adaptation_set in list(_dash_child_elements(period, prefix, "AdaptationSet")):
+            content_type = _dash_adaptation_content_type(adaptation_set, prefix)
+            representations = _dash_child_elements(adaptation_set, prefix, "Representation")
             if content_type == "video":
-                if kept_video:
-                    period.remove(adaptation_set)
-                    continue
-                kept_video = True
+                selected_representation_id = session.selected_dash_video_id
             elif content_type == "audio":
-                if kept_audio:
-                    period.remove(adaptation_set)
-                    continue
-                kept_audio = True
-            representations = child_elements(adaptation_set, "Representation")
-            for extra_representation in representations[1:]:
-                adaptation_set.remove(extra_representation)
+                selected_representation_id = session.selected_dash_audio_id
+            else:
+                continue
+            selected_representation = next(
+                (
+                    representation
+                    for representation in representations
+                    if str(representation.attrib.get("id") or "").strip() == selected_representation_id
+                ),
+                None,
+            )
+            if selected_representation is None:
+                period.remove(adaptation_set)
+                continue
+            for extra_representation in list(representations):
+                if extra_representation is not selected_representation:
+                    adaptation_set.remove(extra_representation)
 
     for base_url in [element for element in root.iter() if element.tag == f"{prefix}BaseURL"]:
         raw_url = unescape((base_url.text or "").strip())
@@ -200,9 +280,43 @@ class LocalHlsProxyServer:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
 
-    def create_dash_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+    def create_dash_url(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        *,
+        selected_video_id: str | None = None,
+    ) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
+        session = self._registry.get(token)
+        if session is not None:
+            session.dash_manifest_payload = _sanitize_dash_manifest(_decode_dash_manifest(url))
+            _parse_dash_session_metadata(
+                session.dash_manifest_payload,
+                session,
+                selected_video_id=selected_video_id,
+            )
         return f"http://{self.host}:{self.port}/dash/{quote(token)}.mpd"
+
+    def _dash_session_for_url(self, dash_url: str) -> ProxySession | None:
+        parsed = urlparse(dash_url)
+        try:
+            token = self._path_token(parsed.path) if parsed.path.startswith("/dash/") else self._query_token(parse_qs(parsed.query))
+        except KeyError:
+            return None
+        return self._registry.get(token)
+
+    def dash_video_representations(self, dash_url: str) -> list[DashRepresentation]:
+        session = self._dash_session_for_url(dash_url)
+        if session is None:
+            return []
+        return list(session.dash_video_representations)
+
+    def selected_dash_video_representation_id(self, dash_url: str) -> str | None:
+        session = self._dash_session_for_url(dash_url)
+        if session is None or not session.selected_dash_video_id:
+            return None
+        return session.selected_dash_video_id
 
     @staticmethod
     def _query_token(query: dict[str, list[str]]) -> str:
@@ -396,8 +510,14 @@ class LocalHlsProxyServer:
                 if session is None:
                     return 404, [], b"missing proxy session"
                 proxy_base_url = f"http://{self.host}:{self.port}"
+                payload = session.dash_manifest_payload
+                if payload is None:
+                    payload = _sanitize_dash_manifest(_decode_dash_manifest(session.playlist_url))
+                    session.dash_manifest_payload = payload
+                if not session.dash_video_representations and not session.dash_audio_representations:
+                    _parse_dash_session_metadata(payload, session, selected_video_id=session.selected_dash_video_id or None)
                 payload = _rewrite_dash_manifest(
-                    _sanitize_dash_manifest(_decode_dash_manifest(session.playlist_url)),
+                    payload,
                     session,
                     proxy_base_url,
                 )

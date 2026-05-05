@@ -431,6 +431,92 @@ def test_local_hls_proxy_server_keeps_only_first_video_and_audio_dash_representa
     ]
 
 
+def test_local_hls_proxy_server_defaults_dash_video_selection_to_highest_quality() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v720" bandwidth="1200000" width="1280" height="720">
+        <BaseURL>https://media.example/video-720.m4s</BaseURL>
+      </Representation>
+      <Representation id="v1080" bandwidth="2800000" width="1920" height="1080">
+        <BaseURL>https://media.example/video-1080.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000">
+        <BaseURL>https://media.example/audio-1.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    session = server._registry.get(token)
+    assert session is not None
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert session.selected_dash_video_id == "v1080"
+    assert [representation.id for representation in session.dash_video_representations] == ["v720", "v1080"]
+    assert [representation.height for representation in session.dash_video_representations] == [720, 1080]
+    assert body.decode("utf-8").count("<Representation") == 2
+    assert "video-1080.m4s" not in body.decode("utf-8")
+    assert "video-720.m4s" not in body.decode("utf-8")
+    assert session.dash_assets == [
+        "https://media.example/video-1080.m4s",
+        "https://media.example/audio-1.m4s",
+    ]
+
+
+def test_local_hls_proxy_server_rewrites_requested_dash_video_selection() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v720" bandwidth="1200000" width="1280" height="720">
+        <BaseURL>https://media.example/video-720.m4s</BaseURL>
+      </Representation>
+      <Representation id="v1080" bandwidth="2800000" width="1920" height="1080">
+        <BaseURL>https://media.example/video-1080.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000">
+        <BaseURL>https://media.example/audio-1.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {}, selected_video_id="v720")
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    session = server._registry.get(token)
+    assert session is not None
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert session.selected_dash_video_id == "v720"
+    assert body.decode("utf-8").count("<Representation") == 2
+    assert session.dash_assets == [
+        "https://media.example/video-720.m4s",
+        "https://media.example/audio-1.m4s",
+    ]
+
+
 def test_local_hls_proxy_server_proxies_dash_asset_with_range_headers() -> None:
     requests: list[tuple[str, dict[str, str]]] = []
 
