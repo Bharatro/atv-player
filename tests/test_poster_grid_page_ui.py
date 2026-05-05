@@ -275,6 +275,7 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert [button.text() for button in page.card_buttons] == ["全局搜索结果\nHD"]
     assert page.page_label.text() == "第 1 / 1 页"
     assert page.status_label.text() == ""
+    assert page.category_list.isHidden() is True
 
 
 def test_poster_grid_page_can_render_external_empty_state(qtbot) -> None:
@@ -298,6 +299,7 @@ def test_poster_grid_page_can_leave_external_result_mode_and_return_to_category_
     qtbot.waitUntil(lambda: controller.load_items_calls >= 2)
     qtbot.waitUntil(lambda: page.card_buttons[0].text() == "霸王别姬\n9.6")
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
+    assert page.category_list.isHidden() is False
 
 
 def test_poster_grid_page_enables_search_and_clear_only_with_keyword(qtbot) -> None:

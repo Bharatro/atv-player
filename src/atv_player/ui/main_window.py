@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStyle,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -168,6 +169,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._trailing_tab_definitions: list[_TabDefinition] = []
         self._plugin_tab_definitions: list[_TabDefinition] = []
         self.nav_tabs = QTabWidget()
+        self.global_search_container = QWidget()
         self.global_search_edit = QLineEdit()
         self.global_search_button = QPushButton("搜索")
         self.global_search_clear_button = QPushButton("清空")
@@ -259,9 +261,44 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_in_progress = False
         self._global_search_keyword = ""
 
-        self.global_search_edit.setPlaceholderText("搜索电报影视、Emby、Jellyfin、飞牛影视和插件")
+        self.global_search_container.setMaximumWidth(520)
+        self.global_search_edit.setPlaceholderText("搜索")
+        self.global_search_edit.setClearButtonEnabled(True)
+        self.global_search_edit.setStyleSheet(
+            """
+            QLineEdit {
+                min-height: 36px;
+                padding: 0 12px;
+                border: 1px solid #d0d7de;
+                border-radius: 18px;
+                background: #ffffff;
+            }
+            QLineEdit:focus {
+                border: 1px solid #409eff;
+            }
+            """
+        )
+        self.global_search_button.setText("")
+        self.global_search_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+        )
+        self.global_search_button.setFixedSize(36, 36)
+        self.global_search_button.setStyleSheet(
+            """
+            QPushButton {
+                border: 1px solid #d0d7de;
+                border-radius: 18px;
+                background: #ffffff;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: #f3f4f6;
+            }
+            """
+        )
         self.global_search_status_label.setWordWrap(True)
         self.global_search_clear_button.setEnabled(False)
+        self.global_search_clear_button.hide()
 
         self._static_tab_definitions = [
             _TabDefinition("douban", "豆瓣电影", self.douban_page),
@@ -290,11 +327,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.global_search_clear_button.clicked.connect(self._clear_global_search)
         self.global_search_edit.returnPressed.connect(self._start_global_search)
         self.global_search_edit.textChanged.connect(self._handle_global_search_text_changed)
+        search_layout = QHBoxLayout(self.global_search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(8)
+        search_layout.addWidget(self.global_search_edit, 1)
+        search_layout.addWidget(self.global_search_button)
         self.header_layout = QHBoxLayout()
-        self.header_layout.addWidget(self.global_search_edit, 1)
-        self.header_layout.addWidget(self.global_search_button)
-        self.header_layout.addWidget(self.global_search_clear_button)
-        self.header_layout.addWidget(self.global_search_status_label, 1)
+        self.header_layout.addStretch(1)
+        self.header_layout.addWidget(self.global_search_container)
         self.header_layout.addStretch(1)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
@@ -302,6 +342,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         container = QWidget()
         container_layout = QVBoxLayout(container)
         container_layout.addLayout(self.header_layout)
+        container_layout.addWidget(self.global_search_status_label)
         container_layout.addWidget(self.nav_tabs)
         self.setCentralWidget(container)
         self.setWindowTitle("alist-tvbox Desktop Player")

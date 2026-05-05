@@ -146,6 +146,22 @@ class SearchableController(FakeStaticController):
         return list(self.items), self.total
 
 
+class SearchableCategoryController(SearchableController):
+    def __init__(self, category_item: VodItem, search_items: list[VodItem], total: int | None = None) -> None:
+        super().__init__(search_items, total=total)
+        self.load_categories_calls = 0
+        self.load_items_calls: list[tuple[str, int]] = []
+        self.category_item = category_item
+
+    def load_categories(self):
+        self.load_categories_calls += 1
+        return [type("Category", (), {"type_id": "movie", "type_name": "电影", "filters": []})()]
+
+    def load_items(self, category_id: str, page: int):
+        self.load_items_calls.append((category_id, page))
+        return [self.category_item], 1
+
+
 class KeywordSearchableController(FakeStaticController):
     def __init__(self, results_by_keyword: dict[str, tuple[list[VodItem], int]]) -> None:
         self.results_by_keyword = {
@@ -216,7 +232,7 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     assert window.plugin_manager_button.text() == "插件管理"
 
 
-def test_main_window_places_global_search_controls_before_plugin_manager(qtbot) -> None:
+def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
         telegram_controller=SearchableController([]),
@@ -235,9 +251,15 @@ def test_main_window_places_global_search_controls_before_plugin_manager(qtbot) 
     window.show()
 
     assert window.global_search_edit.parentWidget() is not None
-    assert window.global_search_button.text() == "搜索"
-    assert window.global_search_clear_button.text() == "清空"
-    assert window.header_layout.indexOf(window.global_search_edit) < window.header_layout.indexOf(window.plugin_manager_button)
+    assert window.global_search_container.maximumWidth() == 640
+    assert window.global_search_edit.placeholderText() == "搜索"
+    assert window.global_search_edit.isClearButtonEnabled() is True
+    assert window.global_search_edit.styleSheet()
+    assert "border-radius: 18px;" in window.global_search_edit.styleSheet()
+    assert window.global_search_button.text() == ""
+    assert window.global_search_button.icon().isNull() is False
+    assert window.global_search_clear_button.isHidden() is True
+    assert window.header_layout.indexOf(window.global_search_container) < window.header_layout.indexOf(window.plugin_manager_button)
 
 
 def test_main_window_global_search_shows_only_tabs_with_results_and_count_titles(qtbot) -> None:
@@ -282,6 +304,88 @@ def test_main_window_global_search_shows_only_tabs_with_results_and_count_titles
     assert jellyfin.search_calls == [("庆余年", 1)]
     assert feiniu.search_calls == [("庆余年", 1)]
     assert plugin_controller.search_calls == [("庆余年", 1)]
+
+
+def test_main_window_global_search_hides_all_tabs_then_shows_results_incrementally(qtbot) -> None:
+    telegram = AsyncKeywordSearchController({"庆余年": ([_vod("Telegram One")], 12)})
+    plugin_controller = AsyncKeywordSearchController({"庆余年": ([_vod("Plugin One")], 1)})
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-a", "title": "红果短剧", "controller": plugin_controller, "search_enabled": False},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: telegram.search_calls == [("庆余年", 1)])
+    assert window.nav_tabs.count() == 0
+
+    telegram.release("庆余年")
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(12)"])
+
+    plugin_controller.release("庆余年")
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(12)", "红果短剧(1)"])
+
+
+def test_main_window_switching_result_tabs_keeps_global_search_results(qtbot) -> None:
+    telegram = SearchableCategoryController(
+        category_item=_vod("分类视频"),
+        search_items=[_vod("Telegram Result", remarks="搜索结果")],
+        total=1,
+    )
+    emby = SearchableCategoryController(
+        category_item=_vod("Emby 分类视频"),
+        search_items=[_vod("Emby Result", remarks="搜索结果")],
+        total=1,
+    )
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(1)", "Emby(1)"])
+    assert [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Result\n搜索结果"]
+    assert [button.text() for button in window.emby_page.card_buttons] == ["Emby Result\n搜索结果"]
+
+    window.nav_tabs.setCurrentIndex(1)
+    qtbot.wait(100)
+
+    assert [button.text() for button in window.emby_page.card_buttons] == ["Emby Result\n搜索结果"]
+    assert window.emby_page.category_list.isHidden() is True
+    assert emby.load_categories_calls == 0
+    assert emby.load_items_calls == []
 
 
 def test_main_window_ignores_stale_global_search_results(qtbot) -> None:

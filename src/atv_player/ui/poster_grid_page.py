@@ -203,6 +203,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.breadcrumb_bar.setVisible(self._folder_navigation_enabled)
         self.filter_panel.hide()
         self.filter_toggle_button.hide()
+        self._sync_category_list_visibility()
 
         right = QVBoxLayout()
         if self._search_enabled:
@@ -292,6 +293,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
     def load_items(self, category_id: str, page: int) -> None:
         self._external_results_active = False
+        self._sync_category_list_visibility()
         self._items_request_id += 1
         request_id = self._items_request_id
         active_filters = dict(self._category_filter_state.get(category_id, {}))
@@ -579,6 +581,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if not keyword:
             return
         self._external_results_active = False
+        self._sync_category_list_visibility()
         self._search_mode = True
         self._search_keyword = keyword
         self.current_page = 1
@@ -590,6 +593,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if not self._search_enabled:
             return
         self._external_results_active = False
+        self._sync_category_list_visibility()
         self.keyword_edit.clear()
         self._search_mode = False
         self._search_keyword = ""
@@ -661,6 +665,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     ) -> None:
         self._external_results_active = True
         self._external_empty_message = empty_message
+        self._sync_category_list_visibility()
         rendered_items = list(items)
         self.show_items(rendered_items, len(rendered_items), page=page, empty_message=empty_message)
 
@@ -669,9 +674,13 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             return
         self._external_results_active = False
         self._external_empty_message = "暂无内容"
+        self._sync_category_list_visibility()
         if self.selected_category_id:
             self.current_page = 1
             self.load_items(self.selected_category_id, self.current_page)
+
+    def _sync_category_list_visibility(self) -> None:
+        self.category_list.setHidden(self._external_results_active)
 
     def reset_folder_breadcrumbs_to_root(self) -> None:
         if not self._folder_navigation_enabled:
