@@ -57,6 +57,7 @@ class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
     playback_failed = Signal(str)
+    video_picture_state_changed = Signal(str)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     context_menu_requested = Signal()
@@ -66,12 +67,19 @@ class MpvWidget(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._player: Any | None = None
+        self._video_picture_state = "idle"
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._placeholder)
+
+    def _set_video_picture_state(self, state: str) -> None:
+        if self._video_picture_state == state:
+            return
+        self._video_picture_state = state
+        self.video_picture_state_changed.emit(state)
 
     def _create_player(self):
         import mpv
@@ -167,9 +175,20 @@ class MpvWidget(QWidget):
         def handle_track_list(_property_name, _tracks) -> None:
             self.subtitle_tracks_changed.emit()
             self.audio_tracks_changed.emit()
+            normalized = _tracks or []
+            has_video_track = any(isinstance(track, dict) and track.get("type") == "video" for track in normalized)
+            if not has_video_track:
+                self._set_video_picture_state("unavailable")
 
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
+
+        def handle_video_out_params(_property_name, params) -> None:
+            if params:
+                self._set_video_picture_state("visible")
+
+        observe_property("video-out-params", handle_video_out_params)
+        self._video_out_params_handler = handle_video_out_params
 
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:
@@ -301,6 +320,7 @@ class MpvWidget(QWidget):
             start_seconds: int = 0,
             headers: dict[str, str] | None = None,
     ) -> None:
+        self._set_video_picture_state("loading")
         self._ensure_player()
         player = self._player
         if player is None:

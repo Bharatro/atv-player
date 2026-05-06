@@ -58,6 +58,7 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             self.pause = False
             self._end_file_callback = None
             self._track_list_observer = None
+            self._video_out_observer = None
 
         def event_callback(self, *event_types):
             assert event_types == ("end-file",)
@@ -69,8 +70,11 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             return register
 
         def observe_property(self, name: str, handler) -> None:
-            assert name == "track-list"
-            self._track_list_observer = handler
+            if name == "track-list":
+                self._track_list_observer = handler
+                return
+            assert name == "video-out-params"
+            self._video_out_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -102,6 +106,78 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
     assert finished["count"] == 1
     assert subtitle_changes["count"] == 1
     assert audio_changes["count"] == 1
+
+
+def test_mpv_widget_emits_loading_and_visible_picture_states(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self._track_list_observer = None
+            self._video_out_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            if name == "track-list":
+                self._track_list_observer = handler
+            elif name == "video-out-params":
+                self._video_out_observer = handler
+
+        def play(self, url: str) -> None:
+            return None
+
+    widget._player = FakePlayer()
+    widget._register_player_events()
+    states: list[str] = []
+    widget.video_picture_state_changed.connect(states.append)
+
+    widget.load("http://m/1.m3u8")
+    widget._player._video_out_observer("video-out-params", {"w": 1920, "h": 1080})
+
+    assert states == ["loading", "visible"]
+
+
+def test_mpv_widget_emits_unavailable_picture_state_when_track_list_has_no_video(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self._track_list_observer = None
+            self._video_out_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            if name == "track-list":
+                self._track_list_observer = handler
+            elif name == "video-out-params":
+                self._video_out_observer = handler
+
+        def play(self, url: str) -> None:
+            return None
+
+    widget._player = FakePlayer()
+    widget._register_player_events()
+    states: list[str] = []
+    widget.video_picture_state_changed.connect(states.append)
+
+    widget.load("http://m/1.m3u8")
+    widget._player._track_list_observer("track-list", [{"id": 2, "type": "audio"}])
+
+    assert states[-1] == "unavailable"
 
 
 def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
