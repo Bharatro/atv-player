@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
+from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
@@ -351,6 +352,7 @@ class AppCoordinator(QObject):
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
             direct_parse_detail_loader=load_direct_parse_detail,
+            direct_parse_danmaku_loader=load_direct_parse_danmaku,
             direct_parse_playback_history_loader=None
             if self._playback_history_repository is None
             else lambda vod_id: self._playback_history_repository.get_history("direct_parse", vod_id),

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
+from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
@@ -215,6 +216,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             plugin_manager=None,
             drive_detail_loader=None,
             direct_parse_detail_loader=None,
+            direct_parse_danmaku_loader=None,
             direct_parse_playback_history_loader=None,
             direct_parse_playback_history_saver=None,
             show_bilibili_tab: bool = False,
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
         self._direct_parse_detail_loader = direct_parse_detail_loader
+        self._direct_parse_danmaku_loader = direct_parse_danmaku_loader
         self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
         self._direct_parse_playback_history_saver = direct_parse_playback_history_saver
         self._live_source_manager = live_source_manager
@@ -765,6 +768,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._playback_parser_service is None:
             raise ValueError("当前未配置内置解析")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
+        danmaku_controller = self._build_direct_parse_danmaku_controller()
 
         def load_item(current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
@@ -777,9 +781,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             current_item.original_url = source_url
             current_item.headers = dict(result.headers)
             current_item.parse_required = True
+            if danmaku_controller is not None:
+                danmaku_controller.maybe_resolve(current_item)
             return None
 
-        detailed_request = self._build_direct_parse_detail_request(url, load_item)
+        detailed_request = self._build_direct_parse_detail_request(url, load_item, danmaku_controller)
         if detailed_request is not None:
             return detailed_request
 
@@ -803,9 +809,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=False,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
+            danmaku_controller=danmaku_controller,
         )
 
-    def _build_direct_parse_detail_request(self, url: str, load_item) -> OpenPlayerRequest | None:
+    def _build_direct_parse_detail_request(self, url: str, load_item, danmaku_controller) -> OpenPlayerRequest | None:
         history_loader, history_saver = self._direct_parse_history_hooks(url)
         if self._direct_parse_detail_loader is None:
             return None
@@ -838,6 +845,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=False,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
+            danmaku_controller=danmaku_controller,
         )
 
     def _direct_parse_history_hooks(self, url: str) -> tuple[Any, Any]:
@@ -848,6 +856,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._direct_parse_playback_history_saver is not None:
             history_saver = lambda payload, source_vod_id=url: self._direct_parse_playback_history_saver(source_vod_id, payload)
         return history_loader, history_saver
+
+    def _build_direct_parse_danmaku_controller(self) -> object | None:
+        if self._direct_parse_danmaku_loader is None:
+            return None
+        return DirectParseDanmakuController(load=self._direct_parse_danmaku_loader)
 
     def _build_direct_parse_playlist(self, payload: dict[str, Any]) -> list[PlayItem]:
         playlist: list[PlayItem] = []

@@ -4,6 +4,7 @@ import time
 import pytest
 
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
+import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.ui.main_window import MainWindow
 
@@ -595,6 +596,18 @@ def test_main_window_global_search_builds_episode_playlist_from_direct_parse_det
         }
 
     parser_service = FakeParserService()
+    danmaku_calls: list[str] = []
+
+    def load_danmaku(url: str) -> dict:
+        danmaku_calls.append(url)
+        return {
+            "code": 23,
+            "name": "demo",
+            "danmuku": [
+                [42.741, "right", "#00CD00", "1205421", "666", "03-15 15:47", "25px"],
+            ],
+        }
+
     opened: list[OpenPlayerRequest] = []
 
     window = MainWindow(
@@ -611,7 +624,10 @@ def test_main_window_global_search_builds_episode_playlist_from_direct_parse_det
         plugin_manager=FakePluginManager(),
         playback_parser_service=parser_service,
         direct_parse_detail_loader=load_detail,
+        direct_parse_danmaku_loader=load_danmaku,
     )
+    monkeypatch.setattr(direct_parse_danmaku_module, "load_cached_danmaku_xml", lambda name, reg_src: "")
+    monkeypatch.setattr(direct_parse_danmaku_module, "save_cached_danmaku_xml", lambda name, reg_src, xml_text: None)
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
 
     qtbot.addWidget(window)
@@ -630,6 +646,7 @@ def test_main_window_global_search_builds_episode_playlist_from_direct_parse_det
     assert [item.title for item in opened[0].playlist] == ["第09话", "第10话", "第11话"]
     assert opened[0].clicked_index == 1
     assert opened[0].use_local_history is False
+    assert opened[0].danmaku_controller is not None
     assert all(item.parse_required for item in opened[0].playlist)
     assert opened[0].playlist[1].original_url == "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
     assert opened[0].playlist[2].url == ""
@@ -641,6 +658,9 @@ def test_main_window_global_search_builds_episode_playlist_from_direct_parse_det
     ]
     assert opened[0].playlist[2].url == "https://media.example/a4101bma2qf.html.m3u8"
     assert opened[0].playlist[2].headers == {"Referer": "https://site.example"}
+    qtbot.waitUntil(lambda: bool(opened[0].playlist[2].danmaku_xml), timeout=1000)
+    assert danmaku_calls == ["https://v.qq.com/x/cover/mzc00200xxpsogl/a4101bma2qf.html"]
+    assert "666" in opened[0].playlist[2].danmaku_xml
 
 
 def test_main_window_opening_pansou_result_restores_browse_tab_and_path(qtbot, monkeypatch) -> None:
