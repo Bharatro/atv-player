@@ -219,6 +219,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             direct_parse_danmaku_loader=None,
             direct_parse_playback_history_loader=None,
             direct_parse_playback_history_saver=None,
+            default_video_cover_loader=None,
             show_bilibili_tab: bool = False,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
@@ -238,6 +239,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._direct_parse_danmaku_loader = direct_parse_danmaku_loader
         self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
         self._direct_parse_playback_history_saver = direct_parse_playback_history_saver
+        self._default_video_cover_loader = default_video_cover_loader
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self._static_tab_definitions: list[_TabDefinition] = []
@@ -1413,6 +1415,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                     self._save_config,
                     m3u8_ad_filter=self._m3u8_ad_filter,
                     playback_parser_service=self._playback_parser_service,
+                    default_video_cover_loader=self._default_video_cover_loader,
                 )
             except TypeError as exc:
                 if "m3u8_ad_filter" not in str(exc) and "playback_parser_service" not in str(exc):

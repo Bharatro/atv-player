@@ -364,6 +364,7 @@ class AppCoordinator(QObject):
                 payload,
                 source_name="全局解析",
             ),
+            default_video_cover_loader=getattr(self._api_client, "get_video_cover", None),
             show_bilibili_tab=bool(capabilities.get("bilibili")),
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),

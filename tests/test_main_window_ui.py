@@ -978,6 +978,56 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
     assert config.last_player_paused is False
 
 
+def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    captured: dict[str, object] = {}
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            captured["loader"] = kwargs.get("default_video_cover_loader")
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+
+    def load_video_cover() -> str:
+        return "https://img.example/fallback.jpg"
+
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        default_video_cover_loader=load_video_cover,
+    )
+    qtbot.addWidget(window)
+
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+        clicked_index=0,
+    )
+    window.open_player(request)
+
+    qtbot.waitUntil(lambda: "loader" in captured)
+    assert captured["loader"] is load_video_cover
+
+
 def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> None:
     class FailingBrowseController(FakeStaticController):
         def build_request_from_detail(self, vod_id: str):
