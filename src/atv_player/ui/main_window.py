@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QIcon
@@ -20,8 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.controllers.browse_controller import _map_vod_item
+from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.models import HistoryRecord, OpenPlayerRequest, VodItem
+from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
@@ -74,10 +77,48 @@ class _EmptyFeiniuController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+_SUPPORTED_DRIVE_DOMAINS = (
+    "alipan.com",
+    "aliyundrive.com",
+    "mypikpak.com",
+    "xunlei.com",
+    "123pan.com",
+    "123pan.cn",
+    "123684.com",
+    "123865.com",
+    "123912.com",
+    "123592.com",
+    "quark.cn",
+    "139.com",
+    "uc.cn",
+    "115.com",
+    "115cdn.com",
+    "anxia.com",
+    "189.cn",
+    "baidu.com",
+)
+
+
 def _plugin_value(definition: Any, key: str):
     if isinstance(definition, dict):
         return definition.get(key)
     return getattr(definition, key)
+
+
+def _looks_like_http_url(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    parsed = urlparse(candidate)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _looks_like_drive_share_link(value: str) -> bool:
+    candidate = value.strip()
+    if not _looks_like_http_url(candidate):
+        return False
+    hostname = (urlparse(candidate).hostname or "").lower()
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
 
 
 class _PluginController(Protocol):
@@ -679,9 +720,81 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _searchable_tab_definitions(self) -> list[_TabDefinition]:
         return [definition for definition in self._all_tab_definitions() if definition.search_controller is not None]
 
+    def _build_drive_detail_request(self, link: str) -> OpenPlayerRequest:
+        if self._drive_detail_loader is None:
+            raise ValueError("当前未配置网盘解析")
+        try:
+            payload = self._drive_detail_loader(link)
+            detail = _map_vod_item(payload["list"][0])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"没有可播放的项目: {link}") from exc
+        playlist = build_detail_playlist(detail)
+        if not playlist:
+            raise ValueError(f"没有可播放的项目: {detail.vod_name or link}")
+        return OpenPlayerRequest(
+            vod=detail,
+            playlist=playlist,
+            clicked_index=0,
+            source_kind="telegram",
+            source_mode="detail",
+            source_vod_id=link,
+            detail_resolver=getattr(self.browse_controller, "resolve_folder_play_item", None),
+        )
+
+    def _build_direct_parse_request(self, url: str) -> OpenPlayerRequest:
+        if self._playback_parser_service is None:
+            raise ValueError("当前未配置内置解析")
+
+        item = PlayItem(
+            title="解析播放",
+            url="",
+            original_url=url,
+            vod_id=url,
+            parse_required=True,
+        )
+
+        def load_item(current_item: PlayItem):
+            result = self._playback_parser_service.resolve(
+                "",
+                url,
+                preferred_key=getattr(self.config, "preferred_parse_key", ""),
+            )
+            current_item.url = result.url
+            current_item.original_url = url
+            current_item.headers = dict(result.headers)
+            current_item.parse_required = True
+            return None
+
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=url, vod_name=url),
+            playlist=[item],
+            clicked_index=0,
+            source_kind="direct",
+            source_mode="parse",
+            source_vod_id=url,
+            playback_loader=load_item,
+            async_playback_loader=True,
+        )
+
+    def _start_direct_open_from_global_search(self, keyword: str) -> bool:
+        if not _looks_like_http_url(keyword):
+            return False
+        if _looks_like_drive_share_link(keyword):
+            self._start_open_request(lambda: self._build_drive_detail_request(keyword))
+            return True
+        try:
+            request = self._build_direct_parse_request(keyword)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return True
+        self.open_player(request)
+        return True
+
     def _start_global_search(self) -> None:
         keyword = self.global_search_edit.text().strip()
         if not keyword:
+            return
+        if self._start_direct_open_from_global_search(keyword):
             return
         searchable = self._searchable_tab_definitions()
         if not searchable:
@@ -1247,6 +1360,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _build_restore_request(self) -> OpenPlayerRequest | None:
         mode = self.config.last_playback_mode
         source = self.config.last_playback_source or "browse"
+        if mode == "parse" and source == "direct" and self.config.last_playback_vod_id:
+            return self._build_direct_parse_request(self.config.last_playback_vod_id)
         if mode in {"detail", "custom"} and self.config.last_playback_vod_id:
             return self._build_detail_restore_request(source, self.config.last_playback_vod_id)
         if mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:

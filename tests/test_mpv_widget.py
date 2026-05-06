@@ -1204,6 +1204,44 @@ def test_mpv_widget_lists_embedded_audio_tracks_with_readable_labels(qtbot) -> N
     ]
 
 
+def test_mpv_widget_audio_track_labels_include_distinguishing_metadata(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {
+                "id": 1,
+                "type": "audio",
+                "lang": "cmn",
+                "title": "",
+                "default": True,
+                "forced": False,
+                "external": False,
+                "codec": "aac",
+                "audio-channels": 2,
+                "audio-samplerate": 48000,
+            },
+            {
+                "id": 2,
+                "type": "audio",
+                "lang": "cmn",
+                "title": "",
+                "default": True,
+                "forced": False,
+                "external": False,
+                "codec": "ac3",
+                "audio-channels": 6,
+                "audio-samplerate": 48000,
+            },
+        ]
+    )
+
+    assert [track.label for track in widget.audio_tracks()] == [
+        "国语 (默认) [AAC / 2ch / 48000Hz / ID 1]",
+        "国语 (默认) [AC3 / 6ch / 48000Hz / ID 2]",
+    ]
+
+
 def test_mpv_widget_auto_mode_keeps_mpv_auto_selection(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

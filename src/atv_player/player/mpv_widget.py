@@ -793,6 +793,55 @@ class MpvWidget(QWidget):
             return base
         return f"{base} ({'/'.join(suffixes)})"
 
+    def _audio_track_detail_label(self, raw_track: object, track_id: int) -> str:
+        if not isinstance(raw_track, dict):
+            return f"ID {track_id}"
+
+        parts: list[str] = []
+
+        codec = str(raw_track.get("codec") or raw_track.get("audio-codec") or "").strip().upper()
+        if codec:
+            parts.append(codec)
+
+        channels = raw_track.get("audio-channels")
+        if channels in (None, ""):
+            channels = raw_track.get("channels")
+        if channels not in (None, ""):
+            parts.append(f"{channels}ch")
+
+        samplerate = raw_track.get("audio-samplerate")
+        if samplerate in (None, ""):
+            samplerate = raw_track.get("samplerate")
+        if samplerate not in (None, ""):
+            parts.append(f"{samplerate}Hz")
+
+        parts.append(f"ID {track_id}")
+        return " / ".join(parts)
+
+    def _audio_track_detail_parts(self, raw_track: object) -> list[str]:
+        if not isinstance(raw_track, dict):
+            return []
+
+        parts: list[str] = []
+
+        codec = str(raw_track.get("codec") or raw_track.get("audio-codec") or "").strip().upper()
+        if codec:
+            parts.append(codec)
+
+        channels = raw_track.get("audio-channels")
+        if channels in (None, ""):
+            channels = raw_track.get("channels")
+        if channels not in (None, ""):
+            parts.append(f"{channels}ch")
+
+        samplerate = raw_track.get("audio-samplerate")
+        if samplerate in (None, ""):
+            samplerate = raw_track.get("samplerate")
+        if samplerate not in (None, ""):
+            parts.append(f"{samplerate}Hz")
+
+        return parts
+
     def _is_preferred_audio_track(self, track: AudioTrack) -> bool:
         if track.lang in {"zh", "chi", "zho", "cmn"}:
             return True
@@ -810,7 +859,7 @@ class MpvWidget(QWidget):
         except Exception:
             return []
 
-        tracks: list[AudioTrack] = []
+        track_entries: list[tuple[int, str, str, bool, bool, object]] = []
         for raw_track in raw_tracks:
             if raw_track.get("type") != "audio" or raw_track.get("external"):
                 continue
@@ -818,14 +867,41 @@ class MpvWidget(QWidget):
             lang = str(raw_track.get("lang") or "").strip().lower()
             is_default = bool(raw_track.get("default"))
             is_forced = bool(raw_track.get("forced"))
+            track_entries.append(
+                (
+                    int(raw_track["id"]),
+                    title,
+                    lang,
+                    is_default,
+                    is_forced,
+                    raw_track,
+                )
+            )
+
+        base_labels = [
+            self._audio_track_label(title, lang, is_default, is_forced, index + 1)
+            for index, (_, title, lang, is_default, is_forced, _) in enumerate(track_entries)
+        ]
+        duplicate_labels = {label for label in base_labels if base_labels.count(label) > 1}
+
+        tracks: list[AudioTrack] = []
+        for index, (track_id, title, lang, is_default, is_forced, raw_track) in enumerate(track_entries):
+            label = base_labels[index]
+            detail_parts = self._audio_track_detail_parts(raw_track)
+            if label in duplicate_labels:
+                if detail_parts:
+                    detail_parts.append(f"ID {track_id}")
+                else:
+                    detail_parts = [f"ID {track_id}"]
+                label = f"{label} [{ ' / '.join(detail_parts) }]"
             tracks.append(
                 AudioTrack(
-                    id=int(raw_track["id"]),
+                    id=track_id,
                     title=title,
                     lang=lang,
                     is_default=is_default,
                     is_forced=is_forced,
-                    label=self._audio_track_label(title, lang, is_default, is_forced, len(tracks) + 1),
+                    label=label,
                 )
             )
         return tracks

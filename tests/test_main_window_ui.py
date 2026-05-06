@@ -429,6 +429,125 @@ def test_main_window_global_search_includes_pansou_when_enabled(qtbot) -> None:
     assert pansou.search_calls == [("庆余年", 1)]
 
 
+def test_main_window_global_search_treats_drive_url_as_direct_detail_open(qtbot, monkeypatch) -> None:
+    telegram = SearchableController([])
+    emby = SearchableController([])
+    jellyfin = SearchableController([])
+    feiniu = SearchableController([])
+    drive_calls: list[str] = []
+    opened: list[OpenPlayerRequest] = []
+
+    def load_drive_detail(link: str) -> dict:
+        drive_calls.append(link)
+        return {
+            "list": [
+                {
+                    "vod_id": "1$91792$1",
+                    "vod_name": "夸克资源",
+                    "vod_play_url": "第1集$https://media.example/quark-1.m3u8#第2集$https://media.example/quark-2.m3u8",
+                }
+            ]
+        }
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=jellyfin,
+        feiniu_controller=feiniu,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        drive_detail_loader=load_drive_detail,
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("https://pan.quark.cn/s/demo")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+
+    assert drive_calls == ["https://pan.quark.cn/s/demo"]
+    assert telegram.search_calls == []
+    assert emby.search_calls == []
+    assert jellyfin.search_calls == []
+    assert feiniu.search_calls == []
+    assert opened[0].vod.vod_name == "夸克资源"
+    assert [item.title for item in opened[0].playlist] == ["第1集", "第2集"]
+    assert opened[0].source_vod_id == "https://pan.quark.cn/s/demo"
+
+
+def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, monkeypatch) -> None:
+    class FakeParserService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            self.calls.append((flag, url, preferred_key))
+            return type(
+                "Result",
+                (),
+                {
+                    "parser_key": "jx1",
+                    "url": "https://media.example/parsed.m3u8",
+                    "headers": {"Referer": "https://site.example"},
+                },
+            )()
+
+    telegram = SearchableController([])
+    emby = SearchableController([])
+    jellyfin = SearchableController([])
+    feiniu = SearchableController([])
+    parser_service = FakeParserService()
+    opened: list[OpenPlayerRequest] = []
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=jellyfin,
+        feiniu_controller=feiniu,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(preferred_parse_key="jx1"),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=parser_service,
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("https://v.qq.com/x/cover/demo.html")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+
+    assert telegram.search_calls == []
+    assert emby.search_calls == []
+    assert jellyfin.search_calls == []
+    assert feiniu.search_calls == []
+    assert opened[0].source_kind == "direct"
+    assert opened[0].source_mode == "parse"
+    assert opened[0].source_vod_id == "https://v.qq.com/x/cover/demo.html"
+    assert opened[0].playlist[0].parse_required is True
+    assert opened[0].playlist[0].url == ""
+
+    opened[0].playback_loader(opened[0].playlist[0])
+
+    assert parser_service.calls == [("", "https://v.qq.com/x/cover/demo.html", "jx1")]
+    assert opened[0].playlist[0].url == "https://media.example/parsed.m3u8"
+    assert opened[0].playlist[0].headers == {"Referer": "https://site.example"}
+
+
 def test_main_window_opening_pansou_result_restores_browse_tab_and_path(qtbot, monkeypatch) -> None:
     pansou = SearchableResolveController([_vod("盘搜结果", vod_id="pan-1")], resolved_path="/Movies/Resolved", total=1)
 
