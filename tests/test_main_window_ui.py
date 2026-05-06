@@ -520,6 +520,7 @@ def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, m
         config=AppConfig(preferred_parse_key="jx1"),
         plugin_manager=FakePluginManager(),
         playback_parser_service=parser_service,
+        direct_parse_detail_loader=lambda _url: {},
     )
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
 
@@ -535,9 +536,10 @@ def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, m
     assert emby.search_calls == []
     assert jellyfin.search_calls == []
     assert feiniu.search_calls == []
-    assert opened[0].source_kind == "direct"
+    assert opened[0].source_kind == "direct_parse"
     assert opened[0].source_mode == "parse"
     assert opened[0].source_vod_id == "https://v.qq.com/x/cover/demo.html"
+    assert opened[0].use_local_history is False
     assert opened[0].playlist[0].parse_required is True
     assert opened[0].playlist[0].url == ""
 
@@ -546,6 +548,99 @@ def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, m
     assert parser_service.calls == [("", "https://v.qq.com/x/cover/demo.html", "jx1")]
     assert opened[0].playlist[0].url == "https://media.example/parsed.m3u8"
     assert opened[0].playlist[0].headers == {"Referer": "https://site.example"}
+
+
+def test_main_window_global_search_builds_episode_playlist_from_direct_parse_detail(qtbot, monkeypatch) -> None:
+    class FakeParserService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            self.calls.append((flag, url, preferred_key))
+            return type(
+                "Result",
+                (),
+                {
+                    "parser_key": "jx1",
+                    "url": f"https://media.example/{url.rsplit('/', 1)[-1]}.m3u8",
+                    "headers": {"Referer": "https://site.example"},
+                },
+            )()
+
+    def load_detail(url: str) -> dict:
+        assert url == "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
+        return {
+            "vod_code": 200,
+            "vod_type": "动漫",
+            "vod_title": "剑来 第二季",
+            "vod_year": "2025",
+            "vod_updateTo": "VIP · 全27集 · 21621",
+            "vod_pic": "https://image.example/poster.jpg",
+            "vod_form": "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html",
+            "vod_desc": "desc",
+            "vod_episodes": [
+                {
+                    "name": "第09话",
+                    "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/y4101fhe180.html",
+                },
+                {
+                    "name": "第10话",
+                    "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html",
+                },
+                {
+                    "name": "第11话",
+                    "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/a4101bma2qf.html",
+                },
+            ],
+        }
+
+    parser_service = FakeParserService()
+    opened: list[OpenPlayerRequest] = []
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(preferred_parse_key="jx1"),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=parser_service,
+        direct_parse_detail_loader=load_detail,
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+
+    assert opened[0].vod.vod_name == "剑来 第二季"
+    assert opened[0].source_kind == "direct_parse"
+    assert opened[0].vod.type_name == "动漫"
+    assert opened[0].vod.vod_year == "2025"
+    assert opened[0].vod.vod_remarks == "VIP · 全27集 · 21621"
+    assert [item.title for item in opened[0].playlist] == ["第09话", "第10话", "第11话"]
+    assert opened[0].clicked_index == 1
+    assert opened[0].use_local_history is False
+    assert all(item.parse_required for item in opened[0].playlist)
+    assert opened[0].playlist[1].original_url == "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
+    assert opened[0].playlist[2].url == ""
+
+    opened[0].playback_loader(opened[0].playlist[2])
+
+    assert parser_service.calls == [
+        ("", "https://v.qq.com/x/cover/mzc00200xxpsogl/a4101bma2qf.html", "jx1")
+    ]
+    assert opened[0].playlist[2].url == "https://media.example/a4101bma2qf.html.m3u8"
+    assert opened[0].playlist[2].headers == {"Referer": "https://site.example"}
 
 
 def test_main_window_opening_pansou_result_restores_browse_tab_and_path(qtbot, monkeypatch) -> None:

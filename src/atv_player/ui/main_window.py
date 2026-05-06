@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
+import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QIcon
 from PySide6.QtWidgets import (
@@ -97,6 +98,7 @@ _SUPPORTED_DRIVE_DOMAINS = (
     "189.cn",
     "baidu.com",
 )
+_DIRECT_PARSE_DETAIL_API = "https://dmku.hls.one/"
 
 
 def _plugin_value(definition: Any, key: str):
@@ -119,6 +121,18 @@ def _looks_like_drive_share_link(value: str) -> bool:
         return False
     hostname = (urlparse(candidate).hostname or "").lower()
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
+
+
+def load_direct_parse_detail(url: str) -> dict[str, Any]:
+    response = httpx.get(
+        _DIRECT_PARSE_DETAIL_API,
+        params={"ac": "list", "url": url},
+        timeout=10.0,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {}
 
 
 class _PluginController(Protocol):
@@ -200,6 +214,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             spider_plugins=None,
             plugin_manager=None,
             drive_detail_loader=None,
+            direct_parse_detail_loader=None,
+            direct_parse_playback_history_loader=None,
+            direct_parse_playback_history_saver=None,
             show_bilibili_tab: bool = False,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
@@ -215,6 +232,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
+        self._direct_parse_detail_loader = direct_parse_detail_loader
+        self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
+        self._direct_parse_playback_history_saver = direct_parse_playback_history_saver
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self._static_tab_definitions: list[_TabDefinition] = []
@@ -744,6 +764,24 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _build_direct_parse_request(self, url: str) -> OpenPlayerRequest:
         if self._playback_parser_service is None:
             raise ValueError("当前未配置内置解析")
+        history_loader, history_saver = self._direct_parse_history_hooks(url)
+
+        def load_item(current_item: PlayItem):
+            source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
+            result = self._playback_parser_service.resolve(
+                "",
+                source_url,
+                preferred_key=getattr(self.config, "preferred_parse_key", ""),
+            )
+            current_item.url = result.url
+            current_item.original_url = source_url
+            current_item.headers = dict(result.headers)
+            current_item.parse_required = True
+            return None
+
+        detailed_request = self._build_direct_parse_detail_request(url, load_item)
+        if detailed_request is not None:
+            return detailed_request
 
         item = PlayItem(
             title="解析播放",
@@ -753,29 +791,83 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             parse_required=True,
         )
 
-        def load_item(current_item: PlayItem):
-            result = self._playback_parser_service.resolve(
-                "",
-                url,
-                preferred_key=getattr(self.config, "preferred_parse_key", ""),
-            )
-            print(result)
-            current_item.url = result.url
-            current_item.original_url = url
-            current_item.headers = dict(result.headers)
-            current_item.parse_required = True
-            return None
-
         return OpenPlayerRequest(
             vod=VodItem(vod_id=url, vod_name=url),
             playlist=[item],
             clicked_index=0,
-            source_kind="direct",
+            source_kind="direct_parse",
             source_mode="parse",
             source_vod_id=url,
             playback_loader=load_item,
             async_playback_loader=True,
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )
+
+    def _build_direct_parse_detail_request(self, url: str, load_item) -> OpenPlayerRequest | None:
+        history_loader, history_saver = self._direct_parse_history_hooks(url)
+        if self._direct_parse_detail_loader is None:
+            return None
+        try:
+            payload = self._direct_parse_detail_loader(url)
+        except Exception:
+            return None
+        playlist = self._build_direct_parse_playlist(payload)
+        if not playlist:
+            return None
+        clicked_index = next((index for index, item in enumerate(playlist) if item.original_url == url), 0)
+        return OpenPlayerRequest(
+            vod=VodItem(
+                vod_id=str(payload.get("vod_form") or url),
+                vod_name=str(payload.get("vod_title") or url),
+                vod_pic=str(payload.get("vod_pic") or ""),
+                vod_remarks=str(payload.get("vod_updateTo") or ""),
+                type_name=str(payload.get("vod_type") or ""),
+                vod_content=str(payload.get("vod_desc") or ""),
+                vod_year=str(payload.get("vod_year") or ""),
+            ),
+            playlist=playlist,
+            clicked_index=clicked_index,
+            source_kind="direct_parse",
+            source_mode="parse",
+            source_vod_id=url,
+            source_clicked_vod_id=str(payload.get("vod_form") or url),
+            playback_loader=load_item,
+            async_playback_loader=True,
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
+        )
+
+    def _direct_parse_history_hooks(self, url: str) -> tuple[Any, Any]:
+        history_loader = None
+        if self._direct_parse_playback_history_loader is not None:
+            history_loader = lambda source_vod_id=url: self._direct_parse_playback_history_loader(source_vod_id)
+        history_saver = None
+        if self._direct_parse_playback_history_saver is not None:
+            history_saver = lambda payload, source_vod_id=url: self._direct_parse_playback_history_saver(source_vod_id, payload)
+        return history_loader, history_saver
+
+    def _build_direct_parse_playlist(self, payload: dict[str, Any]) -> list[PlayItem]:
+        playlist: list[PlayItem] = []
+        for episode in payload.get("vod_episodes") or []:
+            if not isinstance(episode, dict):
+                continue
+            episode_url = str(episode.get("url") or "").strip()
+            if not episode_url:
+                continue
+            playlist.append(
+                PlayItem(
+                    title=str(episode.get("name") or episode.get("title") or f"第{len(playlist) + 1}集"),
+                    url="",
+                    original_url=episode_url,
+                    vod_id=episode_url,
+                    parse_required=True,
+                    index=len(playlist),
+                )
+            )
+        return playlist
 
     def _start_direct_open_from_global_search(self, keyword: str) -> bool:
         if not _looks_like_http_url(keyword):
@@ -783,12 +875,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if _looks_like_drive_share_link(keyword):
             self._start_open_request(lambda: self._build_drive_detail_request(keyword))
             return True
-        try:
-            request = self._build_direct_parse_request(keyword)
-        except Exception as exc:
-            self.show_error(str(exc))
+        if self._playback_parser_service is None:
+            self.show_error("当前未配置内置解析")
             return True
-        self.open_player(request)
+        self._start_open_request(lambda: self._build_direct_parse_request(keyword))
         return True
 
     def _start_global_search(self) -> None:
@@ -1029,6 +1119,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         return None
 
     def open_history_detail(self, record: HistoryRecord) -> None:
+        if record.source_kind == "direct_parse":
+            self._start_open_request(lambda: self._build_direct_parse_request(record.key))
+            return
         if record.source_kind == "spider_plugin":
             plugin_id = record.source_key or str(record.source_plugin_id or "")
             controller = self._plugin_controller_by_id(plugin_id)
@@ -1361,7 +1454,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _build_restore_request(self) -> OpenPlayerRequest | None:
         mode = self.config.last_playback_mode
         source = self.config.last_playback_source or "browse"
-        if mode == "parse" and source == "direct" and self.config.last_playback_vod_id:
+        if mode == "parse" and source in {"direct", "direct_parse"} and self.config.last_playback_vod_id:
             return self._build_direct_parse_request(self.config.last_playback_vod_id)
         if mode in {"detail", "custom"} and self.config.last_playback_vod_id:
             return self._build_detail_restore_request(source, self.config.last_playback_vod_id)

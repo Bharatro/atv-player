@@ -215,6 +215,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             return record.source_name or "Jellyfin"
         if record.source_kind == "feiniu":
             return record.source_name or "飞牛影视"
+        if record.source_kind == "direct_parse":
+            return record.source_name or "全局解析"
         return "远程"
 
     def _format_episode(self, episode: int) -> str:

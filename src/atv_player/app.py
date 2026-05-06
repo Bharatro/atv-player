@@ -37,7 +37,7 @@ from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
 from atv_player.ui.login_window import LoginWindow
-from atv_player.ui.main_window import MainWindow
+from atv_player.ui.main_window import MainWindow, load_direct_parse_detail
 from atv_player.ui.icon_cache import load_icon
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -350,6 +350,18 @@ class AppCoordinator(QObject):
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
+            direct_parse_detail_loader=load_direct_parse_detail,
+            direct_parse_playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("direct_parse", vod_id),
+            direct_parse_playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "direct_parse",
+                vod_id,
+                payload,
+                source_name="全局解析",
+            ),
             show_bilibili_tab=bool(capabilities.get("bilibili")),
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),

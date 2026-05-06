@@ -2185,6 +2185,81 @@ def test_main_window_opens_remote_history_detail_asynchronously(qtbot, monkeypat
     assert opened[0].source_vod_id == "history-vod-1"
 
 
+def test_main_window_opens_direct_parse_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    class FakeParserService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            self.calls.append((flag, url, preferred_key))
+            return type(
+                "Result",
+                (),
+                {
+                    "parser_key": "jx1",
+                    "url": "https://media.example/parsed.m3u8",
+                    "headers": {"Referer": "https://site.example"},
+                },
+            )()
+
+    def load_detail(url: str) -> dict:
+        assert url == "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
+        return {
+            "vod_title": "剑来 第二季",
+            "vod_form": "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html",
+            "vod_episodes": [
+                {"name": "第09话", "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/y4101fhe180.html"},
+                {"name": "第10话", "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"},
+            ],
+        }
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(preferred_parse_key="jx1"),
+        playback_parser_service=FakeParserService(),
+        direct_parse_detail_loader=load_detail,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html",
+            vod_name="剑来 第二季",
+            vod_pic="",
+            vod_remarks="第10话",
+            episode=1,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="direct_parse",
+            source_name="全局解析",
+        )
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].source_kind == "direct_parse"
+    assert opened[0].source_vod_id == "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
+    assert opened[0].clicked_index == 1
+    assert opened[0].vod.vod_name == "剑来 第二季"
+
+
 def test_main_window_opens_plugin_history_detail_asynchronously(qtbot, monkeypatch) -> None:
     controller = AsyncPluginController(_make_telegram_request)
     window = MainWindow(
