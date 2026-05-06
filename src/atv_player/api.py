@@ -380,6 +380,12 @@ class ApiClient:
     def get_capabilities(self) -> dict[str, Any]:
         return self._request("GET", "/api/capabilities")
 
+    def get_video_cover(self) -> str:
+        data = self._request("GET", "/api/settings/video_cover")
+        if not isinstance(data, dict):
+            return ""
+        return str(data.get("value") or "")
+
     def get_text(self, url: str) -> str:
         logger.info("API text request url=%s", url)
         try:

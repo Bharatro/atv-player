@@ -207,6 +207,37 @@ def test_api_client_gets_capabilities_with_bilibili() -> None:
     assert client.get_capabilities()["bilibili"] is True
 
 
+def test_api_client_gets_video_cover_setting() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"name": "video_cover", "value": "https://img.example/cover.jpg"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_video_cover() == "https://img.example/cover.jpg"
+    assert seen == {"path": "/api/settings/video_cover", "query": ""}
+
+
+def test_api_client_get_video_cover_returns_empty_string_for_missing_value() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"name": "video_cover", "value": None})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_video_cover() == ""
+
+
 def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "DELETE"
