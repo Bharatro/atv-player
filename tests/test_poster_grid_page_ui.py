@@ -184,6 +184,34 @@ class EmptyValueFilterPosterController(FakeDoubanController):
         return super().load_items(category_id, page, filters)
 
 
+class TallFilterPosterController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.categories = [
+            DoubanCategory(
+                type_id="movie",
+                type_name="电影",
+                filters=[
+                    CategoryFilter(
+                        key=f"group-{index}",
+                        name=f"筛选组 {index + 1}",
+                        options=[
+                            CategoryFilterOption(
+                                name=f"很长的筛选选项 {index + 1}-{option + 1}",
+                                value=f"{index}-{option}",
+                            )
+                            for option in range(20)
+                        ],
+                    )
+                    for index in range(12)
+                ],
+            )
+        ]
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        return super().load_items(category_id, page, filters)
+
+
 def show_loaded_page(qtbot, page: PosterGridPage) -> PosterGridPage:
     qtbot.addWidget(page)
     page.show()
@@ -427,17 +455,29 @@ def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
     assert label.font().bold() is True
 
 
-def test_poster_grid_page_wraps_filters_in_scroll_area_with_max_height(qtbot) -> None:
-    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+def test_poster_grid_page_filter_scroll_area_uses_content_height_until_max(qtbot) -> None:
+    max_height = PosterGridPage._FILTER_PANEL_MAX_HEIGHT
+    short_page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+    short_page.resize(1400, 900)
 
-    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
-    page.filter_toggle_button.click()
-    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+    qtbot.waitUntil(lambda: short_page.selected_category_id == "movie")
+    short_page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: short_page.filter_panel.isHidden() is False)
 
-    assert page.filter_scroll_area.widget() is page.filter_panel
-    assert page.filter_scroll_area.maximumHeight() == 310
-    assert page.filter_scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert page.filter_scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert short_page.filter_scroll_area.widget() is short_page.filter_panel
+    assert 0 < short_page.filter_scroll_area.height() < 80
+    assert short_page.filter_scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert short_page.filter_scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    tall_page = show_loaded_page(qtbot, PosterGridPage(TallFilterPosterController(), click_action="open", search_enabled=True))
+    tall_page.resize(700, 900)
+
+    qtbot.waitUntil(lambda: tall_page.selected_category_id == "movie")
+    tall_page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: tall_page.filter_panel.isHidden() is False)
+    qtbot.waitUntil(lambda: tall_page.filter_scroll_area.verticalScrollBar().maximum() > 0)
+
+    assert tall_page.filter_scroll_area.height() == max_height
 
 
 def test_poster_grid_page_uses_plugin_empty_filter_button_without_extra_default(qtbot) -> None:

@@ -209,6 +209,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.filter_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.filter_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.filter_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.filter_scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.filter_scroll_area.setWidget(self.filter_panel)
         self.filter_scroll_area.setMaximumHeight(self._FILTER_PANEL_MAX_HEIGHT)
         self.filter_scroll_area.hide()
@@ -389,6 +390,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.filter_scroll_area.hide()
             self.filter_panel.hide()
             return
+        self._sync_filter_scroll_area_height()
         self.filter_toggle_button.show()
         self.filter_scroll_area.hide()
         self.filter_panel.hide()
@@ -433,6 +435,21 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         is_hidden = self.filter_scroll_area.isHidden()
         self.filter_scroll_area.setVisible(is_hidden)
         self.filter_panel.setVisible(is_hidden)
+        if is_hidden:
+            self._sync_filter_scroll_area_height()
+
+    def _sync_filter_scroll_area_height(self) -> None:
+        if not self.filter_buttons:
+            return
+        self.filter_panel_layout.invalidate()
+        self.filter_panel_layout.activate()
+        width = max(1, self.filter_scroll_area.viewport().width(), self.filter_panel.width())
+        if self.filter_panel_layout.hasHeightForWidth():
+            content_height = self.filter_panel_layout.heightForWidth(width)
+        else:
+            content_height = self.filter_panel_layout.sizeHint().height()
+        content_height = max(1, content_height)
+        self.filter_scroll_area.setFixedHeight(min(content_height, self._FILTER_PANEL_MAX_HEIGHT))
 
     def _set_button_cursor(self, button: QPushButton | QToolButton) -> None:
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -826,5 +843,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        if self.filter_buttons:
+            self._sync_filter_scroll_area_height()
         if self.card_buttons:
             self._relayout_cards()
