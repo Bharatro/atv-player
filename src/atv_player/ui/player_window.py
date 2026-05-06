@@ -291,6 +291,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
+        self._video_picture_state = "idle"
         self._auto_advance_locked = False
         self._danmaku_track_id: int | None = None
         self._danmaku_temp_path: Path | None = None
@@ -348,7 +349,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video_widget.context_menu_requested.connect(self._show_video_context_menu_at_cursor)
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
-        self.video_widget.playback_failed.connect(self._append_log)
+        self.video_widget.playback_failed.connect(self._handle_playback_failed)
+        self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
         self.playlist_group_combo = QComboBox()
         self.playlist_group_combo.setHidden(True)
@@ -837,6 +839,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_parse_combo_enabled_state()
         if session.initial_log_message:
             self._append_log(session.initial_log_message)
+        self._handle_video_picture_state_changed("loading")
         if not session.playlist:
             self.report_timer.start()
             self.progress_timer.start()
@@ -1203,6 +1206,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._clear_poster()
         self._start_poster_load(source, self._poster_request_id)
+
+    def _handle_video_picture_state_changed(self, state: str) -> None:
+        self._video_picture_state = state
+        if state == "visible":
+            self._video_surface_ready = True
+            self.video_poster_overlay.hide()
+            return
+        self._video_surface_ready = False
+        pixmap = self.poster_label.pixmap()
+        if pixmap is not None and not pixmap.isNull():
+            self._show_video_poster_overlay(pixmap)
+        if state == "unavailable":
+            self._append_log("当前媒体没有可用视频画面，已显示封面")
+
+    def _handle_playback_failed(self, message: str) -> None:
+        self._append_log(message)
+        self._video_surface_ready = False
+        pixmap = self.poster_label.pixmap()
+        if pixmap is not None and not pixmap.isNull():
+            self._show_video_poster_overlay(pixmap)
 
     def _reset_log(self) -> None:
         self.log_view.clear()
@@ -3520,9 +3543,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         duration = self.video.duration_seconds() if hasattr(self.video, "duration_seconds") else 0
         position = self.video.position_seconds() or 0
-        if duration > 0 or position > 0:
-            self._video_surface_ready = True
-            self.video_poster_overlay.hide()
         if (
             not self._auto_advance_locked
             and self.session is not None

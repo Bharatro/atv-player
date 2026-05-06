@@ -1599,7 +1599,7 @@ def test_player_window_ignores_stale_async_poster_results(qtbot, monkeypatch) ->
     assert rendered.toImage().pixelColor(0, 0) == QColor("blue")
 
 
-def test_player_window_shows_loaded_poster_over_video_until_playback_progress_appears(qtbot) -> None:
+def test_player_window_shows_loaded_poster_over_video_until_visible_picture_signal_arrives(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self._duration = 0
@@ -1642,10 +1642,86 @@ def test_player_window_shows_loaded_poster_over_video_until_playback_progress_ap
     assert window.video_poster_overlay.pixmap() is not None
     assert window.video_poster_overlay.pixmap().isNull() is False
 
-    window.video._duration = 120
-    window._sync_progress_slider()
+    window._handle_video_picture_state_changed("visible")
 
     assert window.video_poster_overlay.isHidden() is True
+
+
+def test_player_window_hides_video_poster_overlay_after_visible_picture_signal(qtbot) -> None:
+    image = QImage(24, 36, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.red)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img.example/poster.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_picture_state_changed("loading")
+
+    assert window.video_poster_overlay.isHidden() is False
+
+    window._handle_video_picture_state_changed("visible")
+
+    assert window.video_poster_overlay.isHidden() is True
+
+
+def test_player_window_shows_video_poster_overlay_again_after_playback_failure(qtbot) -> None:
+    image = QImage(24, 36, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.red)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img.example/poster.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_picture_state_changed("visible")
+
+    assert window.video_poster_overlay.isHidden() is True
+
+    window._handle_playback_failed("播放失败: HTTP 403 Forbidden")
+
+    assert window.video_poster_overlay.isHidden() is False
+    assert "播放失败: HTTP 403 Forbidden" in window.log_view.toPlainText()
+
+
+def test_player_window_shows_video_poster_overlay_when_picture_becomes_unavailable(qtbot) -> None:
+    image = QImage(24, 36, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.red)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img.example/poster.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    window._handle_poster_load_finished(window._poster_request_id, image)
+
+    window._handle_video_picture_state_changed("unavailable")
+
+    assert window.video_poster_overlay.isHidden() is False
+    assert "当前媒体没有可用视频画面，已显示封面" in window.log_view.toPlainText()
 
 
 def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loaded(qtbot) -> None:
