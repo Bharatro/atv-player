@@ -1354,6 +1354,63 @@ def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) 
     assert rendered.size().height() <= window.poster_label.maximumHeight()
 
 
+def test_player_window_prefers_session_poster_before_default_video_cover(qtbot, tmp_path) -> None:
+    session_poster = tmp_path / "session.png"
+    pixmap = QPixmap(24, 36)
+    pixmap.fill(QColor("red"))
+    assert pixmap.save(str(session_poster)) is True
+
+    loader_calls: list[str] = []
+    window = PlayerWindow(
+        FakePlayerController(),
+        default_video_cover_loader=lambda: loader_calls.append("called") or "https://img.example/fallback.jpg",
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic=str(session_poster)),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert loader_calls == []
+    assert window.poster_label.pixmap() is not None
+    assert window.poster_label.pixmap().isNull() is False
+
+
+def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtbot, monkeypatch) -> None:
+    started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int) -> None:
+        started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    window = PlayerWindow(
+        FakePlayerController(),
+        default_video_cover_loader=lambda: "https://img.example/fallback.jpg",
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic=""),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert started == ["https://img.example/fallback.jpg"]
+
+
 def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:

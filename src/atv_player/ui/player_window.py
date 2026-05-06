@@ -251,6 +251,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         save_config=None,
         m3u8_ad_filter=None,
         playback_parser_service=None,
+        default_video_cover_loader=None,
     ) -> None:
         super().__init__()
         self._init_async_guard()
@@ -259,6 +260,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter or M3U8AdFilter()
         self._playback_parser_service = playback_parser_service
+        self._default_video_cover_loader = default_video_cover_loader
+        self._default_video_cover_source: str | None = None
         self.session = None
         self.current_index = 0
         self.current_speed = 1.0
@@ -1162,13 +1165,33 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.setPixmap(pixmap)
         self._show_video_poster_overlay(pixmap)
 
+    def _resolve_default_video_cover_source(self) -> str:
+        if self._default_video_cover_source is not None:
+            return self._default_video_cover_source
+        loader = self._default_video_cover_loader
+        if not callable(loader):
+            self._default_video_cover_source = ""
+            return ""
+        try:
+            self._default_video_cover_source = str(loader() or "")
+        except Exception:
+            self._default_video_cover_source = ""
+        return self._default_video_cover_source
+
+    def _preferred_poster_source(self) -> str:
+        if self.session is None:
+            return ""
+        if self.session.vod.vod_pic:
+            return self.session.vod.vod_pic
+        return self._resolve_default_video_cover_source()
+
     def _render_poster(self) -> None:
         self._poster_request_id += 1
         self._video_surface_ready = False
         if self.session is None:
             self._clear_poster()
             return
-        source = self.session.vod.vod_pic
+        source = self._preferred_poster_source()
         if not source:
             self._clear_poster()
             return
