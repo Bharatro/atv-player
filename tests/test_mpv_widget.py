@@ -721,6 +721,7 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
             self.play_calls: list[str] = []
             self.pause = False
             self._track_list_observer = None
+            self._video_out_observer = None
 
         def event_callback(self, *event_types):
             def register(callback):
@@ -729,8 +730,11 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
             return register
 
         def observe_property(self, name: str, handler) -> None:
-            assert name == "track-list"
-            self._track_list_observer = handler
+            if name == "track-list":
+                self._track_list_observer = handler
+                return
+            assert name == "video-out-params"
+            self._video_out_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -1234,6 +1238,7 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             self.play_calls: list[str] = []
             self.pause = False
             self._track_list_observer = None
+            self._video_out_observer = None
 
         def event_callback(self, *event_types):
             def register(callback):
@@ -1242,8 +1247,11 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             return register
 
         def observe_property(self, name: str, handler) -> None:
-            assert name == "track-list"
-            self._track_list_observer = handler
+            if name == "track-list":
+                self._track_list_observer = handler
+                return
+            assert name == "video-out-params"
+            self._video_out_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
