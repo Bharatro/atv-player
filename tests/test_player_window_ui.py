@@ -890,6 +890,58 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     ]
 
 
+def test_player_window_rewrites_direct_parse_result_to_local_proxy_url(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return ".m3u8" in url
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u?v=proxy-direct-1"
+
+    def load_item(item: PlayItem) -> None:
+        item.url = "https://api.hls.one:4433/Cache/qq/parsed.m3u8?vkey=demo"
+        item.original_url = "https://jx.xmflv.com/?url=https://v.qq.com/x/cover/demo/vid123.html"
+        item.headers = {"Referer": "https://jx.xmflv.com/"}
+        item.parse_required = True
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="解析播放",
+                url="",
+                original_url="https://jx.xmflv.com/?url=https://v.qq.com/x/cover/demo/vid123.html",
+                vod_id="https://v.qq.com/x/cover/demo/vid123.html",
+                parse_required=True,
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = load_item
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?v=proxy-direct-1", 0)])
+    assert filter_service.calls == [
+        (
+            "https://api.hls.one:4433/Cache/qq/parsed.m3u8?vkey=demo",
+            {"Referer": "https://jx.xmflv.com/"},
+        )
+    ]
+    assert session.playlist[0].original_url == "https://api.hls.one:4433/Cache/qq/parsed.m3u8?vkey=demo"
+
+
 def test_player_window_rewrites_dash_data_uri_to_local_proxy_url(qtbot) -> None:
     class FakeM3U8AdFilter:
         def __init__(self) -> None:

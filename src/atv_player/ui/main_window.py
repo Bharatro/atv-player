@@ -759,6 +759,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 url,
                 preferred_key=getattr(self.config, "preferred_parse_key", ""),
             )
+            print(result)
             current_item.url = result.url
             current_item.original_url = url
             current_item.headers = dict(result.headers)

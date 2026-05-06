@@ -132,15 +132,10 @@ class BuiltInPlaybackParserService:
     def _ordered_parsers(self, url: str, preferred_key: str) -> list[BuiltInPlaybackParser]:
         if self._is_xmflv_wrapper_url(url):
             return [parser for parser in self._parsers if parser.key == "xm"]
-        if preferred_key == "xm":
-            preferred = [parser for parser in self._parsers if parser.key == "xm"]
-            remaining = [parser for parser in self._parsers if parser.key != "xm"]
-            return [*preferred, *remaining]
-        available = [parser for parser in self._parsers if parser.key != "xm"]
         if not preferred_key:
-            return available
-        preferred = [parser for parser in available if parser.key == preferred_key]
-        remaining = [parser for parser in available if parser.key != preferred_key]
+            return list(self._parsers)
+        preferred = [parser for parser in self._parsers if parser.key == preferred_key]
+        remaining = [parser for parser in self._parsers if parser.key != preferred_key]
         return [*preferred, *remaining]
 
     def _resolve_with_parser(self, parser: BuiltInPlaybackParser, flag: str, url: str) -> BuiltInPlaybackParserResult:

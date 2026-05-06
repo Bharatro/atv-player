@@ -1278,7 +1278,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None:
             return False
         current_item = self.session.playlist[self.current_index]
-        source_url = current_item.original_url or current_item.url
+        source_url = self._playback_prepare_source_url(current_item)
         if source_url.startswith(self._DASH_DATA_URI_PREFIX) and not current_item.original_url:
             current_item.original_url = source_url
         should_prepare = getattr(self._m3u8_ad_filter, "should_prepare", None)
@@ -1325,6 +1325,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         self._enqueue_controller_task("播放地址预处理失败", prepare)
         return True
+
+    def _playback_prepare_source_url(self, current_item: PlayItem) -> str:
+        preferred_url = (current_item.original_url or current_item.url).strip()
+        resolved_url = current_item.url.strip()
+        if not current_item.parse_required or not preferred_url or not resolved_url or preferred_url == resolved_url:
+            return preferred_url
+
+        should_prepare = getattr(self._m3u8_ad_filter, "should_prepare", None)
+        if callable(should_prepare):
+            if not should_prepare(preferred_url) and should_prepare(resolved_url):
+                return resolved_url
+            return preferred_url
+        if ".m3u8" not in preferred_url.lower() and ".m3u8" in resolved_url.lower():
+            return resolved_url
+        return preferred_url
 
     def _restore_current_index(self, previous_index: int) -> None:
         self.current_index = previous_index
@@ -1433,8 +1448,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_prepare.index:
             return
         current_item = self.session.playlist[self.current_index]
-        if pending_prepare.source_url.startswith(self._DASH_DATA_URI_PREFIX):
-            current_item.original_url = pending_prepare.source_url
+        current_item.original_url = pending_prepare.source_url
         if pending_prepare.requested_dash_video_id:
             current_item.dash_video_id = pending_prepare.requested_dash_video_id
         current_item.url = prepared_url

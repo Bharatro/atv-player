@@ -15,24 +15,33 @@ def _encrypt_xm_payload(text: str, key: str, iv: str) -> str:
 
 
 def test_parser_service_tries_saved_parser_first_and_falls_back() -> None:
-    calls: list[tuple[str, dict[str, str]]] = []
+    calls: list[str] = []
+    post_calls: list[str] = []
 
     def fake_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
-        calls.append((url, headers))
+        calls.append(url)
         if "sspa8.top:8100/api/?key=1060089351&" in url:
+            return httpx.Response(200, json={"parse": 1, "jx": 1, "url": "https://page.example/watch"})
+        if "bd.jx.cn" in url:
             return httpx.Response(200, json={"parse": 1, "jx": 1, "url": "https://page.example/watch"})
         if "kalbim.xatut.top/kalbim2025/781718/play/video_player.php" in url:
             return httpx.Response(200, json={"parse": 1, "jx": 1, "url": "https://page.example/watch"})
         return httpx.Response(200, json={"parse": 0, "jx": 0, "url": "https://media.example/real.m3u8"})
 
-    service = BuiltInPlaybackParserService(get=fake_get)
+    def fake_post(url: str, data: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        post_calls.append(url)
+        return httpx.Response(200, json={})
+
+    service = BuiltInPlaybackParserService(get=fake_get, post=fake_post)
 
     result = service.resolve("qq", "https://site.example/play?id=1", preferred_key="jx1")
 
     assert result.parser_key == "jx2"
     assert result.url == "https://media.example/real.m3u8"
-    assert [url for url, _headers in calls][:3] == [
+    assert post_calls == ["https://api.hls.one:4433/Api"]
+    assert calls[:4] == [
         "http://sspa8.top:8100/api/?key=1060089351&",
+        "https://bd.jx.cn/",
         "https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php",
         "http://sspa8.top:8100/api/?cat_ext=eyJmbGFnIjpbInFxIiwi6IW+6K6vIiwicWl5aSIsIueIseWlh+iJuiIsIuWlh+iJuiIsInlvdWt1Iiwi5LyY6YW3Iiwic29odSIsIuaQnOeLkCIsImxldHYiLCLkuZDop4YiLCJtZ3R2Iiwi6IqS5p6cIiwidG5tYiIsInNldmVuIiwiYmlsaWJpbGkiLCIxOTA1Il0sImhlYWRlciI6eyJVc2VyLUFnZW50Ijoib2todHRwLzQuOS4xIn19&key=星睿4k&",
     ]
@@ -134,3 +143,42 @@ def test_parser_service_resolves_xmflv_wrapper_url() -> None:
     assert post_calls[0][1]["url"] == "https://v.qq.com/x/cover/demo/vid123.html"
     assert len(post_calls[0][1]["key"]) == 32
     assert post_calls[0][1]["sign"]
+
+
+def test_parser_service_uses_defined_order_by_default_including_xm() -> None:
+    get_calls: list[str] = []
+    post_calls: list[str] = []
+    decrypted_payload = (
+        'tg:@xmflv'
+        + json.dumps(
+            {
+                "url": "https://media.example/xm-default.m3u8",
+                "header": {"Referer": "https://jx.xmflv.com/"},
+            }
+        )
+    )
+
+    def fake_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        get_calls.append(url)
+        return httpx.Response(200, json={"parse": 0, "jx": 0, "url": "https://media.example/fallback.m3u8"})
+
+    def fake_post(url: str, data: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        post_calls.append(url)
+        return httpx.Response(
+            200,
+            json={
+                "code": 200,
+                "key": "1234567890abcdef",
+                "iv": "fedcba0987654321",
+                "data": _encrypt_xm_payload(decrypted_payload, "1234567890abcdef", "fedcba0987654321"),
+            },
+        )
+
+    service = BuiltInPlaybackParserService(get=fake_get, post=fake_post)
+
+    result = service.resolve("qq", "https://v.qq.com/x/cover/demo/vid123.html")
+
+    assert result.parser_key == "xm"
+    assert result.url == "https://media.example/xm-default.m3u8"
+    assert post_calls == ["https://api.hls.one:4433/Api"]
+    assert get_calls == []
