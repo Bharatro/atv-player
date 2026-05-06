@@ -427,6 +427,19 @@ def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
     assert label.font().bold() is True
 
 
+def test_poster_grid_page_wraps_filters_in_scroll_area_with_max_height(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    assert page.filter_scroll_area.widget() is page.filter_panel
+    assert page.filter_scroll_area.maximumHeight() == 310
+    assert page.filter_scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert page.filter_scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
 def test_poster_grid_page_uses_plugin_empty_filter_button_without_extra_default(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(EmptyValueFilterPosterController(), click_action="open", search_enabled=True))
 

@@ -122,6 +122,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     _CARD_SPACING = 16
     _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
+    _FILTER_PANEL_MAX_HEIGHT = 310
 
     def __init__(
         self,
@@ -151,6 +152,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.filter_toggle_button = QPushButton("筛选")
         self.filter_panel = QFrame()
         self.filter_panel_layout = QFormLayout(self.filter_panel)
+        self.filter_scroll_area = QScrollArea()
         self.breadcrumb_bar = QWidget()
         self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
         self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
@@ -203,6 +205,13 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.status_label.setWordWrap(True)
         self.breadcrumb_bar.setVisible(self._folder_navigation_enabled)
         self.filter_panel.hide()
+        self.filter_scroll_area.setWidgetResizable(True)
+        self.filter_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.filter_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.filter_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.filter_scroll_area.setWidget(self.filter_panel)
+        self.filter_scroll_area.setMaximumHeight(self._FILTER_PANEL_MAX_HEIGHT)
+        self.filter_scroll_area.hide()
         self.filter_toggle_button.hide()
         self._sync_category_list_visibility()
 
@@ -224,7 +233,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.clear_button.hide()
             self.refresh_button.hide()
             right.addWidget(self.filter_toggle_button)
-        right.addWidget(self.filter_panel)
+        right.addWidget(self.filter_scroll_area)
         right.addWidget(self.breadcrumb_bar)
         right.addWidget(self.status_label)
         right.addWidget(self.cards_scroll, 1)
@@ -365,6 +374,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         filters = list(getattr(category, "filters", [])) if category is not None else []
         if not filters:
             self.filter_toggle_button.hide()
+            self.filter_scroll_area.hide()
             self.filter_panel.hide()
             return
         state = self._category_filter_state.setdefault(category.type_id, self._default_filter_state(category))
@@ -376,9 +386,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.filter_panel_layout.addRow(self._build_filter_group_label(group.name), buttons_widget)
         if not self.filter_buttons or self._search_mode:
             self.filter_toggle_button.setHidden(True)
+            self.filter_scroll_area.hide()
             self.filter_panel.hide()
             return
         self.filter_toggle_button.show()
+        self.filter_scroll_area.hide()
         self.filter_panel.hide()
 
     def _build_filter_buttons(self, key: str, options, selected_value: str) -> QWidget:
@@ -418,7 +430,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _toggle_filters(self) -> None:
         if not self.filter_buttons or self._search_mode:
             return
-        self.filter_panel.setVisible(self.filter_panel.isHidden())
+        is_hidden = self.filter_scroll_area.isHidden()
+        self.filter_scroll_area.setVisible(is_hidden)
+        self.filter_panel.setVisible(is_hidden)
 
     def _set_button_cursor(self, button: QPushButton | QToolButton) -> None:
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -591,6 +605,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_keyword = keyword
         self.current_page = 1
         self.filter_toggle_button.hide()
+        self.filter_scroll_area.hide()
         self.filter_panel.hide()
         self._search_items(keyword, self.current_page)
 
