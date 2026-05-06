@@ -1721,7 +1721,7 @@ def test_player_window_shows_video_poster_overlay_when_picture_becomes_unavailab
     window._handle_video_picture_state_changed("unavailable")
 
     assert window.video_poster_overlay.isHidden() is False
-    assert "当前媒体没有可用视频画面，已显示封面" in window.log_view.toPlainText()
+    assert "当前媒体没有可用视频画面，已显示封面" not in window.log_view.toPlainText()
 
 
 def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loaded(qtbot) -> None:

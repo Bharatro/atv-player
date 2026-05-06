@@ -1217,8 +1217,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pixmap = self.poster_label.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
-        if state == "unavailable":
-            self._append_log("当前媒体没有可用视频画面，已显示封面")
 
     def _handle_playback_failed(self, message: str) -> None:
         self._append_log(message)
