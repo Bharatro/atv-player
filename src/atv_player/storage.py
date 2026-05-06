@@ -47,7 +47,9 @@ class SettingsRepository:
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB,
                     browse_content_splitter_state BLOB,
-                    last_selected_tab TEXT NOT NULL DEFAULT 'douban'
+                    last_selected_tab TEXT NOT NULL DEFAULT 'douban',
+                    last_selected_category_tab TEXT NOT NULL DEFAULT '',
+                    last_selected_category_id TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -127,6 +129,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_selected_tab TEXT NOT NULL DEFAULT 'douban'"
                 )
+            if "last_selected_category_tab" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_selected_category_tab TEXT NOT NULL DEFAULT ''"
+                )
+            if "last_selected_category_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_selected_category_id TEXT NOT NULL DEFAULT ''"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -154,9 +164,11 @@ class SettingsRepository:
                     player_window_geometry,
                     player_main_splitter_state,
                     browse_content_splitter_state,
-                    last_selected_tab
+                    last_selected_tab,
+                    last_selected_category_tab,
+                    last_selected_category_id
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, 0, '', 1, 1, NULL, NULL, NULL, NULL, 'douban')
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, 0, '', 1, 1, NULL, NULL, NULL, NULL, 'douban', '', '')
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -189,7 +201,9 @@ class SettingsRepository:
                     player_window_geometry,
                     player_main_splitter_state,
                     browse_content_splitter_state,
-                    last_selected_tab
+                    last_selected_tab,
+                    last_selected_category_tab,
+                    last_selected_category_id
                 FROM app_config
                 WHERE id = 1
                 """
@@ -231,7 +245,9 @@ class SettingsRepository:
                     player_window_geometry = ?,
                     player_main_splitter_state = ?,
                     browse_content_splitter_state = ?,
-                    last_selected_tab = ?
+                    last_selected_tab = ?,
+                    last_selected_category_tab = ?,
+                    last_selected_category_id = ?
                 WHERE id = 1
                 """,
                 (
@@ -259,6 +275,8 @@ class SettingsRepository:
                     config.player_main_splitter_state,
                     config.browse_content_splitter_state,
                     config.last_selected_tab,
+                    config.last_selected_category_tab,
+                    config.last_selected_category_id,
                 ),
             )
 

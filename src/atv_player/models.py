@@ -34,6 +34,8 @@ class AppConfig:
     player_main_splitter_state: bytes | None = None
     browse_content_splitter_state: bytes | None = None
     last_selected_tab: str = "douban"
+    last_selected_category_tab: str = ""
+    last_selected_category_id: str = ""
 
 
 @dataclass(slots=True)

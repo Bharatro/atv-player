@@ -253,11 +253,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.live_source_manager_button = QPushButton("直播源管理")
         self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
-        self.douban_page = PosterGridPage(douban_controller or _EmptyDoubanController())
+        self.douban_page = PosterGridPage(
+            douban_controller or _EmptyDoubanController(),
+            initial_category_id=self._initial_category_id_for_tab(config, "douban"),
+        )
         self.telegram_page = PosterGridPage(
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
+            initial_category_id=self._initial_category_id_for_tab(config, "telegram"),
         )
         self.bilibili_page = None
         if show_bilibili_tab:
@@ -266,11 +270,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab(config, "bilibili"),
             )
         self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
             folder_navigation_enabled=True,
+            initial_category_id=self._initial_category_id_for_tab(config, "live"),
         )
         self.emby_page = None
         if show_emby_tab:
@@ -279,6 +285,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab(config, "emby"),
             )
         self.jellyfin_page = None
         if show_jellyfin_tab:
@@ -287,6 +294,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab(config, "jellyfin"),
             )
         self.feiniu_page = None
         if show_feiniu_tab:
@@ -295,11 +303,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab(config, "feiniu"),
             )
         self.history_page = HistoryPage(history_controller)
         self.pansou_page = None
         if pansou_controller is not None:
-            self.pansou_page = PosterGridPage(pansou_controller, click_action="open")
+            self.pansou_page = PosterGridPage(
+                pansou_controller,
+                click_action="open",
+                initial_category_id=self._initial_category_id_for_tab(config, "pansou"),
+            )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
@@ -526,18 +539,42 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.pansou_page.item_open_requested.connect(self._handle_pansou_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
+        self.douban_page.selected_category_changed.connect(
+            lambda category_id, page=self.douban_page: self._handle_selected_category_changed(page, category_id)
+        )
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
+        self.telegram_page.selected_category_changed.connect(
+            lambda category_id, page=self.telegram_page: self._handle_selected_category_changed(page, category_id)
+        )
         if self.bilibili_page is not None:
             self.bilibili_page.unauthorized.connect(self.logout_requested.emit)
+            self.bilibili_page.selected_category_changed.connect(
+                lambda category_id, page=self.bilibili_page: self._handle_selected_category_changed(page, category_id)
+            )
         self.live_page.unauthorized.connect(self.logout_requested.emit)
+        self.live_page.selected_category_changed.connect(
+            lambda category_id, page=self.live_page: self._handle_selected_category_changed(page, category_id)
+        )
         if self.emby_page is not None:
             self.emby_page.unauthorized.connect(self.logout_requested.emit)
+            self.emby_page.selected_category_changed.connect(
+                lambda category_id, page=self.emby_page: self._handle_selected_category_changed(page, category_id)
+            )
         if self.jellyfin_page is not None:
             self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
+            self.jellyfin_page.selected_category_changed.connect(
+                lambda category_id, page=self.jellyfin_page: self._handle_selected_category_changed(page, category_id)
+            )
         if self.feiniu_page is not None:
             self.feiniu_page.unauthorized.connect(self.logout_requested.emit)
+            self.feiniu_page.selected_category_changed.connect(
+                lambda category_id, page=self.feiniu_page: self._handle_selected_category_changed(page, category_id)
+            )
         if self.pansou_page is not None:
             self.pansou_page.unauthorized.connect(self.logout_requested.emit)
+            self.pansou_page.selected_category_changed.connect(
+                lambda category_id, page=self.pansou_page: self._handle_selected_category_changed(page, category_id)
+            )
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -560,6 +597,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _all_tab_definitions(self) -> list[_TabDefinition]:
         return [*self._static_tab_definitions, *self._plugin_tab_definitions, *self._trailing_tab_definitions]
+
+    @staticmethod
+    def _initial_category_id_for_tab(config: Any, tab_key: str) -> str:
+        if (
+            getattr(config, "last_selected_tab", "") == tab_key
+            and getattr(config, "last_selected_category_tab", "") == tab_key
+        ):
+            return getattr(config, "last_selected_category_id", "")
+        return ""
 
     def _visible_tab_definitions(self) -> list[_TabDefinition]:
         if not self._global_search_active:
@@ -620,6 +666,26 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.config.last_selected_tab = selected_key
         self._save_config()
 
+    def _remember_selected_category(self, widget: QWidget, category_id: str) -> None:
+        if not category_id:
+            return
+        selected_key = self._tab_key_for_widget(widget)
+        if selected_key is None:
+            return
+        if (
+            self.config.last_selected_category_tab == selected_key
+            and self.config.last_selected_category_id == category_id
+        ):
+            return
+        self.config.last_selected_category_tab = selected_key
+        self.config.last_selected_category_id = category_id
+        self._save_config()
+
+    def _handle_selected_category_changed(self, page: PosterGridPage, category_id: str) -> None:
+        if self._global_search_active or self.nav_tabs.currentWidget() is not page:
+            return
+        self._remember_selected_category(page, category_id)
+
     def _sync_global_search_action_state(self) -> None:
         has_keyword = bool(self.global_search_edit.text().strip())
         self.global_search_button.setEnabled(has_keyword)
@@ -638,6 +704,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._global_search_active:
             return
         self._remember_selected_tab(widget)
+        if isinstance(widget, PosterGridPage):
+            self._remember_selected_category(widget, widget.selected_category_id)
         if widget is self.douban_page:
             self.douban_page.ensure_loaded()
             return
@@ -1007,6 +1075,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 controller,
                 click_action="open",
                 search_enabled=bool(_plugin_value(definition, "search_enabled")),
+                initial_category_id=self._initial_category_id_for_tab(self.config, f"plugin:{plugin_id}"),
             )
             page.item_open_requested.connect(
                 lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(
@@ -1016,6 +1085,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 )
             )
             page.unauthorized.connect(self.logout_requested.emit)
+            page.selected_category_changed.connect(
+                lambda category_id, page=page: self._handle_selected_category_changed(page, category_id)
+            )
             self._plugin_pages.append((page, controller, plugin_id))
             self._plugin_tab_definitions.append(
                 _TabDefinition(f"plugin:{plugin_id}", title, page, controller)

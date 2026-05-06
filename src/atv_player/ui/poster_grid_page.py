@@ -115,6 +115,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     open_requested = Signal(str)
     item_open_requested = Signal(object)
     folder_breadcrumb_requested = Signal(str, str, int)
+    selected_category_changed = Signal(str)
     unauthorized = Signal()
     _CARD_WIDTH = 220
     _CARD_HEIGHT = 360
@@ -130,6 +131,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         click_action: str = "search",
         search_enabled: bool = False,
         folder_navigation_enabled: bool = False,
+        initial_category_id: str = "",
     ) -> None:
         super().__init__()
         self._init_async_guard()
@@ -137,6 +139,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._click_action = click_action
         self._search_enabled = search_enabled
         self._folder_navigation_enabled = folder_navigation_enabled
+        self._initial_category_id = initial_category_id
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
@@ -340,7 +343,12 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.status_label.setText("暂无分类")
             self._update_pagination()
             return
-        self.category_list.setCurrentRow(0)
+        target_category_id = self.selected_category_id or self._initial_category_id
+        target_row = next(
+            (index for index, category in enumerate(self.categories) if category.type_id == target_category_id),
+            0,
+        )
+        self.category_list.setCurrentRow(target_row)
 
     def _current_category(self):
         row = self.category_list.currentRow()
@@ -512,6 +520,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self._remember_current_filter_state()
         category = self.categories[row]
         self.selected_category_id = category.type_id
+        self.selected_category_changed.emit(self.selected_category_id)
         self._category_filter_state.setdefault(category.type_id, self._default_filter_state(category))
         self._rebuild_filter_panel()
         self.current_page = 1

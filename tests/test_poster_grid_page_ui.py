@@ -695,6 +695,16 @@ def test_poster_grid_page_search_replaces_category_cards_and_clear_restores_cate
     qtbot.waitUntil(lambda: page.card_buttons[0].text() == "霸王别姬\n9.6")
 
 
+def test_poster_grid_page_restores_preferred_category_on_initial_load(qtbot) -> None:
+    controller = FakeDoubanController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, initial_category_id="movie"))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+
+    assert page.category_list.currentRow() == 1
+    assert controller.item_calls == [("movie", 1)]
+
+
 def test_poster_grid_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:
     controller = SearchableDoubanController()
     page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
