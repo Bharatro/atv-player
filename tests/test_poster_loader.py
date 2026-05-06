@@ -61,6 +61,13 @@ def test_build_poster_request_headers_uses_site_specific_referers() -> None:
     assert build_poster_request_headers("https://cc.163.com/cover.png")["Referer"] == "https://cc.163.com/"
 
 
+def test_build_poster_request_headers_uses_iqiyi_referer_for_iqiyi_cdn() -> None:
+    headers = build_poster_request_headers("http://pic8.iqiyipic.com/image/demo.jpg")
+
+    assert headers["Referer"] == "https://www.iqiyi.com/"
+    assert headers["User-Agent"] == poster_loader_module.POSTER_USER_AGENT
+
+
 def test_load_remote_poster_image_scales_downloaded_image() -> None:
     def fake_get(
         url: str,
