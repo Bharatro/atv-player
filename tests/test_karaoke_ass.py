@@ -21,7 +21,10 @@ def test_render_karaoke_ass_emits_kf_segments_for_each_word() -> None:
 
     subtitle = render_karaoke_ass(document)
 
-    assert "Style: KaraokeMain" in subtitle
+    assert (
+        "Style: KaraokeMain,Arial,46,&H00FFFFFF,&H0000D7FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,8,0,2,60,60,120,1"
+        in subtitle
+    )
     assert "Dialogue: 0,0:00:29.26,0:00:32.71,KaraokeMain" in subtitle
     assert r"{\kf39}故{\kf39}事{\kf45}的" in subtitle
 
@@ -47,7 +50,10 @@ def test_render_karaoke_ass_adds_static_translation_dialogue() -> None:
 
     subtitle = render_karaoke_ass(document)
 
-    assert "Style: KaraokeTranslation" in subtitle
+    assert (
+        "Style: KaraokeTranslation,Arial,28,&H00E8E8E8,&H00E8E8E8,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,6,0,2,60,60,70,1"
+        in subtitle
+    )
     assert "Dialogue: 0,0:00:00.00,0:00:01.80,KaraokeTranslation" in subtitle
     assert "Light boat already crossed" in subtitle
 

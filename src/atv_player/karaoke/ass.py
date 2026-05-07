@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from atv_player.karaoke.models import KaraokeDocument, KaraokeLine, KaraokeWord
 
+_KARAOKE_MAIN_STYLE = (
+    "Style: KaraokeMain,Arial,46,&H00FFFFFF,&H0000D7FF,&H00000000,&H00000000,"
+    "0,0,0,0,100,100,0,0,1,8,0,2,60,60,120,1"
+)
+_KARAOKE_TRANSLATION_STYLE = (
+    "Style: KaraokeTranslation,Arial,28,&H00E8E8E8,&H00E8E8E8,&H00000000,&H00000000,"
+    "0,0,0,0,100,100,0,0,1,6,0,2,60,60,70,1"
+)
+
 
 def render_karaoke_ass(document: KaraokeDocument) -> str:
     events: list[str] = []
@@ -18,8 +27,8 @@ def render_karaoke_ass(document: KaraokeDocument) -> str:
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            "Style: KaraokeMain,Arial,46,&H00FFFFFF,&H0000D7FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,120,1",
-            "Style: KaraokeTranslation,Arial,28,&H00E8E8E8,&H00E8E8E8,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,70,1",
+            _KARAOKE_MAIN_STYLE,
+            _KARAOKE_TRANSLATION_STYLE,
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
