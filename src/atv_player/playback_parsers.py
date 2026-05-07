@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 import httpx
 from Crypto.Cipher import AES
@@ -16,6 +16,23 @@ from Crypto.Util.Padding import unpad
 
 def _looks_like_media_url(value: str) -> bool:
     return bool(re.search(r"\.(m3u8|mp4|rmvb|avi|wmv|flv|mkv|webm|mov|m3u)(?!\w)", value.strip(), re.IGNORECASE))
+
+
+def _normalize_media_url(value: str) -> str:
+    candidate = value.strip()
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return candidate
+    auth, separator, hostport = parsed.netloc.rpartition("@")
+    if hostport.startswith("["):
+        return candidate
+    parts = hostport.split(":")
+    if len(parts) != 3 or not parts[1].isdigit() or parts[1] != parts[2]:
+        return candidate
+    normalized_netloc = f"{parts[0]}:{parts[1]}"
+    if separator:
+        normalized_netloc = f"{auth}{separator}{normalized_netloc}"
+    return urlunsplit((parsed.scheme, normalized_netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -149,7 +166,7 @@ class BuiltInPlaybackParserService:
             follow_redirects=True,
         )
         payload = response.json()
-        media_url = str(payload.get("url") or "").strip()
+        media_url = _normalize_media_url(str(payload.get("url") or ""))
         if payload.get("parse") == 0 or payload.get("jx") == 0 or _looks_like_media_url(media_url):
             if not _looks_like_media_url(media_url):
                 raise ValueError("返回地址不可播放")
@@ -228,7 +245,9 @@ class BuiltInPlaybackParserService:
         start = decrypted.find("{")
         if start != -1:
             payload = json.loads(decrypted[start:])
-            return str(payload.get("url") or "").strip(), _normalize_headers(payload.get("header") or payload.get("headers"))
+            return _normalize_media_url(str(payload.get("url") or "")), _normalize_headers(
+                payload.get("header") or payload.get("headers")
+            )
         if _looks_like_media_url(value):
-            return value, {}
+            return _normalize_media_url(value), {}
         raise ValueError("xm 解密结果缺少播放信息")

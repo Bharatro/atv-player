@@ -39,9 +39,8 @@ def test_parser_service_tries_saved_parser_first_and_falls_back() -> None:
     assert result.parser_key == "jx2"
     assert result.url == "https://media.example/real.m3u8"
     assert post_calls == ["https://api.hls.one:4433/Api"]
-    assert calls[:4] == [
+    assert calls == [
         "http://sspa8.top:8100/api/?key=1060089351&",
-        "https://bd.jx.cn/",
         "https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php",
         "http://sspa8.top:8100/api/?cat_ext=eyJmbGFnIjpbInFxIiwi6IW+6K6vIiwicWl5aSIsIueIseWlh+iJuiIsIuWlh+iJuiIsInlvdWt1Iiwi5LyY6YW3Iiwic29odSIsIuaQnOeLkCIsImxldHYiLCLkuZDop4YiLCJtZ3R2Iiwi6IqS5p6cIiwidG5tYiIsInNldmVuIiwiYmlsaWJpbGkiLCIxOTA1Il0sImhlYWRlciI6eyJVc2VyLUFnZW50Ijoib2todHRwLzQuOS4xIn19&key=星睿4k&",
     ]
@@ -182,3 +181,31 @@ def test_parser_service_uses_defined_order_by_default_including_xm() -> None:
     assert result.url == "https://media.example/xm-default.m3u8"
     assert post_calls == ["https://api.hls.one:4433/Api"]
     assert get_calls == []
+
+
+def test_parser_service_normalizes_duplicate_port_in_xm_media_url() -> None:
+    decrypted_payload = (
+        'tg:@xmflv'
+        + json.dumps(
+            {
+                "url": "https://api.hls.one:4433:4433/Cache/qiyi/demo.m3u8?vkey=demo",
+            }
+        )
+    )
+
+    def fake_post(url: str, data: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        return httpx.Response(
+            200,
+            json={
+                "code": 200,
+                "key": "1234567890abcdef",
+                "iv": "fedcba0987654321",
+                "data": _encrypt_xm_payload(decrypted_payload, "1234567890abcdef", "fedcba0987654321"),
+            },
+        )
+
+    service = BuiltInPlaybackParserService(post=fake_post)
+
+    result = service.resolve("qiyi", "http://www.iqiyi.com/v_mo3lbdn60s.html", preferred_key="xm")
+
+    assert result.url == "https://api.hls.one:4433/Cache/qiyi/demo.m3u8?vkey=demo"
