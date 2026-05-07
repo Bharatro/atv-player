@@ -1030,7 +1030,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
 
-    def _schedule_followup_subtitle_refresh_if_needed(self, current_item: PlayItem) -> None:
+    def _schedule_followup_subtitle_refresh_if_needed(
+        self,
+        current_item: PlayItem,
+        *,
+        retries_remaining: int = 4,
+    ) -> None:
         if not current_item.external_subtitles and self._primary_external_subtitle_selection is None:
             return
 
@@ -1042,6 +1047,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if self.session.playlist[self.current_index] is not current_item:
                 return
             self._refresh_subtitle_state()
+            if retries_remaining <= 0 or not self._should_retry_followup_subtitle_refresh(current_item):
+                return
+            self._schedule_followup_subtitle_refresh_if_needed(
+                current_item,
+                retries_remaining=retries_remaining - 1,
+            )
 
         QTimer.singleShot(150, refresh_if_still_current)
 
@@ -2120,6 +2131,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._subtitle_preference.mode == "external":
             return True
         return self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
+
+    def _should_retry_followup_subtitle_refresh(self, current_item: PlayItem) -> bool:
+        if self.session is None:
+            return False
+        if self.current_index >= len(self.session.playlist):
+            return False
+        if self.session.playlist[self.current_index] is not current_item:
+            return False
+        if self._primary_external_subtitle_track_id is not None:
+            return False
+        current_external_subtitle = self._current_primary_external_subtitle()
+        if current_external_subtitle is not None:
+            if self._subtitle_preference.mode == "external":
+                return True
+            return self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
+        return self._should_auto_apply_spider_subtitle()
 
     def _remove_external_subtitle_track(self, track_id: int | None) -> None:
         if track_id is None or not hasattr(self.video, "remove_subtitle_track"):
