@@ -7,11 +7,12 @@ import pytest
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
+from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.plugins.controller import SpiderPluginController
 from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem
+from atv_player.plugins.controller import SpiderPluginController
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> None:
@@ -874,33 +875,62 @@ def test_controller_keeps_direct_play_items_parse_disabled() -> None:
     assert first.url == "https://stream.example/play/1.m3u8"
 
 
-def test_controller_overrides_request_poster_with_player_content_cover() -> None:
+class _SessionApiClient:
+    def get_history(self, key: str):
+        return None
+
+    def save_history(self, payload: dict) -> None:
+        return None
+
+
+def test_controller_updates_session_video_cover_override_from_player_content_cover() -> None:
     controller = SpiderPluginController(CoverPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
-
     request = controller.build_request("/detail/1")
-    first = request.playlist[0]
+    session = PlayerController(_SessionApiClient()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        use_local_history=False,
+    )
+    first = session.playlist[0]
 
+    assert session.video_cover_override == ""
     assert request.vod.vod_pic == "poster-detail"
-    assert request.playback_loader is not None
+    assert session.playback_loader is not None
 
-    request.playback_loader(first)
+    session.playback_loader(first)
 
-    assert request.vod.vod_pic == "https://img.example/resolved-cover.jpg"
+    assert session.video_cover_override == "https://img.example/resolved-cover.jpg"
+    assert request.vod.vod_pic == "poster-detail"
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
 
 
-def test_controller_keeps_existing_request_poster_when_player_content_cover_is_blank() -> None:
+def test_controller_keeps_video_cover_override_empty_when_player_content_cover_is_blank() -> None:
     controller = SpiderPluginController(BlankCoverPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
-
     request = controller.build_request("/detail/1")
-    first = request.playlist[0]
+    session = PlayerController(_SessionApiClient()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        use_local_history=False,
+    )
+    first = session.playlist[0]
 
     assert request.vod.vod_pic == "poster-detail"
-    assert request.playback_loader is not None
+    assert session.playback_loader is not None
 
-    request.playback_loader(first)
+    session.playback_loader(first)
 
+    assert session.video_cover_override == ""
     assert request.vod.vod_pic == "poster-detail"
     assert first.url == "https://stream.example/play/1.m3u8"
 

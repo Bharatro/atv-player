@@ -1,7 +1,9 @@
 import logging
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
+from typing import cast
 
 from atv_player.models import HistoryRecord, PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.resume import resolve_resume_index
@@ -32,11 +34,30 @@ class PlayerSession:
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
     initial_log_message: str = ""
     is_placeholder: bool = False
+    video_cover_override: str = ""
 
 
 class PlayerController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
+
+    def _bind_playback_loader(
+        self,
+        playback_loader: Callable[..., PlaybackLoadResult | None] | None,
+        session: PlayerSession,
+    ) -> Callable[[PlayItem], PlaybackLoadResult | None] | None:
+        if playback_loader is None:
+            return None
+        parameters = list(inspect.signature(playback_loader).parameters.values())
+        positional = [
+            parameter
+            for parameter in parameters
+            if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        has_varargs = any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+        if has_varargs or len(positional) >= 2:
+            return lambda item, playback_loader=playback_loader, session=session: playback_loader(session, item)
+        return cast(Callable[[PlayItem], PlaybackLoadResult | None], playback_loader)
 
     def _normalize_playlists(
         self,
@@ -111,7 +132,7 @@ class PlayerController:
             start_index,
             matched_history,
         )
-        return PlayerSession(
+        session = PlayerSession(
             vod=vod,
             playlist=active_playlist,
             start_index=start_index,
@@ -129,10 +150,12 @@ class PlayerController:
             danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,
-            playback_history_saver=playback_history_saver,
             initial_log_message=initial_log_message,
             is_placeholder=is_placeholder,
         )
+        session.playback_loader = self._bind_playback_loader(playback_loader, session)
+        session.playback_history_saver = playback_history_saver
+        return session
 
     def resolve_play_item_detail(self, session: PlayerSession, play_item: PlayItem) -> VodItem | None:
         if not play_item.vod_id or session.detail_resolver is None:

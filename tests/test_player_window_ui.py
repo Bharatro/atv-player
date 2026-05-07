@@ -1485,8 +1485,8 @@ def test_player_window_prefers_session_poster_before_default_video_cover(qtbot, 
 def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtbot, monkeypatch) -> None:
     started: list[str] = []
 
-    def fake_start(self, source: str, request_id: int) -> None:
-        started.append(source)
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        started.append(f"{target}:{source}")
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
 
@@ -1507,14 +1507,51 @@ def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtb
         )
     )
 
-    assert started == ["https://img.example/fallback.jpg"]
+    assert started == ["video:https://img.example/fallback.jpg"]
 
 
-def test_player_window_refreshes_poster_after_async_playback_loader_updates_session_cover(qtbot, monkeypatch) -> None:
-    started: list[str] = []
+def test_player_window_prefers_video_cover_override_before_session_poster_and_default_video_cover(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+    video_started: list[str] = []
 
-    def fake_start(self, source: str, request_id: int) -> None:
-        started.append(source)
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "detail":
+            detail_started.append(source)
+        else:
+            video_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img.example/detail.jpg"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        video_cover_override="https://img.example/video.jpg",
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        default_video_cover_loader=lambda: "https://img.example/fallback.jpg",
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert detail_started == ["https://img.example/detail.jpg"]
+    assert video_started == ["https://img.example/video.jpg"]
+
+
+def test_player_window_refreshes_only_video_poster_after_async_playback_loader_updates_cover_override(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+    video_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "detail":
+            detail_started.append(source)
+        else:
+            video_started.append(source)
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
 
@@ -1553,7 +1590,7 @@ def test_player_window_refreshes_poster_after_async_playback_loader_updates_sess
         vod=VodItem(
             vod_id="plugin-vod-1",
             vod_name="占位电影",
-            vod_pic="https://img.example/card.jpg",
+            vod_pic="https://img.example/detail.jpg",
         ),
         playlist=[PlayItem(title="第1集", url="", vod_id="/play/1", play_source="备用线")],
         start_index=0,
@@ -1563,7 +1600,7 @@ def test_player_window_refreshes_poster_after_async_playback_loader_updates_sess
     )
 
     def playback_loader(item: PlayItem) -> None:
-        session.vod.vod_pic = "https://img.example/resolved-cover.jpg"
+        session.video_cover_override = "https://img.example/video.jpg"
         item.url = "http://m/1.m3u8"
         return None
 
@@ -1576,12 +1613,10 @@ def test_player_window_refreshes_poster_after_async_playback_loader_updates_sess
     window.open_session(session)
 
     qtbot.waitUntil(
-        lambda: started
-        == [
-            "https://img.example/card.jpg",
-            "https://img.example/resolved-cover.jpg",
-        ]
+        lambda: detail_started[:1] == ["https://img.example/detail.jpg"]
+        and video_started == ["https://img.example/video.jpg"]
     )
+    assert session.vod.vod_pic == "https://img.example/detail.jpg"
 
 
 def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
@@ -1755,7 +1790,7 @@ def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text
 def test_player_window_starts_remote_poster_load_without_blocking_open_session(qtbot, monkeypatch) -> None:
     started: list[str] = []
 
-    def fake_start(self, source: str, request_id: int) -> None:
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
         started.append(source)
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
@@ -1846,7 +1881,7 @@ def test_player_window_ignores_async_poster_result_after_window_deletion(qtbot, 
 def test_player_window_ignores_stale_async_poster_results(qtbot, monkeypatch) -> None:
     started_request_ids: list[int] = []
 
-    def fake_start(self, source: str, request_id: int) -> None:
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
         started_request_ids.append(request_id)
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
@@ -1959,7 +1994,7 @@ def test_player_window_attaches_audio_cover_after_remote_poster_load_finishes(qt
     cache_path = tmp_path / "poster-cache.img"
     remote_source = "https://img.example/song-cover.jpg"
 
-    def fake_start(self, source: str, request_id: int) -> None:
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
         return None
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)

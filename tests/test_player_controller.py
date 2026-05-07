@@ -75,6 +75,53 @@ def test_player_controller_builds_history_payload() -> None:
     assert payload["speed"] == 1.25
 
 
+def test_player_controller_create_session_defaults_video_cover_override_to_empty() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="poster-detail")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+
+    session = controller.create_session(vod, playlist, clicked_index=0)
+
+    assert session.video_cover_override == ""
+
+
+def test_player_controller_binds_session_aware_playback_loader_without_changing_history_poster() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie", vod_pic="poster-detail")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="/play/1")]
+
+    def load_item(session, item: PlayItem) -> None:
+        session.video_cover_override = "https://img.example/video-cover.jpg"
+        item.url = "http://m/1.m3u8"
+        return None
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        playback_loader=load_item,
+    )
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=30,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        force_remote_report=True,
+    )
+
+    assert session.video_cover_override == "https://img.example/video-cover.jpg"
+    assert session.vod.vod_pic == "poster-detail"
+    assert api.saved_payloads[0]["vodPic"] == "poster-detail"
+
+
 def test_player_controller_create_session_preserves_detail_resolver_and_seed_cache() -> None:
     controller = PlayerController(FakeApiClient())
     vod = VodItem(vod_id="movie-1", vod_name="Movie")

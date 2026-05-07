@@ -257,7 +257,7 @@ class OpenPlayerRequest:
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
     restore_history: bool = False
-    playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None
+    playback_loader: Callable[..., PlaybackLoadResult | None] | None = None
     async_playback_loader: bool = False
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None

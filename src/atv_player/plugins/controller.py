@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from atv_player.api import ApiError
+from atv_player.controllers.player_controller import PlayerSession
 from atv_player.danmaku.cache import (
     load_cached_danmaku_source_search_result,
     load_cached_danmaku_xml,
@@ -908,7 +909,7 @@ class SpiderPluginController:
         history = self._playback_history_loader(vod_id)
         return resolve_resume_index(history, replacement, 0)
 
-    def _resolve_play_item(self, item: PlayItem, request_vod: VodItem | None = None) -> PlaybackLoadResult | None:
+    def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
@@ -987,8 +988,8 @@ class SpiderPluginController:
                 item.vod_id,
                 len(replacement),
             )
-            if cover_source and request_vod is not None:
-                request_vod.vod_pic = cover_source
+            if cover_source:
+                session.video_cover_override = cover_source
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
                 replacement_start_index=replacement_start_index,
@@ -1003,8 +1004,8 @@ class SpiderPluginController:
             )
             item.url = result.url
             item.headers = dict(result.headers)
-            if cover_source and request_vod is not None:
-                request_vod.vod_pic = cover_source
+            if cover_source:
+                session.video_cover_override = cover_source
             self._maybe_resolve_danmaku(item, url)
             logger.info(
                 "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
@@ -1022,8 +1023,8 @@ class SpiderPluginController:
             url,
         )
         item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
-        if cover_source and request_vod is not None:
-            request_vod.vod_pic = cover_source
+        if cover_source:
+            session.video_cover_override = cover_source
         self._maybe_resolve_danmaku(item, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
@@ -1064,8 +1065,23 @@ class SpiderPluginController:
                 payload,
             )
 
-        def playback_loader(item: PlayItem, request_vod: VodItem = detail) -> PlaybackLoadResult | None:
-            return self._resolve_play_item(item, request_vod=request_vod)
+        def playback_loader(
+            session_or_item: PlayerSession | PlayItem,
+            item: PlayItem | None = None,
+        ) -> PlaybackLoadResult | None:
+            if item is None:
+                session = PlayerSession(
+                    vod=detail,
+                    playlist=playlist,
+                    start_index=0,
+                    start_position_seconds=0,
+                    speed=1.0,
+                )
+                current_item = session_or_item
+            else:
+                session = session_or_item
+                current_item = item
+            return self._resolve_play_item(session, current_item)
 
         return OpenPlayerRequest(
             vod=detail,

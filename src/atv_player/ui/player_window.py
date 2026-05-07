@@ -291,6 +291,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._last_cursor_pos = None
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
+        self._video_poster_request_id = 0
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
         self._playback_prepare_request_id = 0
@@ -327,6 +328,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals()
         self._connect_async_signal(self._poster_load_signals.loaded, self._handle_poster_load_finished)
+        self._video_poster_load_signals = _PosterLoadSignals()
+        self._connect_async_signal(self._video_poster_load_signals.loaded, self._handle_video_poster_load_finished)
         self._play_item_resolve_signals = _PlayItemResolveSignals()
         self._connect_async_signal(self._play_item_resolve_signals.succeeded, self._handle_play_item_resolve_succeeded)
         self._connect_async_signal(self._play_item_resolve_signals.failed, self._handle_play_item_resolve_failed)
@@ -1181,7 +1184,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-    def _start_poster_load(self, source: str, request_id: int) -> None:
+    def _start_poster_load(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
         image_url = normalize_poster_url(source)
         if not image_url:
             return
@@ -1194,7 +1197,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 get=httpx.get,
             )
             if self._is_window_alive():
-                self._poster_load_signals.loaded.emit(request_id, image)
+                if target == "video":
+                    self._video_poster_load_signals.loaded.emit(request_id, image)
+                else:
+                    self._poster_load_signals.loaded.emit(request_id, image)
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -1202,11 +1208,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if request_id != self._poster_request_id:
             return
         if image is None or image.isNull():
-            self._clear_poster()
+            self.poster_label.clear()
+            self.poster_label.setText("")
+            self.poster_label.setPixmap(QPixmap())
             return
         pixmap = QPixmap.fromImage(image)
         self.poster_label.setText("")
         self.poster_label.setPixmap(pixmap)
+        if self._preferred_video_poster_source() == self._preferred_detail_poster_source():
+            self._show_video_poster_overlay(pixmap)
+            self._attach_audio_cover_if_available()
+
+    def _handle_video_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
+        if request_id != self._video_poster_request_id:
+            return
+        if image is None or image.isNull():
+            self._clear_video_poster_overlay()
+            return
+        pixmap = QPixmap.fromImage(image)
         self._show_video_poster_overlay(pixmap)
         self._attach_audio_cover_if_available()
 
@@ -1226,19 +1245,29 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._default_video_cover_source = ""
         return self._default_video_cover_source
 
-    def _preferred_poster_source(self) -> str:
+    def _preferred_detail_poster_source(self) -> str:
         if self.session is None:
             return ""
+        return self.session.vod.vod_pic or ""
+
+    def _preferred_video_poster_source(self) -> str:
+        if self.session is None:
+            return ""
+        if self.session.video_cover_override:
+            return self.session.video_cover_override
         if self.session.vod.vod_pic:
             return self.session.vod.vod_pic
         return self._resolve_default_video_cover_source()
+
+    def _preferred_poster_source(self) -> str:
+        return self._preferred_video_poster_source()
 
     def _should_use_audio_cover(self, url: str) -> bool:
         normalized_path = urlparse(url or "").path.lower()
         return any(normalized_path.endswith(suffix) for suffix in self._AUDIO_ONLY_SUFFIXES)
 
     def _preferred_audio_cover_path(self) -> str | None:
-        source = self._preferred_poster_source().strip()
+        source = self._preferred_video_poster_source().strip()
         if not source:
             return None
         source_path = Path(source)
@@ -1265,24 +1294,57 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         except Exception as exc:
             self._append_log(f"封面挂载失败: {exc}")
 
-    def _render_poster(self) -> None:
+    def _render_detail_poster(self) -> None:
         self._poster_request_id += 1
-        self._video_surface_ready = False
         if self.session is None:
-            self._clear_poster()
+            self.poster_label.clear()
+            self.poster_label.setText("")
+            self.poster_label.setPixmap(QPixmap())
             return
-        source = self._preferred_poster_source()
+        source = self._preferred_detail_poster_source()
         if not source:
-            self._clear_poster()
+            self.poster_label.clear()
+            self.poster_label.setText("")
+            self.poster_label.setPixmap(QPixmap())
             return
         pixmap = self._load_poster_pixmap(source)
         if not pixmap.isNull():
             self.poster_label.setText("")
             self.poster_label.setPixmap(pixmap)
+            return
+        self.poster_label.clear()
+        self.poster_label.setText("")
+        self.poster_label.setPixmap(QPixmap())
+        self._start_poster_load(source, self._poster_request_id, target="detail")
+
+    def _render_video_poster(self) -> None:
+        self._video_poster_request_id += 1
+        self._video_surface_ready = False
+        if self.session is None:
+            self._clear_video_poster_overlay()
+            return
+        source = self._preferred_video_poster_source()
+        if not source:
+            self._clear_video_poster_overlay()
+            return
+        detail_source = self._preferred_detail_poster_source()
+        if source == detail_source:
+            pixmap = self.poster_label.pixmap()
+            if pixmap is not None and not pixmap.isNull():
+                self._show_video_poster_overlay(pixmap)
+            else:
+                self._clear_video_poster_overlay()
+            return
+        pixmap = self._load_poster_pixmap(source)
+        if not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
             return
-        self._clear_poster()
-        self._start_poster_load(source, self._poster_request_id)
+        self._clear_video_poster_overlay()
+        self._start_poster_load(source, self._video_poster_request_id, target="video")
+
+    def _render_poster(self) -> None:
+        self._render_detail_poster()
+        self._render_video_poster()
 
     def _handle_video_picture_state_changed(self, state: str) -> None:
         self._video_picture_state = state
@@ -1294,14 +1356,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if state == "unavailable" and self._has_active_primary_external_subtitle():
             self.video_poster_overlay.hide()
             return
-        pixmap = self.poster_label.pixmap()
+        pixmap = self.video_poster_overlay.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
 
     def _handle_playback_failed(self, message: str) -> None:
         self._append_log(message)
         self._video_surface_ready = False
-        pixmap = self.poster_label.pixmap()
+        pixmap = self.video_poster_overlay.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
 
@@ -4119,6 +4181,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._deactivate_async_guard()
         try:
             self._poster_request_id += 1
+            self._video_poster_request_id += 1
             self._invalidate_play_item_resolution()
             self._video_surface_ready = False
             self._close_help_dialog()
