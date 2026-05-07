@@ -59,6 +59,7 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             self._end_file_callback = None
             self._track_list_observer = None
             self._video_out_observer = None
+            self._eof_reached_observer = None
 
         def event_callback(self, *event_types):
             assert event_types == ("end-file",)
@@ -73,8 +74,11 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             if name == "track-list":
                 self._track_list_observer = handler
                 return
-            assert name == "video-out-params"
-            self._video_out_observer = handler
+            if name == "video-out-params":
+                self._video_out_observer = handler
+                return
+            assert name == "eof-reached"
+            self._eof_reached_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -561,6 +565,66 @@ def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypa
     assert finished["count"] == 1
 
 
+def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.loadfile_calls: list[tuple[str, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+            self._end_file_callback = None
+            self._track_list_observer = None
+            self._video_out_observer = None
+            self._eof_reached_observer = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            if name == "track-list":
+                self._track_list_observer = handler
+                return
+            if name == "video-out-params":
+                self._video_out_observer = handler
+                return
+            assert name == "eof-reached"
+            self._eof_reached_observer = handler
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    widget._player = player
+    widget._register_player_events()
+    finished = {"count": 0}
+    widget.playback_finished.connect(lambda: finished.__setitem__("count", finished["count"] + 1))
+
+    widget.load("http://m/1.mp3", poster_image_path="/tmp/cover.jpg")
+    player._eof_reached_observer("eof-reached", True)
+    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=0)))
+
+    assert player.loadfile_calls == [
+        (
+            "http://m/1.mp3",
+            {
+                "cover_art_files": "/tmp/cover.jpg",
+                "audio_display": "external-first",
+            },
+        )
+    ]
+    assert finished["count"] == 1
+
+
 def test_mpv_widget_emits_playback_failed_with_reason_from_end_file_event(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:
@@ -798,6 +862,7 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
             self.pause = False
             self._track_list_observer = None
             self._video_out_observer = None
+            self._eof_reached_observer = None
 
         def event_callback(self, *event_types):
             def register(callback):
@@ -809,8 +874,11 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
             if name == "track-list":
                 self._track_list_observer = handler
                 return
-            assert name == "video-out-params"
-            self._video_out_observer = handler
+            if name == "video-out-params":
+                self._video_out_observer = handler
+                return
+            assert name == "eof-reached"
+            self._eof_reached_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -1315,6 +1383,7 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             self.pause = False
             self._track_list_observer = None
             self._video_out_observer = None
+            self._eof_reached_observer = None
 
         def event_callback(self, *event_types):
             def register(callback):
@@ -1326,8 +1395,11 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             if name == "track-list":
                 self._track_list_observer = handler
                 return
-            assert name == "video-out-params"
-            self._video_out_observer = handler
+            if name == "video-out-params":
+                self._video_out_observer = handler
+                return
+            assert name == "eof-reached"
+            self._eof_reached_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)

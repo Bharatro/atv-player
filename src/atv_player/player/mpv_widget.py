@@ -69,6 +69,8 @@ class MpvWidget(QWidget):
         self._player: Any | None = None
         self._video_picture_state = "idle"
         self._audio_cover_active = False
+        self._audio_cover_mode = False
+        self._playback_finished_emitted = False
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -81,6 +83,12 @@ class MpvWidget(QWidget):
             return
         self._video_picture_state = state
         self.video_picture_state_changed.emit(state)
+
+    def _emit_playback_finished_once(self) -> None:
+        if self._playback_finished_emitted:
+            return
+        self._playback_finished_emitted = True
+        self.playback_finished.emit()
 
     def _create_player(self):
         import mpv
@@ -163,7 +171,7 @@ class MpvWidget(QWidget):
             reason = getattr(event_data, "reason", None)
             eof_reason = getattr(type(event_data), "EOF", 0)
             if reason == eof_reason:
-                self.playback_finished.emit()
+                self._emit_playback_finished_once()
                 return
             error_reason = getattr(type(event_data), "ERROR", 4)
             if reason == error_reason:
@@ -199,6 +207,13 @@ class MpvWidget(QWidget):
 
         observe_property("video-out-params", handle_video_out_params)
         self._video_out_params_handler = handle_video_out_params
+
+        def handle_eof_reached(_property_name, reached) -> None:
+            if reached and self._audio_cover_mode:
+                self._emit_playback_finished_once()
+
+        observe_property("eof-reached", handle_eof_reached)
+        self._eof_reached_handler = handle_eof_reached
 
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:
@@ -333,6 +348,8 @@ class MpvWidget(QWidget):
     ) -> None:
         self._set_video_picture_state("loading")
         self._audio_cover_active = False
+        self._audio_cover_mode = bool(poster_image_path)
+        self._playback_finished_emitted = False
         self._ensure_player()
         player = self._player
         if player is None:
@@ -413,11 +430,13 @@ class MpvWidget(QWidget):
             player.command("video-add", poster_image_path, "select", "", "", True)
         except Exception:
             self._audio_cover_active = False
+            self._audio_cover_mode = False
             if getattr(player, "core_shutdown", False):
                 return
             self._set_video_picture_state("unavailable")
             return
         self._audio_cover_active = True
+        self._audio_cover_mode = True
         self._set_video_picture_state("audio-cover")
 
     def seek(self, seconds: int) -> None:
