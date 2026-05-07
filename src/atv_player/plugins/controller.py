@@ -362,7 +362,7 @@ class SpiderPluginController:
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
-        self.supports_search = search_enabled
+        self.supports_search = bool(search_enabled and callable(getattr(self._spider, "searchContent", None)))
         self._drive_detail_loader = drive_detail_loader
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
@@ -383,9 +383,11 @@ class SpiderPluginController:
         return [_map_item(item) for item in payload.get("list", [])]
 
     def _detect_search_supports_category(self) -> bool:
+        if not self.supports_search:
+            return False
         try:
             params = inspect.signature(self._spider.searchContent).parameters
-        except (TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError):
             return True
         return "category" in params
 

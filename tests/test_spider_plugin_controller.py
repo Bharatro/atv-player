@@ -134,6 +134,35 @@ class LegacySearchSpider(FakeSpider):
         return super().searchContent(key, quick, pg)
 
 
+class NoSearchSpider:
+    def homeContent(self, filter):
+        return {
+            "class": [{"type_id": "tv", "type_name": "剧场"}],
+            "list": [],
+        }
+
+    def categoryContent(self, tid, pg, filter, extend):
+        return {
+            "list": [{"vod_id": f"/detail/{tid}-{pg}", "vod_name": f"{tid}-{pg}"}],
+            "total": 1,
+        }
+
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "本地播放",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$https://media.example/1.m3u8",
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        return {"parse": 0, "url": "https://media.example/1.m3u8"}
+
+
 class ParseRequiredSpider(FakeSpider):
     def playerContent(self, flag, id, vipFlags):
         return {"parse": 1, "url": f"https://page.example{id}"}
@@ -500,6 +529,17 @@ def test_controller_search_skips_category_for_legacy_search_signature() -> None:
     assert total == 1
     assert items[0].vod_name == "庆余年"
     assert spider.search_calls == [("庆余年", False, 2)]
+
+
+def test_controller_disables_search_when_spider_has_no_search_content() -> None:
+    controller = SpiderPluginController(NoSearchSpider(), plugin_name="本地插件", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+
+    assert controller.supports_search is False
+    assert request.playlist[0].title == "第1集"
+    with pytest.raises(ApiError, match="当前插件不支持搜索"):
+        controller.search_items("庆余年", 1)
 
 
 def test_controller_build_request_exposes_grouped_route_playlists() -> None:
