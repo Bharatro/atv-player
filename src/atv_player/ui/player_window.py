@@ -206,6 +206,9 @@ class _PendingPlaybackPrepare:
     source_url: str
     requested_dash_video_id: str = ""
     previous_dash_video_id: str = ""
+    previous_url: str = ""
+    previous_original_url: str = ""
+    previous_selected_playback_quality_id: str = ""
 
 
 @dataclass(slots=True)
@@ -1019,6 +1022,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._apply_muted_state()
         self._refresh_subtitle_state()
         self._refresh_audio_state()
+        self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
 
     def _load_current_item(
@@ -1393,6 +1397,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         start_position_seconds: int,
         pause: bool,
         dash_video_id: str | None = None,
+        previous_url: str = "",
+        previous_original_url: str = "",
+        previous_selected_playback_quality_id: str = "",
     ) -> bool:
         if self.session is None:
             return False
@@ -1417,6 +1424,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             source_url=source_url,
             requested_dash_video_id=requested_dash_video_id,
             previous_dash_video_id=current_item.dash_video_id,
+            previous_url=previous_url,
+            previous_original_url=previous_original_url,
+            previous_selected_playback_quality_id=previous_selected_playback_quality_id,
         )
 
         def prepare() -> None:
@@ -2859,6 +2869,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._video_quality_options = []
             self._reset_video_quality_combo()
             return
+        if current_item.playback_qualities:
+            self._video_quality_options = list(current_item.playback_qualities)
+            selected_quality_id = current_item.selected_playback_quality_id or current_item.playback_qualities[0].id
+            current_item.selected_playback_quality_id = selected_quality_id
+            self._populate_video_quality_combo(self._video_quality_options, selected_quality_id)
+            return
         source_url = current_item.original_url or current_item.url
         if not source_url.startswith(self._DASH_DATA_URI_PREFIX):
             self._video_quality_options = []
@@ -2952,6 +2968,46 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         target_quality_id = self.video_quality_combo.itemData(index)
         if not isinstance(target_quality_id, str) or not target_quality_id:
+            return
+        if current_item.playback_qualities:
+            if target_quality_id == current_item.selected_playback_quality_id:
+                return
+            selected_quality = next(
+                (quality for quality in current_item.playback_qualities if quality.id == target_quality_id and quality.url),
+                None,
+            )
+            if selected_quality is None:
+                return
+            try:
+                start_position_seconds = int(self.video.position_seconds() or 0)
+            except Exception:
+                start_position_seconds = 0
+            previous_url = current_item.url
+            previous_original_url = current_item.original_url
+            previous_selected_quality_id = current_item.selected_playback_quality_id
+            current_item.url = selected_quality.url
+            current_item.original_url = selected_quality.url
+            current_item.selected_playback_quality_id = target_quality_id
+            if self._start_playback_prepare(
+                previous_index=self.current_index,
+                start_position_seconds=start_position_seconds,
+                pause=not self.is_playing,
+                previous_url=previous_url,
+                previous_original_url=previous_original_url,
+                previous_selected_playback_quality_id=previous_selected_quality_id,
+            ):
+                return
+            try:
+                self._start_current_item_playback(
+                    start_position_seconds=start_position_seconds,
+                    pause=not self.is_playing,
+                )
+            except Exception as exc:
+                current_item.url = previous_url
+                current_item.original_url = previous_original_url
+                current_item.selected_playback_quality_id = previous_selected_quality_id
+                self._refresh_video_quality_state()
+                self._append_log(f"清晰度切换失败: {exc}")
             return
         if target_quality_id == current_item.dash_video_id:
             return

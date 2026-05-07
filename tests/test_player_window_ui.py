@@ -1080,6 +1080,97 @@ def test_player_window_populates_dash_video_quality_options_after_prepare(qtbot)
     assert window.video_quality_combo.isEnabled() is True
 
 
+def test_player_window_populates_spider_video_quality_options(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/video-1080.m3u8",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
+                ],
+                selected_playback_quality_id="1080p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert [window.video_quality_combo.itemData(index) for index in range(window.video_quality_combo.count())] == [
+        "1080p",
+        "720p",
+    ]
+    assert window.video_quality_combo.currentData() == "1080p"
+    assert window.video_quality_combo.isEnabled() is True
+
+
+def test_player_window_switches_spider_video_quality_with_position_and_pause_preserved(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/video-1080.m3u8",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
+                ],
+                selected_playback_quality_id="1080p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert video.load_calls == [("https://media.example/video-1080.m3u8", False, 0)]
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 2)
+    assert video.load_calls[-1] == ("https://media.example/video-720.m3u8", True, 93)
+    assert session.playlist[0].selected_playback_quality_id == "720p"
+
+
 def test_player_window_switches_dash_video_quality_with_position_and_pause_preserved(qtbot) -> None:
     class FakeM3U8AdFilter:
         def __init__(self) -> None:
@@ -3615,6 +3706,39 @@ def test_player_window_builds_video_context_menu_with_dash_quality_submenu(qtbot
         "1080P AVC 2.8 Mbps",
         "720P AVC 1.2 Mbps",
     ]
+
+
+def test_player_window_builds_video_context_menu_with_spider_quality_submenu(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/video-1080.m3u8",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
+                ],
+                selected_playback_quality_id="1080p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    menu = window._build_video_context_menu()
+
+    assert "清晰度" in [action.text() for action in menu.actions()]
+    assert [action.text() for action in _submenu_actions(menu, "清晰度")] == ["1080P", "720P"]
 
 
 def test_player_window_context_menu_video_info_action_calls_video_layer(qtbot) -> None:
