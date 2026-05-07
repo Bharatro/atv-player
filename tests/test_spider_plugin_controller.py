@@ -472,6 +472,27 @@ def test_controller_build_request_resolves_relative_subt_against_base_url() -> N
     ]
 
 
+def test_controller_build_request_keeps_local_absolute_subt_path(tmp_path) -> None:
+    subtitle_path = tmp_path / "episode-1.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider(str(subtitle_path)),
+        plugin_name="字幕插件",
+        search_enabled=True,
+        base_url_loader=lambda: "http://127.0.0.1:4567",
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert [(sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
+        (str(subtitle_path), "application/x-subrip", "spider"),
+    ]
+
+
 def test_controller_build_request_ignores_blank_or_unsupported_subt_without_breaking_playback() -> None:
     controller = SpiderPluginController(
         SubtitlePayloadSpider("subtitle.srt"),

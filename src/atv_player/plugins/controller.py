@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from atv_player.api import ApiError
@@ -322,6 +323,9 @@ class SpiderPluginController:
         if not raw:
             return ""
         if raw.startswith(("http://", "https://")):
+            return raw
+        local_path = Path(raw)
+        if local_path.is_absolute() and local_path.exists():
             return raw
         if not raw.startswith("/"):
             return ""
