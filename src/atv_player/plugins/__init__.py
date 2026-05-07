@@ -42,6 +42,7 @@ class SpiderPluginManager:
         self._playback_history_repository = playback_history_repository
         self._playback_parser_service = None
         self._preferred_parse_key_loader = None
+        self._base_url_loader = None
         self._danmaku_service = None
         self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
 
@@ -157,6 +158,7 @@ class SpiderPluginManager:
                 drive_detail_loader=drive_detail_loader,
                 playback_parser_service=self._playback_parser_service,
                 preferred_parse_key_loader=self._preferred_parse_key_loader,
+                base_url_loader=self._base_url_loader,
                 danmaku_service=self._danmaku_service,
                 danmaku_preference_store=self._danmaku_preference_store,
                 playback_history_loader=None

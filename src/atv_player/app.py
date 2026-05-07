@@ -162,6 +162,11 @@ class AppCoordinator(QObject):
                 "_preferred_parse_key_loader",
                 lambda: self.repo.load_config().preferred_parse_key,
             )
+            setattr(
+                self._plugin_manager,
+                "_base_url_loader",
+                lambda: self.repo.load_config().base_url,
+            )
         else:
             self._live_source_repository = _NullLiveSourceRepository()
             self._live_epg_repository = None
