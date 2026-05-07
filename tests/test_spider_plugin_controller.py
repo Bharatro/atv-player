@@ -142,6 +142,20 @@ class SubtitlePayloadSpider(FakeSpider):
         }
 
 
+class QualityPayloadSpider(FakeSpider):
+    def __init__(self, url: str, qualities: object) -> None:
+        self._url = url
+        self._qualities = qualities
+
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": self._url,
+            "header": {"Referer": "https://site.example"},
+            "qualities": self._qualities,
+        }
+
+
 class HtmlPageSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -452,6 +466,84 @@ def test_controller_build_request_maps_absolute_subt_into_external_subtitles() -
     assert [(sub.name, sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
         ("外挂字幕 [插件]", "https://cdn.example/subtitles/episode-1.srt", "application/x-subrip", "spider"),
     ]
+
+
+def test_controller_build_request_maps_spider_qualities_matching_top_level_url() -> None:
+    controller = SpiderPluginController(
+        QualityPayloadSpider(
+            "https://stream.example/play/1-1080.m3u8",
+            [
+                {"id": "1080p", "label": "1080P", "url": "https://stream.example/play/1-1080.m3u8"},
+                {"id": "720p", "label": "720P", "url": "https://stream.example/play/1-720.m3u8"},
+            ],
+        ),
+        plugin_name="清晰度插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1-1080.m3u8"
+    assert [(quality.id, quality.label, quality.url) for quality in first.playback_qualities] == [
+        ("1080p", "1080P", "https://stream.example/play/1-1080.m3u8"),
+        ("720p", "720P", "https://stream.example/play/1-720.m3u8"),
+    ]
+    assert first.selected_playback_quality_id == "1080p"
+
+
+def test_controller_build_request_falls_back_to_first_valid_spider_quality() -> None:
+    controller = SpiderPluginController(
+        QualityPayloadSpider(
+            "https://stream.example/play/1-default.m3u8",
+            [
+                {"id": "720p", "label": "720P", "url": "https://stream.example/play/1-720.m3u8"},
+                {"id": "480p", "label": "480P", "url": "https://stream.example/play/1-480.m3u8"},
+            ],
+        ),
+        plugin_name="清晰度插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1-default.m3u8"
+    assert [quality.id for quality in first.playback_qualities] == ["720p", "480p"]
+    assert first.selected_playback_quality_id == "720p"
+
+
+def test_controller_build_request_ignores_malformed_spider_quality_entries() -> None:
+    controller = SpiderPluginController(
+        QualityPayloadSpider(
+            "https://stream.example/play/1-1080.m3u8",
+            [
+                {"id": "", "label": "无效", "url": "https://stream.example/play/invalid.m3u8"},
+                {"id": "bad-html", "label": "页面地址", "url": "https://example.com/watch/1.html"},
+                {"id": "720p", "label": "720P", "url": "https://stream.example/play/1-720.m3u8"},
+            ],
+        ),
+        plugin_name="清晰度插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1-1080.m3u8"
+    assert [(quality.id, quality.label, quality.url) for quality in first.playback_qualities] == [
+        ("720p", "720P", "https://stream.example/play/1-720.m3u8"),
+    ]
+    assert first.selected_playback_quality_id == "720p"
 
 
 def test_controller_build_request_resolves_relative_subt_against_base_url() -> None:

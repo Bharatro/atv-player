@@ -65,6 +65,8 @@ class PlayItem:
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
+    playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
+    selected_playback_quality_id: str = ""
     dash_video_id: str = ""
     play_source: str = ""
     media_title: str = ""
@@ -88,6 +90,7 @@ class PlayItem:
 class VideoQualityOption:
     id: str
     label: str
+    url: str = ""
     width: int = 0
     height: int = 0
     bandwidth: int = 0

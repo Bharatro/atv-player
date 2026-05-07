@@ -33,6 +33,7 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlayItem,
     PlaybackLoadResult,
+    VideoQualityOption,
     VodItem,
 )
 from atv_player.paths import app_cache_dir
@@ -265,6 +266,30 @@ def _subtitle_suffix_for_format(format_name: str) -> str:
     if normalized == "text/vtt":
         return ".vtt"
     return ""
+
+
+def _map_spider_playback_qualities(
+    payload: object,
+    selected_url: str,
+) -> tuple[list[VideoQualityOption], str]:
+    if not isinstance(payload, list):
+        return [], ""
+    qualities: list[VideoQualityOption] = []
+    selected_quality_id = ""
+    for raw_quality in payload:
+        if not isinstance(raw_quality, Mapping):
+            continue
+        quality_id = str(raw_quality.get("id") or "").strip()
+        label = str(raw_quality.get("label") or "").strip()
+        quality_url = str(raw_quality.get("url") or "").strip()
+        if not quality_id or not label or not _looks_like_media_url(quality_url):
+            continue
+        qualities.append(VideoQualityOption(id=quality_id, label=label, url=quality_url))
+        if not selected_quality_id and quality_url == selected_url:
+            selected_quality_id = quality_id
+    if not qualities:
+        return [], ""
+    return qualities, selected_quality_id or qualities[0].id
 
 
 def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
@@ -876,6 +901,8 @@ class SpiderPluginController:
                 self._maybe_resolve_danmaku(item, item.url)
             return
         item.external_subtitles = []
+        item.playback_qualities = []
+        item.selected_playback_quality_id = ""
         if not item.vod_id:
             return
         if _looks_like_drive_share_link(item.vod_id):
@@ -972,6 +999,10 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
+            payload.get("qualities"),
+            url,
+        )
         item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
         self._maybe_resolve_danmaku(item, url)
         logger.info(
