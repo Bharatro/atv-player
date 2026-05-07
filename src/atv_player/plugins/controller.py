@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -33,6 +34,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VodItem,
 )
+from atv_player.paths import app_cache_dir
 from atv_player.player.resume import resolve_resume_index
 
 
@@ -251,6 +253,28 @@ def _infer_external_subtitle_format(url: str) -> str:
     return ""
 
 
+def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
+    cache_dir = app_cache_dir() / "subtitles"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if source_path.resolve().is_relative_to(cache_dir.resolve()):
+            return source_path
+    except OSError:
+        return source_path
+    target_path = cache_dir / source_path.name
+    if target_path.exists():
+        stem = source_path.stem
+        suffix = source_path.suffix
+        index = 1
+        while True:
+            candidate = cache_dir / f"{stem}-{index}{suffix}"
+            if not candidate.exists():
+                target_path = candidate
+                break
+            index += 1
+    return Path(shutil.move(str(source_path), str(target_path)))
+
+
 def _format_drive_route_label(route: str, provider: str) -> str:
     normalized_route = route.strip()
     if not provider or provider in normalized_route:
@@ -326,7 +350,7 @@ class SpiderPluginController:
             return raw
         local_path = Path(raw)
         if local_path.is_absolute() and local_path.exists():
-            return raw
+            return str(_move_spider_subtitle_to_cache(local_path))
         if not raw.startswith("/"):
             return ""
         base_url = "" if self._base_url_loader is None else str(self._base_url_loader() or "").strip()

@@ -472,9 +472,12 @@ def test_controller_build_request_resolves_relative_subt_against_base_url() -> N
     ]
 
 
-def test_controller_build_request_keeps_local_absolute_subt_path(tmp_path) -> None:
+def test_controller_build_request_moves_local_absolute_subt_path_into_cache_dir(tmp_path, monkeypatch) -> None:
     subtitle_path = tmp_path / "episode-1.srt"
-    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+    subtitle_text = "1\n00:00:00,000 --> 00:00:01,000\nhello\n"
+    subtitle_path.write_text(subtitle_text, encoding="utf-8")
+    cache_root = tmp_path / "app-cache"
+    monkeypatch.setattr(controller_module, "app_cache_dir", lambda: cache_root)
     controller = SpiderPluginController(
         SubtitlePayloadSpider(str(subtitle_path)),
         plugin_name="字幕插件",
@@ -488,9 +491,12 @@ def test_controller_build_request_keeps_local_absolute_subt_path(tmp_path) -> No
     assert request.playback_loader is not None
     request.playback_loader(first)
 
+    cached_subtitle_path = cache_root / "subtitles" / "episode-1.srt"
     assert [(sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
-        (str(subtitle_path), "application/x-subrip", "spider"),
+        (str(cached_subtitle_path), "application/x-subrip", "spider"),
     ]
+    assert cached_subtitle_path.read_text(encoding="utf-8") == subtitle_text
+    assert not subtitle_path.exists()
 
 
 def test_controller_playback_loader_preserves_resolved_subtitles_on_repeat_load() -> None:
