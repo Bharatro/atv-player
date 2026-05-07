@@ -3741,6 +3741,159 @@ def test_player_window_builds_video_context_menu_with_spider_quality_submenu(qtb
     assert [action.text() for action in _submenu_actions(menu, "清晰度")] == ["1080P", "720P"]
 
 
+def test_player_window_restores_previous_spider_quality_after_prepare_failure(qtbot) -> None:
+    class FlakyM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str | None]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return url.endswith(".m3u8")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            self.calls.append((url, dash_video_id))
+            if len(self.calls) == 1:
+                return "http://127.0.0.1:2323/m3u?v=spider-1080"
+            raise RuntimeError("proxy busy")
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/video-1080.m3u8",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
+                ],
+                selected_playback_quality_id="1080p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FlakyM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://127.0.0.1:2323/m3u?v=spider-1080", 0)])
+
+    item = session.playlist[0]
+    assert item.original_url == "https://media.example/video-1080.m3u8"
+
+    window.video_quality_combo.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: "清晰度切换失败: proxy busy" in window.log_view.toPlainText())
+    assert item.url == "http://127.0.0.1:2323/m3u?v=spider-1080"
+    assert item.original_url == "https://media.example/video-1080.m3u8"
+    assert item.selected_playback_quality_id == "1080p"
+    assert window.video.load_calls == [("http://127.0.0.1:2323/m3u?v=spider-1080", 0)]
+
+
+def test_player_window_restores_previous_spider_quality_after_direct_load_failure(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FlakyVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+            if len(self.load_calls) == 2:
+                raise RuntimeError("device busy")
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 41
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/video-1080.mp4",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.mp4"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.mp4"),
+                ],
+                selected_playback_quality_id="1080p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FlakyVideo()
+    window.video = video
+
+    window.open_session(session)
+    assert video.load_calls == [("https://media.example/video-1080.mp4", False, 0)]
+
+    window.video_quality_combo.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: "清晰度切换失败: device busy" in window.log_view.toPlainText())
+    assert session.playlist[0].url == "https://media.example/video-1080.mp4"
+    assert session.playlist[0].selected_playback_quality_id == "1080p"
+
+
+def test_player_window_prefers_spider_quality_options_over_dash_quality_options(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def dash_video_qualities(self, prepared_url: str) -> list[VideoQualityOption]:
+            return [
+                VideoQualityOption(id="v1080", label="1080P AVC 2.8 Mbps"),
+                VideoQualityOption(id="v720", label="720P AVC 1.2 Mbps"),
+            ]
+
+        def selected_dash_video_quality(self, prepared_url: str) -> str | None:
+            return "v1080"
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FakeM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="http://127.0.0.1:2323/dash/v1080.mpd",
+                original_url="data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                playback_qualities=[
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
+                ],
+                selected_playback_quality_id="720p",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window.current_index = 0
+
+    window._refresh_video_quality_state("http://127.0.0.1:2323/dash/v1080.mpd")
+
+    assert [window.video_quality_combo.itemData(index) for index in range(window.video_quality_combo.count())] == [
+        "1080p",
+        "720p",
+    ]
+    assert window.video_quality_combo.currentData() == "720p"
+
+
 def test_player_window_context_menu_video_info_action_calls_video_layer(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:

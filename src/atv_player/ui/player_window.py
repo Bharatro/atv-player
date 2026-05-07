@@ -1476,6 +1476,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
 
+    def _restore_failed_spider_quality_switch(
+        self,
+        item: PlayItem,
+        pending_prepare: _PendingPlaybackPrepare | None = None,
+    ) -> bool:
+        if pending_prepare is None or not pending_prepare.previous_url:
+            return False
+        item.url = pending_prepare.previous_url
+        item.original_url = pending_prepare.previous_original_url
+        item.selected_playback_quality_id = pending_prepare.previous_selected_playback_quality_id
+        self._refresh_video_quality_state()
+        return True
+
     def _restore_or_keep_current_index_after_failure(self, previous_index: int) -> None:
         if self._current_item_requires_parse():
             self.playlist.setCurrentRow(self.current_index)
@@ -1601,6 +1614,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_prepare.index:
             return
         current_item = self.session.playlist[self.current_index]
+        if self._restore_failed_spider_quality_switch(current_item, pending_prepare):
+            self._append_log(f"清晰度切换失败: {message}")
+            return
         current_item.dash_video_id = pending_prepare.previous_dash_video_id
         self._refresh_video_quality_state(current_item.url)
         self._append_log(f"播放代理失败，继续播放原地址: {message}")
