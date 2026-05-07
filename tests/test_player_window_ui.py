@@ -5274,6 +5274,209 @@ def test_player_window_lists_spider_external_subtitle_in_primary_combo(qtbot) ->
     ]
 
 
+def test_player_window_auto_loads_spider_subtitle_when_no_embedded_tracks(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://site.example"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://127.0.0.1:4567/sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+    assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
+
+
+def test_player_window_does_not_auto_load_spider_subtitle_when_embedded_tracks_exist(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)")]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return 11 if mode == "auto" else track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def position_seconds(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda *args, **kwargs: pytest.fail("should not fetch spider subtitle when embedded tracks exist"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://127.0.0.1:4567/sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.video.loaded_external_subtitles == []
+    assert window.video.subtitle_apply_calls == [("auto", None)]
+    assert window.subtitle_combo.currentText() == "字幕"
+
+
+def test_player_window_does_not_auto_load_non_spider_external_subtitle_when_no_embedded_tracks(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def position_seconds(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda *args, **kwargs: pytest.fail("should not auto-fetch non-spider subtitle"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="bv1", vod_name="B站视频"),
+        playlist=[
+            PlayItem(
+                title="第1话",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="中文 [B站]",
+                        lang="ai-zh",
+                        url="http://sub/zh.srt",
+                        format="application/x-subrip",
+                        source="bilibili",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.video.loaded_external_subtitles == []
+    assert window.video.subtitle_apply_calls == []
+    assert window.subtitle_combo.currentText() == "字幕"
+
+
 def test_player_window_secondary_menu_excludes_spider_external_subtitles(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -5580,6 +5783,85 @@ def test_player_window_user_selection_loads_spider_subtitle_as_primary(qtbot, mo
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
+
+
+def test_player_window_does_not_reapply_auto_spider_subtitle_after_user_turns_subtitles_off(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://site.example"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://127.0.0.1:4567/sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.video.subtitle_apply_calls.clear()
+    window.video.loaded_external_subtitles.clear()
+
+    window.subtitle_combo.setCurrentIndex(1)
+    window.video_widget.subtitle_tracks_changed.emit()
+
+    assert window.video.loaded_external_subtitles == []
+    assert window.video.subtitle_apply_calls == [("off", None)]
+    assert window.subtitle_combo.currentText() == "关闭字幕"
 
 
 def test_player_window_context_menu_loads_bilibili_subtitle_as_secondary(qtbot, monkeypatch) -> None:
