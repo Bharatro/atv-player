@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QCoreApplication, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -696,6 +697,15 @@ class MpvWidget(QWidget):
                 return None
             raise
 
+    def current_subtitle_track_id(self) -> int | None:
+        value = self._player_property("sid", None)
+        if value in {None, "auto", "no"}:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _subtitle_track_ids(self) -> set[int]:
         if self._player is None:
             return set()
@@ -710,15 +720,27 @@ class MpvWidget(QWidget):
                 continue
         return track_ids
 
+    def _detect_new_subtitle_track_id(self, before_ids: set[int]) -> int | None:
+        for attempt in range(6):
+            after_ids = self._subtitle_track_ids()
+            new_ids = sorted(after_ids - before_ids)
+            if new_ids:
+                return new_ids[-1]
+            if attempt == 5:
+                break
+            app = QCoreApplication.instance()
+            if app is not None:
+                app.processEvents()
+            time.sleep(0.01)
+        return None
+
     def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
         if self._player is None:
             return None
         before_ids = self._subtitle_track_ids()
         try:
             self._player.command("sub-add", path, "auto")
-            after_ids = self._subtitle_track_ids()
-            new_ids = sorted(after_ids - before_ids)
-            track_id = new_ids[-1] if new_ids else None
+            track_id = self._detect_new_subtitle_track_id(before_ids)
             if select_for_secondary and track_id is not None:
                 self.apply_secondary_subtitle_mode("track", track_id=track_id)
             return track_id
@@ -726,6 +748,17 @@ class MpvWidget(QWidget):
             if getattr(self._player, "core_shutdown", False):
                 return None
             raise
+
+    def subtitle_debug_state(self) -> dict[str, object]:
+        if self._player is None:
+            return {}
+        track_list = getattr(self._player, "track_list", None) or []
+        return {
+            "sid": self._player_property("sid", None),
+            "secondary_sid": self._player_property("secondary-sid", None),
+            "sub_visibility": self._player_property("sub-visibility", None),
+            "track_list": track_list,
+        }
 
     def remove_subtitle_track(self, track_id: int | None) -> None:
         if self._player is None or track_id is None:

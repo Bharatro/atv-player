@@ -1416,6 +1416,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.log_view.setPlainText(message)
 
+    def _subtitle_debug(self, message: str) -> None:
+        self._append_log(f"[字幕调试] {message}")
+
+    def _subtitle_debug_player_state(self, prefix: str) -> None:
+        getter = getattr(self.video, "subtitle_debug_state", None)
+        if not callable(getter):
+            return
+        try:
+            snapshot = getter() or {}
+        except Exception as exc:
+            self._subtitle_debug(f"{prefix} player_state_error={exc}")
+            return
+        self._subtitle_debug(
+            f"{prefix} sid={snapshot.get('sid')} "
+            f"secondary_sid={snapshot.get('secondary_sid')} "
+            f"sub_visibility={snapshot.get('sub_visibility')} "
+            f"track_list={snapshot.get('track_list')}"
+        )
+
     def append_status_log(self, message: str) -> None:
         self._append_log(message)
 
@@ -2181,6 +2200,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_external_subtitle = self._current_primary_external_subtitle()
         if current_external_subtitle is None or self._primary_external_subtitle_track_id is not None:
             return False
+        self._subtitle_debug(
+            f"准备重载已选外挂字幕 name={current_external_subtitle.name} "
+            f"source={current_external_subtitle.source} mode={self._subtitle_preference.mode}"
+        )
         if self._subtitle_preference.mode == "external":
             pass
         elif self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider":
@@ -2192,6 +2215,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
             return True
         self._sync_subtitle_combo_without_tracks()
+        return True
+
+    def _primary_external_subtitle_track_needs_reapply(self) -> bool:
+        current_external_subtitle = self._current_primary_external_subtitle()
+        track_id = self._primary_external_subtitle_track_id
+        if current_external_subtitle is None or track_id is None:
+            return False
+        getter = getattr(self.video, "current_subtitle_track_id", None)
+        if not callable(getter):
+            return False
+        current_track_id = getter()
+        if current_track_id == track_id:
+            return False
+        self._subtitle_debug(
+            f"检测到外挂字幕 sid 漂移: expected={track_id} actual={current_track_id}; 准备重新应用"
+        )
         return True
 
     def _sync_subtitle_combo_without_tracks(self) -> None:
@@ -2239,10 +2278,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _schedule_primary_external_subtitle_retry_for_pending_track(self) -> bool:
         if self._primary_external_subtitle_retry_attempts >= 3:
+            self._subtitle_debug("外挂字幕 track id 仍未出现，停止重试")
             self._stop_primary_external_subtitle_retry()
             return False
         if not self._primary_external_subtitle_retry_timer.isActive():
             self._primary_external_subtitle_retry_attempts += 1
+            self._subtitle_debug(
+                f"外挂字幕已写入播放器但 track id 未出现，安排第 {self._primary_external_subtitle_retry_attempts} 次重试"
+            )
             self._primary_external_subtitle_retry_timer.start(400)
         return True
 
@@ -2253,11 +2296,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _schedule_primary_external_subtitle_retry(self) -> None:
         self._primary_external_subtitle_retry_attempts += 1
+        self._subtitle_debug(f"外挂字幕应用遇到 mpv 时序错误，安排第 {self._primary_external_subtitle_retry_attempts} 次重试")
         self._primary_external_subtitle_retry_timer.start(400)
 
     def _ensure_primary_external_subtitle_loaded(self, subtitle: ExternalSubtitleOption) -> bool:
         if self._primary_external_subtitle_track_id is not None:
+            self._subtitle_debug(f"外挂字幕已存在轨道 id={self._primary_external_subtitle_track_id}，跳过重新加载")
             return True
+        self._subtitle_debug(f"开始加载外挂字幕 name={subtitle.name} source={subtitle.source}")
         try:
             loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=False)
         except Exception as exc:
@@ -2268,6 +2314,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             raise
         self._primary_external_subtitle_track_id = loaded_track_id
         self._primary_external_subtitle_path = subtitle_path
+        self._subtitle_debug(f"外挂字幕加载完成 track_id={loaded_track_id} file={subtitle_path.name}")
+        self._subtitle_debug_player_state("外挂字幕加载后播放器状态")
         if loaded_track_id is None:
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
@@ -2277,6 +2325,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if track_id is None:
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
+        self._subtitle_debug(f"准备应用外挂字幕轨道 track_id={track_id}")
         try:
             self.video.apply_subtitle_mode("track", track_id=track_id)
         except Exception as exc:
@@ -2286,6 +2335,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._stop_primary_external_subtitle_retry()
             raise
         self._stop_primary_external_subtitle_retry()
+        self._subtitle_debug(f"外挂字幕轨道应用完成 track_id={track_id}")
+        self._subtitle_debug_player_state("外挂字幕应用后播放器状态")
         return True
 
     def _retry_apply_primary_external_subtitle(self) -> None:
@@ -2293,6 +2344,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if current_external_subtitle is None:
             self._stop_primary_external_subtitle_retry()
             return
+        self._subtitle_debug(
+            f"开始外挂字幕重试 attempt={self._primary_external_subtitle_retry_attempts} "
+            f"name={current_external_subtitle.name} source={current_external_subtitle.source}"
+        )
         try:
             if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle):
                 return
@@ -2307,12 +2362,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._clear_primary_external_subtitle()
             self._sync_subtitle_combo_for_current_state()
             return
+        self._subtitle_debug("外挂字幕重试完成")
         self._sync_subtitle_combo_for_current_state()
 
     def _auto_apply_spider_subtitle_if_needed(self) -> bool:
         if not self._should_auto_apply_spider_subtitle():
             return False
         subtitle = self._current_item_auto_spider_external_subtitles()[0]
+        self._subtitle_debug(f"准备自动加载插件外挂字幕 name={subtitle.name}")
         attempt_key = self._current_auto_spider_subtitle_attempt_key(subtitle)
         if self._auto_spider_subtitle_attempted_key == attempt_key:
             return False
@@ -2917,6 +2974,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._reset_subtitle_combo()
             return
         manual_switch_refresh = self._manual_subtitle_switch_refresh_active()
+        current_external_subtitle = self._current_primary_external_subtitle()
         remembered_main_subtitle_scale = self._main_subtitle_scale
         remembered_secondary_subtitle_scale = self._secondary_subtitle_scale
         remembered_main_subtitle_scale_supported = self._main_subtitle_scale_supported
@@ -2934,6 +2992,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._subtitle_tracks = self.video.subtitle_tracks()
             except Exception:
                 pass
+        if current_external_subtitle is not None or self._primary_external_subtitle_retry_timer.isActive():
+            self._subtitle_debug(
+                "刷新字幕状态 "
+                f"embedded_tracks={len(self._subtitle_tracks)} "
+                f"external_selected={current_external_subtitle.name if current_external_subtitle else '-'} "
+                f"external_track_id={self._primary_external_subtitle_track_id} "
+                f"mode={self._subtitle_preference.mode} "
+                f"manual_refresh={manual_switch_refresh} "
+                f"retry_active={self._primary_external_subtitle_retry_timer.isActive()} "
+                f"retry_attempts={self._primary_external_subtitle_retry_attempts}"
+            )
+            self._subtitle_debug_player_state("刷新字幕状态时播放器状态")
         self._populate_subtitle_combo(self._subtitle_tracks)
         if manual_switch_refresh:
             if not self._subtitle_tracks:
@@ -2973,6 +3043,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not self._subtitle_tracks:
             try:
                 if self._reload_selected_primary_external_subtitle_if_needed():
+                    return
+                if self._primary_external_subtitle_track_needs_reapply():
+                    if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
+                        return
+                    self._sync_subtitle_combo_without_tracks()
                     return
                 if self._auto_apply_spider_subtitle_if_needed():
                     return
@@ -3116,6 +3191,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._clear_primary_external_subtitle()
             return
         if mode == "external" and external_subtitle is not None:
+            self._subtitle_debug(
+                f"手动选择外挂字幕 name={external_subtitle.name} source={external_subtitle.source}"
+            )
             previous_track_id = self._primary_external_subtitle_track_id
             try:
                 loaded_track_id, subtitle_path = self._load_external_subtitle(external_subtitle, secondary=False)
@@ -3903,12 +3981,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         *,
         secondary: bool,
     ) -> tuple[int | None, Path]:
+        self._subtitle_debug(
+            f"准备写入外挂字幕临时文件 name={subtitle.name} source={subtitle.source} secondary={secondary}"
+        )
         text = self._fetch_external_subtitle_text(subtitle)
         if not text.strip():
             raise ValueError("字幕内容为空")
         suffix = ".srt" if subtitle.format.endswith("subrip") else ".txt"
         subtitle_path = self._write_external_subtitle_file(text, suffix)
         track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=secondary)
+        self._subtitle_debug(
+            f"播放器返回外挂字幕轨道 name={subtitle.name} track_id={track_id} secondary={secondary}"
+        )
         return track_id, subtitle_path
 
     def _set_subtitle_position_from_menu(self, value: int, secondary: bool) -> None:

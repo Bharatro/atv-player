@@ -1067,6 +1067,43 @@ def test_mpv_widget_can_load_and_remove_external_secondary_subtitle(qtbot, tmp_p
     ]
 
 
+def test_mpv_widget_waits_for_external_subtitle_track_to_appear_after_sub_add(qtbot, tmp_path) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    subtitle_path = tmp_path / "lyrics.ass"
+    subtitle_path.write_text("dummy", encoding="utf-8")
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.secondary_sid: object = "no"
+            self._subtitle_added = False
+            self._post_add_track_reads = 0
+
+        @property
+        def track_list(self) -> list[dict[str, object]]:
+            if not self._subtitle_added:
+                return []
+            self._post_add_track_reads += 1
+            if self._post_add_track_reads == 1:
+                return []
+            return [{"id": 99, "type": "sub", "external": True}]
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+            if args == ("sub-add", str(subtitle_path), "auto"):
+                self._subtitle_added = True
+
+    player = FakePlayer()
+    widget._player = player
+
+    track_id = widget.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+
+    assert track_id == 99
+    assert player.secondary_sid == 99
+    assert player.command_calls == [("sub-add", str(subtitle_path), "auto")]
+
+
 def test_mpv_widget_ignores_removing_stale_external_subtitle_track(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
