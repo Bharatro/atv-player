@@ -1122,7 +1122,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._apply_resolved_vod(resolved_vod)
         return resolved_vod
 
-    def _play_item_at_index(self, index: int, start_position_seconds: int = 0, pause: bool = False) -> None:
+    def _play_item_at_index(
+        self,
+        index: int,
+        start_position_seconds: int = 0,
+        pause: bool = False,
+        *,
+        preserve_primary_external_subtitle_selection: bool = False,
+    ) -> None:
         if self.session is None:
             return
         previous_index = self.current_index
@@ -1134,6 +1141,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 start_position_seconds=start_position_seconds,
                 pause=pause,
                 previous_index=previous_index,
+                preserve_primary_external_subtitle_selection=preserve_primary_external_subtitle_selection,
             )
             self._refresh_window_title()
         except Exception:
@@ -2054,11 +2062,36 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _find_current_item_external_subtitle(self, url: str) -> ExternalSubtitleOption | None:
         return next((subtitle for subtitle in self._current_item_external_subtitles() if subtitle.url == url), None)
 
-    def _current_primary_external_subtitle(self) -> ExternalSubtitleOption | None:
-        selection = self._primary_external_subtitle_selection
+    def _match_current_item_external_subtitle(
+        self,
+        selection: ExternalSubtitleSelection | None,
+    ) -> ExternalSubtitleOption | None:
         if selection is None:
             return None
-        return self._find_current_item_external_subtitle(selection.option_url)
+        exact_match = self._find_current_item_external_subtitle(selection.option_url)
+        if exact_match is not None:
+            return exact_match
+        if not selection.option_name:
+            return None
+        candidates = [
+            subtitle
+            for subtitle in self._current_item_external_subtitles()
+            if subtitle.source == selection.source and subtitle.name == selection.option_name
+        ]
+        if not candidates:
+            return None
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda subtitle: (
+                int(bool(selection.option_lang) and subtitle.lang == selection.option_lang),
+                int(bool(selection.option_format) and subtitle.format == selection.option_format),
+            ),
+            reverse=True,
+        )
+        return ranked_candidates[0]
+
+    def _current_primary_external_subtitle(self) -> ExternalSubtitleOption | None:
+        return self._match_current_item_external_subtitle(self._primary_external_subtitle_selection)
 
     def _current_auto_spider_subtitle_attempt_key(self, subtitle: ExternalSubtitleOption) -> tuple[int, str]:
         current_item = self._current_play_item()
@@ -2221,6 +2254,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._primary_external_subtitle_selection = ExternalSubtitleSelection(
             source=subtitle.source,
             option_url=subtitle.url,
+            option_name=subtitle.name,
+            option_lang=subtitle.lang,
+            option_format=subtitle.format,
         )
         if not self._ensure_primary_external_subtitle_loaded(subtitle):
             return True
@@ -2464,7 +2500,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _apply_secondary_subtitle_preference(self) -> None:
         if self._secondary_external_subtitle_selection is not None and self._secondary_external_subtitle_track_id is not None:
-            subtitle = self._find_current_item_external_subtitle(self._secondary_external_subtitle_selection.option_url)
+            subtitle = self._match_current_item_external_subtitle(self._secondary_external_subtitle_selection)
             if subtitle is not None:
                 self.video.apply_secondary_subtitle_mode("track", track_id=self._secondary_external_subtitle_track_id)
                 return
@@ -3013,6 +3049,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._primary_external_subtitle_selection = ExternalSubtitleSelection(
                 source=external_subtitle.source,
                 option_url=external_subtitle.url,
+                option_name=external_subtitle.name,
+                option_lang=external_subtitle.lang,
+                option_format=external_subtitle.format,
             )
             self._primary_external_subtitle_track_id = loaded_track_id
             self._primary_external_subtitle_path = subtitle_path
@@ -3740,6 +3779,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._secondary_external_subtitle_selection = ExternalSubtitleSelection(
                     source=subtitle.source,
                     option_url=subtitle.url,
+                    option_name=subtitle.name,
+                    option_lang=subtitle.lang,
+                    option_format=subtitle.format,
                 )
                 self._secondary_external_subtitle_track_id = loaded_track_id
                 self._secondary_external_subtitle_path = subtitle_path
@@ -4145,7 +4187,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._stop_current_playback()
         target_index = self.current_index - 1
         try:
-            self._play_item_at_index(target_index)
+            self._play_item_at_index(target_index, preserve_primary_external_subtitle_selection=True)
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
 
@@ -4156,7 +4198,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._stop_current_playback()
         target_index = self.current_index + 1
         try:
-            self._play_item_at_index(target_index)
+            self._play_item_at_index(target_index, preserve_primary_external_subtitle_selection=True)
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
 
@@ -4176,7 +4218,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         try:
-            self._play_item_at_index(row)
+            self._play_item_at_index(row, preserve_primary_external_subtitle_selection=True)
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
 

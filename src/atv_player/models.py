@@ -51,6 +51,9 @@ class ExternalSubtitleOption:
 class ExternalSubtitleSelection:
     source: str
     option_url: str
+    option_name: str = ""
+    option_lang: str = ""
+    option_format: str = ""
 
 
 @dataclass(slots=True)
