@@ -128,6 +128,19 @@ class ParseRequiredSpider(FakeSpider):
         return {"parse": 1, "url": f"https://page.example{id}"}
 
 
+class SubtitlePayloadSpider(FakeSpider):
+    def __init__(self, subt: str) -> None:
+        self._subt = subt
+
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": {"Referer": "https://site.example"},
+            "subt": self._subt,
+        }
+
+
 class HtmlPageSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -419,6 +432,62 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
+
+
+def test_controller_build_request_maps_absolute_subt_into_external_subtitles() -> None:
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider("https://cdn.example/subtitles/episode-1.srt"),
+        plugin_name="字幕插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert [(sub.name, sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
+        ("外挂字幕 [插件]", "https://cdn.example/subtitles/episode-1.srt", "application/x-subrip", "spider"),
+    ]
+
+
+def test_controller_build_request_resolves_relative_subt_against_base_url() -> None:
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider("/files/subtitles/episode-1.ass"),
+        plugin_name="字幕插件",
+        search_enabled=True,
+        base_url_loader=lambda: "http://127.0.0.1:4567",
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert [(sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
+        ("http://127.0.0.1:4567/files/subtitles/episode-1.ass", "text/x-ass", "spider"),
+    ]
+
+
+def test_controller_build_request_ignores_blank_or_unsupported_subt_without_breaking_playback() -> None:
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider("subtitle.srt"),
+        plugin_name="字幕插件",
+        search_enabled=True,
+        base_url_loader=lambda: "http://127.0.0.1:4567",
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.external_subtitles == []
 
 
 def test_controller_uses_media_title_only_for_short_bare_numeric_playlists() -> None:

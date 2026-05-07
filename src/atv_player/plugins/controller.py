@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 from collections.abc import Mapping
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from atv_player.api import ApiError
 from atv_player.danmaku.cache import (
@@ -26,6 +26,7 @@ from atv_player.models import (
     CategoryFilter,
     CategoryFilterOption,
     DoubanCategory,
+    ExternalSubtitleOption,
     OpenPlayerRequest,
     PlayItem,
     PlaybackLoadResult,
@@ -236,6 +237,19 @@ def _detect_drive_provider_label(value: str) -> str:
     return ""
 
 
+def _infer_external_subtitle_format(url: str) -> str:
+    path = urlparse(url).path.lower()
+    if path.endswith(".srt"):
+        return "application/x-subrip"
+    if path.endswith(".ass"):
+        return "text/x-ass"
+    if path.endswith(".ssa"):
+        return "text/x-ssa"
+    if path.endswith(".vtt"):
+        return "text/vtt"
+    return ""
+
+
 def _format_drive_route_label(route: str, provider: str) -> str:
     normalized_route = route.strip()
     if not provider or provider in normalized_route:
@@ -256,6 +270,7 @@ class SpiderPluginController:
         preferred_parse_key_loader: Callable[[], str] | None = None,
         danmaku_service=None,
         danmaku_preference_store=None,
+        base_url_loader: Callable[[], str] | None = None,
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
@@ -265,6 +280,7 @@ class SpiderPluginController:
         self._playback_history_saver = playback_history_saver
         self._playback_parser_service = playback_parser_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
+        self._base_url_loader = base_url_loader
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
@@ -300,6 +316,33 @@ class SpiderPluginController:
         self._home_categories = categories
         self._home_items = items
         self._home_loaded = True
+
+    def _normalize_spider_subtitle_url(self, value: object) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith(("http://", "https://")):
+            return raw
+        if not raw.startswith("/"):
+            return ""
+        base_url = "" if self._base_url_loader is None else str(self._base_url_loader() or "").strip()
+        if not base_url:
+            return ""
+        return urljoin(f"{base_url.rstrip('/')}/", raw.lstrip("/"))
+
+    def _map_spider_external_subtitles(self, payload: object) -> list[ExternalSubtitleOption]:
+        url = self._normalize_spider_subtitle_url(payload)
+        if not url:
+            return []
+        return [
+            ExternalSubtitleOption(
+                name="外挂字幕 [插件]",
+                lang="",
+                url=url,
+                format=_infer_external_subtitle_format(url),
+                source="spider",
+            )
+        ]
 
     def load_categories(self) -> list[DoubanCategory]:
         self._ensure_home_loaded()
@@ -768,6 +811,7 @@ class SpiderPluginController:
         return resolve_resume_index(history, replacement, 0)
 
     def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
+        item.external_subtitles = []
         if item.url:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
@@ -868,6 +912,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
         self._maybe_resolve_danmaku(item, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
