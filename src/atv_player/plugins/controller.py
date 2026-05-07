@@ -908,7 +908,7 @@ class SpiderPluginController:
         history = self._playback_history_loader(vod_id)
         return resolve_resume_index(history, replacement, 0)
 
-    def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
+    def _resolve_play_item(self, item: PlayItem, request_vod: VodItem | None = None) -> PlaybackLoadResult | None:
         if item.url:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
@@ -957,6 +957,7 @@ class SpiderPluginController:
                 item.vod_id,
             )
             raise ValueError(str(exc)) from exc
+        cover_source = str(payload.get("cover") or "").strip()
         parse_required = int(payload.get("parse") or 0) == 1
         item.parse_required = parse_required
         url = str(payload.get("url") or "").strip()
@@ -986,6 +987,8 @@ class SpiderPluginController:
                 item.vod_id,
                 len(replacement),
             )
+            if cover_source and request_vod is not None:
+                request_vod.vod_pic = cover_source
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
                 replacement_start_index=replacement_start_index,
@@ -1000,6 +1003,8 @@ class SpiderPluginController:
             )
             item.url = result.url
             item.headers = dict(result.headers)
+            if cover_source and request_vod is not None:
+                request_vod.vod_pic = cover_source
             self._maybe_resolve_danmaku(item, url)
             logger.info(
                 "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
@@ -1017,6 +1022,8 @@ class SpiderPluginController:
             url,
         )
         item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
+        if cover_source and request_vod is not None:
+            request_vod.vod_pic = cover_source
         self._maybe_resolve_danmaku(item, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
@@ -1056,6 +1063,10 @@ class SpiderPluginController:
                 source_vod_id,
                 payload,
             )
+
+        def playback_loader(item: PlayItem, request_vod: VodItem = detail) -> PlaybackLoadResult | None:
+            return self._resolve_play_item(item, request_vod=request_vod)
+
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
@@ -1066,7 +1077,7 @@ class SpiderPluginController:
             source_mode="detail",
             source_vod_id=source_vod_id,
             use_local_history=False,
-            playback_loader=self._resolve_play_item,
+            playback_loader=playback_loader,
             async_playback_loader=True,
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,

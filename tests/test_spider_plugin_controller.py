@@ -165,6 +165,26 @@ class QualityPayloadSpider(FakeSpider):
         }
 
 
+class CoverPayloadSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": {"Referer": "https://site.example"},
+            "cover": "https://img.example/resolved-cover.jpg",
+        }
+
+
+class BlankCoverPayloadSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": {"Referer": "https://site.example"},
+            "cover": "   ",
+        }
+
+
 class HtmlPageSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -851,6 +871,37 @@ def test_controller_keeps_direct_play_items_parse_disabled() -> None:
     request.playback_loader(first)
 
     assert first.parse_required is False
+    assert first.url == "https://stream.example/play/1.m3u8"
+
+
+def test_controller_overrides_request_poster_with_player_content_cover() -> None:
+    controller = SpiderPluginController(CoverPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.vod.vod_pic == "poster-detail"
+    assert request.playback_loader is not None
+
+    request.playback_loader(first)
+
+    assert request.vod.vod_pic == "https://img.example/resolved-cover.jpg"
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.headers == {"Referer": "https://site.example"}
+
+
+def test_controller_keeps_existing_request_poster_when_player_content_cover_is_blank() -> None:
+    controller = SpiderPluginController(BlankCoverPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.vod.vod_pic == "poster-detail"
+    assert request.playback_loader is not None
+
+    request.playback_loader(first)
+
+    assert request.vod.vod_pic == "poster-detail"
     assert first.url == "https://stream.example/play/1.m3u8"
 
 

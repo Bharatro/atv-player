@@ -1510,6 +1510,80 @@ def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtb
     assert started == ["https://img.example/fallback.jpg"]
 
 
+def test_player_window_refreshes_poster_after_async_playback_loader_updates_session_cover(qtbot, monkeypatch) -> None:
+    started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int) -> None:
+        started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="plugin-vod-1",
+            vod_name="占位电影",
+            vod_pic="https://img.example/card.jpg",
+        ),
+        playlist=[PlayItem(title="第1集", url="", vod_id="/play/1", play_source="备用线")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+
+    def playback_loader(item: PlayItem) -> None:
+        session.vod.vod_pic = "https://img.example/resolved-cover.jpg"
+        item.url = "http://m/1.m3u8"
+        return None
+
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(
+        lambda: started
+        == [
+            "https://img.example/card.jpg",
+            "https://img.example/resolved-cover.jpg",
+        ]
+    )
+
+
 def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
     poster_path = tmp_path / "cover.png"
     pixmap = QPixmap(20, 30)
