@@ -1619,6 +1619,100 @@ def test_player_window_refreshes_only_video_poster_after_async_playback_loader_u
     assert session.vod.vod_pic == "https://img.example/detail.jpg"
 
 
+def test_player_window_restores_previous_item_video_cover_when_switching_back(qtbot, monkeypatch) -> None:
+    video_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "video":
+            video_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-vod-1", vod_name="占位电影", vod_pic=""),
+        playlist=[
+            PlayItem(title="第1首", url="", vod_id="/play/1", play_source="默认线"),
+            PlayItem(title="第2首", url="", vod_id="/play/2", play_source="默认线"),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+
+    def playback_loader(item: PlayItem) -> None:
+        if item.title == "第1首":
+            session.video_cover_override = "https://img.example/song-1.jpg"
+            item.url = "http://m/1.mp3"
+            return None
+        session.video_cover_override = "https://img.example/song-2.jpg"
+        item.url = "http://m/2.mp3"
+        return None
+
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video_started == ["https://img.example/song-1.jpg"])
+
+    window.play_next()
+    qtbot.waitUntil(lambda: video_started == ["https://img.example/song-1.jpg", "https://img.example/song-2.jpg"])
+
+    window.play_previous()
+    qtbot.waitUntil(
+        lambda: video_started
+        == [
+            "https://img.example/song-1.jpg",
+            "https://img.example/song-2.jpg",
+            "https://img.example/song-1.jpg",
+        ]
+    )
+
+
+def test_player_window_prefers_current_item_cover_when_session_override_is_stale(qtbot, monkeypatch) -> None:
+    video_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "video":
+            video_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="plugin-vod-1", vod_name="占位电影", vod_pic="poster-detail"),
+            playlist=[
+                PlayItem(
+                    title="第1首",
+                    url="http://m/1.mp3",
+                    vod_id="/play/1",
+                    play_source="默认线",
+                    video_cover_override="https://img.example/song-1.jpg",
+                ),
+                PlayItem(
+                    title="第2首",
+                    url="http://m/2.mp3",
+                    vod_id="/play/2",
+                    play_source="默认线",
+                    video_cover_override="https://img.example/song-2.jpg",
+                ),
+            ],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            video_cover_override="https://img.example/song-2.jpg",
+        )
+    )
+
+    assert video_started == ["https://img.example/song-1.jpg"]
+
+
 def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
     poster_path = tmp_path / "cover.png"
     pixmap = QPixmap(20, 30)

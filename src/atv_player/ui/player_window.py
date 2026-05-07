@@ -1253,6 +1253,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _preferred_video_poster_source(self) -> str:
         if self.session is None:
             return ""
+        current_item = self._current_play_item()
+        if current_item is not None and current_item.video_cover_override:
+            return current_item.video_cover_override
         if self.session.video_cover_override:
             return self.session.video_cover_override
         if self.session.vod.vod_pic:

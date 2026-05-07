@@ -911,6 +911,7 @@ class SpiderPluginController:
 
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url:
+            session.video_cover_override = item.video_cover_override
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
             return
@@ -989,7 +990,9 @@ class SpiderPluginController:
                 len(replacement),
             )
             if cover_source:
-                session.video_cover_override = cover_source
+                item.video_cover_override = cover_source
+                replacement_item.video_cover_override = cover_source
+            session.video_cover_override = replacement_item.video_cover_override or item.video_cover_override
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
                 replacement_start_index=replacement_start_index,
@@ -1005,7 +1008,8 @@ class SpiderPluginController:
             item.url = result.url
             item.headers = dict(result.headers)
             if cover_source:
-                session.video_cover_override = cover_source
+                item.video_cover_override = cover_source
+            session.video_cover_override = item.video_cover_override
             self._maybe_resolve_danmaku(item, url)
             logger.info(
                 "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
@@ -1024,12 +1028,13 @@ class SpiderPluginController:
         )
         item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
         if cover_source:
-            session.video_cover_override = cover_source
+            item.video_cover_override = cover_source
+        session.video_cover_override = item.video_cover_override
         self._maybe_resolve_danmaku(item, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
-            self._plugin_name,
-            item.vod_id,
+                self._plugin_name,
+                item.vod_id,
             item.play_source,
         )
         return None

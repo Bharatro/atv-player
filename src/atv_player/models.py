@@ -58,6 +58,7 @@ class PlayItem:
     title: str
     url: str
     original_url: str = ""
+    video_cover_override: str = ""
     path: str = ""
     index: int = 0
     size: int = 0

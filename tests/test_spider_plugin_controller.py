@@ -186,6 +186,39 @@ class BlankCoverPayloadSpider(FakeSpider):
         }
 
 
+class FlakyCoverPayloadSpider(FakeSpider):
+    def __init__(self) -> None:
+        self._calls: dict[str, int] = {}
+
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "随机封面歌单",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1首$/play/1#第2首$/play/2",
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        self._calls[id] = self._calls.get(id, 0) + 1
+        payload = {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": {"Referer": "https://site.example"},
+        }
+        if id == "/play/1" and self._calls[id] == 1:
+            payload["cover"] = "https://img.example/song-1.jpg"
+        elif id == "/play/2":
+            payload["cover"] = "https://img.example/song-2.jpg"
+        else:
+            payload["cover"] = " "
+        return payload
+
+
 class HtmlPageSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -931,6 +964,37 @@ def test_controller_keeps_video_cover_override_empty_when_player_content_cover_i
     session.playback_loader(first)
 
     assert session.video_cover_override == ""
+    assert request.vod.vod_pic == "poster-detail"
+    assert first.url == "https://stream.example/play/1.m3u8"
+
+
+def test_controller_reuses_last_known_item_cover_when_player_content_cover_is_missing_on_revisit() -> None:
+    controller = SpiderPluginController(FlakyCoverPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("/detail/1")
+    session = PlayerController(_SessionApiClient()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        use_local_history=False,
+    )
+    first = session.playlist[0]
+    second = session.playlist[1]
+
+    assert session.playback_loader is not None
+
+    session.playback_loader(first)
+    assert session.video_cover_override == "https://img.example/song-1.jpg"
+
+    session.playback_loader(second)
+    assert session.video_cover_override == "https://img.example/song-2.jpg"
+
+    session.playback_loader(first)
+
+    assert session.video_cover_override == "https://img.example/song-1.jpg"
     assert request.vod.vod_pic == "poster-detail"
     assert first.url == "https://stream.example/play/1.m3u8"
 
