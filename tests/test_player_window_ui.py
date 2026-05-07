@@ -5693,6 +5693,84 @@ def test_player_window_retries_auto_loaded_spider_subtitle_when_mpv_is_not_ready
     assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
 
 
+def test_player_window_retries_auto_loaded_spider_subtitle_when_sub_add_fails_initially(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self._fail_first_load = True
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            if self._fail_first_load:
+                self._fail_first_load = False
+                raise RuntimeError(("Error running mpv command", -12, (object(), object(), object())))
+            return 91
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://site.example"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://127.0.0.1:4567/sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False, False]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+    assert "字幕切换失败" not in window.log_view.toPlainText()
+    assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
+
+
 def test_player_window_auto_loads_spider_subtitle_from_local_path(qtbot, monkeypatch, tmp_path) -> None:
     class FakeVideo:
         def __init__(self) -> None:

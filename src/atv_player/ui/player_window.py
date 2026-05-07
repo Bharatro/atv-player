@@ -2008,10 +2008,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             pass
         else:
             return False
-        loaded_track_id, subtitle_path = self._load_external_subtitle(current_external_subtitle, secondary=False)
-        self._primary_external_subtitle_track_id = loaded_track_id
-        self._primary_external_subtitle_path = subtitle_path
-        self._apply_primary_external_subtitle_track(loaded_track_id)
+        if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle):
+            return True
+        if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
+            return True
         self._sync_subtitle_combo_without_tracks()
         return True
 
@@ -2067,6 +2067,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._primary_external_subtitle_retry_attempts += 1
         self._primary_external_subtitle_retry_timer.start(400)
 
+    def _ensure_primary_external_subtitle_loaded(self, subtitle: ExternalSubtitleOption) -> bool:
+        if self._primary_external_subtitle_track_id is not None:
+            return True
+        try:
+            loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=False)
+        except Exception as exc:
+            if self._should_retry_primary_external_subtitle_apply(exc):
+                self._schedule_primary_external_subtitle_retry()
+                return False
+            self._stop_primary_external_subtitle_retry()
+            raise
+        self._primary_external_subtitle_track_id = loaded_track_id
+        self._primary_external_subtitle_path = subtitle_path
+        return True
+
     def _apply_primary_external_subtitle_track(self, track_id: int | None) -> bool:
         try:
             self.video.apply_subtitle_mode("track", track_id=track_id)
@@ -2081,11 +2096,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _retry_apply_primary_external_subtitle(self) -> None:
         current_external_subtitle = self._current_primary_external_subtitle()
-        track_id = self._primary_external_subtitle_track_id
-        if current_external_subtitle is None or track_id is None:
+        if current_external_subtitle is None:
             self._stop_primary_external_subtitle_retry()
             return
         try:
+            if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle):
+                return
+            track_id = self._primary_external_subtitle_track_id
+            if track_id is None:
+                self._stop_primary_external_subtitle_retry()
+                return
             if not self._apply_primary_external_subtitle_track(track_id):
                 return
         except Exception as exc:
@@ -2103,14 +2123,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._auto_spider_subtitle_attempted_key == attempt_key:
             return False
         self._auto_spider_subtitle_attempted_key = attempt_key
-        loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=False)
         self._primary_external_subtitle_selection = ExternalSubtitleSelection(
             source=subtitle.source,
             option_url=subtitle.url,
         )
-        self._primary_external_subtitle_track_id = loaded_track_id
-        self._primary_external_subtitle_path = subtitle_path
-        self._apply_primary_external_subtitle_track(loaded_track_id)
+        if not self._ensure_primary_external_subtitle_loaded(subtitle):
+            return True
+        if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
+            return True
         self._sync_subtitle_combo_without_tracks()
         return True
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -253,6 +254,19 @@ def _infer_external_subtitle_format(url: str) -> str:
     return ""
 
 
+def _subtitle_suffix_for_format(format_name: str) -> str:
+    normalized = str(format_name or "").strip().lower()
+    if normalized == "application/x-subrip":
+        return ".srt"
+    if normalized == "text/x-ass":
+        return ".ass"
+    if normalized == "text/x-ssa":
+        return ".ssa"
+    if normalized == "text/vtt":
+        return ".vtt"
+    return ""
+
+
 def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
     cache_dir = app_cache_dir() / "subtitles"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +287,17 @@ def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
                 break
             index += 1
     return Path(shutil.move(str(source_path), str(target_path)))
+
+
+def _write_inline_spider_subtitle_to_cache(format_name: str, text: str) -> Path:
+    cache_dir = app_cache_dir() / "subtitles"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = _subtitle_suffix_for_format(format_name)
+    digest = hashlib.sha256(f"{format_name}\n{text}".encode("utf-8")).hexdigest()
+    target_path = cache_dir / f"inline_{digest}{suffix}"
+    if not target_path.exists():
+        target_path.write_text(text, encoding="utf-8")
+    return target_path
 
 
 def _format_drive_route_label(route: str, provider: str) -> str:
@@ -343,9 +368,16 @@ class SpiderPluginController:
         self._home_loaded = True
 
     def _normalize_spider_subtitle_url(self, value: object) -> str:
-        raw = str(value or "").strip()
-        if not raw:
+        raw_value = str(value or "")
+        if not raw_value.strip():
             return ""
+        format_name, separator, subtitle_text = raw_value.partition("\n")
+        if separator:
+            format_name = format_name.strip()
+            suffix = _subtitle_suffix_for_format(format_name)
+            if suffix and subtitle_text.strip():
+                return str(_write_inline_spider_subtitle_to_cache(format_name, subtitle_text))
+        raw = raw_value.strip()
         if raw.startswith(("http://", "https://")):
             return raw
         local_path = Path(raw)

@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 import pytest
 
@@ -497,6 +498,33 @@ def test_controller_build_request_moves_local_absolute_subt_path_into_cache_dir(
     ]
     assert cached_subtitle_path.read_text(encoding="utf-8") == subtitle_text
     assert not subtitle_path.exists()
+
+
+def test_controller_build_request_writes_inline_subt_payload_into_cache_dir(tmp_path, monkeypatch) -> None:
+    subtitle_text = "1\n00:00:00,000 --> 00:00:01,000\nhello\n"
+    cache_root = tmp_path / "app-cache"
+    monkeypatch.setattr(controller_module, "app_cache_dir", lambda: cache_root)
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider(f"application/x-subrip\n{subtitle_text}"),
+        plugin_name="字幕插件",
+        search_enabled=True,
+        base_url_loader=lambda: "http://127.0.0.1:4567",
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert len(first.external_subtitles) == 1
+    subtitle = first.external_subtitles[0]
+    subtitle_path = Path(subtitle.url)
+    assert subtitle.format == "application/x-subrip"
+    assert subtitle.source == "spider"
+    assert subtitle_path.parent == cache_root / "subtitles"
+    assert subtitle_path.suffix == ".srt"
+    assert subtitle_path.read_text(encoding="utf-8") == subtitle_text
 
 
 def test_controller_playback_loader_preserves_resolved_subtitles_on_repeat_load() -> None:
