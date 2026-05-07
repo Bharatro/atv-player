@@ -10,6 +10,8 @@ _QQ_WORD_RE = re.compile(r"(?P<text>[^()]+)\((?P<start>\d+),(?P<duration>\d+)\)"
 _QQ_OFFSET_RE = re.compile(r"^\[offset:(?P<offset>-?\d+)\]$")
 _KG_LINE_RE = re.compile(r"^\[(?P<start>\d+),(?P<duration>\d+)\](?P<body>.+)$")
 _KG_WORD_RE = re.compile(r"<(?P<offset>\d+),(?P<duration>\d+),(?P<flag>\d+)>(?P<text>[^<]*)")
+_NETEASE_YRC_LINE_RE = re.compile(r"^\[(?P<start>\d+),(?P<duration>\d+)\](?P<body>.+)$")
+_NETEASE_YRC_WORD_RE = re.compile(r"\((?P<start>\d+),(?P<duration>\d+),(?P<flag>\d+)\)(?P<text>[^()]*)")
 
 
 def parse_raw_karaoke(format_name: str, text: str, translation: str = "") -> KaraokeDocument:
@@ -18,6 +20,8 @@ def parse_raw_karaoke(format_name: str, text: str, translation: str = "") -> Kar
         return parse_qqmusic_qrc(text, translation=translation)
     if normalized == "kugou-krc":
         return parse_kugou_krc(text, translation=translation)
+    if normalized == "netease-yrc":
+        return parse_netease_yrc(text, translation=translation)
     return KaraokeDocument(source_format=normalized)
 
 
@@ -83,6 +87,36 @@ def parse_kugou_krc(text: str, translation: str = "") -> KaraokeDocument:
                 )
             )
     return KaraokeDocument(source_format="kugou-krc", lines=lines)
+
+
+def parse_netease_yrc(text: str, translation: str = "") -> KaraokeDocument:
+    lines: list[KaraokeLine] = []
+    for raw_line in str(text or "").splitlines():
+        match = _NETEASE_YRC_LINE_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        line_start = int(match.group("start"))
+        line_duration = int(match.group("duration"))
+        words: list[KaraokeWord] = []
+        for word_match in _NETEASE_YRC_WORD_RE.finditer(match.group("body")):
+            token_text = word_match.group("text")
+            token_duration = int(word_match.group("duration"))
+            if token_text == "" or token_duration <= 0:
+                continue
+            word_start = int(word_match.group("start"))
+            word_end = word_start + token_duration
+            words.append(KaraokeWord(text=token_text, start_ms=word_start, end_ms=word_end))
+        line_text = "".join(word.text for word in words)
+        if line_text:
+            lines.append(
+                KaraokeLine(
+                    start_ms=line_start,
+                    end_ms=line_start + line_duration,
+                    text=line_text,
+                    words=words,
+                )
+            )
+    return KaraokeDocument(source_format="netease-yrc", lines=lines)
 
 
 def _extract_qrc_lyric_lines(content: str) -> list[str]:
