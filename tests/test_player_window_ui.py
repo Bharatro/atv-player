@@ -6353,6 +6353,80 @@ def test_player_window_auto_loads_spider_subtitle_from_local_path(qtbot, monkeyp
     assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
 
 
+def test_player_window_auto_loads_generated_spider_karaoke_ass_from_local_path(qtbot, tmp_path) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def position_seconds(self) -> int:
+            return 0
+
+    subtitle_path = tmp_path / "plugin-karaoke.ass"
+    subtitle_path.write_text(
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: KaraokeMain,Arial,46,&H00FFFFFF,&H0000D7FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,120,1\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        r"Dialogue: 0,0:00:00.00,0:00:01.80,KaraokeMain,,0,0,0,,{\kf45}轻{\kf45}舟{\kf45}已{\kf45}过\n",
+        encoding="utf-8",
+    )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="逐字歌词 [插件]",
+                        lang="",
+                        url=str(subtitle_path),
+                        format="text/x-ass",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+    assert window.subtitle_combo.currentText() == "逐字歌词 [插件]"
+
+
 def test_player_window_does_not_auto_load_spider_subtitle_when_embedded_tracks_exist(qtbot, monkeypatch) -> None:
     class FakeVideo:
         def __init__(self) -> None:
