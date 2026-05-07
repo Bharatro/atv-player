@@ -1419,6 +1419,141 @@ def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtb
     assert started == ["https://img.example/fallback.jpg"]
 
 
+def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "cover.png"
+    pixmap = QPixmap(20, 30)
+    pixmap.fill(QColor("yellow"))
+    assert pixmap.save(str(poster_path)) is True
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int, str | None]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            self.load_calls.append((url, start_seconds, poster_image_path))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="song-1", vod_name="Song", vod_pic=str(poster_path)),
+            playlist=[PlayItem(title="试听", url="http://m/1.mp3")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert window.video.load_calls == [("http://m/1.mp3", 0, str(poster_path))]
+
+
+def test_player_window_uses_default_audio_cover_when_session_poster_is_missing(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "default-cover.png"
+    pixmap = QPixmap(20, 30)
+    pixmap.fill(QColor("cyan"))
+    assert pixmap.save(str(poster_path)) is True
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int, str | None]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            self.load_calls.append((url, start_seconds, poster_image_path))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: str(poster_path))
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="song-1", vod_name="Song", vod_pic=""),
+            playlist=[PlayItem(title="试听", url="http://m/1.mp3")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert window.video.load_calls == [("http://m/1.mp3", 0, str(poster_path))]
+
+
+def test_player_window_does_not_pass_audio_cover_for_normal_video_media(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "cover.png"
+    pixmap = QPixmap(20, 30)
+    pixmap.fill(QColor("magenta"))
+    assert pixmap.save(str(poster_path)) is True
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int, str | None]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            self.load_calls.append((url, start_seconds, poster_image_path))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic=str(poster_path)),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert window.video.load_calls == [("http://m/1.m3u8", 0, None)]
+
+
 def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -1655,6 +1790,69 @@ def test_player_window_shows_loaded_poster_over_video_until_visible_picture_sign
     assert window.video_poster_overlay.isHidden() is True
 
 
+def test_player_window_attaches_audio_cover_after_remote_poster_load_finishes(qtbot, monkeypatch, tmp_path) -> None:
+    cache_path = tmp_path / "poster-cache.img"
+    remote_source = "https://img.example/song-cover.jpg"
+
+    def fake_start(self, source: str, request_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+    monkeypatch.setattr(player_window_module, "poster_cache_path", lambda _url: cache_path)
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int, str | None]] = []
+            self.attach_calls: list[str] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            self.load_calls.append((url, start_seconds, poster_image_path))
+
+        def attach_audio_cover(self, poster_image_path: str) -> None:
+            self.attach_calls.append(poster_image_path)
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def duration_seconds(self) -> int:
+            return 0
+
+        def position_seconds(self) -> int:
+            return 0
+
+    image = QImage(20, 30, QImage.Format.Format_RGB32)
+    image.fill(QColor("green"))
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="song-1", vod_name="Song", vod_pic=remote_source),
+            playlist=[PlayItem(title="试听", url="http://m/1.mp3")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    cache_path.write_bytes(b"cover")
+    window._handle_poster_load_finished(window._poster_request_id, image)
+
+    assert window.video.load_calls == [("http://m/1.mp3", 0, None)]
+    assert window.video.attach_calls == [str(cache_path)]
+
+
 def test_player_window_hides_video_poster_overlay_after_visible_picture_signal(qtbot) -> None:
     image = QImage(24, 36, QImage.Format.Format_ARGB32)
     image.fill(Qt.GlobalColor.red)
@@ -1677,6 +1875,32 @@ def test_player_window_hides_video_poster_overlay_after_visible_picture_signal(q
     assert window.video_poster_overlay.isHidden() is False
 
     window._handle_video_picture_state_changed("visible")
+
+    assert window.video_poster_overlay.isHidden() is True
+
+
+def test_player_window_hides_video_poster_overlay_after_audio_cover_signal(qtbot) -> None:
+    image = QImage(24, 36, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.red)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="song-1", vod_name="Song", vod_pic="https://img.example/poster.jpg"),
+            playlist=[PlayItem(title="试听", url="http://m/1.mp3")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_picture_state_changed("loading")
+
+    assert window.video_poster_overlay.isHidden() is False
+
+    window._handle_video_picture_state_changed("audio-cover")
 
     assert window.video_poster_overlay.isHidden() is True
 
@@ -8145,6 +8369,164 @@ def test_player_window_refresh_button_restores_active_playback_title(qtbot) -> N
     window.refresh_button.click()
 
     assert window.windowTitle() == "Movie - Episode 2"
+
+
+def test_player_window_refresh_button_reloads_auto_spider_subtitle(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://127.0.0.1:4567/sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+
+    window.refresh_button.click()
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+    assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
+
+
+def test_player_window_refresh_button_reloads_selected_external_subtitle(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV1", vod_name="B站视频"),
+        playlist=[
+            PlayItem(
+                title="第1话",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://www.bilibili.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="中文 [B站]",
+                        lang="ai-zh",
+                        url="http://sub/zh.srt",
+                        format="application/x-subrip",
+                        source="bilibili",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.subtitle_combo.setCurrentIndex(2)
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+
+    window.refresh_button.click()
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+    assert window.subtitle_combo.currentText() == "中文 [B站]"
 
 
 def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:

@@ -320,6 +320,81 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_load_uses_cover_art_file_when_poster_path_is_provided(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.loadfile_calls: list[tuple[str, dict[str, object]]] = []
+            self.command_calls: list[tuple[object, ...]] = []
+            self.options: dict[str, object] = {}
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, options))
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+    states: list[str] = []
+    widget.video_picture_state_changed.connect(states.append)
+
+    widget.load("http://m/1.mp3", start_seconds=5, poster_image_path="/tmp/cover.jpg")
+
+    assert widget._player.loadfile_calls == [
+        (
+            "http://m/1.mp3",
+            {
+                "start": "5",
+                "cover_art_files": "/tmp/cover.jpg",
+                "audio_display": "external-first",
+            },
+        )
+    ]
+    assert widget._player.command_calls == []
+    assert widget._player.options == {
+        "http-header-fields": [],
+    }
+    assert states == ["loading"]
+
+
+def test_mpv_widget_attach_audio_cover_adds_albumart_video_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.options: dict[str, object] = {}
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+    states: list[str] = []
+    widget.video_picture_state_changed.connect(states.append)
+
+    widget.attach_audio_cover("/tmp/cover.jpg")
+
+    assert widget._player.command_calls == [
+        ("video-add", "/tmp/cover.jpg", "select", "", "", True)
+    ]
+    assert widget._player.options == {
+        "audio-display": "external-first",
+        "image-display-duration": "inf",
+        "keep-open": "yes",
+    }
+    assert states == ["audio-cover"]
+
+
 def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_headers(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

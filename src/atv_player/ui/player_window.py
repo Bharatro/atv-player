@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 import httpx
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
@@ -51,7 +52,7 @@ from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
-from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
+from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
 
@@ -227,6 +228,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+    _AUDIO_ONLY_SUFFIXES = {
+        ".aac",
+        ".aiff",
+        ".alac",
+        ".ape",
+        ".flac",
+        ".m4a",
+        ".mp3",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".wma",
+    }
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
     _DANMAKU_SECONDARY_SCALE = 50
     _SUBTITLE_POSITION_PRESETS = {
@@ -865,15 +879,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pause: bool = False,
         start_seconds: int = 0,
         headers: dict[str, str] | None = None,
+        poster_image_path: str | None = None,
     ) -> None:
+        extra_kwargs: dict[str, object] = {}
         if headers:
+            extra_kwargs["headers"] = headers
+        if poster_image_path:
+            extra_kwargs["poster_image_path"] = poster_image_path
+        while True:
             try:
-                self.video.load(url, pause=pause, start_seconds=start_seconds, headers=headers)
+                self.video.load(url, pause=pause, start_seconds=start_seconds, **extra_kwargs)
                 return
             except TypeError as exc:
-                if "headers" not in str(exc):
+                message = str(exc)
+                removable = [key for key in tuple(extra_kwargs) if key in message]
+                if not removable:
                     raise
-        self.video.load(url, pause=pause, start_seconds=start_seconds)
+                for key in removable:
+                    extra_kwargs.pop(key, None)
 
     def _apply_playback_loader_result(self, load_result: PlaybackLoadResult | None) -> None:
         if self.session is None:
@@ -981,11 +1004,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             effective_start_seconds = start_position_seconds
         else:
             effective_start_seconds = self.opening_spin.value()
+        poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
         self._video_load(
             current_item.url,
             pause=pause,
             start_seconds=effective_start_seconds,
             headers=current_item.headers,
+            poster_image_path=poster_image_path,
         )
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()
@@ -1002,6 +1027,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pause: bool = False,
         *,
         previous_index: int | None = None,
+        preserve_primary_external_subtitle_selection: bool = False,
     ) -> None:
         if self.session is None:
             return
@@ -1009,7 +1035,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._clear_manual_subtitle_switch_refresh()
         self._auto_spider_subtitle_suppressed = False
         self._auto_spider_subtitle_attempted_key = None
-        self._clear_external_subtitle_tracks()
+        self._clear_external_subtitle_tracks(
+            preserve_primary_selection=preserve_primary_external_subtitle_selection,
+        )
         self._clear_active_danmaku()
         self._reset_danmaku_combo()
         self._video_quality_options = []
@@ -1175,6 +1203,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.setText("")
         self.poster_label.setPixmap(pixmap)
         self._show_video_poster_overlay(pixmap)
+        self._attach_audio_cover_if_available()
 
     def _has_active_primary_external_subtitle(self) -> bool:
         return self._current_primary_external_subtitle() is not None and self._primary_external_subtitle_track_id is not None
@@ -1199,6 +1228,38 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return self.session.vod.vod_pic
         return self._resolve_default_video_cover_source()
 
+    def _should_use_audio_cover(self, url: str) -> bool:
+        normalized_path = urlparse(url or "").path.lower()
+        return any(normalized_path.endswith(suffix) for suffix in self._AUDIO_ONLY_SUFFIXES)
+
+    def _preferred_audio_cover_path(self) -> str | None:
+        source = self._preferred_poster_source().strip()
+        if not source:
+            return None
+        source_path = Path(source)
+        if source_path.is_file():
+            return str(source_path)
+        normalized = normalize_poster_url(source)
+        if normalized.startswith(("http://", "https://")):
+            cached_path = poster_cache_path(normalized)
+            if cached_path.is_file():
+                return str(cached_path)
+        return None
+
+    def _attach_audio_cover_if_available(self) -> None:
+        if self.session is None or not hasattr(self.video, "attach_audio_cover"):
+            return
+        current_item = self._current_play_item()
+        if current_item is None or not self._should_use_audio_cover(current_item.url):
+            return
+        poster_image_path = self._preferred_audio_cover_path()
+        if not poster_image_path:
+            return
+        try:
+            self.video.attach_audio_cover(poster_image_path)
+        except Exception as exc:
+            self._append_log(f"封面挂载失败: {exc}")
+
     def _render_poster(self) -> None:
         self._poster_request_id += 1
         self._video_surface_ready = False
@@ -1220,7 +1281,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _handle_video_picture_state_changed(self, state: str) -> None:
         self._video_picture_state = state
-        if state == "visible":
+        if state in {"visible", "audio-cover"}:
             self._video_surface_ready = True
             self.video_poster_overlay.hide()
             return
@@ -1706,7 +1767,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_play_button_icon()
         self._refresh_window_title()
         self.playlist.setCurrentRow(self.current_index)
-        self._load_current_item(start_position_seconds=0)
+        self._load_current_item(
+            start_position_seconds=0,
+            preserve_primary_external_subtitle_selection=True,
+        )
 
     def _toggle_mute(self) -> None:
         try:
@@ -1910,22 +1974,46 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.video.remove_subtitle_track(track_id)
 
-    def _clear_primary_external_subtitle(self) -> None:
+    def _clear_primary_external_subtitle(self, *, preserve_selection: bool = False) -> None:
         self._stop_primary_external_subtitle_retry()
         self._remove_external_subtitle_track(self._primary_external_subtitle_track_id)
-        self._primary_external_subtitle_selection = None
+        if not preserve_selection:
+            self._primary_external_subtitle_selection = None
         self._primary_external_subtitle_track_id = None
         self._primary_external_subtitle_path = None
 
-    def _clear_secondary_external_subtitle(self) -> None:
+    def _clear_secondary_external_subtitle(self, *, preserve_selection: bool = False) -> None:
         self._remove_external_subtitle_track(self._secondary_external_subtitle_track_id)
-        self._secondary_external_subtitle_selection = None
+        if not preserve_selection:
+            self._secondary_external_subtitle_selection = None
         self._secondary_external_subtitle_track_id = None
         self._secondary_external_subtitle_path = None
 
-    def _clear_external_subtitle_tracks(self) -> None:
-        self._clear_primary_external_subtitle()
-        self._clear_secondary_external_subtitle()
+    def _clear_external_subtitle_tracks(
+        self,
+        *,
+        preserve_primary_selection: bool = False,
+        preserve_secondary_selection: bool = False,
+    ) -> None:
+        self._clear_primary_external_subtitle(preserve_selection=preserve_primary_selection)
+        self._clear_secondary_external_subtitle(preserve_selection=preserve_secondary_selection)
+
+    def _reload_selected_primary_external_subtitle_if_needed(self) -> bool:
+        current_external_subtitle = self._current_primary_external_subtitle()
+        if current_external_subtitle is None or self._primary_external_subtitle_track_id is not None:
+            return False
+        if self._subtitle_preference.mode == "external":
+            pass
+        elif self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider":
+            pass
+        else:
+            return False
+        loaded_track_id, subtitle_path = self._load_external_subtitle(current_external_subtitle, secondary=False)
+        self._primary_external_subtitle_track_id = loaded_track_id
+        self._primary_external_subtitle_path = subtitle_path
+        self._apply_primary_external_subtitle_track(loaded_track_id)
+        self._sync_subtitle_combo_without_tracks()
+        return True
 
     def _sync_subtitle_combo_without_tracks(self) -> None:
         self.subtitle_combo.blockSignals(True)
@@ -2656,6 +2744,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._secondary_subtitle_scale = current_secondary_subtitle_scale
         if not self._subtitle_tracks:
             try:
+                if self._reload_selected_primary_external_subtitle_if_needed():
+                    return
                 if self._auto_apply_spider_subtitle_if_needed():
                     return
             except Exception as exc:

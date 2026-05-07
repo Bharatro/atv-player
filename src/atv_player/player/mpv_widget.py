@@ -68,6 +68,7 @@ class MpvWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._player: Any | None = None
         self._video_picture_state = "idle"
+        self._audio_cover_active = False
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -178,14 +179,22 @@ class MpvWidget(QWidget):
             self.audio_tracks_changed.emit()
             normalized = _tracks or []
             has_video_track = any(isinstance(track, dict) and track.get("type") == "video" for track in normalized)
-            if not has_video_track:
-                self._set_video_picture_state("unavailable")
+            if has_video_track:
+                self._audio_cover_active = False
+                return
+            if self._audio_cover_active:
+                self._set_video_picture_state("audio-cover")
+                return
+            self._set_video_picture_state("unavailable")
 
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
 
         def handle_video_out_params(_property_name, params) -> None:
             if params:
+                if self._audio_cover_active:
+                    self._set_video_picture_state("audio-cover")
+                    return
                 self._set_video_picture_state("visible")
 
         observe_property("video-out-params", handle_video_out_params)
@@ -320,8 +329,10 @@ class MpvWidget(QWidget):
             pause: bool = False,
             start_seconds: int = 0,
             headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
     ) -> None:
         self._set_video_picture_state("loading")
+        self._audio_cover_active = False
         self._ensure_player()
         player = self._player
         if player is None:
@@ -331,7 +342,21 @@ class MpvWidget(QWidget):
         can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
-            if start_seconds > 0 and can_loadfile:
+            if poster_image_path and can_loadfile:
+                self._load_media(
+                    player,
+                    url,
+                    start_seconds,
+                    {
+                        **loadfile_options,
+                        "cover_art_files": poster_image_path,
+                        "audio_display": "external-first",
+                    },
+                )
+            elif poster_image_path:
+                self._load_media(player, url, start_seconds, loadfile_options)
+                self.attach_audio_cover(poster_image_path)
+            elif start_seconds > 0 and can_loadfile:
                 player.loadfile(url, start=str(start_seconds), **loadfile_options)
             elif (header_fields or loadfile_options) and can_loadfile:
                 player.loadfile(url, **loadfile_options)
@@ -344,7 +369,21 @@ class MpvWidget(QWidget):
                 self._register_player_events()
                 self._apply_http_header_fields(player, header_fields)
                 can_loadfile = hasattr(player, "loadfile")
-                if start_seconds > 0 and can_loadfile:
+                if poster_image_path and can_loadfile:
+                    self._load_media(
+                        player,
+                        url,
+                        start_seconds,
+                        {
+                            **loadfile_options,
+                            "cover_art_files": poster_image_path,
+                            "audio_display": "external-first",
+                        },
+                    )
+                elif poster_image_path:
+                    self._load_media(player, url, start_seconds, loadfile_options)
+                    self.attach_audio_cover(poster_image_path)
+                elif start_seconds > 0 and can_loadfile:
                     player.loadfile(url, start=str(start_seconds), **loadfile_options)
                 elif (header_fields or loadfile_options) and can_loadfile:
                     player.loadfile(url, **loadfile_options)
@@ -353,6 +392,33 @@ class MpvWidget(QWidget):
             else:
                 raise
         player.pause = pause
+
+    def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> None:
+        if start_seconds > 0 and hasattr(player, "loadfile"):
+            player.loadfile(url, start=str(start_seconds), **loadfile_options)
+            return
+        if loadfile_options and hasattr(player, "loadfile"):
+            player.loadfile(url, **loadfile_options)
+            return
+        player.play(url)
+
+    def attach_audio_cover(self, poster_image_path: str) -> None:
+        player = self._player
+        if player is None or not poster_image_path:
+            return
+        try:
+            self._set_player_property("audio-display", "external-first")
+            self._set_player_property("image-display-duration", "inf")
+            self._set_player_property("keep-open", "yes")
+            player.command("video-add", poster_image_path, "select", "", "", True)
+        except Exception:
+            self._audio_cover_active = False
+            if getattr(player, "core_shutdown", False):
+                return
+            self._set_video_picture_state("unavailable")
+            return
+        self._audio_cover_active = True
+        self._set_video_picture_state("audio-cover")
 
     def seek(self, seconds: int) -> None:
         if self._player is None:
