@@ -3216,6 +3216,37 @@ def test_player_window_saves_preferred_parse_key_when_user_selects_parser(qtbot)
     assert saved["called"] == 1
 
 
+def test_player_window_replays_parse_required_item_when_user_switches_parser(qtbot) -> None:
+    config = AppConfig()
+    replayed: list[bool] = []
+
+    class FakeParserService:
+        def parsers(self):
+            return [
+                type("Parser", (), {"key": "fish", "label": "fish"})(),
+                type("Parser", (), {"key": "jx1", "label": "jx1"})(),
+            ]
+
+    window = PlayerWindow(FakePlayerController(), config=config, playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="https://media.example/1.m3u8", parse_required=True)],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=lambda item: None,
+    )
+    window.current_index = 0
+    window._replay_current_item = lambda: replayed.append(True)
+    window.parse_combo.setEnabled(True)
+
+    window.parse_combo.setCurrentIndex(2)
+
+    assert config.preferred_parse_key == "jx1"
+    assert replayed == [True]
+
+
 def test_player_window_populates_embedded_audio_options_after_open_session(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:

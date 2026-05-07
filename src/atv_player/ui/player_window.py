@@ -1890,11 +1890,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.config.preferred_parse_key = parser_key
         self._save_config()
+        current_item = None
+        if self.session is not None and 0 <= self.current_index < len(self.session.playlist):
+            current_item = self.session.playlist[self.current_index]
         if (
-            self.session is not None
+            current_item is not None
             and self.session.playback_loader is not None
-            and 0 <= self.current_index < len(self.session.playlist)
-            and not self.session.playlist[self.current_index].url
+            and current_item.parse_required
         ):
             self._replay_current_item()
 
