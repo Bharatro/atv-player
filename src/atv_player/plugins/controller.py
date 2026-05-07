@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from atv_player.api import ApiError
+from atv_player.karaoke import parse_raw_karaoke, render_karaoke_ass
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.danmaku.cache import (
     load_cached_danmaku_source_search_result,
@@ -327,6 +328,16 @@ def _write_inline_spider_subtitle_to_cache(format_name: str, text: str) -> Path:
     return target_path
 
 
+def _write_inline_spider_karaoke_to_cache(text: str) -> Path:
+    cache_dir = app_cache_dir() / "subtitles"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    target_path = cache_dir / f"karaoke_{digest}.ass"
+    if not target_path.exists():
+        target_path.write_text(text, encoding="utf-8")
+    return target_path
+
+
 def _format_drive_route_label(route: str, provider: str) -> str:
     normalized_route = route.strip()
     if not provider or provider in normalized_route:
@@ -435,6 +446,28 @@ class SpiderPluginController:
                 lang="",
                 url=url,
                 format=_infer_external_subtitle_format(url),
+                source="spider",
+            )
+        ]
+
+    def _map_spider_karaoke_subtitle(self, payload: object) -> list[ExternalSubtitleOption]:
+        if not isinstance(payload, Mapping):
+            return []
+        format_name = str(payload.get("format") or "").strip()
+        text = str(payload.get("text") or "")
+        translation = str(payload.get("translation") or "")
+        if not format_name or not text.strip():
+            return []
+        document = parse_raw_karaoke(format_name, text, translation=translation)
+        if not document.lines:
+            return []
+        subtitle_path = _write_inline_spider_karaoke_to_cache(render_karaoke_ass(document))
+        return [
+            ExternalSubtitleOption(
+                name="逐字歌词 [插件]",
+                lang="",
+                url=str(subtitle_path),
+                format="text/x-ass",
                 source="spider",
             )
         ]
@@ -1026,7 +1059,9 @@ class SpiderPluginController:
             payload.get("qualities"),
             url,
         )
-        item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
+        item.external_subtitles = self._map_spider_karaoke_subtitle(payload.get("lyric"))
+        if not item.external_subtitles:
+            item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
         if cover_source:
             item.video_cover_override = cover_source
         session.video_cover_override = item.video_cover_override

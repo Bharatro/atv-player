@@ -152,6 +152,24 @@ class SubtitlePayloadSpider(FakeSpider):
         }
 
 
+class LyricPayloadSpider(FakeSpider):
+    def __init__(self, lyric: object, subt: str = "") -> None:
+        self._lyric = lyric
+        self._subt = subt
+
+    def playerContent(self, flag, id, vipFlags):
+        payload = {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": {"Referer": "https://site.example"},
+        }
+        if self._lyric is not None:
+            payload["lyric"] = self._lyric
+        if self._subt:
+            payload["subt"] = self._subt
+        return payload
+
+
 class QualityPayloadSpider(FakeSpider):
     def __init__(self, url: str, qualities: object) -> None:
         self._url = url
@@ -691,6 +709,74 @@ def test_controller_build_request_writes_inline_subt_payload_into_cache_dir(tmp_
     assert subtitle_path.parent == cache_root / "subtitles"
     assert subtitle_path.suffix == ".srt"
     assert subtitle_path.read_text(encoding="utf-8") == subtitle_text
+
+
+def test_controller_build_request_prefers_generated_karaoke_subtitle_over_subt(tmp_path, monkeypatch) -> None:
+    cache_root = tmp_path / "app-cache"
+    monkeypatch.setattr(controller_module, "app_cache_dir", lambda: cache_root)
+    controller = SpiderPluginController(
+        LyricPayloadSpider(
+            {
+                "format": "kugou-krc",
+                "text": "[0,1800]<0,450,0>轻<450,450,0>舟<900,450,0>已<1350,450,0>过",
+            },
+            subt="https://cdn.example/fallback.srt",
+        ),
+        plugin_name="歌词插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert len(first.external_subtitles) == 1
+    subtitle = first.external_subtitles[0]
+    assert subtitle.name == "逐字歌词 [插件]"
+    assert subtitle.format == "text/x-ass"
+    assert subtitle.source == "spider"
+    assert Path(subtitle.url).suffix == ".ass"
+    assert r"{\kf45}轻{\kf45}舟{\kf45}已{\kf45}过" in Path(subtitle.url).read_text(encoding="utf-8")
+
+
+def test_controller_build_request_falls_back_to_subt_when_lyric_format_is_unsupported() -> None:
+    controller = SpiderPluginController(
+        LyricPayloadSpider(
+            {"format": "netease-yrc", "text": "[0,1000](0,1000,0)测试"},
+            subt="https://cdn.example/fallback.srt",
+        ),
+        plugin_name="歌词插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert [(sub.name, sub.url, sub.format, sub.source) for sub in first.external_subtitles] == [
+        ("外挂字幕 [插件]", "https://cdn.example/fallback.srt", "application/x-subrip", "spider"),
+    ]
+
+
+def test_controller_build_request_ignores_invalid_lyric_without_breaking_playback() -> None:
+    controller = SpiderPluginController(
+        LyricPayloadSpider({"format": "qqmusic-qrc", "text": ""}),
+        plugin_name="歌词插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.external_subtitles == []
 
 
 def test_controller_playback_loader_preserves_resolved_subtitles_on_repeat_load() -> None:
