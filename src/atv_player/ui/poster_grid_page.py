@@ -673,7 +673,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                items, total = self.controller.search_items(keyword, page)
+                items, total = self.controller.search_items(keyword, page, category_id=self.selected_category_id)
             except UnauthorizedError:
                 if self._is_widget_alive():
                     self._signals.unauthorized.emit(request_id, "items")

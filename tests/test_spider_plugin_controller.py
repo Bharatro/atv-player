@@ -68,7 +68,7 @@ class FakeSpider:
     def playerContent(self, flag, id, vipFlags):
         return {"parse": 0, "url": f"https://stream.example{id}.m3u8", "header": {"Referer": "https://site.example"}}
 
-    def searchContent(self, key, quick, pg="1"):
+    def searchContent(self, key, quick, pg=1, category=""):
         return {
             "list": [{"vod_id": f"/detail/{key}", "vod_name": key, "vod_pic": "poster-search"}],
             "total": 1,
@@ -110,8 +110,17 @@ class DriveLinkSpider(FakeSpider):
 
 
 class FailingSearchSpider(FakeSpider):
-    def searchContent(self, key, quick, pg="1"):
+    def searchContent(self, key, quick, pg=1, category=""):
         raise RuntimeError("search boom")
+
+
+class SearchCategorySpider(FakeSpider):
+    def __init__(self) -> None:
+        self.search_calls: list[tuple[str, bool, int, str]] = []
+
+    def searchContent(self, key, quick, pg=1, category=""):
+        self.search_calls.append((key, quick, pg, category))
+        return super().searchContent(key, quick, pg, category)
 
 
 class ParseRequiredSpider(FakeSpider):
@@ -209,7 +218,7 @@ class RemappedDetailIdSpider(FakeSpider):
 
 class FilterSpider(FakeSpider):
     def __init__(self) -> None:
-        self.category_calls: list[tuple[str, str, bool, dict[str, str]]] = []
+        self.category_calls: list[tuple[str, int, bool, dict[str, str]]] = []
 
     def homeContent(self, filter):
         return {
@@ -328,7 +337,7 @@ def test_controller_passes_selected_filters_into_category_content_extend() -> No
 
     assert total == 1
     assert items[0].vod_name == "movie-2"
-    assert spider.category_calls == [("movie", "2", False, {"sc": "6"})]
+    assert spider.category_calls == [("movie", 2, False, {"sc": "6"})]
 
 
 def test_controller_ignores_filters_for_home_category_items() -> None:
@@ -351,6 +360,26 @@ def test_controller_search_and_category_mapping() -> None:
     assert items[0].vod_name == "庆余年"
     assert category_total == 90
     assert category_items[0].vod_name == "tv-2"
+
+
+def test_controller_passes_selected_category_into_search_content() -> None:
+    spider = SearchCategorySpider()
+    controller = SpiderPluginController(spider, plugin_name="分类搜索插件", search_enabled=True)
+
+    items, total = controller.search_items("庆余年", 1, category_id="tv")
+
+    assert total == 1
+    assert items[0].vod_name == "庆余年"
+    assert spider.search_calls == [("庆余年", False, 1, "tv")]
+
+
+def test_controller_search_normalizes_home_category_to_empty_string() -> None:
+    spider = SearchCategorySpider()
+    controller = SpiderPluginController(spider, plugin_name="分类搜索插件", search_enabled=True)
+
+    controller.search_items("庆余年", 1, category_id="home")
+
+    assert spider.search_calls == [("庆余年", False, 1, "")]
 
 
 def test_controller_build_request_exposes_grouped_route_playlists() -> None:

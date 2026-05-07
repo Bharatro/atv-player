@@ -72,7 +72,7 @@ class TelegramSearchController:
             total = pagecount * self._PAGE_SIZE
         return items, total
 
-    def search_items(self, keyword: str, page: int) -> tuple[list[VodItem], int]:
+    def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_telegram_items(keyword, page=page)
         items = [_map_item(item) for item in payload.get("list", [])]
         total_raw = payload.get("total")

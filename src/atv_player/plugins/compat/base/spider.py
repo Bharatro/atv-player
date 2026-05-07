@@ -51,7 +51,7 @@ class Spider(metaclass=ABCMeta):
     def detailContent(self, ids):
         return {"list": []}
 
-    def searchContent(self, key, quick, pg="1"):
+    def searchContent(self, key, quick, pg=1, category=""):
         raise NotImplementedError
 
     def playerContent(self, flag, id, vipFlags):

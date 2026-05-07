@@ -315,7 +315,7 @@ class SpiderPluginController:
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
-            payload = self._spider.categoryContent(category_id, str(page), False, dict(filters or {})) or {}
+            payload = self._spider.categoryContent(category_id, page, False, dict(filters or {})) or {}
         except Exception as exc:
             logger.exception(
                 "Spider plugin category load failed plugin=%s category_id=%s page=%s",
@@ -330,17 +330,24 @@ class SpiderPluginController:
             total = len(items)
         return items, total
 
-    def search_items(self, keyword: str, page: int) -> tuple[list[VodItem], int]:
+    def search_items(
+        self,
+        keyword: str,
+        page: int,
+        category_id: str = "",
+    ) -> tuple[list[VodItem], int]:
         if not self.supports_search:
             raise ApiError("当前插件不支持搜索")
+        category = "" if category_id == "home" else str(category_id or "")
         try:
-            payload = self._spider.searchContent(keyword, False, str(page)) or {}
+            payload = self._spider.searchContent(keyword, False, page, category) or {}
         except Exception as exc:
             logger.exception(
-                "Spider plugin search failed plugin=%s keyword=%s page=%s",
+                "Spider plugin search failed plugin=%s keyword=%s page=%s category_id=%s",
                 self._plugin_name,
                 keyword,
                 page,
+                category,
             )
             raise ApiError(str(exc)) from exc
         items = self._map_items(payload)

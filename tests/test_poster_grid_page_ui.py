@@ -102,14 +102,14 @@ class AsyncUnauthorizedDoubanController(FakeDoubanController):
 class SearchableDoubanController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
-        self.search_calls: list[tuple[str, int]] = []
+        self.search_calls: list[tuple[str, int, str]] = []
         self.search_results = (
             [VodItem(vod_id="s1", vod_name="黑袍纠察队", vod_pic="poster-search", vod_remarks="搜索结果")],
             30,
         )
 
-    def search_items(self, keyword: str, page: int):
-        self.search_calls.append((keyword, page))
+    def search_items(self, keyword: str, page: int, category_id: str = ""):
+        self.search_calls.append((keyword, page, category_id))
         return self.search_results
 
 
@@ -609,10 +609,10 @@ def test_poster_grid_page_hides_category_filters_during_search_and_restores_them
     class SearchableFilterController(FilterablePosterController):
         def __init__(self) -> None:
             super().__init__()
-            self.search_calls: list[tuple[str, int]] = []
+            self.search_calls: list[tuple[str, int, str]] = []
 
-        def search_items(self, keyword: str, page: int):
-            self.search_calls.append((keyword, page))
+        def search_items(self, keyword: str, page: int, category_id: str = ""):
+            self.search_calls.append((keyword, page, category_id))
             return ([VodItem(vod_id="search-1", vod_name="搜索结果")], 1)
 
     controller = SearchableFilterController()
@@ -622,7 +622,7 @@ def test_poster_grid_page_hides_category_filters_during_search_and_restores_them
     page.keyword_edit.setText("黑袍纠察队")
     page.search()
 
-    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1)])
+    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1, "movie")])
     assert page.filter_toggle_button.isHidden() is True
     assert page.filter_panel.isHidden() is True
 
@@ -685,7 +685,7 @@ def test_poster_grid_page_search_replaces_category_cards_and_clear_restores_cate
     page.keyword_edit.setText("黑袍纠察队")
     page.search()
 
-    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1)])
+    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1, "suggestion")])
     qtbot.waitUntil(lambda: page.card_buttons[0].text() == "黑袍纠察队\n搜索结果")
     assert page.current_page == 1
 
@@ -703,6 +703,20 @@ def test_poster_grid_page_restores_preferred_category_on_initial_load(qtbot) -> 
 
     assert page.category_list.currentRow() == 1
     assert controller.item_calls == [("movie", 1)]
+
+
+def test_poster_grid_page_search_passes_selected_category_to_controller(qtbot) -> None:
+    controller = SearchableDoubanController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "suggestion")
+    page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+
+    page.keyword_edit.setText("黑袍纠察队")
+    page.search()
+
+    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1, "movie")])
 
 
 def test_poster_grid_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:

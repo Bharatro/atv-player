@@ -52,7 +52,7 @@ class FeiniuController:
             total = pagecount * self._PAGE_SIZE
         return items, total
 
-    def search_items(self, keyword: str, page: int) -> tuple[list[VodItem], int]:
+    def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_feiniu_items(keyword, page=page)
         items = self._map_feiniu_items(payload)
         total_raw = payload.get("total")
