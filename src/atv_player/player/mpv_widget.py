@@ -749,17 +749,6 @@ class MpvWidget(QWidget):
                 return None
             raise
 
-    def subtitle_debug_state(self) -> dict[str, object]:
-        if self._player is None:
-            return {}
-        track_list = getattr(self._player, "track_list", None) or []
-        return {
-            "sid": self._player_property("sid", None),
-            "secondary_sid": self._player_property("secondary-sid", None),
-            "sub_visibility": self._player_property("sub-visibility", None),
-            "track_list": track_list,
-        }
-
     def remove_subtitle_track(self, track_id: int | None) -> None:
         if self._player is None or track_id is None:
             return
