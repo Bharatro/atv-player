@@ -2237,6 +2237,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._primary_external_subtitle_retry_timer.stop()
         self._primary_external_subtitle_retry_attempts = 0
 
+    def _schedule_primary_external_subtitle_retry_for_pending_track(self) -> bool:
+        if self._primary_external_subtitle_retry_attempts >= 3:
+            self._stop_primary_external_subtitle_retry()
+            return False
+        if not self._primary_external_subtitle_retry_timer.isActive():
+            self._primary_external_subtitle_retry_attempts += 1
+            self._primary_external_subtitle_retry_timer.start(400)
+        return True
+
     def _should_retry_primary_external_subtitle_apply(self, exc: Exception) -> bool:
         if self._primary_external_subtitle_retry_attempts >= 3:
             return False
@@ -2259,9 +2268,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             raise
         self._primary_external_subtitle_track_id = loaded_track_id
         self._primary_external_subtitle_path = subtitle_path
+        if loaded_track_id is None:
+            self._schedule_primary_external_subtitle_retry_for_pending_track()
+            return False
         return True
 
     def _apply_primary_external_subtitle_track(self, track_id: int | None) -> bool:
+        if track_id is None:
+            self._schedule_primary_external_subtitle_retry_for_pending_track()
+            return False
         try:
             self.video.apply_subtitle_mode("track", track_id=track_id)
         except Exception as exc:
@@ -2283,7 +2298,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 return
             track_id = self._primary_external_subtitle_track_id
             if track_id is None:
-                self._stop_primary_external_subtitle_retry()
+                self._schedule_primary_external_subtitle_retry_for_pending_track()
                 return
             if not self._apply_primary_external_subtitle_track(track_id):
                 return

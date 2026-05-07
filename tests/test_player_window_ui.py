@@ -9586,6 +9586,120 @@ def test_player_window_play_next_recovers_auto_spider_karaoke_after_multiple_sta
     assert window.subtitle_combo.currentText() == "逐字歌词 [插件]"
 
 
+def test_player_window_play_next_recovers_selected_spider_karaoke_when_track_id_is_delayed_after_stale_snapshots(
+    qtbot, tmp_path
+) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.removed_subtitle_tracks: list[int | None] = []
+            self._next_track_id = 91
+            self._load_count = 0
+            self._subtitle_tracks_calls = 0
+            self._pending_track_id = True
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+            self._load_count += 1
+            self._subtitle_tracks_calls = 0
+            if self._load_count >= 2:
+                self._pending_track_id = True
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            self._subtitle_tracks_calls += 1
+            if self._load_count >= 2 and self._subtitle_tracks_calls <= 10:
+                return [SubtitleTrack(id=77, title="旧外挂歌词", lang="", is_default=False, is_forced=False, label="旧外挂歌词")]
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            if self._load_count >= 2 and self._pending_track_id:
+                self._pending_track_id = False
+                return None
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            self.removed_subtitle_tracks.append(track_id)
+
+        def position_seconds(self) -> int:
+            return 0
+
+    first_subtitle_path = tmp_path / "song-1.ass"
+    second_subtitle_path = tmp_path / "song-2.ass"
+    first_subtitle_path.write_text("first", encoding="utf-8")
+    second_subtitle_path.write_text("second", encoding="utf-8")
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件歌曲"),
+        playlist=[
+            PlayItem(
+                title="第1首",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="逐字歌词 [插件]",
+                        lang="",
+                        url=str(first_subtitle_path),
+                        format="text/x-ass",
+                        source="spider",
+                    )
+                ],
+            ),
+            PlayItem(
+                title="第2首",
+                url="http://m/2.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="逐字歌词 [插件]",
+                        lang="",
+                        url=str(second_subtitle_path),
+                        format="text/x-ass",
+                        source="spider",
+                    )
+                ],
+            ),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.subtitle_combo.setCurrentIndex(1)
+    window.subtitle_combo.setCurrentIndex(window.subtitle_combo.findText("逐字歌词 [插件]"))
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2)
+
+    assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
+        "second",
+        "second",
+    ]
+    assert window.video.subtitle_apply_calls == [("track", 93)]
+    assert window.subtitle_combo.currentText() == "逐字歌词 [插件]"
+    assert "字幕切换失败" not in window.log_view.toPlainText()
+
+
 def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:
     config = AppConfig(player_volume=35)
     window = PlayerWindow(FakePlayerController(), config=config)
