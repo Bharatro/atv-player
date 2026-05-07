@@ -1872,6 +1872,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return []
         return list(current_item.external_subtitles)
 
+    def _current_item_secondary_external_subtitles(self) -> list[ExternalSubtitleOption]:
+        return [subtitle for subtitle in self._current_item_external_subtitles() if subtitle.source != "spider"]
+
     def _find_current_item_external_subtitle(self, url: str) -> ExternalSubtitleOption | None:
         return next((subtitle for subtitle in self._current_item_external_subtitles() if subtitle.url == url), None)
 
@@ -2658,7 +2661,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if mode == "external" and external_subtitle is not None:
             previous_track_id = self._primary_external_subtitle_track_id
             try:
-                loaded_track_id, subtitle_path = self._load_bilibili_external_subtitle(external_subtitle, secondary=False)
+                loaded_track_id, subtitle_path = self._load_external_subtitle(external_subtitle, secondary=False)
                 self._mark_manual_subtitle_switch_refresh()
                 self.video.apply_subtitle_mode("track", track_id=loaded_track_id)
             except Exception as exc:
@@ -3160,7 +3163,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
             group.addAction(action)
 
-        for subtitle in self._current_item_external_subtitles():
+        for subtitle in self._current_item_secondary_external_subtitles():
             action = menu.addAction(subtitle.name)
             action.setCheckable(True)
             action.setChecked(
@@ -3343,7 +3346,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 if subtitle is None:
                     return
                 previous_track_id = self._secondary_external_subtitle_track_id
-                loaded_track_id, subtitle_path = self._load_bilibili_external_subtitle(subtitle, secondary=True)
+                loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=True)
                 self.video.apply_secondary_subtitle_mode("track", track_id=loaded_track_id)
                 self._secondary_subtitle_preference = SecondarySubtitlePreference(mode="external")
                 self._secondary_external_subtitle_selection = ExternalSubtitleSelection(
@@ -3384,7 +3387,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         response = httpx.get(subtitle.url, headers=headers, timeout=10.0, follow_redirects=True)
         return str(getattr(response, "text", "") or "")
 
-    def _load_bilibili_external_subtitle(
+    def _load_external_subtitle(
         self,
         subtitle: ExternalSubtitleOption,
         *,
