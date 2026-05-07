@@ -741,10 +741,42 @@ def test_controller_build_request_prefers_generated_karaoke_subtitle_over_subt(t
     assert r"{\kf45}轻{\kf45}舟{\kf45}已{\kf45}过" in Path(subtitle.url).read_text(encoding="utf-8")
 
 
-def test_controller_build_request_falls_back_to_subt_when_lyric_format_is_unsupported() -> None:
+def test_controller_build_request_prefers_generated_netease_karaoke_subtitle_over_subt(
+    tmp_path, monkeypatch
+) -> None:
+    cache_root = tmp_path / "app-cache"
+    monkeypatch.setattr(controller_module, "app_cache_dir", lambda: cache_root)
     controller = SpiderPluginController(
         LyricPayloadSpider(
-            {"format": "netease-yrc", "text": "[0,1000](0,1000,0)测试"},
+            {
+                "format": "netease-yrc",
+                "text": "[0,1800](0,450,0)轻(450,450,0)舟(900,450,0)已(1350,450,0)过",
+            },
+            subt="https://cdn.example/fallback.srt",
+        ),
+        plugin_name="歌词插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert len(first.external_subtitles) == 1
+    subtitle = first.external_subtitles[0]
+    assert subtitle.name == "逐字歌词 [插件]"
+    assert subtitle.format == "text/x-ass"
+    assert subtitle.source == "spider"
+    assert Path(subtitle.url).suffix == ".ass"
+    assert r"{\kf45}轻{\kf45}舟{\kf45}已{\kf45}过" in Path(subtitle.url).read_text(encoding="utf-8")
+
+
+def test_controller_build_request_falls_back_to_subt_when_lyric_format_is_unknown() -> None:
+    controller = SpiderPluginController(
+        LyricPayloadSpider(
+            {"format": "unknown-karaoke", "text": "[0,1000](0,1000,0)测试"},
             subt="https://cdn.example/fallback.srt",
         ),
         plugin_name="歌词插件",
