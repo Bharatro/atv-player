@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import re
@@ -364,9 +365,17 @@ class SpiderPluginController:
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
+        self._search_supports_category = self._detect_search_supports_category()
 
     def _map_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
+
+    def _detect_search_supports_category(self) -> bool:
+        try:
+            params = inspect.signature(self._spider.searchContent).parameters
+        except (TypeError, ValueError):
+            return True
+        return "category" in params
 
     def _ensure_home_loaded(self) -> None:
         if self._home_loaded:
@@ -468,7 +477,11 @@ class SpiderPluginController:
             raise ApiError("当前插件不支持搜索")
         category = "" if category_id == "home" else str(category_id or "")
         try:
-            payload = self._spider.searchContent(keyword, False, page, category) or {}
+            if self._search_supports_category:
+                payload = self._spider.searchContent(keyword, False, page, category)
+            else:
+                payload = self._spider.searchContent(keyword, False, page)
+            payload = payload or {}
         except Exception as exc:
             logger.exception(
                 "Spider plugin search failed plugin=%s keyword=%s page=%s category_id=%s",

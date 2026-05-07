@@ -124,6 +124,15 @@ class SearchCategorySpider(FakeSpider):
         return super().searchContent(key, quick, pg, category)
 
 
+class LegacySearchSpider(FakeSpider):
+    def __init__(self) -> None:
+        self.search_calls: list[tuple[str, bool, int]] = []
+
+    def searchContent(self, key, quick, pg=1):
+        self.search_calls.append((key, quick, pg))
+        return super().searchContent(key, quick, pg)
+
+
 class ParseRequiredSpider(FakeSpider):
     def playerContent(self, flag, id, vipFlags):
         return {"parse": 1, "url": f"https://page.example{id}"}
@@ -408,6 +417,17 @@ def test_controller_search_normalizes_home_category_to_empty_string() -> None:
     controller.search_items("庆余年", 1, category_id="home")
 
     assert spider.search_calls == [("庆余年", False, 1, "")]
+
+
+def test_controller_search_skips_category_for_legacy_search_signature() -> None:
+    spider = LegacySearchSpider()
+    controller = SpiderPluginController(spider, plugin_name="旧版搜索插件", search_enabled=True)
+
+    items, total = controller.search_items("庆余年", 2, category_id="tv")
+
+    assert total == 1
+    assert items[0].vod_name == "庆余年"
+    assert spider.search_calls == [("庆余年", False, 2)]
 
 
 def test_controller_build_request_exposes_grouped_route_playlists() -> None:
