@@ -815,11 +815,11 @@ class SpiderPluginController:
         return resolve_resume_index(history, replacement, 0)
 
     def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
-        item.external_subtitles = []
         if item.url:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
             return
+        item.external_subtitles = []
         if not item.vod_id:
             return
         if _looks_like_drive_share_link(item.vod_id):

@@ -493,6 +493,27 @@ def test_controller_build_request_keeps_local_absolute_subt_path(tmp_path) -> No
     ]
 
 
+def test_controller_playback_loader_preserves_resolved_subtitles_on_repeat_load() -> None:
+    controller = SpiderPluginController(
+        SubtitlePayloadSpider("https://cdn.example/subtitles/episode-1.srt"),
+        plugin_name="字幕插件",
+        search_enabled=True,
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+    first_subtitles = [(sub.url, sub.source) for sub in first.external_subtitles]
+
+    request.playback_loader(first)
+
+    assert [(sub.url, sub.source) for sub in first.external_subtitles] == [
+        *first_subtitles,
+    ]
+
+
 def test_controller_build_request_ignores_blank_or_unsupported_subt_without_breaking_playback() -> None:
     controller = SpiderPluginController(
         SubtitlePayloadSpider("subtitle.srt"),
