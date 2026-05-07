@@ -87,6 +87,7 @@ class MpvWidget(QWidget):
         common = dict(
             wid=str(int(self.winId())),
             hwdec="auto-safe",
+            force_window="yes",
             audio_spdif="no",
             ad="ffmpeg",
             input_default_bindings=False,

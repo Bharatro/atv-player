@@ -403,6 +403,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["input_default_bindings"] is False
     assert captured["input_vo_keyboard"] is False
     assert captured["hwdec"] == "auto-safe"
+    assert captured["force_window"] == "yes"
     assert captured["cache"] is True
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3

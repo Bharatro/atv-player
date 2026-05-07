@@ -1176,6 +1176,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.setPixmap(pixmap)
         self._show_video_poster_overlay(pixmap)
 
+    def _has_active_primary_external_subtitle(self) -> bool:
+        return self._current_primary_external_subtitle() is not None and self._primary_external_subtitle_track_id is not None
+
     def _resolve_default_video_cover_source(self) -> str:
         if self._default_video_cover_source is not None:
             return self._default_video_cover_source
@@ -1222,6 +1225,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.video_poster_overlay.hide()
             return
         self._video_surface_ready = False
+        if state == "unavailable" and self._has_active_primary_external_subtitle():
+            self.video_poster_overlay.hide()
+            return
         pixmap = self.poster_label.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)

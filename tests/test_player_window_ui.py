@@ -9,7 +9,15 @@ from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWid
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import AppConfig, ExternalSubtitleOption, PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
+from atv_player.models import (
+    AppConfig,
+    ExternalSubtitleOption,
+    ExternalSubtitleSelection,
+    PlayItem,
+    PlaybackLoadResult,
+    VideoQualityOption,
+    VodItem,
+)
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
@@ -1722,6 +1730,44 @@ def test_player_window_shows_video_poster_overlay_when_picture_becomes_unavailab
 
     assert window.video_poster_overlay.isHidden() is False
     assert "当前媒体没有可用视频画面，已显示封面" not in window.log_view.toPlainText()
+
+
+def test_player_window_hides_video_poster_overlay_when_picture_is_unavailable_but_primary_subtitle_is_active(qtbot) -> None:
+    image = QImage(24, 36, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.red)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="sp1", vod_name="插件视频", vod_pic="https://img.example/poster.jpg"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.mp3",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕 [插件]",
+                        lang="",
+                        url="http://sub/1.srt",
+                        format="application/x-subrip",
+                        source="spider",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._primary_external_subtitle_selection = ExternalSubtitleSelection(source="spider", option_url="http://sub/1.srt")
+    window._primary_external_subtitle_track_id = 91
+    window._handle_poster_load_finished(window._poster_request_id, image)
+
+    window._handle_video_picture_state_changed("unavailable")
+
+    assert window.video_poster_overlay.isHidden() is True
 
 
 def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loaded(qtbot) -> None:
