@@ -46,7 +46,15 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
-from atv_player.models import ExternalSubtitleOption, ExternalSubtitleSelection, PlayItem, PlaybackLoadResult, VideoQualityOption, VodItem
+from atv_player.models import (
+    ExternalSubtitleOption,
+    ExternalSubtitleSelection,
+    PlayItem,
+    PlaybackDetailAction,
+    PlaybackLoadResult,
+    VideoQualityOption,
+    VodItem,
+)
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.async_guard import AsyncGuardMixin
@@ -150,6 +158,11 @@ class _PlaybackPrepareSignals(QObject):
 
 class _PlaybackLoaderSignals(QObject):
     succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
+class _DetailActionSignals(QObject):
+    succeeded = Signal(int, object, object)
     failed = Signal(int, str)
 
 
@@ -295,6 +308,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
         self._playback_prepare_request_id = 0
+        self._detail_action_request_id = 0
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
@@ -336,6 +350,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._playback_loader_signals = _PlaybackLoaderSignals()
         self._connect_async_signal(self._playback_loader_signals.succeeded, self._handle_playback_loader_succeeded)
         self._connect_async_signal(self._playback_loader_signals.failed, self._handle_playback_loader_failed)
+        self._detail_action_signals = _DetailActionSignals()
+        self._connect_async_signal(self._detail_action_signals.succeeded, self._handle_detail_action_succeeded)
+        self._connect_async_signal(self._detail_action_signals.failed, self._handle_detail_action_failed)
         self._playback_prepare_signals = _PlaybackPrepareSignals()
         self._connect_async_signal(self._playback_prepare_signals.succeeded, self._handle_playback_prepare_succeeded)
         self._connect_async_signal(self._playback_prepare_signals.failed, self._handle_playback_prepare_failed)
@@ -479,6 +496,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         details_layout.setSpacing(6)
         details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         details_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.detail_actions_widget = QWidget()
+        self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
+        self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_actions_layout.setSpacing(6)
+        details_layout.addWidget(self.detail_actions_widget)
         details_layout.addWidget(QLabel("影片详情"))
         details_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(QLabel("播放日志"))
@@ -728,6 +750,39 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
 
+    def _current_detail_actions(self) -> list[PlaybackDetailAction]:
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            return []
+        return [action for action in self.session.playlist[self.current_index].detail_actions if action.visible]
+
+    def _clear_detail_action_buttons(self) -> None:
+        while self.detail_actions_layout.count():
+            item = self.detail_actions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _render_detail_actions(self) -> None:
+        self._clear_detail_action_buttons()
+        actions = self._current_detail_actions()
+        self.detail_actions_widget.setHidden(not actions)
+        for action in actions:
+            button = QPushButton(action.label)
+            button.setToolTip(action.tooltip)
+            button.setEnabled(action.enabled)
+            button.setCheckable(True)
+            button.setChecked(action.active)
+            button.setProperty("detail_action_base_enabled", action.enabled)
+            button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
+            self.detail_actions_layout.addWidget(button)
+
+    def _set_detail_actions_enabled(self, enabled: bool) -> None:
+        for index in range(self.detail_actions_layout.count()):
+            widget = self.detail_actions_layout.itemAt(index).widget()
+            if isinstance(widget, QPushButton):
+                base_enabled = bool(widget.property("detail_action_base_enabled"))
+                widget.setEnabled(enabled and base_enabled)
+
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
         icon: QIcon = load_icon(self._icons_dir / icon_name)
         button.setIcon(icon)
@@ -857,6 +912,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_window_title()
         self._render_playlist_group_combo()
         self._render_playlist_items()
+        self._render_detail_actions()
         self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
         self._reset_subtitle_combo()
@@ -908,6 +964,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None:
             return
         if not isinstance(load_result, PlaybackLoadResult) or not load_result.replacement_playlist:
+            self._render_detail_actions()
             return
         replacement = list(load_result.replacement_playlist)
         self.session.playlists[self.session.playlist_index] = replacement
@@ -918,6 +975,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         )
         self._render_playlist_group_combo()
         self._render_playlist_items()
+        self._render_detail_actions()
 
     def _start_playback_loader(
         self,
@@ -1164,6 +1222,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         try:
             self.playlist.setCurrentRow(self.current_index)
             self._refresh_danmaku_source_entry_points()
+            self._render_detail_actions()
             self._load_current_item(
                 start_position_seconds=start_position_seconds,
                 pause=pause,
@@ -1454,6 +1513,30 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _shutdown_controller_task_queue(self) -> None:
         self._controller_task_queue.put(None)
 
+    def _run_detail_action(self, action_id: str) -> None:
+        if self.session is None or self.session.detail_action_runner is None:
+            self._append_log(f"详情动作未注册[{action_id}]")
+            return
+        if not (0 <= self.current_index < len(self.session.playlist)):
+            return
+        current_item = self.session.playlist[self.current_index]
+        expected_index = self.current_index
+        self._detail_action_request_id += 1
+        request_id = self._detail_action_request_id
+        self._set_detail_actions_enabled(False)
+
+        def run() -> None:
+            try:
+                actions = self.session.detail_action_runner(current_item, action_id)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._detail_action_signals.failed.emit(request_id, f"详情动作执行失败[{action_id}]: {exc}")
+                return
+            if self._is_window_alive():
+                self._detail_action_signals.succeeded.emit(request_id, current_item, (expected_index, actions))
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _start_play_item_resolution(
         self,
         *,
@@ -1681,6 +1764,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
         self._append_log(f"播放失败: {message}")
+
+    def _handle_detail_action_succeeded(self, request_id: int, item: PlayItem, payload: object) -> None:
+        if request_id != self._detail_action_request_id or self.session is None:
+            return
+        expected_index, actions = payload
+        if expected_index != self.current_index:
+            self._render_detail_actions()
+            return
+        if self.session.playlist[self.current_index] is not item:
+            self._render_detail_actions()
+            return
+        item.detail_actions = list(actions) if isinstance(actions, list) else []
+        self._render_detail_actions()
+
+    def _handle_detail_action_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._detail_action_request_id:
+            return
+        self._append_log(message)
+        self._render_detail_actions()
 
     def _handle_playback_prepare_succeeded(self, request_id: int, prepared_url: str) -> None:
         if request_id != self._playback_prepare_request_id:

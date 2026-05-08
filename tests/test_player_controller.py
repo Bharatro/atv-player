@@ -1,7 +1,7 @@
 import logging
 
 from atv_player.controllers.player_controller import PlayerController
-from atv_player.models import HistoryRecord, PlayItem, VodItem
+from atv_player.models import HistoryRecord, PlayItem, PlaybackDetailAction, VodItem
 
 
 class FakeApiClient:
@@ -83,6 +83,34 @@ def test_player_controller_create_session_defaults_video_cover_override_to_empty
     session = controller.create_session(vod, playlist, clicked_index=0)
 
     assert session.video_cover_override == ""
+
+
+def test_player_controller_create_session_defaults_detail_action_runner_to_none() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+
+    session = controller.create_session(vod, playlist, clicked_index=0)
+
+    assert session.detail_action_runner is None
+
+
+def test_player_controller_create_session_preserves_detail_action_runner() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+
+    def detail_action_runner(item: PlayItem, action_id: str) -> list[PlaybackDetailAction]:
+        return [PlaybackDetailAction(id=action_id, label="已执行")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        detail_action_runner=detail_action_runner,
+    )
+
+    assert session.detail_action_runner is detail_action_runner
 
 
 def test_player_controller_binds_session_aware_playback_loader_without_changing_history_poster() -> None:

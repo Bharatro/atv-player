@@ -1,5 +1,5 @@
 from atv_player.controllers.bilibili_controller import BilibiliController
-from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem, PlaybackDetailAction
 
 
 class TextResponse:
@@ -14,10 +14,12 @@ class FakeApiClient:
         self.search_payload = {"list": [], "total": 0}
         self.detail_payload = {"list": []}
         self.playback_payload = {"url": ["Episode 1", "http://b/1.mp4"], "header": {"Referer": "https://www.bilibili.com/"}}
+        self.detail_action_payload = {"actions": []}
         self.item_calls: list[tuple[str, int, dict[str, str] | None]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
         self.playback_source_calls: list[str] = []
+        self.detail_action_calls: list[tuple[str, str]] = []
 
     def list_bilibili_categories(self) -> dict:
         return self.category_payload
@@ -37,6 +39,10 @@ class FakeApiClient:
     def get_bilibili_playback_source(self, vod_id: str) -> dict:
         self.playback_source_calls.append(vod_id)
         return self.playback_payload
+
+    def run_bilibili_detail_action(self, vod_id: str, action_id: str) -> dict:
+        self.detail_action_calls.append((vod_id, action_id))
+        return self.detail_action_payload
 
 
 def test_load_categories_preserves_backend_provided_recommendation() -> None:
@@ -291,6 +297,28 @@ def test_load_playback_item_maps_bilibili_subtitles_from_playback_payload() -> N
     ]
 
 
+def test_load_playback_item_maps_bilibili_detail_actions() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": ["Episode 1", "http://b/1.mp4"],
+        "header": {"Referer": "https://www.bilibili.com/"},
+        "actions": [
+            {"id": "favorite_collection", "label": "收藏歌单", "active": True},
+            {"id": "like_track", "label": "点赞", "enabled": False},
+            {"id": "", "label": "bad"},
+        ],
+    }
+    controller = BilibiliController(api)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD")
+
+    controller.load_playback_item(item)
+
+    assert item.detail_actions == [
+        PlaybackDetailAction(id="favorite_collection", label="收藏歌单", active=True),
+        PlaybackDetailAction(id="like_track", label="点赞", enabled=False),
+    ]
+
+
 def test_build_request_splits_bilibili_routes_by_play_source_without_cross_group_id_corruption() -> None:
     api = FakeApiClient()
     api.detail_payload = {
@@ -327,6 +355,37 @@ def test_build_request_splits_bilibili_routes_by_play_source_without_cross_group
     ]
     assert [item.vod_id for item in request.playlists[2]] == ["BV1ebREBmEha", "BV1YgRKBGELF"]
     assert request.vod.detail_style == "bilibili"
+
+
+def test_build_request_exposes_bilibili_detail_action_runner() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV1xx411c7mD",
+                "vod_name": "孤独摇滚",
+                "vod_play_url": "第1话$BV1xx411c7mD",
+            }
+        ]
+    }
+    api.detail_action_payload = {
+        "actions": [
+            {"id": "favorite_collection", "label": "已收藏歌单", "active": True},
+            {"id": "favorite_track", "label": "已收藏歌曲", "active": True},
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("BV1xx411c7mD")
+
+    assert request.detail_action_runner is not None
+    refreshed = request.detail_action_runner(request.playlist[0], "favorite_track")
+
+    assert api.detail_action_calls == [("BV1xx411c7mD", "favorite_track")]
+    assert refreshed == [
+        PlaybackDetailAction(id="favorite_collection", label="已收藏歌单", active=True),
+        PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True),
+    ]
 
 
 def test_resolve_playlist_item_marks_bilibili_detail_style() -> None:

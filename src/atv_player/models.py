@@ -57,6 +57,16 @@ class ExternalSubtitleSelection:
 
 
 @dataclass(slots=True)
+class PlaybackDetailAction:
+    id: str
+    label: str
+    active: bool = False
+    enabled: bool = True
+    visible: bool = True
+    tooltip: str = ""
+
+
+@dataclass(slots=True)
 class PlayItem:
     title: str
     url: str
@@ -67,6 +77,7 @@ class PlayItem:
     size: int = 0
     duration_seconds: int = 0
     vod_id: str = ""
+    detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
@@ -283,6 +294,7 @@ class OpenPlayerRequest:
     restore_history: bool = False
     playback_loader: Callable[..., PlaybackLoadResult | None] | None = None
     async_playback_loader: bool = False
+    detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

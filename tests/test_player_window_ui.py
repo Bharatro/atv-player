@@ -14,6 +14,7 @@ from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
     PlayItem,
+    PlaybackDetailAction,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -3041,6 +3042,105 @@ def test_player_window_appends_mpv_failure_messages_to_log_view_without_overwrit
     assert "名称: Movie" in window.metadata_view.toPlainText()
     assert "播放失败: HTTP 403 Forbidden" in window.log_view.toPlainText()
     assert "播放失败: HTTP 403 Forbidden" not in window.metadata_view.toPlainText()
+
+
+def test_player_window_hides_detail_actions_when_current_item_has_none(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.detail_actions_widget.isHidden() is True
+    assert window.detail_actions_layout.count() == 0
+
+
+def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="song-1", vod_name="Song"),
+        playlist=[
+            PlayItem(
+                title="Track 1",
+                url="http://m/1.m3u8",
+                detail_actions=[
+                    PlaybackDetailAction(id="favorite_collection", label="收藏歌单", active=True, tooltip="已收藏"),
+                    PlaybackDetailAction(id="favorite_track", label="收藏歌曲", enabled=False),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.detail_actions_widget.isHidden() is False
+    assert [window.detail_actions_layout.itemAt(i).widget().text() for i in range(window.detail_actions_layout.count())] == [
+        "收藏歌单",
+        "收藏歌曲",
+    ]
+    assert window.detail_actions_layout.itemAt(0).widget().toolTip() == "已收藏"
+    assert window.detail_actions_layout.itemAt(1).widget().isEnabled() is False
+
+
+def test_player_window_executes_detail_action_and_refreshes_current_item(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    calls: list[tuple[str, str]] = []
+    item = PlayItem(
+        title="Track 1",
+        url="http://m/1.m3u8",
+        detail_actions=[PlaybackDetailAction(id="favorite_track", label="收藏歌曲")],
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="song-1", vod_name="Song"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_action_runner=lambda current_item, action_id: calls.append((current_item.title, action_id)) or [
+            PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True)
+        ],
+    )
+
+    window.open_session(session)
+    button = window.detail_actions_layout.itemAt(0).widget()
+    button.click()
+    qtbot.waitUntil(lambda: item.detail_actions[0].label == "已收藏歌曲")
+
+    assert calls == [("Track 1", "favorite_track")]
+    assert window.detail_actions_layout.itemAt(0).widget().text() == "已收藏歌曲"
+
+
+def test_player_window_detail_action_failure_logs_error_without_stopping_playback(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="song-1", vod_name="Song"),
+        playlist=[
+            PlayItem(
+                title="Track 1",
+                url="http://m/1.m3u8",
+                detail_actions=[PlaybackDetailAction(id="favorite_track", label="收藏歌曲")],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_action_runner=lambda _item, _action_id: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    window.open_session(session)
+    window.detail_actions_layout.itemAt(0).widget().click()
+    qtbot.waitUntil(lambda: "详情动作执行失败[favorite_track]: boom" in window.log_view.toPlainText())
+
+    assert window.video.load_calls == [("http://m/1.m3u8", 0)]
 
 
 def test_player_window_opening_new_session_refreshes_metadata_and_clears_old_logs(qtbot) -> None:
