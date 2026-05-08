@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.preferences as danmaku_preferences_module
 import atv_player.plugins.controller as spider_controller_module
@@ -138,6 +140,36 @@ class InvalidActionLoader(FakeLoader):
         )
 
 
+class RunnableActionSpider(FakeSpider):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def getManagerActions(self):
+        return [{"id": "qr_login", "label": "扫码登录"}]
+
+    def runManagerAction(self, action_id: str, context) -> None:
+        self.calls.append((action_id, context.parent))
+        context.log("info", f"执行动作: {action_id}")
+        context.set_config_text("token=updated\ncookie=1\n")
+        context.refresh_plugin()
+
+
+class RunnableActionLoader(FakeLoader):
+    def __init__(self) -> None:
+        self.spider = RunnableActionSpider()
+        self.force_refresh_calls: list[bool] = []
+
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        self.force_refresh_calls.append(force_refresh)
+        loaded = super().load(config, force_refresh=force_refresh)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=self.spider,
+            plugin_name="红果短剧",
+            search_enabled=False,
+        )
+
+
 def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader())
@@ -187,6 +219,33 @@ def test_manager_list_plugin_actions_returns_empty_for_plugins_without_action_ap
     manager = SpiderPluginManager(repository, FakeLoader())
 
     assert manager.list_plugin_actions(plugin.id) == []
+
+
+def test_manager_run_plugin_action_provides_context_and_persists_side_effects(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    loader = RunnableActionLoader()
+    manager = SpiderPluginManager(repository, loader)
+
+    parent = object()
+
+    manager.run_plugin_action(plugin.id, "qr_login", parent=parent)
+
+    saved = repository.get_plugin(plugin.id)
+    logs = repository.list_logs(plugin.id)
+    assert loader.spider.calls == [("qr_login", parent)]
+    assert saved.config_text == "token=updated\ncookie=1\n"
+    assert any(entry.message == "执行动作: qr_login" for entry in logs)
+    assert loader.force_refresh_calls[-1] is True
+
+
+def test_manager_run_plugin_action_rejects_undeclared_action(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    manager = SpiderPluginManager(repository, ActionLoader())
+
+    with pytest.raises(ValueError, match="插件动作未注册: missing_action"):
+        manager.run_plugin_action(plugin.id, "missing_action")
 
 
 def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_path: Path) -> None:

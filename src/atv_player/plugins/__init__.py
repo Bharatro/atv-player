@@ -157,6 +157,26 @@ class SpiderPluginManager:
             plugin.source_type, plugin.source_value
         )
 
+    def _append_plugin_log(self, plugin_id: int, level: str, message: str) -> None:
+        self._repository.append_log(plugin_id, level, message)
+
+    def _build_action_context(
+        self,
+        plugin: SpiderPluginConfig,
+        loaded: LoadedSpiderPlugin,
+        *,
+        parent=None,
+    ) -> SpiderPluginActionContext:
+        return SpiderPluginActionContext(
+            parent=parent,
+            plugin_id=plugin.id,
+            plugin_name=self._plugin_title(plugin, loaded),
+            config_text=plugin.config_text,
+            set_config_text=lambda text, plugin_id=plugin.id: self.set_plugin_config(plugin_id, text),
+            refresh_plugin=lambda plugin_id=plugin.id: self.refresh_plugin(plugin_id),
+            log=lambda level, message, plugin_id=plugin.id: self._append_plugin_log(plugin_id, level, message),
+        )
+
     def list_plugin_actions(self, plugin_id: int) -> list[SpiderPluginAction]:
         plugin, loaded = self._load_plugin(plugin_id)
         get_actions = getattr(loaded.spider, "getManagerActions", None)
@@ -171,6 +191,22 @@ class SpiderPluginManager:
             if action.visible:
                 actions.append(action)
         return actions
+
+    def run_plugin_action(self, plugin_id: int, action_id: str, parent=None) -> None:
+        actions = self.list_plugin_actions(plugin_id)
+        action = next((item for item in actions if item.id == action_id), None)
+        if action is None:
+            raise ValueError(f"插件动作未注册: {action_id}")
+        plugin, loaded = self._load_plugin(plugin_id)
+        runner = getattr(loaded.spider, "runManagerAction", None)
+        if not callable(runner):
+            raise ValueError(f"插件不支持动作执行: {action_id}")
+        context = self._build_action_context(plugin, loaded, parent=parent)
+        try:
+            runner(action_id, context)
+        except Exception as exc:
+            self._repository.append_log(plugin.id, "error", f"插件动作执行失败[{action_id}]: {exc}")
+            raise
 
     def load_enabled_plugins(self, drive_detail_loader=None) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
