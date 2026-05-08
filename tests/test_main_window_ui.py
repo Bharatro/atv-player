@@ -58,6 +58,7 @@ class FakePlayerController:
         restore_history=False,
         playback_loader=None,
         async_playback_loader=False,
+        detail_action_runner=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -74,6 +75,7 @@ class FakePlayerController:
             "playlist_index": playlist_index,
             "restore_history": restore_history,
             "async_playback_loader": async_playback_loader,
+            "detail_action_runner": detail_action_runner,
             "danmaku_controller": danmaku_controller,
             "playback_history_loader": playback_history_loader,
             "playback_history_saver": playback_history_saver,
@@ -893,6 +895,7 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             restore_history=False,
             playback_loader=None,
             async_playback_loader=False,
+            detail_action_runner=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
             playback_stopper=None,
@@ -914,6 +917,7 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 restore_history=restore_history,
                 playback_loader=playback_loader,
                 async_playback_loader=async_playback_loader,
+                detail_action_runner=detail_action_runner,
                 danmaku_controller=danmaku_controller,
                 playback_progress_reporter=playback_progress_reporter,
                 playback_stopper=playback_stopper,
@@ -1026,6 +1030,29 @@ def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, m
 
     qtbot.waitUntil(lambda: "loader" in captured)
     assert captured["loader"] is load_video_cover
+
+
+def test_main_window_passes_detail_action_runner_to_player_controller(qtbot) -> None:
+    detail_action_runner = lambda item, action_id: [item, action_id]
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+        clicked_index=0,
+        detail_action_runner=detail_action_runner,
+    )
+
+    session = window._create_player_session(request)
+
+    assert session["detail_action_runner"] is detail_action_runner
 
 
 def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> None:
@@ -1161,6 +1188,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             restore_history=False,
             playback_loader=None,
             async_playback_loader=False,
+            detail_action_runner=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
             playback_stopper=None,
@@ -1181,6 +1209,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 restore_history,
                 playback_loader,
                 async_playback_loader,
+                detail_action_runner,
                 danmaku_controller,
                 playback_progress_reporter,
                 playback_stopper,

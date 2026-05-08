@@ -1026,9 +1026,12 @@ class SpiderPluginController:
             ),
         }
         payload = runner(action_id, context)
+        refreshed_actions: list[PlaybackDetailAction]
         if isinstance(payload, Mapping):
-            return _map_playback_detail_actions(payload.get("actions"))
-        return _map_playback_detail_actions(payload)
+            refreshed_actions = _map_playback_detail_actions(payload.get("actions"))
+        else:
+            refreshed_actions = _map_playback_detail_actions(payload)
+        return _merge_playback_detail_actions(item.detail_actions, refreshed_actions)
 
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url:

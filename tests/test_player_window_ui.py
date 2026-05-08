@@ -3292,6 +3292,44 @@ def test_player_window_executes_detail_action_and_refreshes_current_item(qtbot) 
     assert window.detail_actions_layout.itemAt(0).widget().text() == "已收藏歌曲"
 
 
+def test_player_window_preserves_other_detail_actions_when_refresh_returns_partial_update(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    item = PlayItem(
+        title="Track 1",
+        url="http://m/1.m3u8",
+        detail_actions=[
+            PlaybackDetailAction(id="favorite_playlist", label="收藏歌单"),
+            PlaybackDetailAction(id="favorite_track", label="收藏歌曲"),
+        ],
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="song-1", vod_name="Song"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_action_runner=lambda current_item, action_id: [
+            PlaybackDetailAction(id="favorite_playlist", label="已收藏歌单", active=True),
+            current_item.detail_actions[1],
+        ]
+        if action_id == "favorite_playlist"
+        else list(current_item.detail_actions),
+    )
+
+    window.open_session(session)
+    button = window.detail_actions_layout.itemAt(0).widget()
+    button.click()
+    qtbot.waitUntil(lambda: item.detail_actions[0].label == "已收藏歌单")
+
+    assert [item.detail_actions[index].label for index in range(len(item.detail_actions))] == ["已收藏歌单", "收藏歌曲"]
+    assert [window.detail_actions_layout.itemAt(i).widget().text() for i in range(window.detail_actions_layout.count())] == [
+        "已收藏歌单",
+        "收藏歌曲",
+    ]
+
+
 def test_player_window_detail_action_failure_logs_error_without_stopping_playback(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

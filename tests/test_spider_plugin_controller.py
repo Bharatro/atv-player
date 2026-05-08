@@ -272,6 +272,16 @@ class ActionPayloadSpider(FakeSpider):
         }
 
 
+class PartialActionRefreshSpider(ActionPayloadSpider):
+    def runPlayerAction(self, action_id, context):
+        assert context["action_id"] == action_id
+        return {
+            "actions": [
+                {"id": "favorite_album", "label": "已收藏专辑", "active": True},
+            ]
+        }
+
+
 class DetailFieldPayloadSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -2691,6 +2701,32 @@ def test_spider_controller_detail_action_runner_returns_refreshed_actions() -> N
     assert refreshed == [
         PlaybackDetailAction(id="favorite_album", label="已收藏专辑", active=True),
         PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True),
+    ]
+
+
+def test_spider_controller_detail_action_runner_preserves_existing_item_actions_when_refresh_is_partial() -> None:
+    controller = SpiderPluginController(PartialActionRefreshSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+    )
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+    assert request.detail_action_runner is not None
+
+    refreshed = request.detail_action_runner(session.playlist[0], "favorite_album")
+
+    assert refreshed == [
+        PlaybackDetailAction(id="favorite_album", label="已收藏专辑", active=True),
+        PlaybackDetailAction(id="favorite_track", label="收藏歌曲", enabled=False),
     ]
 
 

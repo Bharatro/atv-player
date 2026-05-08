@@ -70,7 +70,10 @@ The model is intentionally generic. It does not include built-in target types li
 
 ### Session and Item State
 
-The action list belongs to the currently resolved playback detail for the current play item.
+The player still renders one action list from the current play item, but Python spider plugins may source the initial state from two layers:
+
+- collection-level initial actions from `detailContent(...).list[0].actions`
+- current-item actions from `playerContent(...).actions`
 
 Add action state to `PlayItem`:
 
@@ -85,7 +88,7 @@ This keeps the player window simple:
 - render from `current_item.detail_actions`
 - execute through `session.detail_action_runner`
 
-The action state should move with the play item, not with the whole session, because current-track actions may differ across songs while collection-level actions may remain stable.
+For Python spider plugins, collection-level initial actions are copied into each play item during request construction, and current-item actions are merged in during playback resolution. This keeps the UI contract unchanged while allowing plugins to declare collection actions at detail-load time, where full container context already exists.
 
 ### Source Adapter Pattern
 
@@ -98,18 +101,41 @@ Two adapters are required in the first release:
 
 ### Python Spider Plugin Contract
 
-Extend spider-plugin playback detail so `playerContent()` may optionally return:
+Extend spider-plugin playback detail so `detailContent(...).list[0]` may optionally return collection-level initial actions:
+
+```python
+{
+    "vod_id": "detail-1",
+    "vod_name": "示例专辑",
+    "vod_play_from": "默认线",
+    "vod_play_url": "第1首$/play/1#第2首$/play/2",
+    "actions": [
+        {"id": "favorite_album", "label": "收藏专辑", "active": True},
+    ],
+}
+```
+
+These actions are copied into each generated `PlayItem.detail_actions` before `playerContent()` runs.
+
+`playerContent()` may then optionally return current-item actions:
 
 ```python
 {
     "parse": 0,
     "url": "https://media.example/song.m4a",
     "actions": [
-        {"id": "favorite_album", "label": "收藏专辑", "active": True},
         {"id": "favorite_track", "label": "收藏歌曲", "active": False},
     ],
 }
 ```
+
+Merge rule:
+
+- `detailContent(...).actions` seeds the initial list
+- `playerContent(...).actions` merges into the current play item
+- if both layers provide the same action `id`, the `playerContent()` action replaces the earlier one
+
+This split is preferred because `playerContent(flag, id, vipFlags)` only receives the play id and route label, which is often insufficient to infer collection state like playlist, album, or artist membership.
 
 Add an optional spider API:
 
@@ -131,6 +157,11 @@ Suggested context fields:
 - `log`
 
 The player should not require plugin authors to declare collection type. If a plugin wants to show `收藏歌单` for one item and `收藏专辑` for another, it does so through `label`.
+
+Recommended plugin guidance:
+
+- use `detailContent(...).actions` for collection-level initial actions such as `收藏歌单`, `收藏专辑`, or `关注歌手`
+- use `playerContent(...).actions` for current-item actions such as `收藏歌曲` or `点赞`
 
 ### Bilibili Adapter Contract
 
