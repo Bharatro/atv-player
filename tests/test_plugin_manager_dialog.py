@@ -152,6 +152,19 @@ def test_plugin_manager_dialog_shows_empty_custom_action_state_without_selection
     assert dialog.plugin_action_buttons == []
 
 
+def test_plugin_manager_dialog_shows_disabled_no_action_button_when_plugin_has_no_custom_actions(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.actions[1] = []
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+    dialog._sync_action_state()
+
+    assert [button.text() for button in dialog.plugin_action_buttons] == ["无动作"]
+    assert dialog.plugin_action_buttons[0].isEnabled() is False
+
+
 def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)

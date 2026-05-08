@@ -148,6 +148,15 @@ class PluginManagerDialog(QDialog):
                 widget.deleteLater()
         self.plugin_action_buttons = []
 
+    def _show_placeholder_action_button(self, text: str) -> None:
+        self.plugin_actions_empty_label.hide()
+        self.plugin_actions_widget.show()
+        button = QPushButton(text, self.plugin_actions_widget)
+        button.setEnabled(False)
+        self.plugin_actions_layout.addWidget(button)
+        self.plugin_actions_layout.addStretch(1)
+        self.plugin_action_buttons.append(button)
+
     def _reload_plugin_actions(self) -> None:
         self._clear_plugin_action_buttons()
         plugin_id = self._selected_plugin_id()
@@ -158,9 +167,7 @@ class PluginManagerDialog(QDialog):
             return
         actions = self.plugin_manager.list_plugin_actions(plugin_id)
         if not actions:
-            self.plugin_actions_empty_label.setText("该插件没有自定义动作")
-            self.plugin_actions_empty_label.show()
-            self.plugin_actions_widget.hide()
+            self._show_placeholder_action_button("无动作")
             return
         self.plugin_actions_empty_label.hide()
         self.plugin_actions_widget.show()
