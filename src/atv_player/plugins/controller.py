@@ -320,6 +320,21 @@ def _map_playback_detail_actions(payload: object) -> list[PlaybackDetailAction]:
     return actions
 
 
+def _merge_playback_detail_actions(
+    collection_actions: list[PlaybackDetailAction],
+    item_actions: list[PlaybackDetailAction],
+) -> list[PlaybackDetailAction]:
+    merged: list[PlaybackDetailAction] = list(collection_actions)
+    seen_ids = {action.id for action in merged}
+    for action in item_actions:
+        if action.id in seen_ids:
+            merged = [action if existing.id == action.id else existing for existing in merged]
+            continue
+        merged.append(action)
+        seen_ids.add(action.id)
+    return merged
+
+
 def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
     cache_dir = app_cache_dir() / "subtitles"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1005,7 +1020,6 @@ class SpiderPluginController:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
             return
-        item.detail_actions = []
         item.external_subtitles = []
         item.playback_qualities = []
         item.selected_playback_quality_id = ""
@@ -1113,7 +1127,10 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
-        item.detail_actions = _map_playback_detail_actions(payload.get("actions"))
+        item.detail_actions = _merge_playback_detail_actions(
+            item.detail_actions,
+            _map_playback_detail_actions(payload.get("actions")),
+        )
         item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
             payload.get("qualities"),
             url,
@@ -1140,10 +1157,16 @@ class SpiderPluginController:
             logger.exception("Spider plugin detail load failed plugin=%s vod_id=%s", self._plugin_name, vod_id)
             raise ValueError(str(exc)) from exc
         try:
-            detail = _map_vod_item(payload["list"][0])
+            raw_detail = payload["list"][0]
+            detail = _map_vod_item(raw_detail)
         except (KeyError, IndexError) as exc:
             raise ValueError(f"没有可播放的项目: {vod_id}") from exc
         playlists = self._build_playlist(detail)
+        collection_actions = _map_playback_detail_actions(raw_detail.get("actions") if isinstance(raw_detail, Mapping) else None)
+        if collection_actions:
+            for current_playlist in playlists:
+                for item in current_playlist:
+                    item.detail_actions = list(collection_actions)
         if not playlists:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
         logger.info(

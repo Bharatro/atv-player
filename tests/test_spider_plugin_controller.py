@@ -234,14 +234,28 @@ class BlankCoverPayloadSpider(FakeSpider):
 
 
 class ActionPayloadSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$/play/1",
+                    "actions": [
+                        {"id": "favorite_album", "label": "收藏专辑", "active": True, "tooltip": "已收藏"},
+                        {"id": "hidden", "label": "隐藏", "visible": False},
+                    ],
+                }
+            ]
+        }
+
     def playerContent(self, flag, id, vipFlags):
         return {
             "parse": 0,
             "url": f"https://stream.example{id}.m3u8",
             "actions": [
-                {"id": "favorite_album", "label": "收藏专辑", "active": True, "tooltip": "已收藏"},
                 {"id": "favorite_track", "label": "收藏歌曲", "enabled": False},
-                {"id": "hidden", "label": "隐藏", "visible": False},
                 {"id": "", "label": "bad"},
             ],
         }
@@ -2598,7 +2612,7 @@ def test_controller_build_request_uses_requested_vod_id_for_local_history_callba
     assert save_calls == [("/detail/original", {"position": 45000})]
 
 
-def test_spider_controller_maps_playercontent_actions_to_play_item() -> None:
+def test_spider_controller_maps_detailcontent_collection_actions_and_playercontent_item_actions_to_play_item() -> None:
     controller = SpiderPluginController(ActionPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
     request = controller.build_request("detail-1")
     session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
@@ -2618,6 +2632,15 @@ def test_spider_controller_maps_playercontent_actions_to_play_item() -> None:
     assert session.playlist[0].detail_actions == [
         PlaybackDetailAction(id="favorite_album", label="收藏专辑", active=True, tooltip="已收藏"),
         PlaybackDetailAction(id="favorite_track", label="收藏歌曲", enabled=False),
+    ]
+
+
+def test_spider_controller_applies_detailcontent_collection_actions_before_playercontent_load() -> None:
+    controller = SpiderPluginController(ActionPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert request.playlist[0].detail_actions == [
+        PlaybackDetailAction(id="favorite_album", label="收藏专辑", active=True, tooltip="已收藏"),
     ]
 
 
