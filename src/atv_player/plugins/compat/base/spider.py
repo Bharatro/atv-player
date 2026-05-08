@@ -63,16 +63,25 @@ class Spider(metaclass=ABCMeta):
     def danmaku(self):
         return False
 
+    def getManagerActions(self):
+        return []
+
+    def runManagerAction(self, action_id, context):
+        raise ValueError(f"unsupported action: {action_id}")
+
+    def destroy(self):
+        pass
+
     def fetch(
-        self,
-        url,
-        params=None,
-        cookies=None,
-        headers=None,
-        timeout=5,
-        verify=True,
-        stream=False,
-        allow_redirects=True,
+            self,
+            url,
+            params=None,
+            cookies=None,
+            headers=None,
+            timeout=5,
+            verify=True,
+            stream=False,
+            allow_redirects=True,
     ):
         response = requests.get(
             url,
@@ -88,17 +97,17 @@ class Spider(metaclass=ABCMeta):
         return _buffer_and_close_response(response)
 
     def post(
-        self,
-        url,
-        params=None,
-        data=None,
-        json=None,
-        cookies=None,
-        headers=None,
-        timeout=5,
-        verify=True,
-        stream=False,
-        allow_redirects=True,
+            self,
+            url,
+            params=None,
+            data=None,
+            json=None,
+            cookies=None,
+            headers=None,
+            timeout=5,
+            verify=True,
+            stream=False,
+            allow_redirects=True,
     ):
         response = requests.post(
             url,
@@ -145,7 +154,7 @@ class Spider(metaclass=ABCMeta):
             return None
         if len(value) > 0:
             if (value.startswith("{") and value.endswith("}")) or (
-                value.startswith("[") and value.endswith("]")
+                    value.startswith("[") and value.endswith("]")
             ):
                 value = json.loads(value)
                 if isinstance(value, dict):
