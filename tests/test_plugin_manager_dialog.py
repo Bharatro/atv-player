@@ -1,6 +1,7 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView
 
-from atv_player.models import SpiderPluginConfig, SpiderPluginLogEntry
+from atv_player.models import SpiderPluginAction, SpiderPluginConfig, SpiderPluginLogEntry
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 
 
@@ -38,6 +39,18 @@ class FakePluginManager:
         self.add_local_calls: list[str] = []
         self.add_remote_calls: list[str] = []
         self.delete_calls: list[int] = []
+        self.action_calls: list[tuple[int, str, object]] = []
+        self.actions = {
+            1: [SpiderPluginAction(id="qr_login", label="扫码登录")],
+            2: [
+                SpiderPluginAction(
+                    id="refresh_cookie",
+                    label="刷新 Cookie",
+                    enabled=False,
+                    tooltip="需要先扫码登录",
+                )
+            ],
+        }
 
     def list_plugins(self):
         return list(self.plugins)
@@ -68,6 +81,12 @@ class FakePluginManager:
 
     def list_logs(self, plugin_id: int):
         return self.logs.get(plugin_id, [])
+
+    def list_plugin_actions(self, plugin_id: int):
+        return list(self.actions.get(plugin_id, []))
+
+    def run_plugin_action(self, plugin_id: int, action_id: str, parent=None) -> None:
+        self.action_calls.append((plugin_id, action_id, parent))
 
 
 def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
@@ -121,6 +140,18 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
     assert dialog.delete_button.isEnabled() is False
 
 
+def test_plugin_manager_dialog_shows_empty_custom_action_state_without_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.clearSelection()
+    dialog._sync_action_state()
+
+    assert dialog.plugin_actions_empty_label.text() == "请选择插件以查看自定义动作"
+    assert dialog.plugin_action_buttons == []
+
+
 def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
@@ -135,6 +166,19 @@ def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> No
     dialog._sync_action_state()
     assert dialog.up_button.isEnabled() is True
     assert dialog.down_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_renders_dynamic_plugin_action_buttons(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.selectRow(1)
+    dialog._sync_action_state()
+
+    assert [button.text() for button in dialog.plugin_action_buttons] == ["刷新 Cookie"]
+    assert dialog.plugin_action_buttons[0].isEnabled() is False
+    assert dialog.plugin_action_buttons[0].toolTip() == "需要先扫码登录"
 
 
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
@@ -162,6 +206,29 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.move_calls == [(2, -1)]
     assert manager.refresh_calls == [2]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+    dialog._sync_action_state()
+
+    reload_calls: list[str] = []
+    original_reload = dialog.reload_plugins
+
+    def tracked_reload() -> None:
+        reload_calls.append("reload")
+        original_reload()
+
+    monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
+
+    qtbot.mouseClick(dialog.plugin_action_buttons[0], Qt.MouseButton.LeftButton)
+
+    assert manager.action_calls == [(1, "qr_login", dialog)]
+    assert reload_calls == ["reload"]
 
 
 def test_plugin_manager_dialog_edit_config_allows_empty_string_and_keeps_raw_current_value(

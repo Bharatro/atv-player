@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -10,11 +11,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -55,6 +58,12 @@ class PluginManagerDialog(QDialog):
         self.refresh_button = QPushButton("刷新")
         self.logs_button = QPushButton("查看日志")
         self.delete_button = QPushButton("删除")
+        self.plugin_actions_label = QLabel("插件动作")
+        self.plugin_actions_empty_label = QLabel("请选择插件以查看自定义动作")
+        self.plugin_actions_widget = QWidget(self)
+        self.plugin_actions_layout = QHBoxLayout(self.plugin_actions_widget)
+        self.plugin_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.plugin_action_buttons: list[QPushButton] = []
 
         actions = QHBoxLayout()
         for button in (
@@ -74,6 +83,9 @@ class PluginManagerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self.warning_label)
         layout.addLayout(actions)
+        layout.addWidget(self.plugin_actions_label)
+        layout.addWidget(self.plugin_actions_empty_label)
+        layout.addWidget(self.plugin_actions_widget)
         layout.addWidget(self.plugin_table)
 
         self.add_local_button.clicked.connect(self._add_local_plugin)
@@ -108,6 +120,7 @@ class PluginManagerDialog(QDialog):
             self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
         self._restore_selection(selected_plugin_id)
         self._sync_action_state()
+        self._reload_plugin_actions()
 
     def _has_selection(self) -> bool:
         selection_model = self.plugin_table.selectionModel()
@@ -125,6 +138,52 @@ class PluginManagerDialog(QDialog):
         self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+        self._reload_plugin_actions()
+
+    def _clear_plugin_action_buttons(self) -> None:
+        while self.plugin_actions_layout.count():
+            item = self.plugin_actions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.plugin_action_buttons = []
+
+    def _reload_plugin_actions(self) -> None:
+        self._clear_plugin_action_buttons()
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            self.plugin_actions_empty_label.setText("请选择插件以查看自定义动作")
+            self.plugin_actions_empty_label.show()
+            self.plugin_actions_widget.hide()
+            return
+        actions = self.plugin_manager.list_plugin_actions(plugin_id)
+        if not actions:
+            self.plugin_actions_empty_label.setText("该插件没有自定义动作")
+            self.plugin_actions_empty_label.show()
+            self.plugin_actions_widget.hide()
+            return
+        self.plugin_actions_empty_label.hide()
+        self.plugin_actions_widget.show()
+        for action in actions:
+            button = QPushButton(action.label, self.plugin_actions_widget)
+            button.setEnabled(action.enabled)
+            if action.tooltip:
+                button.setToolTip(action.tooltip)
+            button.clicked.connect(partial(self._run_plugin_action, action.id))
+            self.plugin_actions_layout.addWidget(button)
+            self.plugin_action_buttons.append(button)
+        self.plugin_actions_layout.addStretch(1)
+
+    def _run_plugin_action(self, action_id: str) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        try:
+            self.plugin_manager.run_plugin_action(plugin_id, action_id, parent=self)
+        except Exception as exc:
+            QMessageBox.warning(self, "插件动作失败", str(exc))
+            return
+        self.reload_plugins()
 
     def _restore_selection(self, plugin_id: int | None) -> None:
         self.plugin_table.clearSelection()
