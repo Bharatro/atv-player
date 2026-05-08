@@ -26,6 +26,28 @@ class Spider:
     assert module.Spider().getName() == "Fixture Spider"
 
 
+def test_runtime_loads_signed_package_with_dataclass_spider() -> None:
+    package_text, keyring = build_secspider_package(
+        """
+from dataclasses import dataclass
+
+
+@dataclass
+class Spider:
+    name: str = "Fixture Spider"
+
+    def getName(self):
+        return self.name
+"""
+    )
+    runtime = SecSpiderRuntime(keyring)
+    package = SecSpiderPackage.parse(package_text)
+
+    module = runtime.load_module(package, "spider_plugin_dataclass_fixture")
+
+    assert module.Spider().getName() == "Fixture Spider"
+
+
 def test_runtime_rejects_unknown_kid() -> None:
     package_text, _ = build_secspider_package("class Spider:\n    pass\n")
     package = SecSpiderPackage.parse(package_text.replace("//@kid:fixture-kid", "//@kid:missing-kid"))

@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel
 
 from atv_player.models import SpiderPluginAction, SpiderPluginConfig, SpiderPluginLogEntry
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
@@ -148,8 +148,9 @@ def test_plugin_manager_dialog_shows_empty_custom_action_state_without_selection
     dialog.plugin_table.clearSelection()
     dialog._sync_action_state()
 
-    assert dialog.plugin_actions_empty_label.text() == "请选择插件以查看自定义动作"
-    assert dialog.plugin_action_buttons == []
+    assert [button.text() for button in dialog.plugin_action_buttons] == ["无动作"]
+    assert isinstance(dialog.plugin_action_buttons[0], QLabel)
+    assert dialog.plugin_action_buttons[0].testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) is True
 
 
 def test_plugin_manager_dialog_shows_disabled_no_action_button_when_plugin_has_no_custom_actions(qtbot) -> None:
@@ -162,7 +163,8 @@ def test_plugin_manager_dialog_shows_disabled_no_action_button_when_plugin_has_n
     dialog._sync_action_state()
 
     assert [button.text() for button in dialog.plugin_action_buttons] == ["无动作"]
-    assert dialog.plugin_action_buttons[0].isEnabled() is False
+    assert isinstance(dialog.plugin_action_buttons[0], QLabel)
+    assert dialog.plugin_action_buttons[0].testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) is True
 
 
 def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> None:
@@ -192,6 +194,8 @@ def test_plugin_manager_dialog_renders_dynamic_plugin_action_buttons(qtbot) -> N
     assert [button.text() for button in dialog.plugin_action_buttons] == ["刷新 Cookie"]
     assert dialog.plugin_action_buttons[0].isEnabled() is False
     assert dialog.plugin_action_buttons[0].toolTip() == "需要先扫码登录"
+    assert dialog.plugin_action_buttons[0].autoDefault() is False
+    assert dialog.plugin_action_buttons[0].isDefault() is False
 
 
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:

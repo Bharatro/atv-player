@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import types
 
 from Crypto.Cipher import AES
@@ -79,5 +80,14 @@ class SecSpiderRuntime:
             raise SecSpiderHashError("source hash mismatch")
         module = types.ModuleType(module_name)
         module.__file__ = f"<secspider:{package.header('name')}>"
-        exec(compile(source_bytes.decode("utf-8"), module.__file__, "exec"), module.__dict__)
+        previous_module = sys.modules.get(module_name)
+        sys.modules[module_name] = module
+        try:
+            exec(compile(source_bytes.decode("utf-8"), module.__file__, "exec"), module.__dict__)
+        except Exception:
+            if previous_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous_module
+            raise
         return module

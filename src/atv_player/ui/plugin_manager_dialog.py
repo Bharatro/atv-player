@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -26,6 +27,16 @@ def _display_source_type(source_type: str) -> str:
         "local": "本地",
         "remote": "远程",
     }.get(source_type, source_type)
+
+
+_PLACEHOLDER_ACTION_STYLE = """
+QLabel {
+    border: 1px solid #d0d7de;
+    padding: 4px 14px;
+    background-color: #f6f8fa;
+    color: #8c959f;
+}
+"""
 
 
 class PluginManagerDialog(QDialog):
@@ -63,7 +74,7 @@ class PluginManagerDialog(QDialog):
         self.plugin_actions_widget = QWidget(self)
         self.plugin_actions_layout = QHBoxLayout(self.plugin_actions_widget)
         self.plugin_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self.plugin_action_buttons: list[QPushButton] = []
+        self.plugin_action_buttons: list[QWidget] = []
 
         actions = QHBoxLayout()
         for button in (
@@ -151,19 +162,19 @@ class PluginManagerDialog(QDialog):
     def _show_placeholder_action_button(self, text: str) -> None:
         self.plugin_actions_empty_label.hide()
         self.plugin_actions_widget.show()
-        button = QPushButton(text, self.plugin_actions_widget)
-        button.setEnabled(False)
-        self.plugin_actions_layout.addWidget(button)
+        label = QLabel(text, self.plugin_actions_widget)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(_PLACEHOLDER_ACTION_STYLE)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.plugin_actions_layout.addWidget(label)
         self.plugin_actions_layout.addStretch(1)
-        self.plugin_action_buttons.append(button)
+        self.plugin_action_buttons.append(label)
 
     def _reload_plugin_actions(self) -> None:
         self._clear_plugin_action_buttons()
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
-            self.plugin_actions_empty_label.setText("请选择插件以查看自定义动作")
-            self.plugin_actions_empty_label.show()
-            self.plugin_actions_widget.hide()
+            self._show_placeholder_action_button("无动作")
             return
         actions = self.plugin_manager.list_plugin_actions(plugin_id)
         if not actions:
@@ -174,6 +185,8 @@ class PluginManagerDialog(QDialog):
         for action in actions:
             button = QPushButton(action.label, self.plugin_actions_widget)
             button.setEnabled(action.enabled)
+            button.setAutoDefault(False)
+            button.setDefault(False)
             if action.tooltip:
                 button.setToolTip(action.tooltip)
             button.clicked.connect(partial(self._run_plugin_action, action.id))
