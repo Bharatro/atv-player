@@ -167,6 +167,25 @@ def test_plugin_manager_dialog_shows_disabled_no_action_button_when_plugin_has_n
     assert dialog.plugin_action_buttons[0].testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) is True
 
 
+def test_plugin_manager_dialog_does_not_accumulate_placeholder_action_widgets_across_refreshes(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.actions[1] = []
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.selectRow(0)
+    for _ in range(3):
+        dialog._sync_action_state()
+        qtbot.wait(0)
+
+    placeholders = [widget for widget in dialog.plugin_actions_widget.findChildren(QLabel) if widget.text() == "无动作"]
+
+    assert len(placeholders) == 1
+    assert len(dialog.plugin_action_buttons) == 1
+    assert dialog.plugin_action_buttons[0].text() == "无动作"
+
+
 def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
