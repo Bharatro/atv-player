@@ -290,7 +290,6 @@ class M3U8AdFilter:
             return url
         visited = set(visited)
         visited.add(url)
-        print(url)
         try:
             response = self._get(
                 url,
