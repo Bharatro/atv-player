@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from time import time
 from typing import cast
 
-from atv_player.models import HistoryRecord, PlayItem, PlaybackLoadResult, VodItem
+from atv_player.models import HistoryRecord, PlayItem, PlaybackDetailAction, PlaybackLoadResult, VodItem
 from atv_player.player.resume import resolve_resume_index
 
 
@@ -28,6 +28,7 @@ class PlayerSession:
     use_local_history: bool = True
     playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None
     async_playback_loader: bool = False
+    detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
@@ -94,6 +95,7 @@ class PlayerController:
         restore_history: bool = False,
         playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None,
         async_playback_loader: bool = False,
+        detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None,
         danmaku_controller: object | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
@@ -147,6 +149,7 @@ class PlayerController:
             use_local_history=use_local_history,
             playback_loader=playback_loader,
             async_playback_loader=async_playback_loader,
+            detail_action_runner=detail_action_runner,
             danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,

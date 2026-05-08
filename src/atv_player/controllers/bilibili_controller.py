@@ -16,6 +16,7 @@ from atv_player.models import (
     HistoryRecord,
     OpenPlayerRequest,
     PlayItem,
+    PlaybackDetailAction,
     VodItem,
 )
 
@@ -48,6 +49,32 @@ def _parse_bilibili_headers(headers: object) -> dict[str, str]:
         if key:
             parsed[key] = value
     return parsed
+
+
+def _map_detail_actions(payload: object) -> list[PlaybackDetailAction]:
+    if not isinstance(payload, list):
+        return []
+    actions: list[PlaybackDetailAction] = []
+    for raw_action in payload:
+        if not isinstance(raw_action, dict):
+            continue
+        action_id = str(raw_action.get("id") or "").strip()
+        label = str(raw_action.get("label") or "").strip()
+        if not action_id or not label:
+            continue
+        visible = bool(raw_action.get("visible", True))
+        if not visible:
+            continue
+        actions.append(
+            PlaybackDetailAction(
+                id=action_id,
+                label=label,
+                active=bool(raw_action.get("active")),
+                enabled=bool(raw_action.get("enabled", True)),
+                tooltip=str(raw_action.get("tooltip") or "").strip(),
+            )
+        )
+    return actions
 
 
 class BilibiliController:
@@ -201,8 +228,15 @@ class BilibiliController:
             raise ValueError(f"没有可用的播放地址: {item.title}")
         item.url = play_url
         item.headers = _parse_bilibili_headers(payload.get("header") or {})
+        item.detail_actions = _map_detail_actions(payload.get("actions"))
         item.external_subtitles = self._parse_bilibili_subtitles(payload)
         self._load_bilibili_danmaku(item, payload)
+
+    def _run_detail_action(self, vod_id: str, action_id: str) -> list[PlaybackDetailAction]:
+        payload = self._api_client.run_bilibili_detail_action(vod_id, action_id) or {}
+        if isinstance(payload, dict):
+            return _map_detail_actions(payload.get("actions"))
+        return _map_detail_actions(payload)
 
     def _route_name(self, routes: list[str], group_index: int) -> str:
         route = routes[group_index] if group_index < len(routes) else ""
@@ -270,6 +304,10 @@ class BilibiliController:
             detail_resolver=self.resolve_playlist_item,
             playback_loader=self.load_playback_item,
             async_playback_loader=True,
+            detail_action_runner=lambda _item, action_id, source_vod_id=detail.vod_id: self._run_detail_action(
+                source_vod_id,
+                action_id,
+            ),
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )

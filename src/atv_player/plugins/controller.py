@@ -35,6 +35,7 @@ from atv_player.models import (
     ExternalSubtitleOption,
     OpenPlayerRequest,
     PlayItem,
+    PlaybackDetailAction,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -293,6 +294,30 @@ def _map_spider_playback_qualities(
     if not qualities:
         return [], ""
     return qualities, selected_quality_id or qualities[0].id
+
+
+def _map_playback_detail_actions(payload: object) -> list[PlaybackDetailAction]:
+    if not isinstance(payload, list):
+        return []
+    actions: list[PlaybackDetailAction] = []
+    for raw_action in payload:
+        if not isinstance(raw_action, Mapping):
+            continue
+        action_id = str(raw_action.get("id") or "").strip()
+        label = str(raw_action.get("label") or "").strip()
+        if not action_id or not label:
+            continue
+        action = PlaybackDetailAction(
+            id=action_id,
+            label=label,
+            active=bool(raw_action.get("active")),
+            enabled=bool(raw_action.get("enabled", True)),
+            visible=bool(raw_action.get("visible", True)),
+            tooltip=str(raw_action.get("tooltip") or "").strip(),
+        )
+        if action.visible:
+            actions.append(action)
+    return actions
 
 
 def _move_spider_subtitle_to_cache(source_path: Path) -> Path:
@@ -944,12 +969,43 @@ class SpiderPluginController:
         history = self._playback_history_loader(vod_id)
         return resolve_resume_index(history, replacement, 0)
 
+    def _run_detail_action(
+        self,
+        vod: VodItem,
+        playlists: list[list[PlayItem]],
+        playlist_index: int,
+        item: PlayItem,
+        action_id: str,
+    ) -> list[PlaybackDetailAction]:
+        runner = getattr(self._spider, "runPlayerAction", None)
+        if not callable(runner):
+            raise ValueError(f"详情动作未注册[{action_id}]")
+        context = {
+            "action_id": action_id,
+            "vod": vod,
+            "play_item": item,
+            "playlist": playlists[playlist_index] if 0 <= playlist_index < len(playlists) else [],
+            "playlist_index": playlist_index,
+            "play_index": item.index,
+            "log": lambda message: logger.info(
+                "Spider detail action plugin=%s action=%s %s",
+                self._plugin_name,
+                action_id,
+                message,
+            ),
+        }
+        payload = runner(action_id, context)
+        if isinstance(payload, Mapping):
+            return _map_playback_detail_actions(payload.get("actions"))
+        return _map_playback_detail_actions(payload)
+
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url:
             session.video_cover_override = item.video_cover_override
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url)
             return
+        item.detail_actions = []
         item.external_subtitles = []
         item.playback_qualities = []
         item.selected_playback_quality_id = ""
@@ -1057,6 +1113,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        item.detail_actions = _map_playback_detail_actions(payload.get("actions"))
         item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
             payload.get("qualities"),
             url,
@@ -1118,12 +1175,22 @@ class SpiderPluginController:
                     start_index=0,
                     start_position_seconds=0,
                     speed=1.0,
+                    playlists=playlists,
+                    playlist_index=0,
                 )
                 current_item = session_or_item
             else:
                 session = session_or_item
                 current_item = item
             return self._resolve_play_item(session, current_item)
+
+        def detail_action_runner(item: PlayItem, action_id: str) -> list[PlaybackDetailAction]:
+            playlist_index = 0
+            for current_index, current_playlist in enumerate(playlists):
+                if item in current_playlist:
+                    playlist_index = current_index
+                    break
+            return self._run_detail_action(detail, playlists, playlist_index, item, action_id)
 
         return OpenPlayerRequest(
             vod=detail,
@@ -1137,6 +1204,7 @@ class SpiderPluginController:
             use_local_history=False,
             playback_loader=playback_loader,
             async_playback_loader=True,
+            detail_action_runner=detail_action_runner,
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,

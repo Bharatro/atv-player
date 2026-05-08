@@ -215,6 +215,14 @@ class ApiClient:
     def get_bilibili_playback_source(self, vod_id: str) -> dict[str, Any]:
         return self._request("GET", f"/play/{self._vod_token}", params={"bvid": vod_id, "dash": True}, headers={"X-CLIENT": "gui"})
 
+    def run_bilibili_detail_action(self, vod_id: str, action_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/bilibili/{self._vod_token}/action",
+            json={"id": vod_id, "action": action_id},
+            headers={"X-CLIENT": "gui"},
+        )
+
     def list_emby_items(
         self,
         category_id: str,

@@ -11,7 +11,7 @@ from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction
 from atv_player.plugins.controller import SpiderPluginController
 
 
@@ -230,6 +230,31 @@ class BlankCoverPayloadSpider(FakeSpider):
             "url": f"https://stream.example{id}.m3u8",
             "header": {"Referer": "https://site.example"},
             "cover": "   ",
+        }
+
+
+class ActionPayloadSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "actions": [
+                {"id": "favorite_album", "label": "收藏专辑", "active": True, "tooltip": "已收藏"},
+                {"id": "favorite_track", "label": "收藏歌曲", "enabled": False},
+                {"id": "hidden", "label": "隐藏", "visible": False},
+                {"id": "", "label": "bad"},
+            ],
+        }
+
+    def runPlayerAction(self, action_id, context):
+        assert context["action_id"] == action_id
+        assert context["vod"].vod_name == "红果短剧"
+        assert context["play_item"].title == "第1集"
+        return {
+            "actions": [
+                {"id": "favorite_album", "label": "已收藏专辑", "active": True},
+                {"id": "favorite_track", "label": "已收藏歌曲", "active": True},
+            ]
         }
 
 
@@ -2571,6 +2596,42 @@ def test_controller_build_request_uses_requested_vod_id_for_local_history_callba
 
     assert load_calls == ["/detail/original"]
     assert save_calls == [("/detail/original", {"position": 45000})]
+
+
+def test_spider_controller_maps_playercontent_actions_to_play_item() -> None:
+    controller = SpiderPluginController(ActionPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+    )
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+
+    assert session.playlist[0].detail_actions == [
+        PlaybackDetailAction(id="favorite_album", label="收藏专辑", active=True, tooltip="已收藏"),
+        PlaybackDetailAction(id="favorite_track", label="收藏歌曲", enabled=False),
+    ]
+
+
+def test_spider_controller_detail_action_runner_returns_refreshed_actions() -> None:
+    controller = SpiderPluginController(ActionPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert request.detail_action_runner is not None
+    refreshed = request.detail_action_runner(request.playlist[0], "favorite_track")
+
+    assert refreshed == [
+        PlaybackDetailAction(id="favorite_album", label="已收藏专辑", active=True),
+        PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True),
+    ]
 
 
 def test_controller_logs_search_failure(caplog) -> None:
