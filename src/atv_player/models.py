@@ -67,6 +67,12 @@ class PlaybackDetailAction:
 
 
 @dataclass(slots=True)
+class PlaybackDetailField:
+    label: str
+    value: str
+
+
+@dataclass(slots=True)
 class PlayItem:
     title: str
     url: str
@@ -78,6 +84,7 @@ class PlayItem:
     duration_seconds: int = 0
     vod_id: str = ""
     detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
+    detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
@@ -162,6 +169,7 @@ class VodItem:
     epg_schedule: str = ""
     dbid: int = 0
     type: int = 0
+    detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     items: list[PlayItem] = field(default_factory=list)
 
 

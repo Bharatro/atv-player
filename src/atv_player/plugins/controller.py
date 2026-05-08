@@ -36,6 +36,7 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailField,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -318,6 +319,21 @@ def _map_playback_detail_actions(payload: object) -> list[PlaybackDetailAction]:
         if action.visible:
             actions.append(action)
     return actions
+
+
+def _map_playback_detail_fields(payload: object) -> list[PlaybackDetailField]:
+    if not isinstance(payload, list):
+        return []
+    fields: list[PlaybackDetailField] = []
+    for raw_field in payload:
+        if not isinstance(raw_field, Mapping):
+            continue
+        label = str(raw_field.get("label") or "").strip()
+        value = str(raw_field.get("value") or "").strip()
+        if not label or not value:
+            continue
+        fields.append(PlaybackDetailField(label=label, value=value))
+    return fields
 
 
 def _merge_playback_detail_actions(
@@ -1127,6 +1143,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        item.detail_fields = _map_playback_detail_fields(payload.get("ext"))
         item.detail_actions = _merge_playback_detail_actions(
             item.detail_actions,
             _map_playback_detail_actions(payload.get("actions")),
@@ -1159,6 +1176,7 @@ class SpiderPluginController:
         try:
             raw_detail = payload["list"][0]
             detail = _map_vod_item(raw_detail)
+            detail.detail_fields = _map_playback_detail_fields(raw_detail.get("ext") if isinstance(raw_detail, Mapping) else None)
         except (KeyError, IndexError) as exc:
             raise ValueError(f"没有可播放的项目: {vod_id}") from exc
         playlists = self._build_playlist(detail)

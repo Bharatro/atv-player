@@ -11,7 +11,7 @@ from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction
+from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction, PlaybackDetailField
 from atv_player.plugins.controller import SpiderPluginController
 
 
@@ -270,6 +270,43 @@ class ActionPayloadSpider(FakeSpider):
                 {"id": "favorite_track", "label": "已收藏歌曲", "active": True},
             ]
         }
+
+
+class DetailFieldPayloadSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "默认线$$$备用线",
+                    "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                    "ext": [
+                        {"label": "播放", "value": "12万"},
+                        {"label": "更新", "value": "2026-05-08"},
+                        {"label": "", "value": "bad"},
+                        {"label": "空值", "value": ""},
+                    ],
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        payload = {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+        }
+        if id == "/play/1":
+            payload["ext"] = [
+                {"label": "播放", "value": "18万"},
+                {"label": "热度", "value": "95"},
+            ]
+        elif id == "/play/2":
+            payload["ext"] = [
+                {"label": "播放", "value": " "},
+                {"label": "", "value": "ignored"},
+            ]
+        return payload
 
 
 class FlakyCoverPayloadSpider(FakeSpider):
@@ -2655,6 +2692,68 @@ def test_spider_controller_detail_action_runner_returns_refreshed_actions() -> N
         PlaybackDetailAction(id="favorite_album", label="已收藏专辑", active=True),
         PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True),
     ]
+
+
+def test_spider_controller_maps_detailcontent_ext_to_vod_detail_fields() -> None:
+    controller = SpiderPluginController(DetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert request.vod.detail_fields == [
+        PlaybackDetailField(label="播放", value="12万"),
+        PlaybackDetailField(label="更新", value="2026-05-08"),
+    ]
+    assert request.playlist[0].detail_fields == []
+
+
+def test_spider_controller_maps_playercontent_ext_to_current_play_item_detail_fields() -> None:
+    controller = SpiderPluginController(DetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+    )
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+
+    assert session.playlist[0].detail_fields == [
+        PlaybackDetailField(label="播放", value="18万"),
+        PlaybackDetailField(label="热度", value="95"),
+    ]
+
+
+def test_spider_controller_clears_stale_item_detail_fields_when_playercontent_ext_is_invalid() -> None:
+    controller = SpiderPluginController(DetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+    )
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+    assert session.playlist[0].detail_fields == [
+        PlaybackDetailField(label="播放", value="18万"),
+        PlaybackDetailField(label="热度", value="95"),
+    ]
+
+    second_item = session.playlist[1]
+    second_item.detail_fields = [PlaybackDetailField(label="旧值", value="stale")]
+    session.playback_loader(second_item)
+
+    assert second_item.detail_fields == []
 
 
 def test_controller_logs_search_failure(caplog) -> None:

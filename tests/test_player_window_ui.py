@@ -7,7 +7,7 @@ from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
-from atv_player.controllers.player_controller import PlayerSession
+from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.models import (
     AppConfig,
@@ -15,6 +15,7 @@ from atv_player.models import (
     ExternalSubtitleSelection,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailField,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -125,6 +126,36 @@ class RecordingVideo:
 
     def duration_seconds(self) -> int:
         return 120
+
+
+class DetailFieldPayloadSpider:
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                    "ext": [
+                        {"label": "播放", "value": "12万"},
+                        {"label": "更新", "value": "2026-05-08"},
+                    ],
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        payload = {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+        }
+        if id == "/play/1":
+            payload["ext"] = [
+                {"label": "播放", "value": "18万"},
+                {"label": "热度", "value": "95"},
+            ]
+        return payload
 
 
 def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSession:
@@ -3053,6 +3084,125 @@ def test_player_window_hides_detail_actions_when_current_item_has_none(qtbot) ->
 
     assert window.detail_actions_widget.isHidden() is True
     assert window.detail_actions_layout.count() == 0
+
+
+def test_player_window_shows_collection_level_detail_fields_on_open_session(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            detail_fields=[PlaybackDetailField(label="播放", value="12万")],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+
+    window.open_session(session)
+
+    assert window.detail_fields_widget.isHidden() is False
+    assert window.detail_fields_view.toPlainText() == "播放: 12万"
+
+
+def test_player_window_hides_detail_fields_widget_when_no_fields_exist(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.detail_fields_widget.isHidden() is True
+    assert window.detail_fields_view.toPlainText() == ""
+
+
+def test_player_window_prefers_current_item_detail_fields_over_vod_fields(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="series-1",
+            vod_name="Series",
+            detail_fields=[PlaybackDetailField(label="播放", value="12万")],
+        ),
+        playlist=[
+            PlayItem(
+                title="Episode 1",
+                url="http://m/1.m3u8",
+                detail_fields=[PlaybackDetailField(label="播放", value="18万")],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+
+    window.open_session(session)
+
+    assert window.detail_fields_view.toPlainText() == "播放: 18万"
+
+
+def test_player_window_falls_back_to_vod_detail_fields_when_switching_to_item_without_override(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="series-1",
+            vod_name="Series",
+            detail_fields=[PlaybackDetailField(label="播放", value="12万")],
+        ),
+        playlist=[
+            PlayItem(
+                title="Episode 1",
+                url="http://m/1.m3u8",
+                detail_fields=[PlaybackDetailField(label="播放", value="18万")],
+            ),
+            PlayItem(title="Episode 2", url="http://m/2.m3u8"),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+
+    window.open_session(session)
+    window._play_item_at_index(1)
+
+    assert window.detail_fields_view.toPlainText() == "播放: 12万"
+
+
+def test_player_window_replaces_collection_detail_fields_after_spider_playback_loader_resolves_item_fields(qtbot) -> None:
+    controller = SpiderPluginController(DetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.detail_fields_view.toPlainText() == "播放: 12万\n更新: 2026-05-08"
+
+    assert session.playback_loader is not None
+    session.playback_loader(session.playlist[0])
+    window._render_detail_fields()
+
+    assert window.detail_fields_view.toPlainText() == "播放: 18万\n热度: 95"
 
 
 def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> None:

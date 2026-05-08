@@ -51,6 +51,7 @@ from atv_player.models import (
     ExternalSubtitleSelection,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailField,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -501,6 +502,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_actions_layout.setSpacing(6)
         details_layout.addWidget(self.detail_actions_widget)
+        self.detail_fields_widget = QWidget()
+        detail_fields_layout = QVBoxLayout(self.detail_fields_widget)
+        detail_fields_layout.setContentsMargins(0, 0, 0, 0)
+        detail_fields_layout.setSpacing(4)
+        self.detail_fields_view = QTextEdit()
+        self.detail_fields_view.setReadOnly(True)
+        self.detail_fields_view.setMaximumHeight(96)
+        self.detail_fields_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.detail_fields_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        detail_fields_layout.addWidget(self.detail_fields_view)
+        details_layout.addWidget(self.detail_fields_widget)
         details_layout.addWidget(QLabel("影片详情"))
         details_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(QLabel("播放日志"))
@@ -755,6 +767,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return []
         return [action for action in self.session.playlist[self.current_index].detail_actions if action.visible]
 
+    def _current_detail_fields(self) -> list[PlaybackDetailField]:
+        if self.session is None:
+            return []
+        if 0 <= self.current_index < len(self.session.playlist):
+            item_fields = self.session.playlist[self.current_index].detail_fields
+            if item_fields:
+                return item_fields
+        return self.session.vod.detail_fields
+
+    def _format_detail_fields_text(self, fields: list[PlaybackDetailField]) -> str:
+        return "\n".join(f"{field.label}: {field.value}" for field in fields)
+
+    def _render_detail_fields(self) -> None:
+        fields = self._current_detail_fields()
+        self.detail_fields_widget.setHidden(not fields)
+        self.detail_fields_view.setPlainText(self._format_detail_fields_text(fields) if fields else "")
+
     def _clear_detail_action_buttons(self) -> None:
         while self.detail_actions_layout.count():
             item = self.detail_actions_layout.takeAt(0)
@@ -891,10 +920,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             session.playlists = [session.playlist]
             session.playlist_index = 0
         self.session = session
+        self.current_index = session.start_index
         self._render_poster()
+        self._render_detail_fields()
         self._render_metadata()
         self._reset_log()
-        self.current_index = session.start_index
         self.current_speed = session.speed
         self.opening_spin.blockSignals(True)
         self.ending_spin.blockSignals(True)
@@ -1194,6 +1224,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.session.vod = resolved_vod
         self._render_poster()
+        self._render_detail_fields()
         self._render_metadata()
 
     def _resolve_current_play_item(self) -> VodItem | None:
@@ -1222,6 +1253,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         try:
             self.playlist.setCurrentRow(self.current_index)
             self._refresh_danmaku_source_entry_points()
+            self._render_detail_fields()
             self._render_detail_actions()
             self._load_current_item(
                 start_position_seconds=start_position_seconds,
@@ -1734,6 +1766,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._apply_playback_loader_result(load_result)
         self._render_poster()
+        self._render_detail_fields()
         self._refresh_parse_combo_enabled_state()
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:

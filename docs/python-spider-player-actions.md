@@ -36,6 +36,28 @@ Normalization rules:
 - malformed actions are ignored
 - source ordering is preserved
 
+## Custom Detail Fields
+
+Python spider plugins can also provide read-only custom detail rows in the player sidebar.
+
+Supported payload shape:
+
+```python
+"ext": [
+    {"label": "播放", "value": "12万"},
+    {"label": "更新", "value": "2026-05-08"},
+]
+```
+
+Rules:
+
+- `detailContent(...).list[0].ext` sets collection-level fields for the whole detail page
+- `playerContent(...).ext` sets current-item fields for the active episode or track
+- if the current play item has non-empty `playerContent().ext`, those rows replace the collection-level rows
+- if the current play item has no valid rows, the player falls back to `detailContent().ext`
+- each row must provide non-blank `label` and `value`
+- rows are display-only and are rendered as `label: value`
+
 ## Two Action Sources
 
 Python spider plugins now have two different places to provide player-detail actions:
