@@ -245,6 +245,26 @@ class SpiderPluginLogEntry:
 
 
 @dataclass(slots=True)
+class SpiderPluginAction:
+    id: str
+    label: str
+    enabled: bool = True
+    visible: bool = True
+    tooltip: str = ""
+
+
+@dataclass(slots=True)
+class SpiderPluginActionContext:
+    parent: object | None
+    plugin_id: int
+    plugin_name: str
+    config_text: str
+    set_config_text: Callable[[str], None]
+    refresh_plugin: Callable[[], None]
+    log: Callable[[str, str], None]
+
+
+@dataclass(slots=True)
 class OpenPlayerRequest:
     vod: VodItem
     playlist: list[PlayItem]

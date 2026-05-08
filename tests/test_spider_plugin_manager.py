@@ -6,7 +6,7 @@ import atv_player.plugins.controller as spider_controller_module
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.models import PlayItem
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import SpiderPluginConfig
+from atv_player.models import SpiderPluginAction, SpiderPluginConfig
 from atv_player.plugins import SpiderPluginManager
 from atv_player.plugins.loader import LoadedSpiderPlugin
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -93,6 +93,51 @@ class HistoryLoader(FakeLoader):
         )
 
 
+class ActionSpider(FakeSpider):
+    def getManagerActions(self):
+        return [
+            {"id": "qr_login", "label": "扫码登录"},
+            {
+                "id": "refresh_cookie",
+                "label": "刷新 Cookie",
+                "enabled": False,
+                "tooltip": "需要先扫码登录",
+            },
+            {"id": "hidden_action", "label": "隐藏动作", "visible": False},
+        ]
+
+
+class InvalidActionSpider(FakeSpider):
+    def getManagerActions(self):
+        return [
+            "bad-payload",
+            {"id": "", "label": "缺少 id"},
+            {"id": "missing_label"},
+        ]
+
+
+class ActionLoader(FakeLoader):
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=ActionSpider(),
+            plugin_name="红果短剧",
+            search_enabled=False,
+        )
+
+
+class InvalidActionLoader(FakeLoader):
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=InvalidActionSpider(),
+            plugin_name="坏动作插件",
+            search_enabled=False,
+        )
+
+
 def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader())
@@ -104,6 +149,44 @@ def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp
     assert len(plugins) == 1
     assert plugins[0].source_type == "remote"
     assert plugins[0].display_name == "红果短剧"
+
+
+def test_manager_list_plugin_actions_normalizes_visible_actions(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    manager = SpiderPluginManager(repository, ActionLoader())
+
+    actions = manager.list_plugin_actions(plugin.id)
+
+    assert actions == [
+        SpiderPluginAction(id="qr_login", label="扫码登录"),
+        SpiderPluginAction(
+            id="refresh_cookie",
+            label="刷新 Cookie",
+            enabled=False,
+            tooltip="需要先扫码登录",
+        ),
+    ]
+
+
+def test_manager_list_plugin_actions_ignores_invalid_payloads_and_logs_reasons(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/bad.py", "坏动作插件")
+    manager = SpiderPluginManager(repository, InvalidActionLoader())
+
+    actions = manager.list_plugin_actions(plugin.id)
+    logs = repository.list_logs(plugin.id)
+
+    assert actions == []
+    assert any("插件动作声明无效" in entry.message for entry in logs)
+
+
+def test_manager_list_plugin_actions_returns_empty_for_plugins_without_action_api(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/plain.py", "普通插件")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    assert manager.list_plugin_actions(plugin.id) == []
 
 
 def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_path: Path) -> None:

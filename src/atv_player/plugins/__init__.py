@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
-from atv_player.models import SpiderPluginConfig
+from atv_player.models import SpiderPluginAction, SpiderPluginActionContext, SpiderPluginConfig
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.plugins.loader import LoadedSpiderPlugin, SpiderPluginLoader
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -28,6 +28,22 @@ def _default_plugin_name(source_type: str, source_value: str) -> str:
         if name:
             return name
     return Path(source_value).stem or Path(source_value).name.removesuffix(".py")
+
+
+def _coerce_plugin_action(payload: object) -> SpiderPluginAction | None:
+    if not isinstance(payload, dict):
+        return None
+    action_id = str(payload.get("id") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    if not action_id or not label:
+        return None
+    return SpiderPluginAction(
+        id=action_id,
+        label=label,
+        enabled=bool(payload.get("enabled", True)),
+        visible=bool(payload.get("visible", True)),
+        tooltip=str(payload.get("tooltip") or "").strip(),
+    )
 
 
 class SpiderPluginManager:
@@ -129,6 +145,33 @@ class SpiderPluginManager:
     def list_logs(self, plugin_id: int):
         return self._repository.list_logs(plugin_id)
 
+    def _get_plugin(self, plugin_id: int) -> SpiderPluginConfig:
+        return self._repository.get_plugin(plugin_id)
+
+    def _load_plugin(self, plugin_id: int, *, force_refresh: bool = False) -> tuple[SpiderPluginConfig, LoadedSpiderPlugin]:
+        plugin = self._get_plugin(plugin_id)
+        return plugin, self._loader.load(plugin, force_refresh=force_refresh)
+
+    def _plugin_title(self, plugin: SpiderPluginConfig, loaded: LoadedSpiderPlugin) -> str:
+        return plugin.display_name or loaded.plugin_name or _default_plugin_name(
+            plugin.source_type, plugin.source_value
+        )
+
+    def list_plugin_actions(self, plugin_id: int) -> list[SpiderPluginAction]:
+        plugin, loaded = self._load_plugin(plugin_id)
+        get_actions = getattr(loaded.spider, "getManagerActions", None)
+        if not callable(get_actions):
+            return []
+        actions: list[SpiderPluginAction] = []
+        for payload in get_actions() or []:
+            action = _coerce_plugin_action(payload)
+            if action is None:
+                self._repository.append_log(plugin.id, "error", f"插件动作声明无效: {payload!r}")
+                continue
+            if action.visible:
+                actions.append(action)
+        return actions
+
     def load_enabled_plugins(self, drive_detail_loader=None) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
         for plugin in self._repository.list_plugins():
@@ -148,9 +191,7 @@ class SpiderPluginManager:
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
-            title = plugin.display_name or loaded.plugin_name or _default_plugin_name(
-                plugin.source_type, plugin.source_value
-            )
+            title = self._plugin_title(plugin, loaded)
             controller = SpiderPluginController(
                 loaded.spider,
                 plugin_name=title,
