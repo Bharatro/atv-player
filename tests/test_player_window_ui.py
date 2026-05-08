@@ -3086,46 +3086,68 @@ def test_player_window_hides_detail_actions_when_current_item_has_none(qtbot) ->
     assert window.detail_actions_layout.count() == 0
 
 
-def test_player_window_shows_collection_level_detail_fields_on_open_session(qtbot) -> None:
+def test_player_window_inlines_collection_level_detail_fields_into_metadata_text(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     session = PlayerSession(
         vod=VodItem(
             vod_id="movie-1",
             vod_name="Movie",
+            type_name="剧情",
+            vod_content="简介文本",
             detail_fields=[PlaybackDetailField(label="播放", value="12万")],
         ),
         playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
-        opening_seconds=0,
-        ending_seconds=0,
     )
 
     window.open_session(session)
 
-    assert window.detail_fields_widget.isHidden() is False
-    assert window.detail_fields_view.toPlainText() == "播放: 12万"
+    assert window.metadata_view.toPlainText() == (
+        "名称: Movie\n"
+        "类型: 剧情\n"
+        "年代:\n"
+        "地区:\n"
+        "语言:\n"
+        "评分:\n"
+        "导演:\n"
+        "演员:\n"
+        "豆瓣ID:\n"
+        "播放: 12万\n"
+        "\n"
+        "简介:\n"
+        "简介文本"
+    )
 
 
-def test_player_window_hides_detail_fields_widget_when_no_fields_exist(qtbot) -> None:
+def test_player_window_omits_inline_detail_field_lines_when_no_fields_exist(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie", type_name="剧情", vod_content="简介"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
 
-    window.open_session(make_player_session(start_index=0))
+    window.open_session(session)
 
-    assert window.detail_fields_widget.isHidden() is True
-    assert window.detail_fields_view.toPlainText() == ""
+    assert "播放:" not in window.metadata_view.toPlainText()
+    assert window.metadata_view.toPlainText().endswith("简介:\n简介")
 
 
-def test_player_window_prefers_current_item_detail_fields_over_vod_fields(qtbot) -> None:
+def test_player_window_prefers_current_item_detail_fields_inside_metadata_text(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     session = PlayerSession(
         vod=VodItem(
             vod_id="series-1",
             vod_name="Series",
+            type_name="剧情",
+            vod_content="简介文本",
             detail_fields=[PlaybackDetailField(label="播放", value="12万")],
         ),
         playlist=[
@@ -3138,22 +3160,23 @@ def test_player_window_prefers_current_item_detail_fields_over_vod_fields(qtbot)
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
-        opening_seconds=0,
-        ending_seconds=0,
     )
 
     window.open_session(session)
 
-    assert window.detail_fields_view.toPlainText() == "播放: 18万"
+    assert "播放: 18万" in window.metadata_view.toPlainText()
+    assert "播放: 12万" not in window.metadata_view.toPlainText()
 
 
-def test_player_window_falls_back_to_vod_detail_fields_when_switching_to_item_without_override(qtbot) -> None:
+def test_player_window_falls_back_to_vod_detail_fields_inside_metadata_text(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     session = PlayerSession(
         vod=VodItem(
             vod_id="series-1",
             vod_name="Series",
+            type_name="剧情",
+            vod_content="简介文本",
             detail_fields=[PlaybackDetailField(label="播放", value="12万")],
         ),
         playlist=[
@@ -3167,17 +3190,16 @@ def test_player_window_falls_back_to_vod_detail_fields_when_switching_to_item_wi
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
-        opening_seconds=0,
-        ending_seconds=0,
     )
 
     window.open_session(session)
     window._play_item_at_index(1)
 
-    assert window.detail_fields_view.toPlainText() == "播放: 12万"
+    assert "播放: 12万" in window.metadata_view.toPlainText()
+    assert "播放: 18万" not in window.metadata_view.toPlainText()
 
 
-def test_player_window_replaces_collection_detail_fields_after_spider_playback_loader_resolves_item_fields(qtbot) -> None:
+def test_player_window_replaces_collection_detail_fields_inside_metadata_after_spider_playback_loader(qtbot) -> None:
     controller = SpiderPluginController(DetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
     request = controller.build_request("detail-1")
     session = PlayerController(type("Api", (), {"get_history": lambda self, _key: None})()).create_session(
@@ -3196,13 +3218,16 @@ def test_player_window_replaces_collection_detail_fields_after_spider_playback_l
 
     window.open_session(session)
 
-    assert window.detail_fields_view.toPlainText() == "播放: 12万\n更新: 2026-05-08"
+    assert "播放: 12万" in window.metadata_view.toPlainText()
+    assert "更新: 2026-05-08" in window.metadata_view.toPlainText()
 
     assert session.playback_loader is not None
     session.playback_loader(session.playlist[0])
-    window._render_detail_fields()
+    window._render_metadata()
 
-    assert window.detail_fields_view.toPlainText() == "播放: 18万\n热度: 95"
+    assert "播放: 18万" in window.metadata_view.toPlainText()
+    assert "热度: 95" in window.metadata_view.toPlainText()
+    assert "更新: 2026-05-08" not in window.metadata_view.toPlainText()
 
 
 def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> None:

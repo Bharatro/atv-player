@@ -57,6 +57,8 @@ Rules:
 - if the current play item has no valid rows, the player falls back to `detailContent().ext`
 - each row must provide non-blank `label` and `value`
 - rows are display-only and are rendered as `label: value`
+- these rows are inserted into the existing player metadata text block
+- on normal detail pages, they appear after `豆瓣ID` and before `简介`
 
 ## Two Action Sources
 
