@@ -1,6 +1,11 @@
 import errno
 from io import BytesIO
 
+from atv_player.player.bluray_iso import (
+    _CachedIsoSegment,
+    _CachedIsoStreamSource,
+    create_iso_stream_range_cache,
+)
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.session import PlaylistSegment
@@ -327,6 +332,182 @@ def test_local_hls_proxy_server_serves_iso_stream_range() -> None:
     assert ("Content-Range", "bytes 2-5/10") in headers
     assert ("Accept-Ranges", "bytes") in headers
     assert body == b"2345"
+
+
+def test_local_hls_proxy_server_prefers_cached_iso_stream_source_for_range_reads() -> None:
+    server = LocalHlsProxyServer()
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=10,
+        iso_stream_source="cached-iso-source",
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+
+    calls: list[tuple[str, object, int, int | None, object | None]] = []
+
+    def fake_cached_read(
+        url: str,
+        headers: dict[str, str],
+        source: object,
+        start: int,
+        end: int | None,
+        *,
+        range_cache: object | None = None,
+        get,
+    ) -> tuple[bytes, int]:
+        assert headers == {}
+        assert get is server._get
+        calls.append((url, source, start, end, range_cache))
+        return b"2345", 10
+
+    import atv_player.proxy.server as proxy_server_module
+
+    original = proxy_server_module.read_iso_stream_range_from_source
+    proxy_server_module.read_iso_stream_range_from_source = fake_cached_read
+    try:
+        status, headers, body = server.handle_request(
+            "GET",
+            f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+            {"Range": "bytes=2-5"},
+        )
+    finally:
+        proxy_server_module.read_iso_stream_range_from_source = original
+
+    assert calls == [("http://media.example/disc.iso", "cached-iso-source", 2, 5, server._registry.get(token).iso_stream_range_cache)]
+    assert status == 206
+    assert ("Content-Range", "bytes 2-5/10") in headers
+    assert body == b"2345"
+
+
+def test_local_hls_proxy_server_reuses_iso_range_cache_for_nearby_requests() -> None:
+    remote_bytes = bytes(index % 251 for index in range(16384))
+    requests: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            bounded_end = min(end, len(remote_bytes) - 1)
+            self.content = remote_bytes[start : bounded_end + 1]
+            self.status_code = 206
+            self.headers = {
+                "Content-Range": f"bytes {start}-{bounded_end}/{len(remote_bytes)}",
+            }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        assert url == "http://media.example/disc.iso"
+        assert timeout == 15.0
+        assert follow_redirects is True
+        range_header = headers["Range"]
+        requests.append(range_header)
+        start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+        return FakeResponse(int(start_text), int(end_text))
+
+    server = LocalHlsProxyServer(get=fake_get)
+    source = _CachedIsoStreamSource(
+        size=4096,
+        segments=(
+            _CachedIsoSegment(
+                logical_offset=0,
+                length=4096,
+                physical_start=4096,
+            ),
+        ),
+    )
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=4096,
+        iso_stream_source=source,
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+    session = server._registry.get(token)
+    assert session is not None
+    session.iso_stream_range_cache = create_iso_stream_range_cache(window_size=4096, max_windows=2)
+
+    first_status, first_headers, first_body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+        {"Range": "bytes=0-1023"},
+    )
+    second_status, second_headers, second_body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+        {"Range": "bytes=1024-2047"},
+    )
+
+    assert requests == ["bytes=4096-8191"]
+    assert first_status == 206
+    assert second_status == 206
+    assert ("Content-Range", "bytes 0-1023/4096") in first_headers
+    assert ("Content-Range", "bytes 1024-2047/4096") in second_headers
+    assert first_body == remote_bytes[4096:5120]
+    assert second_body == remote_bytes[5120:6144]
+
+
+def test_local_hls_proxy_server_default_iso_range_cache_uses_small_startup_window_for_initial_probe() -> None:
+    remote_size = 64 * 1024 * 1024
+    requests: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            bounded_end = min(end, remote_size - 1)
+            self.content = bytes((start + index) % 251 for index in range(bounded_end - start + 1))
+            self.status_code = 206
+            self.headers = {
+                "Content-Range": f"bytes {start}-{bounded_end}/{remote_size}",
+            }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        assert url == "http://media.example/disc.iso"
+        assert timeout == 15.0
+        assert follow_redirects is True
+        range_header = headers["Range"]
+        requests.append(range_header)
+        start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+        return FakeResponse(int(start_text), int(end_text))
+
+    server = LocalHlsProxyServer(get=fake_get)
+    source = _CachedIsoStreamSource(
+        size=40 * 1024 * 1024,
+        segments=(
+            _CachedIsoSegment(
+                logical_offset=0,
+                length=40 * 1024 * 1024,
+                physical_start=0,
+            ),
+        ),
+    )
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=40 * 1024 * 1024,
+        iso_stream_source=source,
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+
+    first_status, _first_headers, _first_body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+        {"Range": f"bytes={1044480}-{1175551}"},
+    )
+    second_status, _second_headers, _second_body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+        {"Range": f"bytes={1175552}-{1241087}"},
+    )
+
+    assert first_status == 206
+    assert second_status == 206
+    assert requests == [f"bytes={1044480}-{1044480 + 1024 * 1024 - 1}"]
 
 
 def test_local_hls_proxy_server_returns_decoded_dash_manifest_for_data_uri() -> None:
@@ -736,6 +917,153 @@ def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_fu
                 "Range": "bytes=0-5",
             },
         )
+    ]
+
+
+def test_local_hls_proxy_server_streams_iso_response_without_buffering_full_body() -> None:
+    requests: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            payload = b"abcdef"
+            bounded_end = min(end, len(payload) - 1)
+            self.content = payload[start : bounded_end + 1]
+            self.status_code = 206
+            self.headers = {
+                "Content-Range": f"bytes {start}-{bounded_end}/{len(payload)}",
+            }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        assert url == "http://media.example/disc.iso"
+        assert timeout == 15.0
+        assert follow_redirects is True
+        range_header = headers["Range"]
+        requests.append(range_header)
+        start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+        return FakeResponse(int(start_text), int(end_text))
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(get=fake_get)
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00000.M2TS",
+        stream_size=6,
+        iso_stream_source=_CachedIsoStreamSource(
+            size=6,
+            segments=(
+                _CachedIsoSegment(
+                    logical_offset=0,
+                    length=6,
+                    physical_start=0,
+                ),
+            ),
+        ),
+    )
+    handler = FakeHandler()
+
+    handled = server._stream_iso_response(
+        media_url.removeprefix(f"http://{server.host}:{server.port}"),
+        {},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert ("Content-Type", "video/MP2T") in handler.headers
+    assert ("Content-Length", "6") in handler.headers
+    assert ("Accept-Ranges", "bytes") in handler.headers
+    assert handler.ended is True
+    assert handler.wfile.getvalue() == b"abcdef"
+    assert requests == ["bytes=0-5"]
+
+
+def test_local_hls_proxy_server_streams_iso_response_reuses_cache_for_sequential_output() -> None:
+    payload = bytes(index % 251 for index in range(2 * 1024 * 1024))
+    requests: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            bounded_end = min(end, len(payload) - 1)
+            self.content = payload[start : bounded_end + 1]
+            self.status_code = 206
+            self.headers = {
+                "Content-Range": f"bytes {start}-{bounded_end}/{len(payload)}",
+            }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        assert url == "http://media.example/disc.iso"
+        requests.append(headers["Range"])
+        return FakeResponse(*map(int, headers["Range"].removeprefix("bytes=").split("-", 1)))
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(get=fake_get)
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00000.M2TS",
+        stream_size=len(payload),
+        iso_stream_source=_CachedIsoStreamSource(
+            size=len(payload),
+            segments=(
+                _CachedIsoSegment(
+                    logical_offset=0,
+                    length=len(payload),
+                    physical_start=0,
+                ),
+            ),
+        ),
+    )
+    handler = FakeHandler()
+
+    handled = server._stream_iso_response(
+        media_url.removeprefix(f"http://{server.host}:{server.port}"),
+        {},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert handler.wfile.getvalue() == payload
+    assert requests == [
+        f"bytes=0-{1024 * 1024 - 1}",
+        f"bytes={1024 * 1024}-{len(payload) - 1}",
     ]
 
 

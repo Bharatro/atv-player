@@ -14,13 +14,19 @@ from xml.sax.saxutils import escape
 
 import httpx
 
-from atv_player.player.bluray_iso import read_iso_stream_range
+from atv_player.player.bluray_iso import (
+    create_iso_stream_range_cache,
+    read_iso_stream_range,
+    read_iso_stream_range_from_source,
+)
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
 from atv_player.request_headers import normalize_media_request_headers
 
 logger = logging.getLogger(__name__)
+
+_ISO_STREAM_CHUNK_SIZE = 256 * 1024
 
 
 def _is_dash_data_uri(url: str) -> bool:
@@ -288,12 +294,17 @@ class LocalHlsProxyServer:
         *,
         stream_path: str,
         stream_size: int,
+        iso_stream_source: object | None = None,
     ) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         session = self._registry.get(token)
         if session is not None:
             session.iso_stream_path = stream_path
             session.iso_stream_size = stream_size
+            session.iso_stream_source = iso_stream_source
+            session.iso_stream_range_cache = (
+                create_iso_stream_range_cache() if iso_stream_source is not None else None
+            )
         return f"http://{self.host}:{self.port}/iso/{quote(token)}{stream_path}"
 
     def create_dash_url(
@@ -374,8 +385,7 @@ class LocalHlsProxyServer:
 
     def _read_iso_stream_range(
         self,
-        url: str,
-        headers: dict[str, str],
+        session: ProxySession,
         stream_path: str,
         request_headers: dict[str, str] | None = None,
     ) -> tuple[bytes, int]:
@@ -383,7 +393,24 @@ class LocalHlsProxyServer:
         parsed = _parse_byte_range_header(range_header) if range_header else None
         start = parsed[0] if parsed is not None else 0
         end = parsed[1] if parsed is not None else None
-        return read_iso_stream_range(url, headers, stream_path, start, end, get=self._get)
+        if session.iso_stream_source is not None:
+            return read_iso_stream_range_from_source(
+                session.playlist_url,
+                session.headers,
+                session.iso_stream_source,
+                start,
+                end,
+                range_cache=session.iso_stream_range_cache,
+                get=self._get,
+            )
+        return read_iso_stream_range(
+            session.playlist_url,
+            session.headers,
+            stream_path,
+            start,
+            end,
+            get=self._get,
+        )
 
     def _proxy_dash_asset(
         self,
@@ -475,6 +502,78 @@ class LocalHlsProxyServer:
                     handler.wfile.write(chunk)
         return True
 
+    def _stream_iso_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/iso/"):
+            return False
+        token, stream_path = self._iso_path(parsed.path)
+        session = self._registry.get(token)
+        if session is None:
+            payload = b"missing proxy session"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            handler.wfile.write(payload)
+            return True
+        total_size = int(session.iso_stream_size)
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed_range[0] if parsed_range is not None else 0
+        inclusive_end = (
+            total_size - 1
+            if parsed_range is None or parsed_range[1] is None
+            else min(parsed_range[1], total_size - 1)
+        )
+        if total_size <= 0 or start < 0 or start > total_size or inclusive_end < start:
+            payload = b"invalid iso range"
+            handler.send_response(416)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.send_header("Content-Range", f"bytes */{max(total_size, 0)}")
+            handler.end_headers()
+            handler.wfile.write(payload)
+            return True
+        status_code = 206 if parsed_range is not None else 200
+        content_length = inclusive_end - start + 1
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", "video/MP2T")
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if parsed_range is not None:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        cursor = start
+        while cursor <= inclusive_end:
+            chunk_end = min(cursor + _ISO_STREAM_CHUNK_SIZE - 1, inclusive_end)
+            if session.iso_stream_source is not None:
+                chunk, _chunk_total_size = read_iso_stream_range_from_source(
+                    session.playlist_url,
+                    session.headers,
+                    session.iso_stream_source,
+                    cursor,
+                    chunk_end,
+                    range_cache=session.iso_stream_range_cache,
+                    get=self._get,
+                )
+            else:
+                chunk, _chunk_total_size = read_iso_stream_range(
+                    session.playlist_url,
+                    session.headers,
+                    session.iso_stream_path or stream_path,
+                    cursor,
+                    chunk_end,
+                    get=self._get,
+                )
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+            cursor += len(chunk)
+        return True
+
     def handle_request(
         self,
         method: str,
@@ -547,8 +646,7 @@ class LocalHlsProxyServer:
                 if session is None:
                     return 404, [], b"missing proxy session"
                 payload, total_size = self._read_iso_stream_range(
-                    session.playlist_url,
-                    session.headers,
+                    session,
                     session.iso_stream_path or stream_path,
                     request_headers=request_headers,
                 )
@@ -594,6 +692,8 @@ class LocalHlsProxyServer:
             def do_GET(self) -> None:
                 try:
                     if parent._stream_dash_asset_response(self.path, dict(self.headers.items()), self):
+                        return
+                    if parent._stream_iso_response(self.path, dict(self.headers.items()), self):
                         return
                 except Exception as exc:
                     payload = str(exc).encode("utf-8")

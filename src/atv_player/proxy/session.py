@@ -31,6 +31,8 @@ class ProxySession:
     segments: list[PlaylistSegment] = field(default_factory=list)
     iso_stream_path: str = ""
     iso_stream_size: int = 0
+    iso_stream_source: object | None = None
+    iso_stream_range_cache: object | None = None
     dash_assets: list[str] = field(default_factory=list)
     dash_manifest_payload: bytes | None = None
     dash_video_representations: list[DashRepresentation] = field(default_factory=list)

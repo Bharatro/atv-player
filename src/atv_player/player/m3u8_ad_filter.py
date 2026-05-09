@@ -213,12 +213,20 @@ class M3U8AdFilter:
         self._proxy_server.start()
         normalized_headers = normalize_media_request_headers(url, headers)
         if is_remote_iso_url(url):
-            selected_stream = self._bluray_iso_inspector.inspect(url, normalized_headers)
+            prepare_playback = getattr(self._bluray_iso_inspector, "prepare_playback", None)
+            iso_stream_source: object | None = None
+            if callable(prepare_playback):
+                playback_plan = prepare_playback(url, normalized_headers)
+                selected_stream = playback_plan.stream
+                iso_stream_source = playback_plan.source
+            else:
+                selected_stream = self._bluray_iso_inspector.inspect(url, normalized_headers)
             return self._proxy_server.create_iso_media_url(
                 url,
                 headers=normalized_headers,
                 stream_path=selected_stream.path,
                 stream_size=selected_stream.size,
+                iso_stream_source=iso_stream_source,
             )
         if _is_dash_data_uri(url):
             if dash_video_id:
