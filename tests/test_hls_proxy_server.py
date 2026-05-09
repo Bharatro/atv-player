@@ -5,6 +5,7 @@ from io import BytesIO
 from atv_player.player.bluray_iso import (
     _CachedIsoSegment,
     _CachedIsoStreamSource,
+    IsoPlaybackSegment,
     create_iso_stream_range_cache,
 )
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
@@ -308,6 +309,50 @@ def test_local_hls_proxy_server_creates_iso_media_url() -> None:
 
     assert media_url.startswith(f"http://{server.host}:{server.port}/iso/")
     assert media_url.endswith("/BDMV/STREAM/00080.m2ts")
+
+
+def test_local_hls_proxy_server_creates_iso_playlist_url_without_origin_fetch() -> None:
+    server = LocalHlsProxyServer(
+        get=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("origin fetch not expected"))
+    )
+
+    playlist_url = server.create_iso_playlist_url(
+        "http://media.example/disc.iso",
+        {},
+        segments=[
+            IsoPlaybackSegment(
+                stream_path="/BDMV/STREAM/00001.M2TS",
+                stream_size=1024,
+                duration_seconds=282.0,
+                source=_CachedIsoStreamSource(
+                    size=1024,
+                    segments=(_CachedIsoSegment(logical_offset=0, length=1024, physical_start=1000),),
+                ),
+            ),
+            IsoPlaybackSegment(
+                stream_path="/BDMV/STREAM/00002.M2TS",
+                stream_size=2048,
+                duration_seconds=604.0,
+                source=_CachedIsoStreamSource(
+                    size=2048,
+                    segments=(_CachedIsoSegment(logical_offset=0, length=2048, physical_start=4000),),
+                ),
+            ),
+        ],
+    )
+    token = playlist_url.rsplit("=", 1)[-1]
+
+    status, headers, body = server.handle_request("GET", f"/m3u?v={token}")
+    text = body.decode("utf-8")
+
+    assert status == 200
+    assert headers == [("Content-Type", "application/vnd.apple.mpegurl")]
+    assert text.startswith("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-PLAYLIST-TYPE:VOD\n")
+    assert "#EXTINF:282.000," in text
+    assert "#EXTINF:604.000," in text
+    assert "#EXT-X-DISCONTINUITY" in text
+    assert text.count("/iso/") == 2
+    assert text.endswith("#EXT-X-ENDLIST\n")
 
 
 def test_local_hls_proxy_server_serves_iso_stream_range() -> None:

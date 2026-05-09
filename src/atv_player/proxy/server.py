@@ -5,6 +5,7 @@ from html import unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import errno
 import logging
+import math
 import socket
 import re
 import threading
@@ -16,6 +17,7 @@ from xml.sax.saxutils import escape
 import httpx
 
 from atv_player.player.bluray_iso import (
+    IsoPlaybackSegment,
     create_iso_stream_range_cache,
     read_iso_stream_range,
     read_iso_stream_range_from_source,
@@ -317,6 +319,56 @@ class LocalHlsProxyServer:
                 create_iso_stream_range_cache() if iso_stream_source is not None else None
             )
         return f"http://{self.host}:{self.port}/iso/{quote(token)}{stream_path}"
+
+    def create_iso_playlist_url(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        *,
+        segments: list[IsoPlaybackSegment] | tuple[IsoPlaybackSegment, ...],
+    ) -> str:
+        normalized_headers = normalize_media_request_headers(url, headers)
+        normalized_segments = tuple(segments)
+        if not normalized_segments:
+            raise ValueError("iso playlist requires at least one segment")
+        segment_urls = [
+            self.create_iso_media_url(
+                url,
+                headers=normalized_headers,
+                stream_path=segment.stream_path,
+                stream_size=segment.stream_size,
+                iso_stream_source=segment.source,
+            )
+            for segment in normalized_segments
+        ]
+        target_duration = max(
+            1,
+            math.ceil(
+                max(
+                    float(segment.duration_seconds)
+                    for segment in normalized_segments
+                )
+            ),
+        )
+        lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+            f"#EXT-X-TARGETDURATION:{target_duration}",
+            "#EXT-X-MEDIA-SEQUENCE:0",
+        ]
+        for index, (segment, segment_url) in enumerate(zip(normalized_segments, segment_urls, strict=True)):
+            if index > 0:
+                lines.append("#EXT-X-DISCONTINUITY")
+            lines.append(f"#EXTINF:{float(segment.duration_seconds):.3f},")
+            lines.append(segment_url)
+        lines.append("#EXT-X-ENDLIST")
+        playlist_text = "\n".join(lines) + "\n"
+        token = self._registry.create_session("", {})
+        session = self._registry.get(token)
+        if session is not None:
+            session.cached_playlist_text = playlist_text
+        return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
 
     def create_dash_url(
         self,
@@ -650,6 +702,8 @@ class LocalHlsProxyServer:
                 session = self._registry.get(token)
                 if session is None:
                     return 404, [], b"missing proxy session"
+                if not session.playlist_url and session.cached_playlist_text is not None:
+                    return 200, [("Content-Type", "application/vnd.apple.mpegurl")], session.cached_playlist_text.encode("utf-8")
                 try:
                     response = self._get(
                         session.playlist_url,

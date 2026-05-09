@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from atv_player.player.bluray_iso import IsoPlaybackSegment
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter, rewrite_media_playlist
 
 
@@ -361,6 +362,83 @@ def test_m3u8_ad_filter_treats_remote_iso_as_proxy_candidate() -> None:
             "/BDMV/STREAM/00080.m2ts",
             123456789,
             "cached-iso-source",
+        )
+    ]
+
+
+def test_m3u8_ad_filter_uses_playlist_proxy_for_multi_clip_iso() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str], tuple[IsoPlaybackSegment, ...]]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_iso_playlist_url(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            *,
+            segments: list[IsoPlaybackSegment] | tuple[IsoPlaybackSegment, ...],
+        ) -> str:
+            self.calls.append((url, dict(headers or {}), tuple(segments)))
+            return "http://127.0.0.1:2323/m3u?v=iso-playlist-token"
+
+        def create_iso_media_url(self, *args, **kwargs) -> str:
+            raise AssertionError("single-stream iso proxy should not be used")
+
+        def close(self) -> None:
+            return None
+
+    class FakeInspector:
+        def prepare_playback(self, url: str, headers: dict[str, str]):
+            return type(
+                "Result",
+                (),
+                {
+                    "stream": type("Stream", (), {"path": "/BDMV/STREAM/00001.M2TS", "size": 3072})(),
+                    "source": "unused-composed-source",
+                    "playlist_segments": (
+                        IsoPlaybackSegment(
+                            stream_path="/BDMV/STREAM/00001.M2TS",
+                            stream_size=1024,
+                            duration_seconds=282.0,
+                            source="clip-source-1",
+                        ),
+                        IsoPlaybackSegment(
+                            stream_path="/BDMV/STREAM/00002.M2TS",
+                            stream_size=2048,
+                            duration_seconds=604.0,
+                            source="clip-source-2",
+                        ),
+                    ),
+                },
+            )()
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, bluray_iso_inspector=FakeInspector())
+
+    prepared = ad_filter.prepare("http://media.example/disc.iso", {"Referer": "https://site.example"})
+
+    assert prepared == "http://127.0.0.1:2323/m3u?v=iso-playlist-token"
+    assert server.calls == [
+        (
+            "http://media.example/disc.iso",
+            {"Referer": "https://site.example"},
+            (
+                IsoPlaybackSegment(
+                    stream_path="/BDMV/STREAM/00001.M2TS",
+                    stream_size=1024,
+                    duration_seconds=282.0,
+                    source="clip-source-1",
+                ),
+                IsoPlaybackSegment(
+                    stream_path="/BDMV/STREAM/00002.M2TS",
+                    stream_size=2048,
+                    duration_seconds=604.0,
+                    source="clip-source-2",
+                ),
+            ),
         )
     ]
 

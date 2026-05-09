@@ -217,6 +217,13 @@ class M3U8AdFilter:
             iso_stream_source: object | None = None
             if callable(prepare_playback):
                 playback_plan = prepare_playback(url, normalized_headers)
+                playlist_segments = tuple(getattr(playback_plan, "playlist_segments", ()) or ())
+                if playlist_segments:
+                    return self._proxy_server.create_iso_playlist_url(
+                        url,
+                        headers=normalized_headers,
+                        segments=playlist_segments,
+                    )
                 selected_stream = playback_plan.stream
                 iso_stream_source = playback_plan.source
             else:

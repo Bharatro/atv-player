@@ -32,9 +32,18 @@ class BluRayIsoStream:
 
 
 @dataclass(frozen=True, slots=True)
+class IsoPlaybackSegment:
+    stream_path: str
+    stream_size: int
+    duration_seconds: float
+    source: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class IsoPlaybackPlan:
     stream: BluRayIsoStream
     source: object | None = None
+    playlist_segments: tuple[IsoPlaybackSegment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1148,9 +1157,23 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
             continue
         selected_source = _compose_cached_iso_stream_sources(child_sources)
         selected_path = parsed.play_items[0].stream_path
+        playlist_segments = (
+            tuple(
+                IsoPlaybackSegment(
+                    stream_path=play_item.stream_path,
+                    stream_size=child_source.size,
+                    duration_seconds=(play_item.duration / 45000.0) if play_item.duration > 0 else 0.0,
+                    source=child_source,
+                )
+                for play_item, child_source in zip(parsed.play_items, child_sources, strict=True)
+            )
+            if len(parsed.play_items) > 1
+            else ()
+        )
         return IsoPlaybackPlan(
             stream=BluRayIsoStream(path=selected_path, size=selected_source.size),
             source=selected_source,
+            playlist_segments=playlist_segments,
         )
     return None
 
