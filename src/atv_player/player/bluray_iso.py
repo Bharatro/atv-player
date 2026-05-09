@@ -1299,6 +1299,27 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
     return None
 
 
+def _prepare_promoted_pycdlib_udf_playback(reader: RemoteRangeReader, iso: Any) -> IsoPlaybackPlan | None:
+    if not getattr(iso, "_has_udf", False):
+        return None
+    if getattr(iso, "udf_main_descs", None) is None or getattr(iso, "udf_file_set", None) is None:
+        return None
+    try:
+        remote_iso = _build_remote_udf_iso(reader, iso)
+    except Exception:
+        return None
+    playlist_plan = _prepare_remote_udf_playlist_playback(remote_iso)
+    if playlist_plan is not None:
+        return playlist_plan
+    streams = _stat_remote_udf_streams(remote_iso)
+    selected_stream = pick_main_feature_stream(streams)
+    entry_ref = _find_remote_udf_entry(remote_iso, selected_stream.path)
+    return IsoPlaybackPlan(
+        stream=selected_stream,
+        source=_build_cached_iso_stream_source(remote_iso, entry_ref),
+    )
+
+
 def prepare_iso_playback(
     url: str,
     headers: dict[str, str],
@@ -1319,6 +1340,9 @@ def prepare_iso_playback(
                 stream=selected_stream,
                 source=_build_cached_iso_stream_source(iso, entry_ref),
             )
+        promoted_plan = _prepare_promoted_pycdlib_udf_playback(reader, iso)
+        if promoted_plan is not None:
+            return promoted_plan
         streams: list[BluRayIsoStream] = []
         for normalized_path, raw_path in _iter_pycdlib_udf_paths(iso):
             if not _BLURAY_STREAM_RE.match(normalized_path):
