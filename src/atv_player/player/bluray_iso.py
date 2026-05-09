@@ -1267,14 +1267,67 @@ def _estimate_playlist_payload_size(
     source_cache: dict[str, _CachedIsoStreamSource],
 ) -> int:
     total_size = 0
+    counted_stream_paths: set[str] = set()
     for play_item in play_items:
+        if play_item.stream_path in counted_stream_paths:
+            continue
         clip_source = source_cache.get(play_item.stream_path)
         if clip_source is None:
             entry_ref = _find_remote_udf_entry(remote_iso, play_item.stream_path)
             clip_source = _build_cached_iso_stream_source(remote_iso, entry_ref)
             source_cache[play_item.stream_path] = clip_source
         total_size += clip_source.size
+        counted_stream_paths.add(play_item.stream_path)
     return total_size
+
+
+def _looks_like_repeated_trimmed_segment_loop(
+    play_items: tuple[_MplsPlayItem, ...],
+    child_sources: list[_CachedIsoStreamSource],
+) -> bool:
+    if len(play_items) < _SMALL_LOOPING_PLAYLIST_MIN_ITEMS or len(play_items) != len(child_sources):
+        return False
+    signature_counts = Counter(
+        (play_item.stream_path, child_source.size)
+        for play_item, child_source in zip(play_items, child_sources, strict=True)
+    )
+    if not signature_counts:
+        return False
+    unique_signature_count = len(signature_counts)
+    _signature, count = signature_counts.most_common(1)[0]
+    repeat_ratio = count / len(play_items)
+    return (
+        repeat_ratio >= _SMALL_LOOPING_PLAYLIST_REPEAT_RATIO
+        and unique_signature_count <= _SMALL_LOOPING_PLAYLIST_MAX_UNIQUE_SIGNATURES
+    )
+
+
+def _looks_like_same_stream_overlapping_playlist(play_items: tuple[_MplsPlayItem, ...]) -> bool:
+    if len(play_items) < _SMALL_LOOPING_PLAYLIST_MIN_ITEMS:
+        return False
+    stream_paths = {item.stream_path for item in play_items}
+    if len(stream_paths) != 1:
+        return False
+    intervals = sorted(
+        (item.in_time, item.out_time)
+        for item in play_items
+        if item.out_time > item.in_time
+    )
+    if len(intervals) < _SMALL_LOOPING_PLAYLIST_MIN_ITEMS:
+        return False
+    total_duration = sum(end - start for start, end in intervals)
+    if total_duration <= 0:
+        return False
+    merged_duration = 0
+    current_start, current_end = intervals[0]
+    for start, end in intervals[1:]:
+        if start <= current_end:
+            current_end = max(current_end, end)
+            continue
+        merged_duration += current_end - current_start
+        current_start, current_end = start, end
+    merged_duration += current_end - current_start
+    return (merged_duration / total_duration) <= 0.6
 
 
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
@@ -1289,6 +1342,8 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
         except ValueError:
             continue
         if _looks_like_looping_playlist(parsed):
+            continue
+        if _looks_like_same_stream_overlapping_playlist(parsed.play_items):
             continue
         playlist_candidates.append(parsed)
     source_cache: dict[str, _CachedIsoStreamSource] = {}
@@ -1312,6 +1367,8 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
                 for play_item in selected_play_items
             ]
         except ValueError:
+            continue
+        if _looks_like_repeated_trimmed_segment_loop(selected_play_items, child_sources):
             continue
         selected_source = _compose_cached_iso_stream_sources(child_sources)
         selected_path = selected_play_items[0].stream_path
