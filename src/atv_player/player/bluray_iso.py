@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import re
+from types import SimpleNamespace
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ _BLURAY_INDEX_PATH = "/BDMV/INDEX.BDMV"
 _BLURAY_STREAM_RE = re.compile(r"^/BDMV/STREAM/[^/]+\.M2TS$")
 _CONTENT_RANGE_RE = re.compile(r"^bytes\s+(\d+)-(\d+)/(\d+)$", re.IGNORECASE)
 _RANGE_UNSUPPORTED_MESSAGE = "远程 ISO 服务不支持按范围读取"
+_MISSING_PVD_MESSAGE = "Valid ISO9660 filesystems must have at least one PVD"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +52,47 @@ def _load_pycdlib() -> Any:
     import pycdlib
 
     return pycdlib
+
+
+def _safe_close_iso(iso: Any) -> None:
+    try:
+        iso.close()
+    except Exception:
+        pass
+
+
+def _physical_block_count(reader: RemoteRangeReader, logical_block_size: int) -> int:
+    total_size = reader._ensure_size()
+    return max(1, (total_size + logical_block_size - 1) // logical_block_size)
+
+
+def _open_pycdlib_iso(reader: RemoteRangeReader) -> Any:
+    pycdlib = _load_pycdlib()
+    iso = pycdlib.PyCdlib()
+    invalid_iso = getattr(getattr(pycdlib, "pycdlibexception", None), "PyCdlibInvalidISO", None)
+    try:
+        iso.open_fp(reader)
+        return iso
+    except ValueError:
+        _safe_close_iso(iso)
+        raise
+    except Exception as exc:
+        if invalid_iso is None or not isinstance(exc, invalid_iso):
+            _safe_close_iso(iso)
+            raise ValueError(f"ISO 解析失败: {exc}") from exc
+        if _MISSING_PVD_MESSAGE not in str(exc) or not getattr(iso, "_has_udf", False):
+            _safe_close_iso(iso)
+            raise ValueError(f"ISO 解析失败: {exc}") from exc
+        try:
+            logical_block_size = int(getattr(iso, "logical_block_size", 2048) or 2048)
+            iso.pvd = SimpleNamespace(space_size=_physical_block_count(reader, logical_block_size))
+            iso._parse_udf_descriptors()
+            iso._walk_udf_directories({})
+            iso._initialized = True
+            return iso
+        except Exception as udf_exc:
+            _safe_close_iso(iso)
+            raise ValueError(f"ISO 解析失败: {udf_exc}") from udf_exc
 
 
 def _parse_total_size_from_response(response: httpx.Response, *, expected_start: int) -> int:
@@ -177,22 +220,12 @@ def list_iso_entries(
     *,
     get: Callable[..., httpx.Response] = httpx.get,
 ) -> list[str]:
-    pycdlib = _load_pycdlib()
     reader = RemoteRangeReader(url, headers, get=get)
-    iso = pycdlib.PyCdlib()
+    iso = _open_pycdlib_iso(reader)
     try:
-        try:
-            iso.open_fp(reader)
-            return _walk_iso_paths(iso)
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError(f"ISO 解析失败: {exc}") from exc
+        return _walk_iso_paths(iso)
     finally:
-        try:
-            iso.close()
-        except Exception:
-            pass
+        _safe_close_iso(iso)
 
 
 def stat_iso_streams(
@@ -201,28 +234,18 @@ def stat_iso_streams(
     *,
     get: Callable[..., httpx.Response] = httpx.get,
 ) -> list[BluRayIsoStream]:
-    pycdlib = _load_pycdlib()
     reader = RemoteRangeReader(url, headers, get=get)
-    iso = pycdlib.PyCdlib()
+    iso = _open_pycdlib_iso(reader)
     try:
-        try:
-            iso.open_fp(reader)
-            streams: list[BluRayIsoStream] = []
-            for path in _walk_iso_paths(iso):
-                if not _BLURAY_STREAM_RE.match(path):
-                    continue
-                record = iso.get_record(udf_path=path)
-                streams.append(BluRayIsoStream(path=path, size=_stream_size_from_record(record)))
-            return streams
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError(f"ISO 解析失败: {exc}") from exc
+        streams: list[BluRayIsoStream] = []
+        for path in _walk_iso_paths(iso):
+            if not _BLURAY_STREAM_RE.match(path):
+                continue
+            record = iso.get_record(udf_path=path)
+            streams.append(BluRayIsoStream(path=path, size=_stream_size_from_record(record)))
+        return streams
     finally:
-        try:
-            iso.close()
-        except Exception:
-            pass
+        _safe_close_iso(iso)
 
 
 def read_iso_stream_range(
@@ -234,38 +257,28 @@ def read_iso_stream_range(
     *,
     get: Callable[..., httpx.Response] = httpx.get,
 ) -> tuple[bytes, int]:
-    pycdlib = _load_pycdlib()
     normalized_path = _normalize_iso_path(stream_path)
     reader = RemoteRangeReader(url, headers, get=get)
-    iso = pycdlib.PyCdlib()
+    iso = _open_pycdlib_iso(reader)
     try:
-        try:
-            iso.open_fp(reader)
-            record = iso.get_record(udf_path=normalized_path)
-            total_size = _stream_size_from_record(record)
-            if total_size <= 0:
-                raise ValueError("Blu-ray ISO 中没有可播放的 m2ts 文件")
-            if start < 0:
-                raise ValueError("invalid range start")
-            if start >= total_size:
-                return b"", total_size
-            inclusive_end = total_size - 1 if end is None else min(end, total_size - 1)
-            if inclusive_end < start:
-                return b"", total_size
-            length = inclusive_end - start + 1
-            with iso.open_file_from_iso(udf_path=normalized_path) as iso_file:
-                iso_file.seek(start)
-                payload = iso_file.read(length)
-            return bytes(payload), total_size
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError(f"ISO 解析失败: {exc}") from exc
+        record = iso.get_record(udf_path=normalized_path)
+        total_size = _stream_size_from_record(record)
+        if total_size <= 0:
+            raise ValueError("Blu-ray ISO 中没有可播放的 m2ts 文件")
+        if start < 0:
+            raise ValueError("invalid range start")
+        if start >= total_size:
+            return b"", total_size
+        inclusive_end = total_size - 1 if end is None else min(end, total_size - 1)
+        if inclusive_end < start:
+            return b"", total_size
+        length = inclusive_end - start + 1
+        with iso.open_file_from_iso(udf_path=normalized_path) as iso_file:
+            iso_file.seek(start)
+            payload = iso_file.read(length)
+        return bytes(payload), total_size
     finally:
-        try:
-            iso.close()
-        except Exception:
-            pass
+        _safe_close_iso(iso)
 
 
 class BlurayIsoInspector:
