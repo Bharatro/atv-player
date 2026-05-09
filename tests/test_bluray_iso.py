@@ -551,7 +551,7 @@ def test_compose_cached_iso_stream_source_rebases_segments_for_virtual_playlist(
     )
 
 
-def test_prepare_iso_playback_prefers_largest_clip_from_longest_playlist_for_remote_udf(monkeypatch) -> None:
+def test_prepare_iso_playback_builds_trimmed_virtual_stream_from_playlist_for_remote_udf(monkeypatch) -> None:
     remote_iso = bluray_iso._RemoteUdfIso(
         reader=SimpleNamespace(),
         logical_block_size=2048,
@@ -561,16 +561,12 @@ def test_prepare_iso_playback_prefers_largest_clip_from_longest_playlist_for_rem
     )
     sources = {
         "/BDMV/STREAM/00001.M2TS": bluray_iso._CachedIsoStreamSource(
-            size=5,
-            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=5, physical_start=100),),
+            size=1536,
+            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=1536, physical_start=1000),),
         ),
         "/BDMV/STREAM/00002.M2TS": bluray_iso._CachedIsoStreamSource(
-            size=7,
-            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),),
-        ),
-        "/BDMV/STREAM/00080.M2TS": bluray_iso._CachedIsoStreamSource(
-            size=20,
-            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=20, physical_start=300),),
+            size=1536,
+            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=1536, physical_start=4000),),
         ),
     }
 
@@ -580,49 +576,53 @@ def test_prepare_iso_playback_prefers_largest_clip_from_longest_playlist_for_rem
         bluray_iso,
         "_iter_remote_udf_playlists",
         lambda iso: [
-            (
-                "/BDMV/PLAYLIST/00001.MPLS",
-                _build_test_mpls([("00080", 0, 90000)]),
-            ),
-            (
-                "/BDMV/PLAYLIST/00002.MPLS",
-                _build_test_mpls([("00001", 0, 90000), ("00002", 0, 180000)]),
-            ),
+            ("/BDMV/PLAYLIST/00002.MPLS", _build_test_mpls([("00001", 0, 90000), ("00002", 0, 180000)])),
         ],
     )
+    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", lambda iso, path: SimpleNamespace(path=path))
+    monkeypatch.setattr(bluray_iso, "_build_cached_iso_stream_source", lambda iso, entry_ref: sources[entry_ref.path])
     monkeypatch.setattr(
         bluray_iso,
-        "_find_remote_udf_entry",
-        lambda iso, path: SimpleNamespace(path=path),
-    )
-    monkeypatch.setattr(
-        bluray_iso,
-        "_build_cached_iso_stream_source",
-        lambda iso, entry_ref: sources[entry_ref.path],
+        "_read_remote_udf_clipinfo",
+        lambda iso, clip_id: {
+            "00001": bluray_iso._ParsedClpi(
+                clip_id="00001",
+                entry_points=(
+                    bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=384),
+                    bluray_iso._ClpiEntryPoint(time_45k=90000, byte_offset=768),
+                    bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=1152),
+                ),
+            ),
+            "00002": bluray_iso._ParsedClpi(
+                clip_id="00002",
+                entry_points=(
+                    bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=192),
+                    bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=576),
+                    bluray_iso._ClpiEntryPoint(time_45k=270000, byte_offset=960),
+                ),
+            ),
+        }[clip_id],
     )
     monkeypatch.setattr(
         bluray_iso,
         "_stat_remote_udf_streams",
-        lambda iso: [
-            BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=20),
-            BluRayIsoStream(path="/BDMV/STREAM/00001.M2TS", size=5),
-            BluRayIsoStream(path="/BDMV/STREAM/00002.M2TS", size=7),
-        ],
+        lambda iso: [BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=9999)],
     )
 
     plan = bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
 
-    assert plan.stream.path == "/BDMV/STREAM/00002.M2TS"
-    assert plan.stream.size == 7
+    assert plan.stream.path == "/BDMV/STREAM/00001.M2TS"
+    assert plan.stream.size == 1536
     assert plan.source == bluray_iso._CachedIsoStreamSource(
-        size=7,
+        size=1536,
         segments=(
-            bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),
+            bluray_iso._CachedIsoSegment(logical_offset=0, length=768, physical_start=1384),
+            bluray_iso._CachedIsoSegment(logical_offset=768, length=768, physical_start=4192),
         ),
     )
 
 
-def test_prepare_iso_playback_only_resolves_selected_playlist_clips_for_remote_udf(monkeypatch) -> None:
+def test_prepare_iso_playback_only_resolves_selected_playlist_clipinfo_for_remote_udf(monkeypatch) -> None:
     remote_iso = bluray_iso._RemoteUdfIso(
         reader=SimpleNamespace(),
         logical_block_size=2048,
@@ -630,7 +630,7 @@ def test_prepare_iso_playback_only_resolves_selected_playlist_clips_for_remote_u
         file_set=None,
         partition_resolvers=(),
     )
-    resolved_paths: list[str] = []
+    resolved_clip_ids: list[str] = []
 
     monkeypatch.setattr(bluray_iso, "_open_pycdlib_iso", lambda reader: remote_iso)
     monkeypatch.setattr(bluray_iso, "_safe_close_iso", lambda iso: None)
@@ -649,33 +649,136 @@ def test_prepare_iso_playback_only_resolves_selected_playlist_clips_for_remote_u
         ],
     )
 
-    def fake_find_entry(iso, path):
-        resolved_paths.append(path)
-        return SimpleNamespace(path=path)
-
-    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", fake_find_entry)
+    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", lambda iso, path: SimpleNamespace(path=path))
     monkeypatch.setattr(
         bluray_iso,
         "_build_cached_iso_stream_source",
-        lambda iso, entry_ref: {
-            "/BDMV/STREAM/00001.M2TS": bluray_iso._CachedIsoStreamSource(
-                size=5,
-                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=5, physical_start=100),),
+        lambda iso, entry_ref: bluray_iso._CachedIsoStreamSource(
+            size=1536,
+            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=1536, physical_start=1000),),
+        ),
+    )
+    def fake_read_remote_udf_clipinfo(iso, clip_id):
+        resolved_clip_ids.append(clip_id)
+        return bluray_iso._ParsedClpi(
+            clip_id=clip_id,
+            entry_points=(
+                bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=192),
+                bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=576),
+                bluray_iso._ClpiEntryPoint(time_45k=270000, byte_offset=960),
             ),
-            "/BDMV/STREAM/00002.M2TS": bluray_iso._CachedIsoStreamSource(
-                size=7,
-                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),),
-            ),
-            "/BDMV/STREAM/00080.M2TS": bluray_iso._CachedIsoStreamSource(
-                size=20,
-                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=20, physical_start=300),),
-            ),
-        }[entry_ref.path],
+        )
+
+    monkeypatch.setattr(bluray_iso, "_read_remote_udf_clipinfo", fake_read_remote_udf_clipinfo)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_stat_remote_udf_streams",
+        lambda iso: [BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=9999)],
     )
 
     bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
 
-    assert resolved_paths == [
-        "/BDMV/STREAM/00001.M2TS",
-        "/BDMV/STREAM/00002.M2TS",
-    ]
+    assert resolved_clip_ids == ["00001", "00002"]
+
+
+def test_prepare_iso_playback_tries_next_playlist_when_first_clipinfo_trim_fails(monkeypatch) -> None:
+    remote_iso = bluray_iso._RemoteUdfIso(
+        reader=SimpleNamespace(),
+        logical_block_size=2048,
+        main_descs=None,
+        file_set=None,
+        partition_resolvers=(),
+    )
+
+    monkeypatch.setattr(bluray_iso, "_open_pycdlib_iso", lambda reader: remote_iso)
+    monkeypatch.setattr(bluray_iso, "_safe_close_iso", lambda iso: None)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_iter_remote_udf_playlists",
+        lambda iso: [
+            ("/BDMV/PLAYLIST/00003.MPLS", _build_test_mpls([("00080", 0, 360000)])),
+            ("/BDMV/PLAYLIST/00002.MPLS", _build_test_mpls([("00001", 0, 90000), ("00002", 0, 180000)])),
+        ],
+    )
+    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", lambda iso, path: SimpleNamespace(path=path))
+    monkeypatch.setattr(
+        bluray_iso,
+        "_build_cached_iso_stream_source",
+        lambda iso, entry_ref: bluray_iso._CachedIsoStreamSource(
+            size=1536,
+            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=1536, physical_start=2000),),
+        ),
+    )
+    def fake_read_remote_udf_clipinfo(iso, clip_id):
+        if clip_id == "00080":
+            raise ValueError("bad clpi")
+        return bluray_iso._ParsedClpi(
+            clip_id=clip_id,
+            entry_points=(
+                bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=192),
+                bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=576),
+                bluray_iso._ClpiEntryPoint(time_45k=270000, byte_offset=960),
+            ),
+        )
+
+    monkeypatch.setattr(bluray_iso, "_read_remote_udf_clipinfo", fake_read_remote_udf_clipinfo)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_stat_remote_udf_streams",
+        lambda iso: [BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=9999)],
+    )
+
+    plan = bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
+
+    assert plan.stream.path == "/BDMV/STREAM/00001.M2TS"
+    assert plan.stream.size == 1152
+
+
+def test_prepare_iso_playback_falls_back_to_largest_stream_when_all_playlists_fail(monkeypatch) -> None:
+    remote_iso = bluray_iso._RemoteUdfIso(
+        reader=SimpleNamespace(),
+        logical_block_size=2048,
+        main_descs=None,
+        file_set=None,
+        partition_resolvers=(),
+    )
+
+    monkeypatch.setattr(bluray_iso, "_open_pycdlib_iso", lambda reader: remote_iso)
+    monkeypatch.setattr(bluray_iso, "_safe_close_iso", lambda iso: None)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_iter_remote_udf_playlists",
+        lambda iso: [
+            ("/BDMV/PLAYLIST/00002.MPLS", _build_test_mpls([("00001", 0, 90000), ("00002", 0, 180000)])),
+        ],
+    )
+    monkeypatch.setattr(
+        bluray_iso,
+        "_read_remote_udf_clipinfo",
+        lambda iso, clip_id: (_ for _ in ()).throw(ValueError("bad clpi")),
+    )
+    monkeypatch.setattr(
+        bluray_iso,
+        "_stat_remote_udf_streams",
+        lambda iso: [
+            BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=20),
+            BluRayIsoStream(path="/BDMV/STREAM/00010.M2TS", size=10),
+        ],
+    )
+
+    def fake_find_remote_udf_entry(iso, path):
+        return SimpleNamespace(path=path, record=SimpleNamespace())
+
+    def fake_build_cached_iso_stream_source(iso, entry_ref):
+        size = 20 if entry_ref.path.endswith("00080.M2TS") else 10
+        return bluray_iso._CachedIsoStreamSource(
+            size=size,
+            segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=size, physical_start=300),),
+        )
+
+    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", fake_find_remote_udf_entry)
+    monkeypatch.setattr(bluray_iso, "_build_cached_iso_stream_source", fake_build_cached_iso_stream_source)
+
+    plan = bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
+
+    assert plan.stream == BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=20)

@@ -1008,6 +1008,12 @@ def _read_remote_udf_file(remote_iso: _RemoteUdfIso, entry_ref: _UdfEntryRef) ->
     return _read_remote_udf_file_range(remote_iso, entry_ref, 0, total_size - 1)
 
 
+def _read_remote_udf_clipinfo(remote_iso: _RemoteUdfIso, clip_id: str) -> _ParsedClpi:
+    clipinfo_path = f"/BDMV/CLIPINF/{clip_id}.CLPI"
+    entry_ref = _find_remote_udf_entry(remote_iso, clipinfo_path)
+    return _parse_clpi_entry_points(clip_id, _read_remote_udf_file(remote_iso, entry_ref))
+
+
 def _iter_remote_udf_playlists(remote_iso: _RemoteUdfIso) -> list[tuple[str, bytes]]:
     playlist_dir = _find_remote_udf_entry(remote_iso, "/BDMV/PLAYLIST")
     playlists: list[tuple[str, bytes]] = []
@@ -1100,8 +1106,24 @@ def _slice_cached_iso_stream_source(
     return _CachedIsoStreamSource(size=length, segments=tuple(segments))
 
 
+def _build_trimmed_playlist_clip_source(
+    remote_iso: _RemoteUdfIso,
+    play_item: _MplsPlayItem,
+) -> _CachedIsoStreamSource:
+    clip_entry_ref = _find_remote_udf_entry(remote_iso, play_item.stream_path)
+    clip_source = _build_cached_iso_stream_source(remote_iso, clip_entry_ref)
+    parsed_clpi = _read_remote_udf_clipinfo(remote_iso, play_item.clip_id)
+    start, end_exclusive = _compute_trimmed_clip_range(
+        parsed_clpi,
+        play_item.in_time,
+        play_item.out_time,
+        clip_source.size,
+    )
+    return _slice_cached_iso_stream_source(clip_source, start, end_exclusive - start)
+
+
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
-    playlist_candidates: list[tuple[int, str, _ParsedMplsPlaylist]] = []
+    playlist_candidates: list[_ParsedMplsPlaylist] = []
     try:
         playlists = _iter_remote_udf_playlists(remote_iso)
     except ValueError:
@@ -1111,29 +1133,21 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
             parsed = _parse_mpls_playlist(playlist_path, playlist_data)
         except ValueError:
             continue
-        playlist_candidates.append((parsed.duration, playlist_path, parsed))
-    for _duration, _playlist_path, parsed in sorted(
+        playlist_candidates.append(parsed)
+    for parsed in sorted(
         playlist_candidates,
-        key=lambda item: (item[0], item[1]),
+        key=lambda item: (item.duration, item.path),
         reverse=True,
     ):
-        clip_sources: list[tuple[str, _CachedIsoStreamSource]] = []
-        for clip_path in parsed.clip_paths:
-            try:
-                clip_entry_ref = _find_remote_udf_entry(remote_iso, clip_path)
-            except ValueError:
-                clip_sources = []
-                break
-            clip_sources.append((clip_path, _build_cached_iso_stream_source(remote_iso, clip_entry_ref)))
-        if not clip_sources:
+        try:
+            child_sources = [
+                _build_trimmed_playlist_clip_source(remote_iso, play_item)
+                for play_item in parsed.play_items
+            ]
+        except ValueError:
             continue
-        if len(parsed.clip_paths) == 1:
-            selected_path, selected_source = clip_sources[0]
-        else:
-            selected_path, selected_source = max(
-                clip_sources,
-                key=lambda item: (item[1].size, item[0]),
-            )
+        selected_source = _compose_cached_iso_stream_sources(child_sources)
+        selected_path = parsed.play_items[0].stream_path
         return IsoPlaybackPlan(
             stream=BluRayIsoStream(path=selected_path, size=selected_source.size),
             source=selected_source,
