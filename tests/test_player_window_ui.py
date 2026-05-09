@@ -930,6 +930,31 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     ]
 
 
+def test_player_window_rewrites_remote_iso_to_local_proxy_url(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return url.endswith(".iso")
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            return "http://127.0.0.1:2323/iso/test/BDMV/STREAM/00080.m2ts"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="http://media.example/disc.iso")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FakeM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/iso/test/BDMV/STREAM/00080.m2ts", 0)])
+
+
 def test_player_window_rewrites_direct_parse_result_to_local_proxy_url(qtbot) -> None:
     class FakeM3U8AdFilter:
         def __init__(self) -> None:
@@ -1045,6 +1070,32 @@ def test_player_window_logs_proxy_prepare_failure_and_plays_original_url(qtbot) 
     qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/path/index.m3u8", 0)])
 
     assert "port 2323 busy" in window.log_view.toPlainText()
+
+
+def test_player_window_does_not_fallback_to_direct_iso_on_prepare_failure(qtbot) -> None:
+    class FailingM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return url.endswith(".iso")
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            raise ValueError("远程 ISO 不是受支持的 Blu-ray 目录结构")
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="http://media.example/disc.iso")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FailingM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: "远程 ISO 不是受支持的 Blu-ray 目录结构" in window.log_view.toPlainText())
+
+    assert video.load_calls == []
 
 
 def test_player_window_populates_dash_video_quality_options_after_prepare(qtbot) -> None:

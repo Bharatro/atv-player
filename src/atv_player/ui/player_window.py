@@ -55,6 +55,7 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
+from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.async_guard import AsyncGuardMixin
@@ -1697,6 +1698,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._restore_current_index(previous_index)
 
+    def _requires_prepared_media_url(self, url: str) -> bool:
+        return is_remote_iso_url(url)
+
     def _handle_play_item_resolve_succeeded(self, request_id: int, resolved_vod: VodItem | None) -> None:
         if request_id != self._play_item_request_id:
             return
@@ -1837,6 +1841,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         if self._restore_failed_spider_quality_switch(current_item, pending_prepare):
             self._append_log(f"清晰度切换失败: {message}")
+            return
+        if self._requires_prepared_media_url(pending_prepare.source_url):
+            self._append_log(f"播放失败: {message}")
+            self._restore_current_index(pending_prepare.previous_index)
             return
         current_item.dash_video_id = pending_prepare.previous_dash_video_id
         self._refresh_video_quality_state(current_item.url)
