@@ -5,6 +5,7 @@ from html import unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import errno
 import logging
+import socket
 import re
 import threading
 from typing import Any
@@ -27,6 +28,16 @@ from atv_player.request_headers import normalize_media_request_headers
 logger = logging.getLogger(__name__)
 
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
+
+
+def _is_client_disconnect_error(exc: BaseException) -> bool:
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        return True
+    if isinstance(exc, OSError):
+        return exc.errno in {errno.EPIPE, errno.ECONNRESET}
+    if isinstance(exc, socket.error):
+        return True
+    return False
 
 
 def _is_dash_data_uri(url: str) -> bool:
@@ -570,7 +581,12 @@ class LocalHlsProxyServer:
                 )
             if not chunk:
                 break
-            handler.wfile.write(chunk)
+            try:
+                handler.wfile.write(chunk)
+            except Exception as exc:
+                if _is_client_disconnect_error(exc):
+                    return True
+                raise
             cursor += len(chunk)
         return True
 
@@ -696,19 +712,31 @@ class LocalHlsProxyServer:
                     if parent._stream_iso_response(self.path, dict(self.headers.items()), self):
                         return
                 except Exception as exc:
+                    if _is_client_disconnect_error(exc):
+                        return
                     payload = str(exc).encode("utf-8")
                     self.send_response(502)
                     self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
+                    try:
+                        self.end_headers()
+                        self.wfile.write(payload)
+                    except Exception as write_exc:
+                        if _is_client_disconnect_error(write_exc):
+                            return
+                        raise
                     return
                 status, headers, payload = parent.handle_request("GET", self.path, dict(self.headers.items()))
                 self.send_response(status)
                 for key, value in headers:
                     self.send_header(key, value)
                 self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
+                try:
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except Exception as exc:
+                    if _is_client_disconnect_error(exc):
+                        return
+                    raise
 
             def log_message(self, format: str, *args) -> None:
                 return None

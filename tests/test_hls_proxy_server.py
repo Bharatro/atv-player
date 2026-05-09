@@ -1067,6 +1067,81 @@ def test_local_hls_proxy_server_streams_iso_response_reuses_cache_for_sequential
     ]
 
 
+def test_local_hls_proxy_server_stops_iso_stream_quietly_when_client_disconnects() -> None:
+    payload = b"abcdef"
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            bounded_end = min(end, len(payload) - 1)
+            self.content = payload[start : bounded_end + 1]
+            self.status_code = 206
+            self.headers = {
+                "Content-Range": f"bytes {start}-{bounded_end}/{len(payload)}",
+            }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        del url, timeout, follow_redirects
+        start, end = map(int, headers["Range"].removeprefix("bytes=").split("-", 1))
+        return FakeResponse(start, end)
+
+    class DisconnectingWriter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def write(self, chunk: bytes) -> None:
+            del chunk
+            self.calls += 1
+            raise BrokenPipeError()
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = DisconnectingWriter()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(get=fake_get)
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00000.M2TS",
+        stream_size=len(payload),
+        iso_stream_source=_CachedIsoStreamSource(
+            size=len(payload),
+            segments=(
+                _CachedIsoSegment(
+                    logical_offset=0,
+                    length=len(payload),
+                    physical_start=0,
+                ),
+            ),
+        ),
+    )
+    handler = FakeHandler()
+
+    handled = server._stream_iso_response(
+        media_url.removeprefix(f"http://{server.host}:{server.port}"),
+        {},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert handler.ended is True
+
+
 def test_local_hls_proxy_server_returns_repaired_bytes_for_direct_media_url() -> None:
     class FakeResponse:
         def __init__(self, content: bytes) -> None:
