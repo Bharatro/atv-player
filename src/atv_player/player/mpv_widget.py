@@ -272,7 +272,6 @@ class MpvWidget(QWidget):
                 "demuxer_lavf_format": "mpegts",
                 "demuxer_lavf_linearize_timestamps": "yes",
                 "rebase_start_time": "yes",
-                "demuxer_lavf_o_add": "scan_all_pmts=1",
             }
         if ".m3u8" not in lowered and ".mpd" not in lowered:
             return {}

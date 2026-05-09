@@ -205,9 +205,9 @@ def create_iso_stream_range_cache(
 
 def create_iso_parse_range_cache() -> object:
     return create_iso_stream_range_cache(
-        window_size=128 * 1024,
-        startup_window_size=128 * 1024,
-        startup_request_threshold=128 * 1024,
+        window_size=512 * 1024,
+        startup_window_size=512 * 1024,
+        startup_request_threshold=512 * 1024,
         max_windows=16,
     )
 
@@ -987,7 +987,7 @@ def _compose_cached_iso_stream_sources(
 
 
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
-    candidates: list[tuple[int, int, str, _CachedIsoStreamSource]] = []
+    playlist_candidates: list[tuple[int, str, _ParsedMplsPlaylist]] = []
     try:
         playlists = _iter_remote_udf_playlists(remote_iso)
     except ValueError:
@@ -997,32 +997,34 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
             parsed = _parse_mpls_playlist(playlist_data)
         except ValueError:
             continue
-        clip_sources: list[_CachedIsoStreamSource] = []
+        playlist_candidates.append((parsed.duration, playlist_path, parsed))
+    for _duration, _playlist_path, parsed in sorted(
+        playlist_candidates,
+        key=lambda item: (item[0], item[1]),
+        reverse=True,
+    ):
+        clip_sources: list[tuple[str, _CachedIsoStreamSource]] = []
         for clip_path in parsed.clip_paths:
             try:
                 clip_entry_ref = _find_remote_udf_entry(remote_iso, clip_path)
             except ValueError:
                 clip_sources = []
                 break
-            clip_sources.append(_build_cached_iso_stream_source(remote_iso, clip_entry_ref))
+            clip_sources.append((clip_path, _build_cached_iso_stream_source(remote_iso, clip_entry_ref)))
         if not clip_sources:
             continue
         if len(parsed.clip_paths) == 1:
-            selected_path = parsed.clip_paths[0]
-            selected_source = clip_sources[0]
+            selected_path, selected_source = clip_sources[0]
         else:
             selected_path, selected_source = max(
-                zip(parsed.clip_paths, clip_sources, strict=False),
+                clip_sources,
                 key=lambda item: (item[1].size, item[0]),
             )
-        candidates.append((parsed.duration, selected_source.size, selected_path, selected_source))
-    if not candidates:
-        return None
-    _duration, _size, selected_path, source = max(candidates, key=lambda item: (item[0], item[1], item[2]))
-    return IsoPlaybackPlan(
-        stream=BluRayIsoStream(path=selected_path, size=source.size),
-        source=source,
-    )
+        return IsoPlaybackPlan(
+            stream=BluRayIsoStream(path=selected_path, size=selected_source.size),
+            source=selected_source,
+        )
+    return None
 
 
 def prepare_iso_playback(
@@ -1204,9 +1206,25 @@ class BlurayIsoInspector:
         self._list_entries = list_entries
         self._stat_streams = stat_streams
         self._prepare_playback = prepare_playback
+        self._prepare_playback_cache: dict[tuple[str, tuple[tuple[str, str], ...]], IsoPlaybackPlan] = {}
+        self._prepare_playback_lock = Lock()
+
+    def _prepare_playback_cache_key(self, url: str, headers: dict[str, str]) -> tuple[str, tuple[tuple[str, str], ...]]:
+        return url, tuple(sorted((str(key), str(value)) for key, value in headers.items()))
 
     def prepare_playback(self, url: str, headers: dict[str, str]) -> IsoPlaybackPlan:
-        return self._prepare_playback(url, headers)
+        cache_key = self._prepare_playback_cache_key(url, headers)
+        with self._prepare_playback_lock:
+            cached = self._prepare_playback_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        plan = self._prepare_playback(url, headers)
+        with self._prepare_playback_lock:
+            cached = self._prepare_playback_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            self._prepare_playback_cache[cache_key] = plan
+        return plan
 
     def inspect(self, url: str, headers: dict[str, str]) -> BluRayIsoStream:
         entries = [_normalize_iso_path(entry) for entry in self._list_entries(url, headers)]

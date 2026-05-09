@@ -48,6 +48,26 @@ def test_inspector_rejects_non_bluray_layout() -> None:
         raise AssertionError("expected ValueError")
 
 
+def test_bluray_iso_inspector_caches_prepare_playback_result() -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+    plan = bluray_iso.IsoPlaybackPlan(
+        stream=BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=123),
+        source=object(),
+    )
+    inspector = BlurayIsoInspector(
+        prepare_playback=lambda url, headers: calls.append((url, dict(headers))) or plan,
+    )
+
+    first = inspector.prepare_playback("http://media.example/disc.iso", {"Referer": "https://site.example"})
+    second = inspector.prepare_playback("http://media.example/disc.iso", {"Referer": "https://site.example"})
+
+    assert first is plan
+    assert second is plan
+    assert calls == [
+        ("http://media.example/disc.iso", {"Referer": "https://site.example"}),
+    ]
+
+
 def test_list_iso_entries_falls_back_to_udf_when_pycdlib_rejects_missing_pvd(monkeypatch) -> None:
     class FakeInvalidISO(Exception):
         pass
@@ -374,6 +394,16 @@ def test_remote_range_reader_coalesces_small_reads_with_window_cache() -> None:
     ]
 
 
+def test_create_iso_parse_range_cache_uses_half_mebibyte_windows() -> None:
+    cache = bluray_iso.create_iso_parse_range_cache()
+
+    assert isinstance(cache, bluray_iso._RemoteRangeWindowCache)
+    assert cache.window_size == 512 * 1024
+    assert cache.startup_window_size == 512 * 1024
+    assert cache.startup_request_threshold == 512 * 1024
+    assert cache.max_windows == 16
+
+
 def _build_test_mpls(play_items: list[tuple[str, int, int]]) -> bytes:
     playlist_body = bytearray(b"\x00\x00")
     playlist_body.extend(len(play_items).to_bytes(2, "big"))
@@ -515,3 +545,62 @@ def test_prepare_iso_playback_prefers_largest_clip_from_longest_playlist_for_rem
             bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),
         ),
     )
+
+
+def test_prepare_iso_playback_only_resolves_selected_playlist_clips_for_remote_udf(monkeypatch) -> None:
+    remote_iso = bluray_iso._RemoteUdfIso(
+        reader=SimpleNamespace(),
+        logical_block_size=2048,
+        main_descs=None,
+        file_set=None,
+        partition_resolvers=(),
+    )
+    resolved_paths: list[str] = []
+
+    monkeypatch.setattr(bluray_iso, "_open_pycdlib_iso", lambda reader: remote_iso)
+    monkeypatch.setattr(bluray_iso, "_safe_close_iso", lambda iso: None)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_iter_remote_udf_playlists",
+        lambda iso: [
+            (
+                "/BDMV/PLAYLIST/00001.MPLS",
+                _build_test_mpls([("00080", 0, 90000)]),
+            ),
+            (
+                "/BDMV/PLAYLIST/00002.MPLS",
+                _build_test_mpls([("00001", 0, 90000), ("00002", 0, 180000)]),
+            ),
+        ],
+    )
+
+    def fake_find_entry(iso, path):
+        resolved_paths.append(path)
+        return SimpleNamespace(path=path)
+
+    monkeypatch.setattr(bluray_iso, "_find_remote_udf_entry", fake_find_entry)
+    monkeypatch.setattr(
+        bluray_iso,
+        "_build_cached_iso_stream_source",
+        lambda iso, entry_ref: {
+            "/BDMV/STREAM/00001.M2TS": bluray_iso._CachedIsoStreamSource(
+                size=5,
+                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=5, physical_start=100),),
+            ),
+            "/BDMV/STREAM/00002.M2TS": bluray_iso._CachedIsoStreamSource(
+                size=7,
+                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),),
+            ),
+            "/BDMV/STREAM/00080.M2TS": bluray_iso._CachedIsoStreamSource(
+                size=20,
+                segments=(bluray_iso._CachedIsoSegment(logical_offset=0, length=20, physical_start=300),),
+            ),
+        }[entry_ref.path],
+    )
+
+    bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
+
+    assert resolved_paths == [
+        "/BDMV/STREAM/00001.M2TS",
+        "/BDMV/STREAM/00002.M2TS",
+    ]

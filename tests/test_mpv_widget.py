@@ -353,7 +353,6 @@ def test_mpv_widget_loads_local_iso_proxy_as_mpegts_with_linearized_timestamps(q
                 "demuxer_lavf_format": "mpegts",
                 "demuxer_lavf_linearize_timestamps": "yes",
                 "rebase_start_time": "yes",
-                "demuxer_lavf_o_add": "scan_all_pmts=1",
             },
         )
     ]
