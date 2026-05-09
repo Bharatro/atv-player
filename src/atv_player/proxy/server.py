@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 
 import httpx
 
+from atv_player.player.bluray_iso import read_iso_stream_range
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
@@ -280,6 +281,21 @@ class LocalHlsProxyServer:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
 
+    def create_iso_media_url(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        *,
+        stream_path: str,
+        stream_size: int,
+    ) -> str:
+        token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
+        session = self._registry.get(token)
+        if session is not None:
+            session.iso_stream_path = stream_path
+            session.iso_stream_size = stream_size
+        return f"http://{self.host}:{self.port}/iso/{quote(token)}{stream_path}"
+
     def create_dash_url(
         self,
         url: str,
@@ -344,6 +360,30 @@ class LocalHlsProxyServer:
         if not token or not index_part:
             raise KeyError("token")
         return token, int(index_part.removesuffix(".m4s"))
+
+    @staticmethod
+    def _iso_path(path: str) -> tuple[str, str]:
+        prefix = "/iso/"
+        if not path.startswith(prefix):
+            raise KeyError("token")
+        asset_path = path.removeprefix(prefix)
+        token, _separator, stream_path = asset_path.partition("/")
+        if not token or not stream_path:
+            raise KeyError("token")
+        return token, f"/{stream_path}"
+
+    def _read_iso_stream_range(
+        self,
+        url: str,
+        headers: dict[str, str],
+        stream_path: str,
+        request_headers: dict[str, str] | None = None,
+    ) -> tuple[bytes, int]:
+        range_header = (request_headers or {}).get("Range") or (request_headers or {}).get("range") or ""
+        parsed = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed[0] if parsed is not None else 0
+        end = parsed[1] if parsed is not None else None
+        return read_iso_stream_range(url, headers, stream_path, start, end, get=self._get)
 
     def _proxy_dash_asset(
         self,
@@ -501,6 +541,27 @@ class LocalHlsProxyServer:
                     return 404, [], b"missing proxy session"
                 payload = self._segment_proxy.fetch_media(token)
                 return 200, [("Content-Type", "video/MP2T")], payload
+            if parsed.path.startswith("/iso/"):
+                token, stream_path = self._iso_path(parsed.path)
+                session = self._registry.get(token)
+                if session is None:
+                    return 404, [], b"missing proxy session"
+                payload, total_size = self._read_iso_stream_range(
+                    session.playlist_url,
+                    session.headers,
+                    session.iso_stream_path or stream_path,
+                    request_headers=request_headers,
+                )
+                range_header = (request_headers or {}).get("Range") or (request_headers or {}).get("range")
+                headers = [("Content-Type", "video/MP2T"), ("Accept-Ranges", "bytes")]
+                if range_header:
+                    parsed_range = _parse_byte_range_header(range_header)
+                    if parsed_range is not None:
+                        start = parsed_range[0]
+                        end = start + len(payload) - 1 if payload else start - 1
+                        headers.append(("Content-Range", f"bytes {start}-{end}/{total_size}"))
+                        return 206, headers, payload
+                return 200, headers, payload
             if parsed.path.startswith("/dash/asset/") and parsed.path.endswith(".m4s"):
                 token, asset_index = self._dash_asset_path(parsed.path)
                 return self._proxy_dash_asset(token, asset_index, request_headers=request_headers)

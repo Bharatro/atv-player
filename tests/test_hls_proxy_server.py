@@ -290,6 +290,45 @@ def test_local_hls_proxy_server_returns_404_for_missing_token() -> None:
     assert body == b"missing proxy session"
 
 
+def test_local_hls_proxy_server_creates_iso_media_url() -> None:
+    server = LocalHlsProxyServer()
+
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {"Referer": "https://site.example"},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=4096,
+    )
+
+    assert media_url.startswith(f"http://{server.host}:{server.port}/iso/")
+    assert media_url.endswith("/BDMV/STREAM/00080.m2ts")
+
+
+def test_local_hls_proxy_server_serves_iso_stream_range() -> None:
+    server = LocalHlsProxyServer()
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=10,
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+
+    server._read_iso_stream_range = lambda *args, **kwargs: (b"2345", 10)
+
+    status, headers, body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00080.m2ts",
+        {"Range": "bytes=2-5"},
+    )
+
+    assert status == 206
+    assert ("Content-Type", "video/MP2T") in headers
+    assert ("Content-Range", "bytes 2-5/10") in headers
+    assert ("Accept-Ranges", "bytes") in headers
+    assert body == b"2345"
+
+
 def test_local_hls_proxy_server_returns_decoded_dash_manifest_for_data_uri() -> None:
     server = LocalHlsProxyServer()
     mpd_url = server.create_dash_url("data:application/dash+xml;base64,PE1QRD48UGVyaW9kLz48L01QRD4=", {})
