@@ -432,19 +432,19 @@ def _build_test_mpls(play_items: list[tuple[str, int, int]]) -> bytes:
     return bytes(header + playlist_section)
 
 
-def _build_test_clpi(entry_points: list[tuple[int, int]]) -> bytes:
-    cpi_body = bytearray()
-    cpi_body.extend(len(entry_points).to_bytes(2, "big"))
-    for time_45k, byte_offset in entry_points:
-        cpi_body.extend(int(time_45k).to_bytes(4, "big"))
-        cpi_body.extend(int(byte_offset).to_bytes(4, "big"))
-    cpi_start = 24
-    header = bytearray(b"HDMV0200")
-    header.extend((0).to_bytes(4, "big"))
-    header.extend((0).to_bytes(4, "big"))
-    header.extend(cpi_start.to_bytes(4, "big"))
-    header.extend((0).to_bytes(4, "big"))
-    return bytes(header + cpi_body)
+_REAL_CLPI_00004_HEX = """
+48444d5630333030000000dc000000f600000134000001b400000000000000000000000000000000
+000000b0000001010000000000f3f32c000702800000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000001e8048444d560000000000
+0000000000000000000000000000000000000000000000160001000000000100100100000000019b
+fcc001a4aa350000003a000100000000010002001011152481301200303030303030303030303030
+000000001100158361656e67303030303030303030303030000000000000007c0001000110110004
+0018000e0000000e00000034000000660000000400004067000003140001c0680001c93800020068
+00029e3f000280680004450d0003406900065d8e17f80004195803141ab80a321ae40c741c4444f8
+1da49cf51f0516621065c93811c49e3f132578ee1484450d15e5095a1745f5a818025d8e00000000
+""".strip().replace("\n", "")
 
 
 def test_parse_mpls_playlist_extracts_play_items_and_duration() -> None:
@@ -479,15 +479,23 @@ def test_parse_mpls_playlist_extracts_play_items_and_duration() -> None:
 
 
 def test_parse_clpi_extracts_entry_points() -> None:
-    parsed = bluray_iso._parse_clpi_entry_points("00003", _build_test_clpi([(0, 384), (90000, 768), (180000, 1344)]))
+    parsed = bluray_iso._parse_clpi_entry_points(
+        "00004",
+        bytes.fromhex(_REAL_CLPI_00004_HEX),
+    )
 
-    assert parsed == bluray_iso._ParsedClpi(
-        clip_id="00003",
-        entry_points=(
-            bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=384),
-            bluray_iso._ClpiEntryPoint(time_45k=90000, byte_offset=768),
-            bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=1344),
-        ),
+    assert parsed.clip_id == "00004"
+    assert len(parsed.entry_points) == 14
+    assert parsed.entry_points[:5] == (
+        bluray_iso._ClpiEntryPoint(time_45k=26999808, byte_offset=768),
+        bluray_iso._ClpiEntryPoint(time_45k=27044864, byte_offset=151296),
+        bluray_iso._ClpiEntryPoint(time_45k=27089920, byte_offset=501120),
+        bluray_iso._ClpiEntryPoint(time_45k=27095552, byte_offset=612096),
+        bluray_iso._ClpiEntryPoint(time_45k=27140608, byte_offset=3389952),
+    )
+    assert parsed.entry_points[-1] == bluray_iso._ClpiEntryPoint(
+        time_45k=27525376,
+        byte_offset=80095872,
     )
 
 

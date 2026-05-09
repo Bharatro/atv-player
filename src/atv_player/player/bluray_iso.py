@@ -987,26 +987,93 @@ def _parse_mpls_playlist(path: str, data: bytes) -> _ParsedMplsPlaylist:
     )
 
 
-def _parse_clpi_entry_points(clip_id: str, data: bytes) -> _ParsedClpi:
-    if len(data) < 26 or data[:4] != b"HDMV":
-        raise ValueError("无效的 Blu-ray clip info")
-    cpi_start = _read_u32be(data, 16)
-    entry_count = _read_u16be(data, cpi_start)
-    cursor = cpi_start + 2
+def _detect_primary_clpi_stream_pid(data: bytes, sequence_start: int) -> int | None:
+    if sequence_start < 0 or sequence_start + 6 > len(data):
+        return None
+    atc_sequence_count = data[sequence_start + 5]
+    sequence_cursor = sequence_start + 6
+    for atc_index in range(atc_sequence_count):
+        if sequence_cursor + 6 > len(data):
+            break
+        stc_sequence_count = data[sequence_cursor + 4]
+        stc_cursor = sequence_cursor + 6
+        for stc_index in range(stc_sequence_count):
+            if stc_cursor + 14 > len(data):
+                break
+            if atc_index == 0 and stc_index == 0:
+                return _read_u16be(data, stc_cursor)
+            stc_cursor += 14
+        sequence_cursor += (stc_sequence_count * 14) + 6
+    return None
+
+
+def _parse_clpi_ep_map_entry_points(
+    data: bytes,
+    cpi_start: int,
+    primary_stream_pid: int | None,
+) -> tuple[_ClpiEntryPoint, ...]:
+    if cpi_start < 0 or cpi_start + 10 > len(data):
+        return ()
+    if (_read_u16be(data, cpi_start + 4) & 0x0F) != 1:
+        return ()
     entry_points: list[_ClpiEntryPoint] = []
-    for _ in range(entry_count):
-        entry_points.append(
-            _ClpiEntryPoint(
-                time_45k=_read_u32be(data, cursor),
-                byte_offset=_read_u32be(data, cursor + 4),
-            )
-        )
-        cursor += 8
+    ep_map_table_base = cpi_start + 6
+    stream_entry_count = data[cpi_start + 7]
+    stream_cursor = cpi_start + 8
+    for stream_index in range(stream_entry_count):
+        if stream_cursor + 12 > len(data):
+            break
+        stream_pid = _read_u16be(data, stream_cursor)
+        coarse_entry_count = (_read_u32be(data, stream_cursor + 3) >> 10) & 0xFFFF
+        fine_entry_count = (_read_u32be(data, stream_cursor + 5) >> 8) & 0x3FFFF
+        ep_map_start = _read_u32be(data, stream_cursor + 8) + ep_map_table_base
+        stream_cursor += 12
+        if stream_index != 0 and stream_pid != primary_stream_pid:
+            continue
+        if ep_map_start < 0 or ep_map_start + 4 > len(data):
+            continue
+        coarse_table_start = ep_map_start + 4
+        fine_table_start = ep_map_start + _read_u32be(data, ep_map_start)
+        if coarse_table_start + (coarse_entry_count * 8) > len(data):
+            continue
+        if fine_table_start < 0 or fine_table_start >= len(data):
+            continue
+        max_fine_entries = (len(data) - fine_table_start) // 4
+        fine_entry_count = min(fine_entry_count, max_fine_entries)
+        for coarse_index in range(coarse_entry_count):
+            coarse_offset = coarse_table_start + (coarse_index * 8)
+            coarse_entry = _read_u32be(data, coarse_offset)
+            fine_index_start = (coarse_entry >> 14) & 0x3FFFF
+            fine_offset_base = _read_u32be(data, coarse_offset + 4)
+            if coarse_index + 1 < coarse_entry_count:
+                next_coarse_offset = coarse_table_start + ((coarse_index + 1) * 8)
+                fine_index_end = (_read_u32be(data, next_coarse_offset) >> 14) & 0x3FFFF
+            else:
+                fine_index_end = fine_entry_count
+            for fine_index in range(fine_index_start, min(fine_index_end, fine_entry_count)):
+                fine_offset = fine_table_start + (fine_index * 4)
+                fine_entry = _read_u32be(data, fine_offset)
+                entry_points.append(
+                    _ClpiEntryPoint(
+                        time_45k=((coarse_entry & 0x3FFE) << 18) | (((fine_entry >> 17) & 0x7FF) << 8),
+                        byte_offset=((fine_offset_base & 0xFFFFE000) | (fine_entry & 0x1FFFF)) * 192,
+                    )
+                )
+    return tuple(sorted(entry_points, key=lambda item: item.time_45k))
+
+
+def _parse_clpi_entry_points(clip_id: str, data: bytes) -> _ParsedClpi:
+    if len(data) < 20 or data[:4] != b"HDMV":
+        raise ValueError("无效的 Blu-ray clip info")
+    sequence_start = _read_u32be(data, 8)
+    cpi_start = _read_u32be(data, 16)
+    primary_stream_pid = _detect_primary_clpi_stream_pid(data, sequence_start)
+    entry_points = _parse_clpi_ep_map_entry_points(data, cpi_start, primary_stream_pid)
     if not entry_points:
         raise ValueError("Blu-ray clip info 中没有可用入口点")
     return _ParsedClpi(
         clip_id=clip_id,
-        entry_points=tuple(sorted(entry_points, key=lambda item: item.time_45k)),
+        entry_points=entry_points,
     )
 
 
