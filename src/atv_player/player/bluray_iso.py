@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 _BLURAY_INDEX_PATH = "/BDMV/INDEX.BDMV"
 _BLURAY_STREAM_RE = re.compile(r"^/BDMV/STREAM/[^/]+\.M2TS$")
+_BLURAY_PLAYLIST_RE = re.compile(r"^/BDMV/PLAYLIST/[^/]+\.MPLS$")
 _CONTENT_RANGE_RE = re.compile(r"^bytes\s+(\d+)-(\d+)/(\d+)$", re.IGNORECASE)
 _RANGE_UNSUPPORTED_MESSAGE = "远程 ISO 服务不支持按范围读取"
 _MISSING_PVD_MESSAGE = "Valid ISO9660 filesystems must have at least one PVD"
@@ -34,6 +35,12 @@ class BluRayIsoStream:
 class IsoPlaybackPlan:
     stream: BluRayIsoStream
     source: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedMplsPlaylist:
+    clip_paths: tuple[str, ...]
+    duration: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +200,15 @@ def create_iso_stream_range_cache(
         startup_window_size=max(1, min(normalized_window_size, int(startup_window_size))),
         startup_request_threshold=max(1, int(startup_request_threshold)),
         max_windows=max(1, int(max_windows)),
+    )
+
+
+def create_iso_parse_range_cache() -> object:
+    return create_iso_stream_range_cache(
+        window_size=128 * 1024,
+        startup_window_size=128 * 1024,
+        startup_request_threshold=128 * 1024,
+        max_windows=16,
     )
 
 
@@ -767,6 +783,7 @@ class RemoteRangeReader(io.RawIOBase):
         headers: dict[str, str],
         *,
         get: Callable[..., httpx.Response] = httpx.get,
+        range_cache: object | None = None,
     ) -> None:
         super().__init__()
         self._url = url
@@ -774,6 +791,11 @@ class RemoteRangeReader(io.RawIOBase):
         self._get = get
         self._position = 0
         self._size: int | None = None
+        self._range_cache = (
+            range_cache
+            if isinstance(range_cache, _RemoteRangeWindowCache)
+            else create_iso_parse_range_cache()
+        )
 
     def readable(self) -> bool:
         return True
@@ -806,19 +828,31 @@ class RemoteRangeReader(io.RawIOBase):
         size = self._ensure_size()
         if self._position >= size:
             return 0
-        end = min(self._position + len(view), size) - 1
-        headers = dict(self._headers)
-        headers["Range"] = f"bytes={self._position}-{end}"
-        response = self._get(
-            self._url,
-            headers=headers,
-            timeout=15.0,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
-        if int(response.status_code) != 206:
-            raise ValueError(_RANGE_UNSUPPORTED_MESSAGE)
-        payload = bytes(response.content)
+        length = min(len(view), size - self._position)
+        if self._range_cache is not None:
+            payload = _read_remote_range_with_cache(
+                self._url,
+                self._headers,
+                self._range_cache,
+                self._position,
+                length,
+                max_end=size - 1,
+                get=self._get,
+            )
+        else:
+            end = self._position + length - 1
+            headers = dict(self._headers)
+            headers["Range"] = f"bytes={self._position}-{end}"
+            response = self._get(
+                self._url,
+                headers=headers,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            if int(response.status_code) != 206:
+                raise ValueError(_RANGE_UNSUPPORTED_MESSAGE)
+            payload = bytes(response.content)
         length = len(payload)
         view[:length] = payload
         self._position += length
@@ -865,6 +899,125 @@ def _stream_size_from_record(record: Any) -> int:
         return 0
 
 
+def _read_u16be(data: bytes, offset: int) -> int:
+    if offset < 0 or offset + 2 > len(data):
+        raise ValueError("MPLS 数据不完整")
+    return int.from_bytes(data[offset : offset + 2], "big")
+
+
+def _read_u32be(data: bytes, offset: int) -> int:
+    if offset < 0 or offset + 4 > len(data):
+        raise ValueError("MPLS 数据不完整")
+    return int.from_bytes(data[offset : offset + 4], "big")
+
+
+def _parse_mpls_playlist(data: bytes) -> _ParsedMplsPlaylist:
+    if len(data) < 20 or data[:4] != b"MPLS":
+        raise ValueError("无效的 Blu-ray playlist")
+    playlist_start = _read_u32be(data, 8)
+    playlist_length = _read_u32be(data, playlist_start)
+    playlist_end = min(len(data), playlist_start + 4 + playlist_length)
+    header_offset = playlist_start + 4
+    play_item_count = _read_u16be(data, header_offset + 2)
+    play_item_offset = header_offset + 6
+    clip_paths: list[str] = []
+    total_duration = 0
+    for _ in range(play_item_count):
+        item_length = _read_u16be(data, play_item_offset)
+        item_start = play_item_offset + 2
+        item_end = item_start + item_length
+        if item_end > playlist_end or item_end > len(data):
+            raise ValueError("MPLS play item 超出边界")
+        if item_length < 20:
+            raise ValueError("MPLS play item 长度无效")
+        clip_name = data[item_start : item_start + 5].decode("ascii", errors="ignore").strip().upper()
+        clip_codec = data[item_start + 5 : item_start + 9].decode("ascii", errors="ignore").strip().upper()
+        in_time = _read_u32be(data, item_start + 12)
+        out_time = _read_u32be(data, item_start + 16)
+        if clip_name and clip_codec == "M2TS":
+            clip_paths.append(f"/BDMV/STREAM/{clip_name}.M2TS")
+            if out_time > in_time:
+                total_duration += out_time - in_time
+        play_item_offset = item_end
+    if not clip_paths:
+        raise ValueError("Blu-ray playlist 中没有可播放的片段")
+    return _ParsedMplsPlaylist(clip_paths=tuple(clip_paths), duration=total_duration)
+
+
+def _read_remote_udf_file(remote_iso: _RemoteUdfIso, entry_ref: _UdfEntryRef) -> bytes:
+    total_size = _stream_size_from_record(entry_ref.record)
+    if total_size <= 0:
+        return b""
+    return _read_remote_udf_file_range(remote_iso, entry_ref, 0, total_size - 1)
+
+
+def _iter_remote_udf_playlists(remote_iso: _RemoteUdfIso) -> list[tuple[str, bytes]]:
+    playlist_dir = _find_remote_udf_entry(remote_iso, "/BDMV/PLAYLIST")
+    playlists: list[tuple[str, bytes]] = []
+    for file_ident in _iter_udf_dir_entries(remote_iso, playlist_dir):
+        if file_ident.is_parent() or file_ident.is_dir():
+            continue
+        name = _decode_udf_name(file_ident)
+        normalized_path = _normalize_iso_path(f"/BDMV/PLAYLIST/{name}")
+        if not _BLURAY_PLAYLIST_RE.match(normalized_path):
+            continue
+        entry_ref = _parse_udf_entry_from_long_ad(remote_iso, file_ident.icb, playlist_dir.record)
+        playlists.append((normalized_path, _read_remote_udf_file(remote_iso, entry_ref)))
+    return sorted(playlists, key=lambda item: item[0])
+
+
+def _compose_cached_iso_stream_sources(
+    sources: list[_CachedIsoStreamSource],
+) -> _CachedIsoStreamSource:
+    segments: list[_CachedIsoSegment] = []
+    logical_offset = 0
+    for source in sources:
+        for segment in source.segments:
+            segments.append(
+                _CachedIsoSegment(
+                    logical_offset=logical_offset + segment.logical_offset,
+                    length=segment.length,
+                    physical_start=segment.physical_start,
+                )
+            )
+        logical_offset += source.size
+    if logical_offset <= 0 or not segments:
+        raise ValueError("Blu-ray ISO 中没有可播放的 m2ts 文件")
+    return _CachedIsoStreamSource(size=logical_offset, segments=tuple(segments))
+
+
+def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
+    candidates: list[tuple[int, int, str, _CachedIsoStreamSource]] = []
+    try:
+        playlists = _iter_remote_udf_playlists(remote_iso)
+    except ValueError:
+        return None
+    for playlist_path, playlist_data in playlists:
+        try:
+            parsed = _parse_mpls_playlist(playlist_data)
+        except ValueError:
+            continue
+        clip_sources: list[_CachedIsoStreamSource] = []
+        for clip_path in parsed.clip_paths:
+            try:
+                clip_entry_ref = _find_remote_udf_entry(remote_iso, clip_path)
+            except ValueError:
+                clip_sources = []
+                break
+            clip_sources.append(_build_cached_iso_stream_source(remote_iso, clip_entry_ref))
+        if not clip_sources:
+            continue
+        composed_source = _compose_cached_iso_stream_sources(clip_sources)
+        candidates.append((parsed.duration, composed_source.size, playlist_path, composed_source))
+    if not candidates:
+        return None
+    _duration, _size, playlist_path, source = max(candidates, key=lambda item: (item[0], item[1], item[2]))
+    return IsoPlaybackPlan(
+        stream=BluRayIsoStream(path=playlist_path, size=source.size),
+        source=source,
+    )
+
+
 def prepare_iso_playback(
     url: str,
     headers: dict[str, str],
@@ -875,6 +1028,9 @@ def prepare_iso_playback(
     iso = _open_pycdlib_iso(reader)
     try:
         if isinstance(iso, _RemoteUdfIso):
+            playlist_plan = _prepare_remote_udf_playlist_playback(iso)
+            if playlist_plan is not None:
+                return playlist_plan
             streams = _stat_remote_udf_streams(iso)
             selected_stream = pick_main_feature_stream(streams)
             entry_ref = _find_remote_udf_entry(iso, selected_stream.path)

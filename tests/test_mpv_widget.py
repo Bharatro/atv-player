@@ -265,6 +265,10 @@ def test_mpv_widget_sets_http_header_fields_as_property_before_loading(qtbot) ->
         ("http://m/1.m3u8", "replace", {"demuxer_lavf_o_add": "allowed_extensions=ALL"})
     ]
     assert widget._player.options == {
+        "cache-pause": "yes",
+        "cache-pause-initial": "yes",
+        "cache-pause-wait": 3,
+        "demuxer-readahead-secs": 20,
         "http-header-fields": [
             "User-Agent: Yamby/1.5.7.18(Android",
             "Referer: https://site.example",
@@ -324,6 +328,70 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_loads_local_iso_proxy_as_mpegts_with_linearized_timestamps(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/iso/test-token/BDMV/PLAYLIST/00002.MPLS")
+
+    assert widget._player.calls == [
+        (
+            "http://127.0.0.1:2323/iso/test-token/BDMV/PLAYLIST/00002.MPLS",
+            "replace",
+            None,
+            {
+                "demuxer_lavf_format": "mpegts",
+                "demuxer_lavf_linearize_timestamps": "yes",
+                "rebase_start_time": "yes",
+                "demuxer_lavf_o_add": "scan_all_pmts=1",
+            },
+        )
+    ]
+
+
+def test_mpv_widget_disables_initial_cache_pause_for_local_iso_proxy_and_restores_defaults(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/iso/test-token/BDMV/PLAYLIST/00002.MPLS")
+
+    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause-initial"] == "no"
+    assert widget._player.options["cache-pause-wait"] == 0
+    assert widget._player.options["demuxer-readahead-secs"] == 3
+
+    widget.load("http://m/1.m3u8")
+
+    assert widget._player.options["cache-pause"] == "yes"
+    assert widget._player.options["cache-pause-initial"] == "yes"
+    assert widget._player.options["cache-pause-wait"] == 3
+    assert widget._player.options["demuxer-readahead-secs"] == 20
+
+
 def test_mpv_widget_load_uses_cover_art_file_when_poster_path_is_provided(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -362,6 +430,10 @@ def test_mpv_widget_load_uses_cover_art_file_when_poster_path_is_provided(qtbot)
     ]
     assert widget._player.command_calls == []
     assert widget._player.options == {
+        "cache-pause": "yes",
+        "cache-pause-initial": "yes",
+        "cache-pause-wait": 3,
+        "demuxer-readahead-secs": 20,
         "http-header-fields": [],
     }
     assert states == ["loading"]
@@ -427,6 +499,10 @@ def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_head
     assert widget._player.loadfile_calls == ["http://m/1.m3u8", "http://m/2.m3u8"]
     assert widget._player.play_calls == []
     assert widget._player.options == {
+        "cache-pause": "yes",
+        "cache-pause-initial": "yes",
+        "cache-pause-wait": 3,
+        "demuxer-readahead-secs": 20,
         "http-header-fields": []
     }
 

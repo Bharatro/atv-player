@@ -5,6 +5,7 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QCoreApplication, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
@@ -31,6 +32,20 @@ _MPV_ERROR_MESSAGES = {
     -18: "当前系统不支持该操作",
     -19: "功能尚未实现",
     -20: "未指定错误",
+}
+
+_DEFAULT_STREAM_PROFILE: dict[str, object] = {
+    "cache-pause": "yes",
+    "cache-pause-initial": "yes",
+    "cache-pause-wait": 3,
+    "demuxer-readahead-secs": 20,
+}
+
+_ISO_PROXY_STREAM_PROFILE: dict[str, object] = {
+    "cache-pause": "no",
+    "cache-pause-initial": "no",
+    "cache-pause-wait": 0,
+    "demuxer-readahead-secs": 3,
 }
 
 
@@ -241,8 +256,24 @@ class MpvWidget(QWidget):
             return
         player["http-header-fields"] = header_fields
 
+    def _is_local_iso_proxy_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.scheme in {"http", "https"} and parsed.path.startswith("/iso/")
+
+    def _apply_stream_profile(self, player: Any, url: str) -> None:
+        profile = _ISO_PROXY_STREAM_PROFILE if self._is_local_iso_proxy_url(url) else _DEFAULT_STREAM_PROFILE
+        for key, value in profile.items():
+            self._set_player_property(key, value)
+
     def _loadfile_options(self, url: str) -> dict[str, str]:
         lowered = url.lower()
+        if self._is_local_iso_proxy_url(url):
+            return {
+                "demuxer_lavf_format": "mpegts",
+                "demuxer_lavf_linearize_timestamps": "yes",
+                "rebase_start_time": "yes",
+                "demuxer_lavf_o_add": "scan_all_pmts=1",
+            }
         if ".m3u8" not in lowered and ".mpd" not in lowered:
             return {}
         # Some HLS/DASH sources use fragment URLs mpv would otherwise reject by extension.
@@ -360,6 +391,7 @@ class MpvWidget(QWidget):
         can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
+            self._apply_stream_profile(player, url)
             if poster_image_path and can_loadfile:
                 self._load_media(
                     player,
@@ -386,6 +418,7 @@ class MpvWidget(QWidget):
                 self._player = player
                 self._register_player_events()
                 self._apply_http_header_fields(player, header_fields)
+                self._apply_stream_profile(player, url)
                 can_loadfile = hasattr(player, "loadfile")
                 if poster_image_path and can_loadfile:
                     self._load_media(
