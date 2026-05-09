@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections import Counter
 import io
 import re
 from threading import Lock
@@ -23,6 +24,11 @@ _CONTENT_RANGE_RE = re.compile(r"^bytes\s+(\d+)-(\d+)/(\d+)$", re.IGNORECASE)
 _RANGE_UNSUPPORTED_MESSAGE = "远程 ISO 服务不支持按范围读取"
 _MISSING_PVD_MESSAGE = "Valid ISO9660 filesystems must have at least one PVD"
 _UDF_FILE_SET_TAG_MESSAGE = "UDF File Set Tag identifier not 256"
+_SHORT_INTRO_MAX_DURATION_45K = 5 * 60 * 45000
+_SHORT_INTRO_MAX_TOTAL_DURATION_45K = 10 * 60 * 45000
+_MAIN_FEATURE_MIN_DURATION_45K = 15 * 60 * 45000
+_LOOPING_PLAYLIST_MIN_ITEMS = 20
+_LOOPING_PLAYLIST_REPEAT_RATIO = 0.8
 
 
 @dataclass(frozen=True, slots=True)
@@ -1198,6 +1204,34 @@ def _build_trimmed_playlist_clip_source(
     return _slice_cached_iso_stream_source(clip_source, start, end_exclusive - start)
 
 
+def _trim_leading_intro_play_items(play_items: tuple[_MplsPlayItem, ...]) -> tuple[_MplsPlayItem, ...]:
+    if len(play_items) < 2:
+        return play_items
+    first_main_feature_index = next(
+        (index for index, item in enumerate(play_items) if item.duration >= _MAIN_FEATURE_MIN_DURATION_45K),
+        None,
+    )
+    if first_main_feature_index is None or first_main_feature_index <= 0:
+        return play_items
+    leading_items = play_items[:first_main_feature_index]
+    if any(item.duration > _SHORT_INTRO_MAX_DURATION_45K for item in leading_items):
+        return play_items
+    if sum(item.duration for item in leading_items) > _SHORT_INTRO_MAX_TOTAL_DURATION_45K:
+        return play_items
+    return play_items[first_main_feature_index:]
+
+
+def _looks_like_looping_playlist(parsed: _ParsedMplsPlaylist) -> bool:
+    if len(parsed.play_items) < _LOOPING_PLAYLIST_MIN_ITEMS:
+        return False
+    signature_counts = Counter(
+        (item.clip_id, item.in_time, item.out_time)
+        for item in parsed.play_items
+    )
+    _signature, count = signature_counts.most_common(1)[0]
+    return (count / len(parsed.play_items)) >= _LOOPING_PLAYLIST_REPEAT_RATIO
+
+
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
     playlist_candidates: list[_ParsedMplsPlaylist] = []
     try:
@@ -1209,21 +1243,24 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
             parsed = _parse_mpls_playlist(playlist_path, playlist_data)
         except ValueError:
             continue
+        if _looks_like_looping_playlist(parsed):
+            continue
         playlist_candidates.append(parsed)
     for parsed in sorted(
         playlist_candidates,
         key=lambda item: (item.duration, item.path),
         reverse=True,
     ):
+        selected_play_items = _trim_leading_intro_play_items(parsed.play_items)
         try:
             child_sources = [
                 _build_trimmed_playlist_clip_source(remote_iso, play_item)
-                for play_item in parsed.play_items
+                for play_item in selected_play_items
             ]
         except ValueError:
             continue
         selected_source = _compose_cached_iso_stream_sources(child_sources)
-        selected_path = parsed.play_items[0].stream_path
+        selected_path = selected_play_items[0].stream_path
         playlist_segments = (
             tuple(
                 IsoPlaybackSegment(
@@ -1232,9 +1269,9 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
                     duration_seconds=(play_item.duration / 45000.0) if play_item.duration > 0 else 0.0,
                     source=child_source,
                 )
-                for play_item, child_source in zip(parsed.play_items, child_sources, strict=True)
+                for play_item, child_source in zip(selected_play_items, child_sources, strict=True)
             )
-            if len(parsed.play_items) > 1
+            if len(selected_play_items) > 1
             else ()
         )
         return IsoPlaybackPlan(
