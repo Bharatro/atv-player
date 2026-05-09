@@ -54,6 +54,18 @@ class _ParsedMplsPlaylist:
 
 
 @dataclass(frozen=True, slots=True)
+class _ClpiEntryPoint:
+    time_45k: int
+    byte_offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedClpi:
+    clip_id: str
+    entry_points: tuple[_ClpiEntryPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _UdfMetadataPartitionMap:
     part_num: int
     metadata_file_location: int
@@ -966,6 +978,29 @@ def _parse_mpls_playlist(path: str, data: bytes) -> _ParsedMplsPlaylist:
     )
 
 
+def _parse_clpi_entry_points(clip_id: str, data: bytes) -> _ParsedClpi:
+    if len(data) < 26 or data[:4] != b"HDMV":
+        raise ValueError("无效的 Blu-ray clip info")
+    cpi_start = _read_u32be(data, 16)
+    entry_count = _read_u16be(data, cpi_start)
+    cursor = cpi_start + 2
+    entry_points: list[_ClpiEntryPoint] = []
+    for _ in range(entry_count):
+        entry_points.append(
+            _ClpiEntryPoint(
+                time_45k=_read_u32be(data, cursor),
+                byte_offset=_read_u32be(data, cursor + 4),
+            )
+        )
+        cursor += 8
+    if not entry_points:
+        raise ValueError("Blu-ray clip info 中没有可用入口点")
+    return _ParsedClpi(
+        clip_id=clip_id,
+        entry_points=tuple(sorted(entry_points, key=lambda item: item.time_45k)),
+    )
+
+
 def _read_remote_udf_file(remote_iso: _RemoteUdfIso, entry_ref: _UdfEntryRef) -> bytes:
     total_size = _stream_size_from_record(entry_ref.record)
     if total_size <= 0:
@@ -1006,6 +1041,63 @@ def _compose_cached_iso_stream_sources(
     if logical_offset <= 0 or not segments:
         raise ValueError("Blu-ray ISO 中没有可播放的 m2ts 文件")
     return _CachedIsoStreamSource(size=logical_offset, segments=tuple(segments))
+
+
+def _compute_trimmed_clip_range(
+    parsed_clpi: _ParsedClpi,
+    in_time: int,
+    out_time: int,
+    stream_size: int,
+) -> tuple[int, int]:
+    if stream_size <= 0:
+        raise ValueError("Blu-ray clip 大小无效")
+    start_point = next(
+        (entry for entry in reversed(parsed_clpi.entry_points) if entry.time_45k <= in_time),
+        None,
+    )
+    end_point = next(
+        (entry for entry in parsed_clpi.entry_points if entry.time_45k > out_time),
+        None,
+    )
+    start = ((0 if start_point is None else start_point.byte_offset) // 192) * 192
+    end_exclusive = stream_size if end_point is None else ((end_point.byte_offset + 191) // 192) * 192
+    end_exclusive = min(stream_size, end_exclusive)
+    if end_exclusive <= start:
+        raise ValueError("Blu-ray clip 裁剪区间无效")
+    return start, end_exclusive
+
+
+def _slice_cached_iso_stream_source(
+    source: _CachedIsoStreamSource,
+    start: int,
+    length: int,
+) -> _CachedIsoStreamSource:
+    if start < 0 or length <= 0 or start + length > source.size:
+        raise ValueError("Blu-ray clip 裁剪区间超出边界")
+    end_exclusive = start + length
+    segments: list[_CachedIsoSegment] = []
+    logical_offset = 0
+    for segment in source.segments:
+        segment_start = segment.logical_offset
+        segment_end = segment.logical_offset + segment.length
+        if segment_end <= start:
+            continue
+        if segment_start >= end_exclusive:
+            break
+        local_start = max(start, segment_start)
+        local_end = min(end_exclusive, segment_end)
+        slice_length = local_end - local_start
+        segments.append(
+            _CachedIsoSegment(
+                logical_offset=logical_offset,
+                length=slice_length,
+                physical_start=segment.physical_start + (local_start - segment_start),
+            )
+        )
+        logical_offset += slice_length
+    if logical_offset != length or not segments:
+        raise ValueError("Blu-ray clip 裁剪区间无法映射到底层分段")
+    return _CachedIsoStreamSource(size=length, segments=tuple(segments))
 
 
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:

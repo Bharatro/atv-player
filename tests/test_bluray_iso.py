@@ -432,6 +432,21 @@ def _build_test_mpls(play_items: list[tuple[str, int, int]]) -> bytes:
     return bytes(header + playlist_section)
 
 
+def _build_test_clpi(entry_points: list[tuple[int, int]]) -> bytes:
+    cpi_body = bytearray()
+    cpi_body.extend(len(entry_points).to_bytes(2, "big"))
+    for time_45k, byte_offset in entry_points:
+        cpi_body.extend(int(time_45k).to_bytes(4, "big"))
+        cpi_body.extend(int(byte_offset).to_bytes(4, "big"))
+    cpi_start = 24
+    header = bytearray(b"HDMV0200")
+    header.extend((0).to_bytes(4, "big"))
+    header.extend((0).to_bytes(4, "big"))
+    header.extend(cpi_start.to_bytes(4, "big"))
+    header.extend((0).to_bytes(4, "big"))
+    return bytes(header + cpi_body)
+
+
 def test_parse_mpls_playlist_extracts_play_items_and_duration() -> None:
     parsed = bluray_iso._parse_mpls_playlist(
         "/BDMV/PLAYLIST/00002.MPLS",
@@ -461,6 +476,52 @@ def test_parse_mpls_playlist_extracts_play_items_and_duration() -> None:
         ),
     )
     assert parsed.duration == 360000
+
+
+def test_parse_clpi_extracts_entry_points() -> None:
+    parsed = bluray_iso._parse_clpi_entry_points("00003", _build_test_clpi([(0, 384), (90000, 768), (180000, 1344)]))
+
+    assert parsed == bluray_iso._ParsedClpi(
+        clip_id="00003",
+        entry_points=(
+            bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=384),
+            bluray_iso._ClpiEntryPoint(time_45k=90000, byte_offset=768),
+            bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=1344),
+        ),
+    )
+
+
+def test_compute_trimmed_clip_range_aligns_to_192_byte_packets() -> None:
+    parsed_clpi = bluray_iso._ParsedClpi(
+        clip_id="00003",
+        entry_points=(
+            bluray_iso._ClpiEntryPoint(time_45k=0, byte_offset=383),
+            bluray_iso._ClpiEntryPoint(time_45k=90000, byte_offset=768),
+            bluray_iso._ClpiEntryPoint(time_45k=180000, byte_offset=1345),
+        ),
+    )
+
+    assert bluray_iso._compute_trimmed_clip_range(parsed_clpi, 1, 179999, 2000) == (192, 1536)
+
+
+def test_slice_cached_iso_stream_source_rebases_trimmed_segments() -> None:
+    source = bluray_iso._CachedIsoStreamSource(
+        size=18,
+        segments=(
+            bluray_iso._CachedIsoSegment(logical_offset=0, length=10, physical_start=100),
+            bluray_iso._CachedIsoSegment(logical_offset=10, length=8, physical_start=500),
+        ),
+    )
+
+    sliced = bluray_iso._slice_cached_iso_stream_source(source, 6, 8)
+
+    assert sliced == bluray_iso._CachedIsoStreamSource(
+        size=8,
+        segments=(
+            bluray_iso._CachedIsoSegment(logical_offset=0, length=4, physical_start=106),
+            bluray_iso._CachedIsoSegment(logical_offset=4, length=4, physical_start=500),
+        ),
+    )
 
 
 def test_compose_cached_iso_stream_source_rebases_segments_for_virtual_playlist() -> None:
