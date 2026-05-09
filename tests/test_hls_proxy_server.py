@@ -477,6 +477,56 @@ def test_local_hls_proxy_server_reuses_iso_range_cache_for_nearby_requests() -> 
     assert second_body == remote_bytes[5120:6144]
 
 
+def test_local_hls_proxy_server_serves_composed_iso_source_across_segment_boundaries() -> None:
+    remote_bytes = bytes(range(64)) * 128
+    requests: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, start: int, end: int) -> None:
+            self.content = remote_bytes[start : end + 1]
+            self.status_code = 206
+            self.headers = {"Content-Range": f"bytes {start}-{end}/{len(remote_bytes)}"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        requests.append(headers["Range"])
+        start_text, end_text = headers["Range"].removeprefix("bytes=").split("-", 1)
+        return FakeResponse(int(start_text), int(end_text))
+
+    server = LocalHlsProxyServer(get=fake_get)
+    source = _CachedIsoStreamSource(
+        size=12,
+        segments=(
+            _CachedIsoSegment(logical_offset=0, length=8, physical_start=100),
+            _CachedIsoSegment(logical_offset=8, length=4, physical_start=300),
+        ),
+    )
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00001.M2TS",
+        stream_size=12,
+        iso_stream_source=source,
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+
+    status, headers, body = server.handle_request(
+        "GET",
+        f"/iso/{token}/BDMV/STREAM/00001.M2TS",
+        {"Range": "bytes=6-9"},
+    )
+
+    assert status == 206
+    assert ("Content-Range", "bytes 6-9/12") in headers
+    assert body == remote_bytes[106:108] + remote_bytes[300:302]
+    assert requests[0] == "bytes=106-107"
+    second_start_text, second_end_text = requests[1].removeprefix("bytes=").split("-", 1)
+    assert int(second_start_text) <= 300
+    assert int(second_end_text) >= 301
+
+
 def test_local_hls_proxy_server_default_iso_range_cache_uses_small_startup_window_for_initial_probe() -> None:
     remote_size = 64 * 1024 * 1024
     requests: list[str] = []
