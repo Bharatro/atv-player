@@ -266,6 +266,7 @@ class MpvWidget(QWidget):
             self._set_player_property(key, value)
 
     def _loadfile_options(self, url: str) -> dict[str, str]:
+        lowered_path = urlparse(url).path.lower()
         lowered = url.lower()
         if self._is_local_iso_proxy_url(url):
             return {
@@ -273,6 +274,8 @@ class MpvWidget(QWidget):
                 "demuxer_lavf_linearize_timestamps": "yes",
                 "rebase_start_time": "yes",
             }
+        if lowered_path.endswith(".mkv"):
+            return {"demuxer_mkv_subtitle_preroll_secs": "0"}
         if ".m3u8" not in lowered and ".mpd" not in lowered:
             return {}
         # Some HLS/DASH sources use fragment URLs mpv would otherwise reject by extension.

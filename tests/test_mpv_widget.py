@@ -328,6 +328,32 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+    widget._player = FakePlayer()
+
+    widget.load("http://media.example/video.mkv")
+
+    assert widget._player.calls == [
+        (
+            "http://media.example/video.mkv",
+            "replace",
+            None,
+            {"demuxer_mkv_subtitle_preroll_secs": "0"},
+        )
+    ]
+
+
 def test_mpv_widget_loads_local_iso_proxy_as_mpegts_with_linearized_timestamps(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
