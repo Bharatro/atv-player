@@ -446,7 +446,7 @@ def test_compose_cached_iso_stream_source_rebases_segments_for_virtual_playlist(
     )
 
 
-def test_prepare_iso_playback_prefers_longest_playlist_for_remote_udf(monkeypatch) -> None:
+def test_prepare_iso_playback_prefers_largest_clip_from_longest_playlist_for_remote_udf(monkeypatch) -> None:
     remote_iso = bluray_iso._RemoteUdfIso(
         reader=SimpleNamespace(),
         logical_block_size=2048,
@@ -507,12 +507,11 @@ def test_prepare_iso_playback_prefers_longest_playlist_for_remote_udf(monkeypatc
 
     plan = bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
 
-    assert plan.stream.path == "/BDMV/PLAYLIST/00002.MPLS"
-    assert plan.stream.size == 12
+    assert plan.stream.path == "/BDMV/STREAM/00002.M2TS"
+    assert plan.stream.size == 7
     assert plan.source == bluray_iso._CachedIsoStreamSource(
-        size=12,
+        size=7,
         segments=(
-            bluray_iso._CachedIsoSegment(logical_offset=0, length=5, physical_start=100),
-            bluray_iso._CachedIsoSegment(logical_offset=5, length=7, physical_start=200),
+            bluray_iso._CachedIsoSegment(logical_offset=0, length=7, physical_start=200),
         ),
     )

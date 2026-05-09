@@ -1007,13 +1007,20 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
             clip_sources.append(_build_cached_iso_stream_source(remote_iso, clip_entry_ref))
         if not clip_sources:
             continue
-        composed_source = _compose_cached_iso_stream_sources(clip_sources)
-        candidates.append((parsed.duration, composed_source.size, playlist_path, composed_source))
+        if len(parsed.clip_paths) == 1:
+            selected_path = parsed.clip_paths[0]
+            selected_source = clip_sources[0]
+        else:
+            selected_path, selected_source = max(
+                zip(parsed.clip_paths, clip_sources, strict=False),
+                key=lambda item: (item[1].size, item[0]),
+            )
+        candidates.append((parsed.duration, selected_source.size, selected_path, selected_source))
     if not candidates:
         return None
-    _duration, _size, playlist_path, source = max(candidates, key=lambda item: (item[0], item[1], item[2]))
+    _duration, _size, selected_path, source = max(candidates, key=lambda item: (item[0], item[1], item[2]))
     return IsoPlaybackPlan(
-        stream=BluRayIsoStream(path=playlist_path, size=source.size),
+        stream=BluRayIsoStream(path=selected_path, size=source.size),
         source=source,
     )
 
