@@ -29,6 +29,9 @@ _SHORT_INTRO_MAX_TOTAL_DURATION_45K = 10 * 60 * 45000
 _MAIN_FEATURE_MIN_DURATION_45K = 15 * 60 * 45000
 _LOOPING_PLAYLIST_MIN_ITEMS = 20
 _LOOPING_PLAYLIST_REPEAT_RATIO = 0.8
+_SMALL_LOOPING_PLAYLIST_MIN_ITEMS = 3
+_SMALL_LOOPING_PLAYLIST_REPEAT_RATIO = 0.8
+_SMALL_LOOPING_PLAYLIST_MAX_UNIQUE_SIGNATURES = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -1239,14 +1242,23 @@ def _trim_leading_intro_play_items(play_items: tuple[_MplsPlayItem, ...]) -> tup
 
 
 def _looks_like_looping_playlist(parsed: _ParsedMplsPlaylist) -> bool:
-    if len(parsed.play_items) < _LOOPING_PLAYLIST_MIN_ITEMS:
-        return False
     signature_counts = Counter(
         (item.clip_id, item.in_time, item.out_time)
         for item in parsed.play_items
     )
+    if not signature_counts:
+        return False
+    unique_signature_count = len(signature_counts)
     _signature, count = signature_counts.most_common(1)[0]
-    return (count / len(parsed.play_items)) >= _LOOPING_PLAYLIST_REPEAT_RATIO
+    repeat_ratio = count / len(parsed.play_items)
+    if len(parsed.play_items) >= _LOOPING_PLAYLIST_MIN_ITEMS:
+        return repeat_ratio >= _LOOPING_PLAYLIST_REPEAT_RATIO
+    if len(parsed.play_items) < _SMALL_LOOPING_PLAYLIST_MIN_ITEMS:
+        return False
+    return (
+        repeat_ratio >= _SMALL_LOOPING_PLAYLIST_REPEAT_RATIO
+        and unique_signature_count <= _SMALL_LOOPING_PLAYLIST_MAX_UNIQUE_SIGNATURES
+    )
 
 
 def _estimate_playlist_payload_size(
