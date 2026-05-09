@@ -1,4 +1,5 @@
 import errno
+import http.client
 from io import BytesIO
 
 from atv_player.player.bluray_iso import (
@@ -332,6 +333,33 @@ def test_local_hls_proxy_server_serves_iso_stream_range() -> None:
     assert ("Content-Range", "bytes 2-5/10") in headers
     assert ("Accept-Ranges", "bytes") in headers
     assert body == b"2345"
+
+
+def test_local_hls_proxy_server_serves_iso_head_probe_without_fetching_origin() -> None:
+    server = LocalHlsProxyServer(port=0)
+    media_url = server.create_iso_media_url(
+        "http://media.example/disc.iso",
+        {},
+        stream_path="/BDMV/STREAM/00080.m2ts",
+        stream_size=10,
+    )
+    token = media_url.split("/iso/", 1)[1].split("/", 1)[0]
+    server.start()
+    try:
+        connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+        connection.request("HEAD", f"/iso/{token}/BDMV/STREAM/00080.m2ts")
+        response = connection.getresponse()
+        body = response.read()
+        headers = dict(response.getheaders())
+        connection.close()
+    finally:
+        server.close()
+
+    assert response.status == 200
+    assert body == b""
+    assert headers["Content-Type"] == "video/MP2T"
+    assert headers["Content-Length"] == "10"
+    assert headers["Accept-Ranges"] == "bytes"
 
 
 def test_local_hls_proxy_server_prefers_cached_iso_stream_source_for_range_reads() -> None:

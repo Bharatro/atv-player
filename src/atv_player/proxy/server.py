@@ -590,6 +590,50 @@ class LocalHlsProxyServer:
             cursor += len(chunk)
         return True
 
+    def _send_iso_head_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/iso/"):
+            return False
+        token, _stream_path = self._iso_path(parsed.path)
+        session = self._registry.get(token)
+        if session is None:
+            payload = b"missing proxy session"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            return True
+        total_size = int(session.iso_stream_size)
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed_range[0] if parsed_range is not None else 0
+        inclusive_end = (
+            total_size - 1
+            if parsed_range is None or parsed_range[1] is None
+            else min(parsed_range[1], total_size - 1)
+        )
+        if total_size <= 0 or start < 0 or start > total_size or inclusive_end < start:
+            payload = b"invalid iso range"
+            handler.send_response(416)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.send_header("Content-Range", f"bytes */{max(total_size, 0)}")
+            handler.end_headers()
+            return True
+        status_code = 206 if parsed_range is not None else 200
+        content_length = inclusive_end - start + 1
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", "video/MP2T")
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if parsed_range is not None:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        return True
+
     def handle_request(
         self,
         method: str,
@@ -733,6 +777,35 @@ class LocalHlsProxyServer:
                 try:
                     self.end_headers()
                     self.wfile.write(payload)
+                except Exception as exc:
+                    if _is_client_disconnect_error(exc):
+                        return
+                    raise
+
+            def do_HEAD(self) -> None:
+                try:
+                    if parent._send_iso_head_response(self.path, dict(self.headers.items()), self):
+                        return
+                except Exception as exc:
+                    if _is_client_disconnect_error(exc):
+                        return
+                    payload = str(exc).encode("utf-8")
+                    self.send_response(502)
+                    self.send_header("Content-Length", str(len(payload)))
+                    try:
+                        self.end_headers()
+                    except Exception as write_exc:
+                        if _is_client_disconnect_error(write_exc):
+                            return
+                        raise
+                    return
+                status, headers, payload = parent.handle_request("HEAD", self.path, dict(self.headers.items()))
+                self.send_response(status)
+                for key, value in headers:
+                    self.send_header(key, value)
+                self.send_header("Content-Length", str(len(payload)))
+                try:
+                    self.end_headers()
                 except Exception as exc:
                     if _is_client_disconnect_error(exc):
                         return
