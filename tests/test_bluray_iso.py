@@ -432,19 +432,33 @@ def _build_test_mpls(play_items: list[tuple[str, int, int]]) -> bytes:
     return bytes(header + playlist_section)
 
 
-def test_parse_mpls_playlist_extracts_clip_sequence_and_duration() -> None:
+def test_parse_mpls_playlist_extracts_play_items_and_duration() -> None:
     parsed = bluray_iso._parse_mpls_playlist(
+        "/BDMV/PLAYLIST/00002.MPLS",
         _build_test_mpls(
             [
                 ("00003", 90000, 180000),
                 ("00004", 0, 270000),
             ]
-        )
+        ),
     )
 
-    assert parsed.clip_paths == (
-        "/BDMV/STREAM/00003.M2TS",
-        "/BDMV/STREAM/00004.M2TS",
+    assert parsed.path == "/BDMV/PLAYLIST/00002.MPLS"
+    assert parsed.play_items == (
+        bluray_iso._MplsPlayItem(
+            clip_id="00003",
+            stream_path="/BDMV/STREAM/00003.M2TS",
+            in_time=90000,
+            out_time=180000,
+            duration=90000,
+        ),
+        bluray_iso._MplsPlayItem(
+            clip_id="00004",
+            stream_path="/BDMV/STREAM/00004.M2TS",
+            in_time=0,
+            out_time=270000,
+            duration=270000,
+        ),
     )
     assert parsed.duration == 360000
 

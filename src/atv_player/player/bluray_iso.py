@@ -38,8 +38,18 @@ class IsoPlaybackPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class _MplsPlayItem:
+    clip_id: str
+    stream_path: str
+    in_time: int
+    out_time: int
+    duration: int
+
+
+@dataclass(frozen=True, slots=True)
 class _ParsedMplsPlaylist:
-    clip_paths: tuple[str, ...]
+    path: str
+    play_items: tuple[_MplsPlayItem, ...]
     duration: int
 
 
@@ -911,7 +921,7 @@ def _read_u32be(data: bytes, offset: int) -> int:
     return int.from_bytes(data[offset : offset + 4], "big")
 
 
-def _parse_mpls_playlist(data: bytes) -> _ParsedMplsPlaylist:
+def _parse_mpls_playlist(path: str, data: bytes) -> _ParsedMplsPlaylist:
     if len(data) < 20 or data[:4] != b"MPLS":
         raise ValueError("无效的 Blu-ray playlist")
     playlist_start = _read_u32be(data, 8)
@@ -920,7 +930,7 @@ def _parse_mpls_playlist(data: bytes) -> _ParsedMplsPlaylist:
     header_offset = playlist_start + 4
     play_item_count = _read_u16be(data, header_offset + 2)
     play_item_offset = header_offset + 6
-    clip_paths: list[str] = []
+    play_items: list[_MplsPlayItem] = []
     total_duration = 0
     for _ in range(play_item_count):
         item_length = _read_u16be(data, play_item_offset)
@@ -934,14 +944,26 @@ def _parse_mpls_playlist(data: bytes) -> _ParsedMplsPlaylist:
         clip_codec = data[item_start + 5 : item_start + 9].decode("ascii", errors="ignore").strip().upper()
         in_time = _read_u32be(data, item_start + 12)
         out_time = _read_u32be(data, item_start + 16)
+        duration = max(0, out_time - in_time)
         if clip_name and clip_codec == "M2TS":
-            clip_paths.append(f"/BDMV/STREAM/{clip_name}.M2TS")
-            if out_time > in_time:
-                total_duration += out_time - in_time
+            play_items.append(
+                _MplsPlayItem(
+                    clip_id=clip_name,
+                    stream_path=f"/BDMV/STREAM/{clip_name}.M2TS",
+                    in_time=in_time,
+                    out_time=out_time,
+                    duration=duration,
+                )
+            )
+            total_duration += duration
         play_item_offset = item_end
-    if not clip_paths:
+    if not play_items:
         raise ValueError("Blu-ray playlist 中没有可播放的片段")
-    return _ParsedMplsPlaylist(clip_paths=tuple(clip_paths), duration=total_duration)
+    return _ParsedMplsPlaylist(
+        path=_normalize_iso_path(path),
+        play_items=tuple(play_items),
+        duration=total_duration,
+    )
 
 
 def _read_remote_udf_file(remote_iso: _RemoteUdfIso, entry_ref: _UdfEntryRef) -> bytes:
@@ -994,7 +1016,7 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
         return None
     for playlist_path, playlist_data in playlists:
         try:
-            parsed = _parse_mpls_playlist(playlist_data)
+            parsed = _parse_mpls_playlist(playlist_path, playlist_data)
         except ValueError:
             continue
         playlist_candidates.append((parsed.duration, playlist_path, parsed))
