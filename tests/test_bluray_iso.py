@@ -937,3 +937,61 @@ def test_prepare_iso_playback_ignores_looping_playlist_that_repeats_same_clip_wi
 
     assert plan.stream.path == "/BDMV/STREAM/00011.M2TS"
     assert plan.playlist_segments == ()
+
+
+def test_prepare_iso_playback_resolves_plain_udf_paths_case_insensitively(monkeypatch) -> None:
+    class FakeIsoFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def seek(self, offset: int) -> None:
+            assert offset == 0
+
+        def read(self, length: int) -> bytes:
+            assert length == 4
+            return b"data"
+
+    class FakeRecord:
+        def get_data_length(self) -> int:
+            return 4
+
+    class FakeIso:
+        def walk(self, **kwargs):
+            assert kwargs == {"udf_path": "/"}
+            return [
+                ("/", ["bdmv"], []),
+                ("/bdmv", ["stream"], ["index.bdmv"]),
+                ("/bdmv/stream", [], ["00080.m2ts"]),
+            ]
+
+        def get_record(self, *, udf_path: str):
+            if udf_path != "/bdmv/stream/00080.m2ts":
+                raise ValueError("Could not find path")
+            return FakeRecord()
+
+        def open_file_from_iso(self, *, udf_path: str):
+            if udf_path != "/bdmv/stream/00080.m2ts":
+                raise ValueError("Could not find path")
+            return FakeIsoFile()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(bluray_iso, "_open_pycdlib_iso", lambda reader: FakeIso())
+    monkeypatch.setattr(bluray_iso, "_safe_close_iso", lambda iso: None)
+
+    plan = bluray_iso.prepare_iso_playback("http://media.example/disc.iso", {})
+    payload, total_size = bluray_iso.read_iso_stream_range(
+        "http://media.example/disc.iso",
+        {},
+        "/BDMV/STREAM/00080.M2TS",
+        0,
+        None,
+    )
+
+    assert plan.stream == BluRayIsoStream(path="/BDMV/STREAM/00080.M2TS", size=4)
+    assert payload == b"data"
+    assert total_size == 4

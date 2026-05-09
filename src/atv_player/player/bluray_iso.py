@@ -914,15 +914,32 @@ class RemoteRangeReader(io.RawIOBase):
 def _walk_iso_paths(iso: Any) -> list[str]:
     if isinstance(iso, _RemoteUdfIso):
         return _walk_remote_udf_paths(iso)
-    paths: list[str] = []
+    return sorted({normalized_path for normalized_path, _raw_path in _iter_pycdlib_udf_paths(iso)})
+
+
+def _iter_pycdlib_udf_paths(iso: Any) -> list[tuple[str, str]]:
+    paths: list[tuple[str, str]] = []
     for current_path, directories, files in iso.walk(udf_path="/"):
-        normalized_current = _normalize_iso_path(current_path)
-        paths.append(normalized_current)
+        raw_current = str(current_path or "/")
+        normalized_current = _normalize_iso_path(raw_current)
+        paths.append((normalized_current, raw_current))
         for directory in directories:
-            paths.append(_normalize_iso_path(f"{normalized_current}/{directory}"))
+            raw_path = f"{raw_current.rstrip('/')}/{directory}" if raw_current != "/" else f"/{directory}"
+            paths.append((_normalize_iso_path(raw_path), raw_path))
         for filename in files:
-            paths.append(_normalize_iso_path(f"{normalized_current}/{filename}"))
-    return sorted(set(paths))
+            raw_path = f"{raw_current.rstrip('/')}/{filename}" if raw_current != "/" else f"/{filename}"
+            paths.append((_normalize_iso_path(raw_path), raw_path))
+    unique_paths: dict[str, str] = {}
+    for normalized_path, raw_path in paths:
+        unique_paths.setdefault(normalized_path, raw_path)
+    return sorted(unique_paths.items())
+
+
+def _resolve_pycdlib_udf_path(iso: Any, normalized_path: str) -> str:
+    for candidate_normalized_path, raw_path in _iter_pycdlib_udf_paths(iso):
+        if candidate_normalized_path == normalized_path:
+            return raw_path
+    raise ValueError("Could not find path")
 
 
 def _stream_size_from_record(record: Any) -> int:
@@ -1303,11 +1320,11 @@ def prepare_iso_playback(
                 source=_build_cached_iso_stream_source(iso, entry_ref),
             )
         streams: list[BluRayIsoStream] = []
-        for path in _walk_iso_paths(iso):
-            if not _BLURAY_STREAM_RE.match(path):
+        for normalized_path, raw_path in _iter_pycdlib_udf_paths(iso):
+            if not _BLURAY_STREAM_RE.match(normalized_path):
                 continue
-            record = iso.get_record(udf_path=path)
-            streams.append(BluRayIsoStream(path=path, size=_stream_size_from_record(record)))
+            record = iso.get_record(udf_path=raw_path)
+            streams.append(BluRayIsoStream(path=normalized_path, size=_stream_size_from_record(record)))
         return IsoPlaybackPlan(stream=pick_main_feature_stream(streams))
     finally:
         _safe_close_iso(iso)
@@ -1339,11 +1356,11 @@ def stat_iso_streams(
         if isinstance(iso, _RemoteUdfIso):
             return _stat_remote_udf_streams(iso)
         streams: list[BluRayIsoStream] = []
-        for path in _walk_iso_paths(iso):
-            if not _BLURAY_STREAM_RE.match(path):
+        for normalized_path, raw_path in _iter_pycdlib_udf_paths(iso):
+            if not _BLURAY_STREAM_RE.match(normalized_path):
                 continue
-            record = iso.get_record(udf_path=path)
-            streams.append(BluRayIsoStream(path=path, size=_stream_size_from_record(record)))
+            record = iso.get_record(udf_path=raw_path)
+            streams.append(BluRayIsoStream(path=normalized_path, size=_stream_size_from_record(record)))
         return streams
     finally:
         _safe_close_iso(iso)
@@ -1428,7 +1445,8 @@ def read_iso_stream_range(
             entry_ref = _find_remote_udf_entry(iso, normalized_path)
             record = entry_ref.record
         else:
-            record = iso.get_record(udf_path=normalized_path)
+            raw_path = _resolve_pycdlib_udf_path(iso, normalized_path)
+            record = iso.get_record(udf_path=raw_path)
         total_size = _stream_size_from_record(record)
         if total_size <= 0:
             raise ValueError("Blu-ray ISO 中没有可播放的 m2ts 文件")
@@ -1443,7 +1461,7 @@ def read_iso_stream_range(
         if isinstance(iso, _RemoteUdfIso):
             payload = _read_remote_udf_file_range(iso, entry_ref, start, inclusive_end)
         else:
-            with iso.open_file_from_iso(udf_path=normalized_path) as iso_file:
+            with iso.open_file_from_iso(udf_path=raw_path) as iso_file:
                 iso_file.seek(start)
                 payload = iso_file.read(length)
         return bytes(payload), total_size
