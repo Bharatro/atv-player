@@ -12,6 +12,7 @@ import httpx
 
 from atv_player.models import VideoQualityOption
 from atv_player.paths import app_cache_dir
+from atv_player.player.bluray_iso import BlurayIsoInspector, is_remote_iso_url
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
 from atv_player.request_headers import normalize_media_request_headers
@@ -186,13 +187,17 @@ class M3U8AdFilter:
         proxy_server: LocalHlsProxyServer | None = None,
         cache_dir: Path | None = None,
         get: Callable[..., object] = httpx.get,
+        bluray_iso_inspector: BlurayIsoInspector | None = None,
     ) -> None:
         self._cache_dir = cache_dir or (app_cache_dir() / "playlists")
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._get = get
         self._proxy_server = proxy_server or LocalHlsProxyServer(get=get)
+        self._bluray_iso_inspector = bluray_iso_inspector or BlurayIsoInspector()
 
     def should_prepare(self, url: str) -> bool:
+        if is_remote_iso_url(url):
+            return True
         if _is_dash_data_uri(url):
             return True
         return _is_remote_proxy_candidate_url(url)
@@ -207,6 +212,14 @@ class M3U8AdFilter:
             return url
         self._proxy_server.start()
         normalized_headers = normalize_media_request_headers(url, headers)
+        if is_remote_iso_url(url):
+            selected_stream = self._bluray_iso_inspector.inspect(url, normalized_headers)
+            return self._proxy_server.create_iso_media_url(
+                url,
+                headers=normalized_headers,
+                stream_path=selected_stream.path,
+                stream_size=selected_stream.size,
+            )
         if _is_dash_data_uri(url):
             if dash_video_id:
                 return self._proxy_server.create_dash_url(

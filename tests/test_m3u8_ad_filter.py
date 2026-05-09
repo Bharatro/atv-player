@@ -313,6 +313,49 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_in
     assert server.calls == [("https://media.example/master.m3u8", {})]
 
 
+def test_m3u8_ad_filter_treats_remote_iso_as_proxy_candidate() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str], str, int]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_iso_media_url(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            *,
+            stream_path: str,
+            stream_size: int,
+        ) -> str:
+            self.calls.append((url, dict(headers or {}), stream_path, stream_size))
+            return "http://127.0.0.1:2323/iso/test/BDMV/STREAM/00080.m2ts"
+
+        def close(self) -> None:
+            return None
+
+    class FakeInspector:
+        def inspect(self, url: str, headers: dict[str, str]):
+            return type("Result", (), {"path": "/BDMV/STREAM/00080.m2ts", "size": 123456789})()
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, bluray_iso_inspector=FakeInspector())
+
+    prepared = ad_filter.prepare("http://media.example/disc.iso", {"Referer": "https://site.example"})
+
+    assert ad_filter.should_prepare("http://media.example/disc.iso") is True
+    assert prepared == "http://127.0.0.1:2323/iso/test/BDMV/STREAM/00080.m2ts"
+    assert server.calls == [
+        (
+            "http://media.example/disc.iso",
+            {"Referer": "https://site.example"},
+            "/BDMV/STREAM/00080.m2ts",
+            123456789,
+        )
+    ]
+
+
 @pytest.mark.skip(reason="Known baseline failure: recursive prepare() currently returns the original URL instead of a cache file path.")
 def test_m3u8_ad_filter_recurses_from_master_playlist_into_media_playlist(tmp_path: Path) -> None:
     requests: list[str] = []
