@@ -1249,6 +1249,22 @@ def _looks_like_looping_playlist(parsed: _ParsedMplsPlaylist) -> bool:
     return (count / len(parsed.play_items)) >= _LOOPING_PLAYLIST_REPEAT_RATIO
 
 
+def _estimate_playlist_payload_size(
+    remote_iso: _RemoteUdfIso,
+    play_items: tuple[_MplsPlayItem, ...],
+    source_cache: dict[str, _CachedIsoStreamSource],
+) -> int:
+    total_size = 0
+    for play_item in play_items:
+        clip_source = source_cache.get(play_item.stream_path)
+        if clip_source is None:
+            entry_ref = _find_remote_udf_entry(remote_iso, play_item.stream_path)
+            clip_source = _build_cached_iso_stream_source(remote_iso, entry_ref)
+            source_cache[play_item.stream_path] = clip_source
+        total_size += clip_source.size
+    return total_size
+
+
 def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlaybackPlan | None:
     playlist_candidates: list[_ParsedMplsPlaylist] = []
     try:
@@ -1263,9 +1279,18 @@ def _prepare_remote_udf_playlist_playback(remote_iso: _RemoteUdfIso) -> IsoPlayb
         if _looks_like_looping_playlist(parsed):
             continue
         playlist_candidates.append(parsed)
+    source_cache: dict[str, _CachedIsoStreamSource] = {}
     for parsed in sorted(
         playlist_candidates,
-        key=lambda item: (item.duration, item.path),
+        key=lambda item: (
+            _estimate_playlist_payload_size(
+                remote_iso,
+                _trim_leading_intro_play_items(item.play_items),
+                source_cache,
+            ),
+            item.duration,
+            item.path,
+        ),
         reverse=True,
     ):
         selected_play_items = _trim_leading_intro_play_items(parsed.play_items)
