@@ -549,7 +549,7 @@ def test_api_client_posts_offline_download_detail() -> None:
     client.get_offline_download_detail("magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33")
 
     assert seen == {
-        "path": "/api/offline_download",
+        "path": "/offline_download/Harold",
         "query": "ac=gui",
         "method": "POST",
         "body": b'{"url":"magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"}',

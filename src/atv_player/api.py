@@ -166,7 +166,7 @@ class ApiClient:
     def get_offline_download_detail(self, link: str) -> dict[str, Any]:
         return self._request(
             "POST",
-            "/api/offline_download",
+            f"/offline_download/{self._vod_token}",
             params={"ac": "gui"},
             json={"url": link},
         )
