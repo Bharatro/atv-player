@@ -63,3 +63,46 @@ def test_render_danmaku_ass_embeds_font_size_and_top_alignment() -> None:
     assert ",4,1" in subtitle
     assert "Dialogue:" in subtitle
     assert "第一条\\N第二条" in subtitle
+
+
+def test_render_danmaku_ass_uses_uniform_color_and_scroll_mode() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,255">滚动蓝字</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="uniform",
+        uniform_color="#FF0000",
+        position_preset="upper",
+    )
+
+    assert "\\move(" in subtitle
+    assert "\\c&H0000FF&" in subtitle
+    assert "\\c&HFF0000&" not in subtitle
+
+
+def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,5,25,16777215">顶部</d>'
+        '<d p="1.0,4,25,65280">底部</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=2,
+        render_mode="mixed",
+        color_mode="source",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "顶部" in subtitle
+    assert "底部" in subtitle
+    assert "\\move(" not in subtitle.split("顶部", 1)[0]

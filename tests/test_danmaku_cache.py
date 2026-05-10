@@ -9,13 +9,51 @@ def test_load_or_create_danmaku_ass_cache_reuses_existing_file(monkeypatch, tmp_
     monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
 
-    first_path = danmaku_cache_module.load_or_create_danmaku_ass_cache(xml_text, 1)
-    second_path = danmaku_cache_module.load_or_create_danmaku_ass_cache(xml_text, 1)
+    first_path = danmaku_cache_module.load_or_create_danmaku_ass_cache(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+    second_path = danmaku_cache_module.load_or_create_danmaku_ass_cache(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
 
     assert first_path is not None
     assert second_path == first_path
     assert first_path.exists()
     assert first_path.read_text(encoding="utf-8").startswith("[Script Info]")
+
+
+def test_danmaku_ass_cache_path_changes_when_render_settings_change(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'
+
+    first = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+    second = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="mixed",
+        color_mode="source",
+        uniform_color="#00FF00",
+        position_preset="bottom",
+    )
+
+    assert first != second
 
 
 def test_purge_stale_danmaku_cache_deletes_files_older_than_three_days(monkeypatch, tmp_path) -> None:

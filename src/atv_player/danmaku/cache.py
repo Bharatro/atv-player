@@ -10,7 +10,7 @@ from atv_player.danmaku.subtitle import render_danmaku_ass
 from atv_player.paths import app_cache_dir
 
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
-_DANMAKU_ASS_CACHE_VERSION = "v1"
+_DANMAKU_ASS_CACHE_VERSION = "v2"
 _DANMAKU_XML_CACHE_VERSION = "v1"
 _DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v1"
 
@@ -21,18 +21,58 @@ def danmaku_cache_dir() -> Path:
     return cache_dir
 
 
-def danmaku_ass_cache_path(xml_text: str, line_count: int) -> Path:
+def danmaku_ass_cache_path(
+    xml_text: str,
+    line_count: int,
+    *,
+    render_mode: str = "static",
+    color_mode: str = "uniform",
+    uniform_color: str = "#FFFFFF",
+    position_preset: str = "top",
+) -> Path:
     digest = sha256(
-        "\0".join((_DANMAKU_ASS_CACHE_VERSION, str(max(1, min(int(line_count), 5))), xml_text)).encode("utf-8")
+        "\0".join(
+            (
+                _DANMAKU_ASS_CACHE_VERSION,
+                str(max(1, min(int(line_count), 5))),
+                render_mode,
+                color_mode,
+                uniform_color,
+                position_preset,
+                xml_text,
+            )
+        ).encode("utf-8")
     ).hexdigest()
     return danmaku_cache_dir() / f"{digest}.ass"
 
 
-def load_or_create_danmaku_ass_cache(xml_text: str, line_count: int) -> Path | None:
-    subtitle_text = render_danmaku_ass(xml_text, line_count=line_count)
+def load_or_create_danmaku_ass_cache(
+    xml_text: str,
+    line_count: int,
+    *,
+    render_mode: str = "static",
+    color_mode: str = "uniform",
+    uniform_color: str = "#FFFFFF",
+    position_preset: str = "top",
+) -> Path | None:
+    subtitle_text = render_danmaku_ass(
+        xml_text,
+        line_count=line_count,
+        render_mode=render_mode,
+        color_mode=color_mode,
+        uniform_color=uniform_color,
+        position_preset=position_preset,
+    )
     if not subtitle_text:
         return None
-    cache_path = danmaku_ass_cache_path(xml_text, line_count)
+    cache_path = danmaku_ass_cache_path(
+        xml_text,
+        line_count,
+        render_mode=render_mode,
+        color_mode=color_mode,
+        uniform_color=uniform_color,
+        position_preset=position_preset,
+    )
     if not cache_path.exists():
         cache_path.write_text(subtitle_text, encoding="utf-8")
     return cache_path
