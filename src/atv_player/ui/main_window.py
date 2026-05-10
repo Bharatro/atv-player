@@ -851,8 +851,6 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         except (KeyError, IndexError, TypeError) as exc:
             raise ValueError(f"没有可播放的项目: {link}") from exc
         playlist = build_detail_playlist(detail)
-        print(detail)
-        print(playlist)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name or link}")
         return OpenPlayerRequest(
