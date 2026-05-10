@@ -553,6 +553,63 @@ def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, m
     assert opened[0].playlist[0].headers == {"Referer": "https://site.example"}
 
 
+def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:
+    telegram = SearchableController([])
+    emby = SearchableController([])
+    jellyfin = SearchableController([])
+    feiniu = SearchableController([])
+    offline_calls: list[str] = []
+    opened: list[OpenPlayerRequest] = []
+
+    def load_offline_detail(link: str) -> dict:
+        offline_calls.append(link)
+        return {
+            "list": [
+                {
+                    "vod_id": "1$107919$1",
+                    "vod_name": "离线下载结果",
+                    "vod_play_from": "丫仙女",
+                    "vod_play_url": "离线文件.mp4(6.11 GB)$1@107920@0@0",
+                    "path": "/我的115云盘/alist-tvbox-offline/离线文件/~playlist",
+                }
+            ]
+        }
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=jellyfin,
+        feiniu_controller=feiniu,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        offline_download_detail_loader=load_offline_detail,
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    magnet = "magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"
+    window.global_search_edit.setText(magnet)
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+
+    assert offline_calls == [magnet]
+    assert telegram.search_calls == []
+    assert emby.search_calls == []
+    assert jellyfin.search_calls == []
+    assert feiniu.search_calls == []
+    assert opened[0].vod.vod_name == "离线下载结果"
+    assert [item.title for item in opened[0].playlist] == ["离线文件.mp4(6.11 GB)"]
+    assert opened[0].source_vod_id == magnet
+
+
 def test_main_window_global_search_builds_episode_playlist_from_direct_parse_detail(qtbot, monkeypatch) -> None:
     class FakeParserService:
         def __init__(self) -> None:

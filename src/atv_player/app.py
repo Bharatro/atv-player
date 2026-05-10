@@ -247,14 +247,28 @@ class AppCoordinator(QObject):
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
+        offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
         try:
             spider_plugins = self._plugin_manager.load_enabled_plugins(
                 drive_detail_loader=drive_detail_loader,
+                offline_download_detail_loader=offline_download_detail_loader,
             )
         except TypeError as exc:
-            if "drive_detail_loader" not in str(exc):
-                raise
-            spider_plugins = self._plugin_manager.load_enabled_plugins()
+            if "offline_download_detail_loader" not in str(exc):
+                if "drive_detail_loader" not in str(exc):
+                    raise
+                spider_plugins = self._plugin_manager.load_enabled_plugins(
+                    drive_detail_loader=drive_detail_loader,
+                )
+            else:
+                try:
+                    spider_plugins = self._plugin_manager.load_enabled_plugins(
+                        drive_detail_loader=drive_detail_loader,
+                    )
+                except TypeError as drive_exc:
+                    if "drive_detail_loader" not in str(drive_exc):
+                        raise
+                    spider_plugins = self._plugin_manager.load_enabled_plugins()
         live_epg_service = _NullLiveEpgService()
         if self._live_epg_repository is not None:
             live_epg_service = LiveEpgService(
@@ -356,6 +370,7 @@ class AppCoordinator(QObject):
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
+            offline_download_detail_loader=offline_download_detail_loader,
             direct_parse_detail_loader=load_direct_parse_detail,
             direct_parse_danmaku_loader=load_direct_parse_danmaku,
             direct_parse_playback_history_loader=None

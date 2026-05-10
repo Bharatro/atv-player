@@ -529,6 +529,33 @@ def test_api_client_gets_drive_share_detail() -> None:
     }
 
 
+def test_api_client_posts_offline_download_detail() -> None:
+    seen = {"path": "", "query": "", "method": "", "body": b""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        seen["method"] = request.method
+        seen["body"] = request.content
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_offline_download_detail("magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33")
+
+    assert seen == {
+        "path": "/api/offline_download",
+        "query": "ac=gui",
+        "method": "POST",
+        "body": b'{"url":"magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"}',
+    }
+
+
 def test_api_client_searches_telegram_items_by_keyword() -> None:
     seen_queries: list[str] = []
 

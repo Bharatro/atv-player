@@ -2107,6 +2107,131 @@ def test_controller_keeps_player_content_for_non_drive_plugin_ids() -> None:
     assert first.headers == {"Referer": "https://site.example"}
 
 
+def test_controller_replaces_only_current_magnet_item_when_offline_download_returns_files() -> None:
+    class MagnetSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "磁力片源",
+                        "vod_play_from": "磁力线",
+                        "vod_play_url": (
+                            "第1集$magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33#"
+                            "第2集$magnet:?xt=urn:btih:bbbb6396e03acb19d72eb2d779a22b2dc00f66bb"
+                        ),
+                    }
+                ]
+            }
+
+    offline_calls: list[str] = []
+    resolve_calls: list[str] = []
+
+    def load_offline_detail(link: str) -> dict:
+        offline_calls.append(link)
+        if link.endswith("66a33"):
+            return {
+                "list": [
+                    {
+                        "vod_id": "1$107919$1",
+                        "vod_name": "离线下载结果 A",
+                        "vod_play_from": "丫仙女",
+                        "vod_play_url": "离线A1.mp4(6.11 GB)$1@107920@0@0",
+                        "path": "/我的115云盘/alist-tvbox-offline/A/~playlist",
+                        "items": [],
+                    }
+                ]
+            }
+        return {
+            "list": [
+                {
+                    "vod_id": "1$107929$1",
+                    "vod_name": "离线下载结果 B",
+                    "vod_play_from": "丫仙女",
+                    "vod_play_url": "离线B1.mp4(1 GB)$1@107930@0@0#离线B2.mp4(1 GB)$1@107931@0@1",
+                    "path": "/我的115云盘/alist-tvbox-offline/B/~playlist",
+                    "items": [],
+                }
+            ]
+        }
+
+    def load_drive_detail(vod_id: str) -> dict:
+        resolve_calls.append(vod_id)
+        assert vod_id == "1@107920@0@0"
+        return {
+            "list": [
+                {
+                    "vod_id": "1@107920@0@0",
+                    "vod_name": "离线文件.mp4",
+                    "items": [{"url": "http://192.168.50.60:4567/p/web/1@107920?ac=web&ids=1$107920$1"}],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        MagnetSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        offline_download_detail_loader=load_offline_detail,
+    )
+
+    request = controller.build_request("/detail/magnet")
+    session = PlayerController(type("Api", (), {"get_history": lambda self, vod_id: None})()).create_session(
+        request.vod,
+        request.playlist,
+        clicked_index=0,
+        playlists=request.playlists,
+        playlist_index=request.playlist_index,
+        detail_resolver=request.detail_resolver,
+        resolved_vod_by_id=request.resolved_vod_by_id,
+        use_local_history=request.use_local_history,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        detail_action_runner=request.detail_action_runner,
+        danmaku_controller=request.danmaku_controller,
+    )
+    assert request.playback_loader is not None
+    first_result = request.playback_loader(session, request.playlists[0][0])
+
+    assert first_result is not None
+    assert offline_calls == ["magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"]
+    assert [item.title for item in first_result.replacement_playlist] == ["离线A1.mp4(6.11 GB)", "第2集"]
+    assert [item.vod_id for item in first_result.replacement_playlist] == ["1@107920@0@0", "magnet:?xt=urn:btih:bbbb6396e03acb19d72eb2d779a22b2dc00f66bb"]
+    assert first_result.replacement_start_index == 0
+
+    session.playlist = first_result.replacement_playlist
+    session.playlists[session.playlist_index] = session.playlist
+    resolved = session.detail_resolver(session.playlist[0])
+    assert resolved is not None
+    session.playlist[0].url = resolved.items[0].url
+    assert session.playlist[0].title == "离线A1.mp4(6.11 GB)"
+
+    second_result = request.playback_loader(session, session.playlist[1])
+
+    assert second_result is not None
+    assert offline_calls == [
+        "magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33",
+        "magnet:?xt=urn:btih:bbbb6396e03acb19d72eb2d779a22b2dc00f66bb",
+    ]
+    assert [item.title for item in second_result.replacement_playlist] == [
+        "离线A1.mp4(6.11 GB)",
+        "离线B1.mp4(1 GB)",
+        "离线B2.mp4(1 GB)",
+    ]
+    assert [item.vod_id for item in second_result.replacement_playlist] == [
+        "1@107920@0@0",
+        "1@107930@0@0",
+        "1@107931@0@1",
+    ]
+    assert second_result.replacement_start_index == 1
+
+    assert session.detail_resolver is not None
+    assert resolve_calls == ["1@107920@0@0"]
+    assert resolved.items[0].title == ""
+    assert resolved.items[0].url == "http://192.168.50.60:4567/p/web/1@107920?ac=web&ids=1$107920$1"
+
+
 def test_controller_returns_replacement_playlist_for_quark_drive_route() -> None:
     spider = DriveLinkSpider()
 

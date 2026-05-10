@@ -208,7 +208,7 @@ class SpiderPluginManager:
             self._repository.append_log(plugin.id, "error", f"插件动作执行失败[{action_id}]: {exc}")
             raise
 
-    def load_enabled_plugins(self, drive_detail_loader=None) -> list[SpiderPluginDefinition]:
+    def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
         for plugin in self._repository.list_plugins():
             if not plugin.enabled:
@@ -233,6 +233,7 @@ class SpiderPluginManager:
                 plugin_name=title,
                 search_enabled=loaded.search_enabled,
                 drive_detail_loader=drive_detail_loader,
+                offline_download_detail_loader=offline_download_detail_loader,
                 playback_parser_service=self._playback_parser_service,
                 preferred_parse_key_loader=self._preferred_parse_key_loader,
                 base_url_loader=self._base_url_loader,

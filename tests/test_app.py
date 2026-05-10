@@ -636,11 +636,12 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     loaded_plugins = [
         {"title": "红果短剧", "controller": object(), "search_enabled": True},
     ]
-    captured_loader = {"value": None}
+    captured_loader = {"drive": None, "offline": None}
 
     class FakePluginManager:
-        def load_enabled_plugins(self, drive_detail_loader=None):
-            captured_loader["value"] = drive_detail_loader
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            captured_loader["drive"] = drive_detail_loader
+            captured_loader["offline"] = offline_download_detail_loader
             return loaded_plugins
 
     def api_factory(*args, **kwargs):
@@ -663,13 +664,14 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     qtbot.addWidget(widget)
 
     assert widget.nav_tabs.tabText(6) == "红果短剧"
-    assert callable(captured_loader["value"])
+    assert callable(captured_loader["drive"])
+    assert callable(captured_loader["offline"])
 
 
 def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))
-    captured = {"parser_service": None}
+    captured = {"parser_service": None, "offline_loader": None}
 
     class FakeSignal:
         def connect(self, callback) -> None:
@@ -678,10 +680,11 @@ def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, 
     class FakeMainWindow:
         def __init__(self, *args, **kwargs) -> None:
             captured["parser_service"] = kwargs.get("playback_parser_service")
+            captured["offline_loader"] = kwargs.get("offline_download_detail_loader")
             self.logout_requested = FakeSignal()
 
     class FakePluginManager:
-        def load_enabled_plugins(self, drive_detail_loader=None):
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
             return []
 
     def api_factory(*args, **kwargs):
@@ -705,6 +708,7 @@ def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, 
     coordinator._show_main()
 
     assert captured["parser_service"] is not None
+    assert callable(captured["offline_loader"])
 
 
 def test_app_coordinator_wires_danmaku_service_into_plugin_manager(monkeypatch, tmp_path) -> None:
@@ -1072,6 +1076,46 @@ def test_main_window_reloads_plugins_with_drive_detail_loader_after_plugin_manag
     window._open_plugin_manager()
 
     assert captured_loaders == [drive_detail_loader]
+
+
+def test_main_window_reloads_plugins_with_offline_download_loader_after_plugin_manager_closes(qtbot, monkeypatch) -> None:
+    captured_loaders: list[object | None] = []
+    offline_download_detail_loader = object()
+
+    class OfflineAwarePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            captured_loaders.append(offline_download_detail_loader)
+            return []
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=OfflineAwarePluginManager(),
+        offline_download_detail_loader=offline_download_detail_loader,
+    )
+    qtbot.addWidget(window)
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+            self.parent = parent
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "PluginManagerDialog", FakeDialog)
+
+    window._open_plugin_manager()
+
+    assert captured_loaders == [offline_download_detail_loader]
 
 
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:

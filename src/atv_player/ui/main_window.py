@@ -116,6 +116,11 @@ def _looks_like_http_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def _looks_like_offline_download_link(value: str) -> bool:
+    candidate = value.strip().lower()
+    return candidate.startswith("magnet:?") or candidate.startswith("ed2k://")
+
+
 def _looks_like_drive_share_link(value: str) -> bool:
     candidate = value.strip()
     if not _looks_like_http_url(candidate):
@@ -215,6 +220,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             spider_plugins=None,
             plugin_manager=None,
             drive_detail_loader=None,
+            offline_download_detail_loader=None,
             direct_parse_detail_loader=None,
             direct_parse_danmaku_loader=None,
             direct_parse_playback_history_loader=None,
@@ -235,6 +241,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
+        self._offline_download_detail_loader = offline_download_detail_loader
         self._direct_parse_detail_loader = direct_parse_detail_loader
         self._direct_parse_danmaku_loader = direct_parse_danmaku_loader
         self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
@@ -834,6 +841,29 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             detail_resolver=getattr(self.browse_controller, "resolve_folder_play_item", None),
         )
 
+    def _build_offline_download_request(self, link: str) -> OpenPlayerRequest:
+        if self._offline_download_detail_loader is None:
+            raise ValueError("当前未配置磁力链接解析")
+        try:
+            payload = self._offline_download_detail_loader(link)
+            detail = _map_vod_item(payload["list"][0])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"没有可播放的项目: {link}") from exc
+        playlist = build_detail_playlist(detail)
+        print(detail)
+        print(playlist)
+        if not playlist:
+            raise ValueError(f"没有可播放的项目: {detail.vod_name or link}")
+        return OpenPlayerRequest(
+            vod=detail,
+            playlist=playlist,
+            clicked_index=0,
+            source_kind="browse",
+            source_mode="detail",
+            source_vod_id=link,
+            detail_resolver=getattr(self.browse_controller, "resolve_folder_play_item", None),
+        )
+
     def _build_direct_parse_request(self, url: str) -> OpenPlayerRequest:
         if self._playback_parser_service is None:
             raise ValueError("当前未配置内置解析")
@@ -953,6 +983,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         return playlist
 
     def _start_direct_open_from_global_search(self, keyword: str) -> bool:
+        if _looks_like_offline_download_link(keyword):
+            self._start_open_request(lambda: self._build_offline_download_request(keyword))
+            return True
         if not _looks_like_http_url(keyword):
             return False
         if _looks_like_drive_share_link(keyword):
@@ -1146,11 +1179,26 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
         if callable(load_enabled_plugins):
             try:
-                loaded_plugins = load_enabled_plugins(drive_detail_loader=self._drive_detail_loader)
+                loaded_plugins = load_enabled_plugins(
+                    drive_detail_loader=self._drive_detail_loader,
+                    offline_download_detail_loader=self._offline_download_detail_loader,
+                )
             except TypeError as exc:
-                if "drive_detail_loader" not in str(exc):
-                    raise
-                loaded_plugins = load_enabled_plugins()
+                if "offline_download_detail_loader" not in str(exc):
+                    if "drive_detail_loader" not in str(exc):
+                        raise
+                    loaded_plugins = load_enabled_plugins(
+                        drive_detail_loader=self._drive_detail_loader,
+                    )
+                else:
+                    try:
+                        loaded_plugins = load_enabled_plugins(
+                            drive_detail_loader=self._drive_detail_loader,
+                        )
+                    except TypeError as drive_exc:
+                        if "drive_detail_loader" not in str(drive_exc):
+                            raise
+                        loaded_plugins = load_enabled_plugins()
             if isinstance(loaded_plugins, Iterable):
                 self._plugin_definitions = list(loaded_plugins)
             else:

@@ -38,6 +38,8 @@ def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
 
 
 def build_detail_playlist(detail: VodItem) -> list[PlayItem]:
+    if detail.items and len(detail.items) == 1 and detail.items[0].url and _looks_like_media_url(detail.vod_play_url):
+        return list(detail.items)
     playlist = _parse_playlist(detail.vod_play_url)
     if not playlist and detail.items:
         playlist = list(detail.items)

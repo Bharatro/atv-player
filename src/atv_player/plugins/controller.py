@@ -48,6 +48,11 @@ from atv_player.player.resume import resolve_resume_index
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_offline_download_link(value: str) -> bool:
+    candidate = value.strip().lower()
+    return candidate.startswith("magnet:?") or candidate.startswith("ed2k://")
+
+
 def _map_filter_option(payload: object) -> CategoryFilterOption | None:
     if not isinstance(payload, dict):
         return None
@@ -408,6 +413,7 @@ class SpiderPluginController:
         plugin_name: str,
         search_enabled: bool,
         drive_detail_loader: Callable[[str], dict] | None = None,
+        offline_download_detail_loader: Callable[[str], dict] | None = None,
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
         playback_parser_service=None,
@@ -420,6 +426,7 @@ class SpiderPluginController:
         self._plugin_name = plugin_name
         self.supports_search = bool(search_enabled and callable(getattr(self._spider, "searchContent", None)))
         self._drive_detail_loader = drive_detail_loader
+        self._offline_download_detail_loader = offline_download_detail_loader
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
         self._playback_parser_service = playback_parser_service
@@ -664,6 +671,64 @@ class SpiderPluginController:
             for index, item in enumerate(playlist)
             if item.url and not _looks_like_drive_share_link(item.url)
         ])
+
+    def _resolve_folder_like_detail(self, item: PlayItem) -> VodItem | None:
+        if not item.vod_id or self._drive_detail_loader is None:
+            return None
+        try:
+            payload = self._drive_detail_loader(item.vod_id)
+            return _map_vod_item(payload["list"][0])
+        except (KeyError, IndexError):
+            return None
+
+    def _build_offline_download_replacement_playlist(self, detail: VodItem, play_source: str) -> list[PlayItem]:
+        playlist = build_detail_playlist(detail)
+        return _mark_short_bare_numeric_playlist([
+            PlayItem(
+                title=item.title,
+                url=item.url,
+                media_title=detail.vod_name,
+                path=item.path,
+                index=index,
+                size=item.size,
+                vod_id=item.vod_id,
+                headers=dict(item.headers),
+                play_source=play_source,
+            )
+            for index, item in enumerate(playlist)
+            if item.url or item.vod_id
+        ])
+
+    def _apply_single_offline_download_item(self, current_item: PlayItem, replacement: PlayItem) -> None:
+        current_item.vod_id = replacement.vod_id
+        current_item.path = replacement.path
+        current_item.size = replacement.size
+        current_item.headers = dict(replacement.headers)
+        current_item.external_subtitles = list(replacement.external_subtitles)
+        current_item.playback_qualities = list(replacement.playback_qualities)
+        current_item.selected_playback_quality_id = replacement.selected_playback_quality_id
+        if replacement.url:
+            current_item.url = replacement.url
+
+    def _replace_current_playlist_item(
+        self,
+        playlist: list[PlayItem],
+        current_item: PlayItem,
+        replacements: list[PlayItem],
+    ) -> tuple[list[PlayItem], int]:
+        if not playlist:
+            updated = list(replacements)
+            for index, item in enumerate(updated):
+                item.index = index
+            return updated, 0
+        try:
+            current_index = playlist.index(current_item)
+        except ValueError:
+            current_index = max(0, min(int(current_item.index or 0), len(playlist) - 1))
+        updated = list(playlist[:current_index]) + list(replacements) + list(playlist[current_index + 1 :])
+        for index, item in enumerate(updated):
+            item.index = index
+        return updated, current_index
 
     def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
@@ -1044,6 +1109,39 @@ class SpiderPluginController:
         item.selected_playback_quality_id = ""
         if not item.vod_id:
             return
+        if _looks_like_offline_download_link(item.vod_id):
+            if self._offline_download_detail_loader is None:
+                raise ValueError("当前插件未配置磁力链接解析")
+            try:
+                payload = self._offline_download_detail_loader(item.vod_id)
+                detail = _map_vod_item(payload["list"][0])
+            except (KeyError, IndexError) as exc:
+                logger.exception(
+                    "Spider plugin offline download detail failed plugin=%s source=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                )
+                raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
+            replacement = self._build_offline_download_replacement_playlist(detail, item.play_source)
+            if not replacement:
+                raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            session.detail_resolver = self._resolve_folder_like_detail
+            session.resolved_vod_by_id = {}
+            merged_playlist, replacement_start_index = self._replace_current_playlist_item(
+                session.playlist,
+                item,
+                replacement,
+            )
+            logger.info(
+                "Spider plugin resolved offline download playlist plugin=%s source=%s items=%s",
+                self._plugin_name,
+                item.vod_id,
+                len(replacement),
+            )
+            return PlaybackLoadResult(
+                replacement_playlist=merged_playlist,
+                replacement_start_index=replacement_start_index,
+            )
         if _looks_like_drive_share_link(item.vod_id):
             if self._drive_detail_loader is None:
                 raise ValueError("当前插件未配置网盘解析")
