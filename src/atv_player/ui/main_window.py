@@ -195,6 +195,7 @@ class _GlobalSearchResult:
     page: PosterGridPage
     items: list[Any]
     total: int
+    page_number: int
 
 
 class MainWindow(QMainWindow, AsyncGuardMixin):
@@ -1025,13 +1026,22 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             ).start()
 
     def _run_global_search(self, request_id: int, definition: _TabDefinition, keyword: str) -> None:
+        self._run_global_search_page(request_id, definition, keyword, 1)
+
+    def _run_global_search_page(
+        self,
+        request_id: int,
+        definition: _TabDefinition,
+        keyword: str,
+        page_number: int,
+    ) -> None:
         controller = definition.search_controller
         if controller is None:
             if self._is_window_alive():
                 self._global_search_signals.failed.emit(request_id, definition.key)
             return
         try:
-            items, total = controller.search_items(keyword, 1)
+            items, total = controller.search_items(keyword, page_number)
         except Exception:
             if self._is_window_alive():
                 self._global_search_signals.failed.emit(request_id, definition.key)
@@ -1045,26 +1055,32 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                     page=cast(PosterGridPage, definition.page),
                     items=list(items),
                     total=total,
+                    page_number=page_number,
                 ),
             )
 
     def _handle_global_search_succeeded(self, request_id: int, result: _GlobalSearchResult) -> None:
         if request_id != self._global_search_request_id:
             return
-        if result.items:
-            result.page.show_external_results(result.items, result.total, page=1, empty_message="无搜索结果")
-            self._global_search_results[result.key] = result
+        initial_request = result.key in self._global_search_pending_keys
+        if initial_request and not result.items:
+            self._global_search_results.pop(result.key, None)
             self._refresh_visible_tabs()
         else:
-            self._global_search_results.pop(result.key, None)
-        self._finish_global_search_result(result.key)
+            self._show_global_search_result(result)
+            if initial_request:
+                self._refresh_visible_tabs()
+        if initial_request:
+            self._finish_global_search_result(result.key)
 
     def _handle_global_search_failed(self, request_id: int, key: str) -> None:
         if request_id != self._global_search_request_id:
             return
-        self._global_search_results.pop(key, None)
-        self._refresh_visible_tabs()
-        self._finish_global_search_result(key)
+        initial_request = key in self._global_search_pending_keys
+        if initial_request:
+            self._global_search_results.pop(key, None)
+            self._refresh_visible_tabs()
+            self._finish_global_search_result(key)
 
     def _finish_global_search_result(self, key: str) -> None:
         self._global_search_pending_keys.discard(key)
@@ -1096,6 +1112,36 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 definition.page.clear_external_results()
         self._refresh_visible_tabs()
         self._sync_global_search_action_state()
+
+    def _show_global_search_result(self, result: _GlobalSearchResult) -> None:
+        result.page.show_external_results(
+            result.items,
+            result.total,
+            page=result.page_number,
+            empty_message="无搜索结果",
+            page_loader=self._build_global_search_page_loader(result.key),
+        )
+        self._global_search_results[result.key] = result
+
+    def _build_global_search_page_loader(self, key: str):
+        def load_page(page_number: int) -> None:
+            self._load_global_search_page(key, page_number)
+
+        return load_page
+
+    def _load_global_search_page(self, key: str, page_number: int) -> None:
+        if not self._global_search_active or not self._global_search_keyword:
+            return
+        definition = next((item for item in self._all_tab_definitions() if item.key == key), None)
+        if definition is None:
+            return
+        request_id = self._global_search_request_id
+        keyword = self._global_search_keyword
+        threading.Thread(
+            target=self._run_global_search_page,
+            args=(request_id, definition, keyword, page_number),
+            daemon=True,
+        ).start()
 
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:

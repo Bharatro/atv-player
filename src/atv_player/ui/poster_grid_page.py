@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from threading import BoundedSemaphore
 from typing import cast
 
@@ -145,6 +146,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_keyword = ""
         self._external_results_active = False
         self._external_empty_message = "暂无内容"
+        self._external_page_loader: Callable[[int], None] | None = None
+        self._external_loading = False
         self._search_row: QHBoxLayout | None = None
         self._search_controls_container: QWidget | None = None
         self.category_list = QListWidget()
@@ -588,11 +591,22 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _update_pagination(self) -> None:
         total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
         self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
+        if self._external_results_active:
+            pagination_enabled = self._external_page_loader is not None and not self._external_loading
+            self.prev_page_button.setEnabled(pagination_enabled and self.current_page > 1)
+            self.next_page_button.setEnabled(pagination_enabled and self.current_page < total_pages)
+            return
         self.prev_page_button.setEnabled(self.current_page > 1)
         self.next_page_button.setEnabled(self.current_page < total_pages)
 
     def previous_page(self) -> None:
         if self._external_results_active:
+            if self._external_page_loader is None or self._external_loading or self.current_page <= 1:
+                return
+            self._external_loading = True
+            self.status_label.setText("搜索中...")
+            self._update_pagination()
+            self._external_page_loader(self.current_page - 1)
             return
         if self.current_page <= 1:
             return
@@ -605,9 +619,15 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.load_items(self.selected_category_id, self.current_page)
 
     def next_page(self) -> None:
-        if self._external_results_active:
-            return
         total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
+        if self._external_results_active:
+            if self._external_page_loader is None or self._external_loading or self.current_page >= total_pages:
+                return
+            self._external_loading = True
+            self.status_label.setText("搜索中...")
+            self._update_pagination()
+            self._external_page_loader(self.current_page + 1)
+            return
         if self.current_page >= total_pages:
             return
         self.current_page += 1
@@ -625,6 +645,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if not keyword:
             return
         self._external_results_active = False
+        self._external_page_loader = None
+        self._external_loading = False
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
         self._search_mode = True
@@ -639,6 +661,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if not self._search_enabled:
             return
         self._external_results_active = False
+        self._external_page_loader = None
+        self._external_loading = False
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
         self.keyword_edit.clear()
@@ -654,8 +678,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if self._external_results_active:
             self.show_items(
                 self.items,
-                len(self.items),
-                page=1,
+                self.total_items,
+                page=self.current_page,
                 empty_message=self._external_empty_message,
             )
             return
@@ -709,19 +733,24 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         total: int,
         page: int = 1,
         empty_message: str = "无搜索结果",
+        page_loader: Callable[[int], None] | None = None,
     ) -> None:
         self._external_results_active = True
         self._external_empty_message = empty_message
+        self._external_page_loader = page_loader
+        self._external_loading = False
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
         rendered_items = list(items)
-        self.show_items(rendered_items, len(rendered_items), page=page, empty_message=empty_message)
+        self.show_items(rendered_items, total, page=page, empty_message=empty_message)
 
     def clear_external_results(self) -> None:
         if not self._external_results_active:
             return
         self._external_results_active = False
         self._external_empty_message = "暂无内容"
+        self._external_page_loader = None
+        self._external_loading = False
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
         if self.selected_category_id:

@@ -149,6 +149,18 @@ class SearchableController(FakeStaticController):
         return list(self.items), self.total
 
 
+class PagedSearchableController(FakeStaticController):
+    def __init__(self, results_by_page: dict[int, tuple[list[VodItem], int]]) -> None:
+        self.results_by_page = {
+            page: (list(items), total) for page, (items, total) in results_by_page.items()
+        }
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return self.results_by_page.get(page, ([], 0))
+
+
 class SearchableCategoryController(SearchableController):
     def __init__(self, category_item: VodItem, search_items: list[VodItem], total: int | None = None) -> None:
         super().__init__(search_items, total=total)
@@ -402,6 +414,48 @@ def test_main_window_switching_result_tabs_keeps_global_search_results(qtbot) ->
     assert window.emby_page.category_list.isHidden() is True
     assert emby.load_categories_calls == 0
     assert emby.load_items_calls == []
+
+
+def test_main_window_global_search_results_can_paginate_current_source_only(qtbot) -> None:
+    telegram = PagedSearchableController(
+        {
+            1: ([_vod("Telegram Page 1")], 61),
+            2: ([_vod("Telegram Page 2")], 61),
+        }
+    )
+    emby = SearchableController([_vod("Emby Result")], total=1)
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=emby,
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(61)", "Emby(1)"])
+    assert [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 1"]
+    assert telegram.search_calls == [("庆余年", 1)]
+    assert emby.search_calls == [("庆余年", 1)]
+
+    window.telegram_page.next_page()
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 2"])
+    assert telegram.search_calls == [("庆余年", 1), ("庆余年", 2)]
+    assert emby.search_calls == [("庆余年", 1)]
+    assert window.telegram_page.page_label.text() == "第 2 / 3 页"
 
 
 def test_main_window_global_search_includes_pansou_when_enabled(qtbot) -> None:
