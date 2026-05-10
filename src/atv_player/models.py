@@ -29,6 +29,10 @@ class AppConfig:
     preferred_parse_key: str = ""
     preferred_danmaku_enabled: bool = True
     preferred_danmaku_line_count: int = 1
+    preferred_danmaku_render_mode: str = "static"
+    preferred_danmaku_color_mode: str = "uniform"
+    preferred_danmaku_uniform_color: str = "#FFFFFF"
+    preferred_danmaku_position_preset: str = "top"
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None

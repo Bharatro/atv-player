@@ -4,6 +4,32 @@ from pathlib import Path
 from atv_player.models import AppConfig
 from atv_player.sqlite_utils import managed_connection
 
+_VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
+_VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
+_VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
+
+
+def _normalize_danmaku_render_mode(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_DANMAKU_RENDER_MODES else "static"
+
+
+def _normalize_danmaku_color_mode(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_DANMAKU_COLOR_MODES else "uniform"
+
+
+def _normalize_danmaku_uniform_color(value: object) -> str:
+    text = str(value or "").strip().upper()
+    if len(text) == 7 and text.startswith("#"):
+        return text
+    return "#FFFFFF"
+
+
+def _normalize_danmaku_position_preset(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_DANMAKU_POSITION_PRESETS else "top"
+
 
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
@@ -43,6 +69,10 @@ class SettingsRepository:
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
                     preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
+                    preferred_danmaku_render_mode TEXT NOT NULL DEFAULT 'static',
+                    preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'uniform',
+                    preferred_danmaku_uniform_color TEXT NOT NULL DEFAULT '#FFFFFF',
+                    preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top',
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB,
@@ -117,6 +147,22 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1"
                 )
+            if "preferred_danmaku_render_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_render_mode TEXT NOT NULL DEFAULT 'static'"
+                )
+            if "preferred_danmaku_color_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'uniform'"
+                )
+            if "preferred_danmaku_uniform_color" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_uniform_color TEXT NOT NULL DEFAULT '#FFFFFF'"
+                )
+            if "preferred_danmaku_position_preset" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top'"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
@@ -160,6 +206,10 @@ class SettingsRepository:
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
+                    preferred_danmaku_render_mode,
+                    preferred_danmaku_color_mode,
+                    preferred_danmaku_uniform_color,
+                    preferred_danmaku_position_preset,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -168,7 +218,11 @@ class SettingsRepository:
                     last_selected_category_tab,
                     last_selected_category_id
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, 0, '', 1, 1, NULL, NULL, NULL, NULL, 'douban', '', '')
+                VALUES (
+                    1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
+                    0, 100, 0, 0, '', 1, 1, 'static', 'uniform', '#FFFFFF', 'top',
+                    NULL, NULL, NULL, NULL, 'douban', '', ''
+                )
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -197,6 +251,10 @@ class SettingsRepository:
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
+                    preferred_danmaku_render_mode,
+                    preferred_danmaku_color_mode,
+                    preferred_danmaku_uniform_color,
+                    preferred_danmaku_position_preset,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -214,6 +272,10 @@ class SettingsRepository:
         values[14] = bool(values[14])
         values[15] = bool(values[15])
         values[17] = bool(values[17])
+        values[19] = _normalize_danmaku_render_mode(values[19])
+        values[20] = _normalize_danmaku_color_mode(values[20])
+        values[21] = _normalize_danmaku_uniform_color(values[21])
+        values[22] = _normalize_danmaku_position_preset(values[22])
         return AppConfig(*values)
 
     def save_config(self, config: AppConfig) -> None:
@@ -241,6 +303,10 @@ class SettingsRepository:
                     preferred_parse_key = ?,
                     preferred_danmaku_enabled = ?,
                     preferred_danmaku_line_count = ?,
+                    preferred_danmaku_render_mode = ?,
+                    preferred_danmaku_color_mode = ?,
+                    preferred_danmaku_uniform_color = ?,
+                    preferred_danmaku_position_preset = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
                     player_main_splitter_state = ?,
@@ -270,6 +336,10 @@ class SettingsRepository:
                     config.preferred_parse_key,
                     int(config.preferred_danmaku_enabled),
                     config.preferred_danmaku_line_count,
+                    _normalize_danmaku_render_mode(config.preferred_danmaku_render_mode),
+                    _normalize_danmaku_color_mode(config.preferred_danmaku_color_mode),
+                    _normalize_danmaku_uniform_color(config.preferred_danmaku_uniform_color),
+                    _normalize_danmaku_position_preset(config.preferred_danmaku_position_preset),
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,
