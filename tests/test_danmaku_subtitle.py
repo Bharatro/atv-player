@@ -102,7 +102,7 @@ def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
         position_preset="top",
     )
 
-    assert "Dialogue: 0,0:00:00.00,0:00:08.00" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:09.00" in subtitle
 
 
 def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
@@ -124,7 +124,7 @@ def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
     )
 
     assert ",40," in subtitle
-    assert "Dialogue: 0,0:00:00.00,0:00:16.00" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:18.00" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:

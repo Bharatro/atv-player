@@ -8329,7 +8329,8 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
             self.loaded_danmaku_paths: list[str] = []
             self.removed_danmaku_track_ids: list[int] = []
             self.set_secondary_subtitle_position_calls: list[int] = []
-            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
             self._next_track_id = 40
 
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -8348,7 +8349,7 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
             return []
 
         def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
-            assert select_for_secondary is True
+            assert select_for_secondary is False
             self.loaded_danmaku_paths.append(path)
             track_id = self._next_track_id
             self._next_track_id += 1
@@ -8364,14 +8365,18 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
         def set_secondary_subtitle_position(self, value: int) -> None:
             self.set_secondary_subtitle_position_calls.append(value)
 
-        def supports_secondary_subtitle_ass_override(self) -> bool:
+        def supports_subtitle_ass_override(self) -> bool:
             return True
 
-        def secondary_subtitle_ass_override(self) -> str:
-            return "strip"
+        def subtitle_ass_override(self) -> str:
+            return "scale"
 
-        def set_secondary_subtitle_ass_override(self, value: str) -> None:
-            self.set_secondary_subtitle_ass_override_calls.append(value)
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
 
         def position_seconds(self) -> int:
             return 0
@@ -8406,7 +8411,8 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
     assert window.danmaku_combo.currentText() == "弹幕"
     assert len(window.video.loaded_danmaku_paths) == 1
     assert window.video.set_secondary_subtitle_position_calls == []
-    assert window.video.set_secondary_subtitle_ass_override_calls[-1] == "no"
+    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.subtitle_apply_calls[-1] == ("track", 40)
     assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
 
 
@@ -8907,12 +8913,12 @@ def test_player_window_keeps_danmaku_temp_file_until_player_loads_it(qtbot) -> N
     assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
 
 
-def test_player_window_falls_back_when_secondary_danmaku_track_is_unsupported(qtbot) -> None:
+def test_player_window_loads_danmaku_with_primary_slot_even_when_secondary_ass_override_is_supported(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self.loaded_danmaku_paths: list[tuple[str, bool]] = []
-            self.set_secondary_subtitle_ass_override_calls: list[str] = []
             self.set_subtitle_ass_override_calls: list[str] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
             self._next_track_id = 70
 
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -8933,12 +8939,6 @@ def test_player_window_falls_back_when_secondary_danmaku_track_is_unsupported(qt
         def supports_secondary_subtitle_ass_override(self) -> bool:
             return True
 
-        def secondary_subtitle_ass_override(self) -> str:
-            return "strip"
-
-        def set_secondary_subtitle_ass_override(self, value: str) -> None:
-            self.set_secondary_subtitle_ass_override_calls.append(value)
-
         def supports_subtitle_ass_override(self) -> bool:
             return True
 
@@ -8948,10 +8948,12 @@ def test_player_window_falls_back_when_secondary_danmaku_track_is_unsupported(qt
         def set_subtitle_ass_override(self, value: str) -> None:
             self.set_subtitle_ass_override_calls.append(value)
 
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
         def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
             self.loaded_danmaku_paths.append((path, select_for_secondary))
-            if select_for_secondary:
-                raise RuntimeError("secondary unsupported")
             track_id = self._next_track_id
             self._next_track_id += 1
             return track_id
@@ -8988,9 +8990,9 @@ def test_player_window_falls_back_when_secondary_danmaku_track_is_unsupported(qt
 
     assert window.danmaku_combo.isEnabled() is True
     assert window.danmaku_combo.currentText() == "弹幕"
-    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True, False]
-    assert window.video.set_secondary_subtitle_ass_override_calls[-1] == "no"
-    assert window.video.set_subtitle_ass_override_calls[-1] == "no"
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
+    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.subtitle_apply_calls[-1] == ("track", 70)
     assert Path(window.video.loaded_danmaku_paths[-1][0]).read_text(encoding="utf-8").startswith("[Script Info]")
     assert "弹幕加载失败" not in window.log_view.toPlainText()
 
@@ -9071,16 +9073,17 @@ def test_player_window_uses_primary_slot_when_secondary_ass_override_is_unsuppor
     window.open_session(session)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
-    assert window.video.set_subtitle_ass_override_calls == ["no", "no"]
+    assert window.video.set_subtitle_ass_override_calls == []
     assert window.video.subtitle_apply_calls[-1] == ("track", 90)
 
 
-def test_player_window_reapplies_secondary_ass_override_after_loading_danmaku(qtbot) -> None:
+def test_player_window_does_not_use_secondary_slot_when_secondary_ass_override_is_supported(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self.loaded_danmaku_paths: list[tuple[str, bool]] = []
             self.set_secondary_subtitle_ass_override_calls: list[str] = []
-            self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
             self._next_track_id = 70
 
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -9107,8 +9110,17 @@ def test_player_window_reapplies_secondary_ass_override_after_loading_danmaku(qt
         def set_secondary_subtitle_ass_override(self, value: str) -> None:
             self.set_secondary_subtitle_ass_override_calls.append(value)
 
-        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
-            self.secondary_subtitle_apply_calls.append((mode, track_id))
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
             return track_id
 
         def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
@@ -9147,9 +9159,10 @@ def test_player_window_reapplies_secondary_ass_override_after_loading_danmaku(qt
 
     window.open_session(session)
 
-    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True]
-    assert window.video.set_secondary_subtitle_ass_override_calls == ["no", "no"]
-    assert window.video.secondary_subtitle_apply_calls[-1] == ("track", 70)
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
+    assert window.video.set_secondary_subtitle_ass_override_calls == []
+    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.subtitle_apply_calls[-1] == ("track", 70)
 
 
 def test_player_window_retries_danmaku_load_after_initial_mpv_command_failure(qtbot) -> None:
@@ -9228,7 +9241,7 @@ def test_player_window_retries_danmaku_load_after_initial_mpv_command_failure(qt
 
     qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) >= 2)
 
-    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True, True]
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False, False]
     assert "弹幕加载失败" not in window.log_view.toPlainText()
 
 
@@ -9309,11 +9322,11 @@ def test_player_window_keeps_retrying_danmaku_load_until_player_is_ready(qtbot) 
     qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) >= 5, timeout=3000)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [
-        True,
-        True,
-        True,
-        True,
-        True,
+        False,
+        False,
+        False,
+        False,
+        False,
     ]
     assert "弹幕加载失败" not in window.log_view.toPlainText()
 
@@ -9323,8 +9336,9 @@ def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_
         def __init__(self, window: PlayerWindow) -> None:
             self.window = window
             self.loaded_danmaku_paths: list[tuple[str, bool]] = []
-            self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
             self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
             self._next_track_id = 120
             self._loaded_track_id: int | None = None
 
@@ -9363,6 +9377,15 @@ def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_
         def set_secondary_subtitle_ass_override(self, value: str) -> None:
             self.set_secondary_subtitle_ass_override_calls.append(value)
 
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
         def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
             self.loaded_danmaku_paths.append((path, select_for_secondary))
             track_id = self._next_track_id
@@ -9371,8 +9394,8 @@ def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_
             self.window.video_widget.subtitle_tracks_changed.emit()
             return track_id
 
-        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
-            self.secondary_subtitle_apply_calls.append((mode, track_id))
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
             return track_id
 
         def remove_subtitle_track(self, track_id: int | None) -> None:
@@ -9408,7 +9431,7 @@ def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_
 
     window.open_session(session)
 
-    assert window.video.secondary_subtitle_apply_calls == []
+    assert window.video.subtitle_apply_calls[-1] == ("track", 120)
     assert window.danmaku_combo.currentText() == "弹幕"
 
 

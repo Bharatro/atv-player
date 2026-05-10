@@ -3103,37 +3103,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             raise ValueError("弹幕为空")
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
-        can_preserve_secondary_ass = bool(
-            getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
-        )
-        if can_preserve_secondary_ass:
-            if (
-                self._danmaku_restore_secondary_ass_override is None
-                and hasattr(self.video, "secondary_subtitle_ass_override")
-            ):
-                self._danmaku_restore_secondary_ass_override = self.video.secondary_subtitle_ass_override()
-            if hasattr(self.video, "set_secondary_subtitle_ass_override"):
-                self.video.set_secondary_subtitle_ass_override("no")
-            try:
-                self._danmaku_loading_slot = "secondary"
-                track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
-                if (
-                    track_id is not None
-                    and hasattr(self.video, "set_secondary_subtitle_ass_override")
-                    and getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
-                ):
-                    self.video.set_secondary_subtitle_ass_override("no")
-                    if hasattr(self.video, "apply_secondary_subtitle_mode"):
-                        self.video.apply_secondary_subtitle_mode("track", track_id=track_id)
-                self._danmaku_uses_secondary_slot = True
-            except Exception as exc:
-                if self._is_mpv_command_error(exc):
-                    raise
-                track_id = self._load_primary_danmaku_subtitle(subtitle_path)
-            finally:
-                self._danmaku_loading_slot = None
-        else:
-            track_id = self._load_primary_danmaku_subtitle(subtitle_path)
+        track_id = self._load_primary_danmaku_subtitle(subtitle_path)
         if track_id is None:
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id
@@ -3141,30 +3111,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_line_count = line_count
 
     def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
-        if (
-            self._danmaku_restore_main_ass_override is None
-            and hasattr(self.video, "subtitle_ass_override")
-            and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
-        ):
-            self._danmaku_restore_main_ass_override = self.video.subtitle_ass_override()
-        if (
-            hasattr(self.video, "set_subtitle_ass_override")
-            and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
-        ):
-            self.video.set_subtitle_ass_override("no")
         self._danmaku_loading_slot = "primary"
         try:
             track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=False)
             if track_id is not None and hasattr(self.video, "apply_subtitle_mode"):
                 self.video.apply_subtitle_mode("track", track_id=track_id)
-            if (
-                track_id is not None
-                and hasattr(self.video, "set_subtitle_ass_override")
-                and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
-            ):
-                self.video.set_subtitle_ass_override("no")
-                if hasattr(self.video, "apply_subtitle_mode"):
-                    self.video.apply_subtitle_mode("track", track_id=track_id)
         finally:
             self._danmaku_loading_slot = None
         self._danmaku_uses_secondary_slot = False
