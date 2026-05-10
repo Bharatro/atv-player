@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
@@ -393,6 +393,57 @@ def test_player_window_saves_danmaku_render_mode_from_dialog(qtbot) -> None:
     assert dialog.windowTitle() == "弹幕设置"
     assert config.preferred_danmaku_render_mode == "mixed"
     assert saved["called"] == 1
+
+
+def test_player_window_uses_color_palette_button_in_danmaku_settings_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    assert window._danmaku_uniform_color_edit is None
+    assert isinstance(window._danmaku_uniform_color_button, QPushButton)
+    assert window._danmaku_uniform_color_button.text() == "#FFFFFF"
+    assert window._danmaku_uniform_color_button.isEnabled() is True
+
+    window._danmaku_uniform_color_button.click()
+
+    assert window._danmaku_uniform_color_dialog is not None
+    assert window._danmaku_uniform_color_dialog.isVisible() is True
+
+    window._danmaku_color_mode_combo.setCurrentIndex(window._danmaku_color_mode_combo.findData("source"))
+
+    assert window._danmaku_uniform_color_button.isEnabled() is False
+
+
+def test_player_window_saves_advanced_danmaku_settings_from_dialog(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    assert isinstance(window._danmaku_line_count_spin, QSpinBox)
+    assert isinstance(window._danmaku_font_size_spin, QSpinBox)
+    assert isinstance(window._danmaku_scroll_speed_spin, QDoubleSpinBox)
+
+    window._danmaku_line_count_spin.setValue(8)
+    window._danmaku_font_size_spin.setValue(40)
+    window._danmaku_scroll_speed_spin.setValue(0.8)
+
+    assert config.preferred_danmaku_line_count == 8
+    assert config.preferred_danmaku_font_size == 40
+    assert config.preferred_danmaku_scroll_speed == pytest.approx(0.8)
+    assert saved["called"] == 3
 
 
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
@@ -3697,6 +3748,11 @@ def test_player_window_exposes_danmaku_combo_after_subtitle_combo(qtbot) -> None
         "3行",
         "4行",
         "5行",
+        "6行",
+        "7行",
+        "8行",
+        "9行",
+        "10行",
     ]
     assert window.danmaku_combo.isEnabled() is False
     assert control_layout.indexOf(window.danmaku_combo) == control_layout.indexOf(window.subtitle_combo) + 1
@@ -4878,6 +4934,11 @@ def test_player_window_context_menu_danmaku_actions_sync_bottom_combo(qtbot) -> 
         "3行",
         "4行",
         "5行",
+        "6行",
+        "7行",
+        "8行",
+        "9行",
+        "10行",
     ]
 
 
@@ -8456,7 +8517,7 @@ def test_player_window_uses_saved_danmaku_line_count_on_open_session(qtbot) -> N
     )
     window = PlayerWindow(
         FakePlayerController(),
-        config=AppConfig(preferred_danmaku_enabled=True, preferred_danmaku_line_count=4),
+        config=AppConfig(preferred_danmaku_enabled=True, preferred_danmaku_line_count=8),
     )
     qtbot.addWidget(window)
     window.video = FakeVideo()
@@ -8464,7 +8525,7 @@ def test_player_window_uses_saved_danmaku_line_count_on_open_session(qtbot) -> N
     window.open_session(session)
 
     assert len(window.video.loaded_danmaku_paths) == 1
-    assert window.danmaku_combo.currentText() == "4行"
+    assert window.danmaku_combo.currentText() == "8行"
 
 
 def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) -> None:
@@ -8612,6 +8673,80 @@ def test_player_window_reloads_active_danmaku_after_uniform_color_change(qtbot) 
     initial_path = window.video.loaded_danmaku_paths[-1]
 
     window._save_danmaku_uniform_color("#00FF00")
+
+    assert saved["called"] == 1
+    assert len(window.video.loaded_danmaku_paths) == initial_count + 1
+    assert window.video.removed_danmaku_track_ids == [70]
+    assert window.video.loaded_danmaku_paths[-1] != initial_path
+
+
+def test_player_window_reloads_active_danmaku_after_color_mode_change(qtbot) -> None:
+    saved = {"called": 0}
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self.removed_danmaku_track_ids: list[int] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self.removed_danmaku_track_ids.append(track_id)
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16711680">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+    saved["called"] = 0
+    initial_count = len(window.video.loaded_danmaku_paths)
+    initial_path = window.video.loaded_danmaku_paths[-1]
+
+    window._save_danmaku_color_mode("source")
 
     assert saved["called"] == 1
     assert len(window.video.loaded_danmaku_paths) == initial_count + 1
@@ -8936,8 +9071,85 @@ def test_player_window_uses_primary_slot_when_secondary_ass_override_is_unsuppor
     window.open_session(session)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
-    assert window.video.set_subtitle_ass_override_calls[-1] == "no"
+    assert window.video.set_subtitle_ass_override_calls == ["no", "no"]
     assert window.video.subtitle_apply_calls[-1] == ("track", 90)
+
+
+def test_player_window_reapplies_secondary_ass_override_after_loading_danmaku(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.secondary_subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True]
+    assert window.video.set_secondary_subtitle_ass_override_calls == ["no", "no"]
+    assert window.video.secondary_subtitle_apply_calls[-1] == ("track", 70)
 
 
 def test_player_window_retries_danmaku_load_after_initial_mpv_command_failure(qtbot) -> None:

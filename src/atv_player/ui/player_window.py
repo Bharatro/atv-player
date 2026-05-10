@@ -15,6 +15,7 @@ from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QCloseEvent,
+    QColor,
     QContextMenuEvent,
     QCursor,
     QIcon,
@@ -29,6 +30,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
+    QColorDialog,
+    QDoubleSpinBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -259,7 +262,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         ".wma",
     }
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
-    _DANMAKU_SECONDARY_SCALE = 50
+    _DANMAKU_SECONDARY_SCALE = 100
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
         "偏上": 30,
@@ -325,6 +328,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
+        self._danmaku_uniform_color_button: QPushButton | None = None
+        self._danmaku_uniform_color_dialog: QColorDialog | None = None
+        self._danmaku_uniform_color_preview_original: str | None = None
+        self._danmaku_line_count_spin: QSpinBox | None = None
+        self._danmaku_font_size_spin: QSpinBox | None = None
+        self._danmaku_scroll_speed_spin: QDoubleSpinBox | None = None
         self._danmaku_position_preset_combo: QComboBox | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
@@ -2084,7 +2093,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _reset_danmaku_combo(self, *, enabled: bool = False, current_index: int = 0) -> None:
         self.danmaku_combo.blockSignals(True)
         self.danmaku_combo.clear()
-        for label in ("弹幕", "关闭", "1行", "2行", "3行", "4行", "5行"):
+        labels = ["弹幕", "关闭", *(f"{line_count}行" for line_count in range(1, 11))]
+        for label in labels:
             self.danmaku_combo.addItem(label)
         self.danmaku_combo.setCurrentIndex(current_index)
         self.danmaku_combo.setEnabled(enabled)
@@ -2145,7 +2155,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _preferred_danmaku_line_count(self) -> int:
         if self.config is None:
             return 1
-        return max(1, min(int(getattr(self.config, "preferred_danmaku_line_count", 1)), 5))
+        return max(1, min(int(getattr(self.config, "preferred_danmaku_line_count", 1)), 10))
 
     def _preferred_danmaku_render_mode(self) -> str:
         if self.config is None:
@@ -2162,9 +2172,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _preferred_danmaku_uniform_color(self) -> str:
         if self.config is None:
             return "#FFFFFF"
-        value = str(getattr(self.config, "preferred_danmaku_uniform_color", "#FFFFFF") or "").strip().upper()
-        if len(value) == 7 and value.startswith("#"):
-            return value
+        return self._normalize_danmaku_uniform_color(getattr(self.config, "preferred_danmaku_uniform_color", "#FFFFFF"))
+
+    def _normalize_danmaku_uniform_color(self, value: object) -> str:
+        normalized = str(value or "").strip().upper()
+        if len(normalized) == 7 and normalized.startswith("#"):
+            try:
+                int(normalized[1:], 16)
+            except ValueError:
+                return "#FFFFFF"
+            return normalized
         return "#FFFFFF"
 
     def _preferred_danmaku_position_preset(self) -> str:
@@ -2172,6 +2189,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return "top"
         value = str(getattr(self.config, "preferred_danmaku_position_preset", "top") or "").strip()
         return value if value in {"top", "upper", "mid_upper", "bottom"} else "top"
+
+    def _preferred_danmaku_scroll_speed(self) -> float:
+        if self.config is None:
+            return 1.0
+        try:
+            value = float(getattr(self.config, "preferred_danmaku_scroll_speed", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.5, min(round(value, 2), 2.0))
+
+    def _preferred_danmaku_font_size(self) -> int:
+        if self.config is None:
+            return 32
+        try:
+            value = int(getattr(self.config, "preferred_danmaku_font_size", 32))
+        except (TypeError, ValueError):
+            return 32
+        return max(16, min(value, 72))
 
     def _preferred_danmaku_combo_index(self) -> int:
         if not self._preferred_danmaku_enabled():
@@ -2182,7 +2217,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _danmaku_line_count_from_combo_index(self, index: int) -> int:
         if index in (0, 1, 2):
             return 1
-        return max(1, min(index - 1, 5))
+        return max(1, min(index - 1, 10))
+
+    def _refresh_danmaku_combo_from_preferences(self) -> None:
+        self._reset_danmaku_combo(enabled=self.danmaku_combo.isEnabled(), current_index=self._preferred_danmaku_combo_index())
 
     def _save_preferred_danmaku_selection(self, index: int) -> None:
         if self.config is None or index < 0:
@@ -2197,6 +2235,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.config.preferred_danmaku_enabled = enabled
         self.config.preferred_danmaku_line_count = line_count
         self._save_config()
+
+    def _save_danmaku_line_count(self, value: int) -> None:
+        if self.config is None:
+            return
+        normalized = max(1, min(int(value), 10))
+        if self.config.preferred_danmaku_line_count == normalized:
+            return
+        self.config.preferred_danmaku_line_count = normalized
+        self._save_config()
+        self._refresh_danmaku_combo_from_preferences()
+        self._refresh_danmaku_settings_dialog_controls()
+        self._reload_active_danmaku_for_render_settings()
 
     def _save_danmaku_render_mode(self, value: str) -> None:
         if self.config is None:
@@ -2222,13 +2272,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _save_danmaku_uniform_color(self, value: str) -> None:
         if self.config is None:
             return
-        normalized = str(value or "").strip().upper()
-        if len(normalized) != 7 or not normalized.startswith("#"):
-            normalized = "#FFFFFF"
+        normalized = self._normalize_danmaku_uniform_color(value)
         if self.config.preferred_danmaku_uniform_color == normalized:
             return
         self.config.preferred_danmaku_uniform_color = normalized
         self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
         self._reload_active_danmaku_for_render_settings()
 
     def _save_danmaku_position_preset(self, value: str) -> None:
@@ -2239,6 +2288,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.config.preferred_danmaku_position_preset = normalized
         self._save_config()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_scroll_speed(self, value: float) -> None:
+        if self.config is None:
+            return
+        normalized = max(0.5, min(round(float(value), 2), 2.0))
+        if abs(float(getattr(self.config, "preferred_danmaku_scroll_speed", 1.0)) - normalized) < 0.001:
+            return
+        self.config.preferred_danmaku_scroll_speed = normalized
+        self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_font_size(self, value: int) -> None:
+        if self.config is None:
+            return
+        normalized = max(16, min(int(value), 72))
+        if int(getattr(self.config, "preferred_danmaku_font_size", 32)) == normalized:
+            return
+        self.config.preferred_danmaku_font_size = normalized
+        self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
         self._reload_active_danmaku_for_render_settings()
 
     def _reload_active_danmaku_for_render_settings(self) -> None:
@@ -2965,6 +3036,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             color_mode=self._preferred_danmaku_color_mode(),
             uniform_color=self._preferred_danmaku_uniform_color(),
             position_preset=self._preferred_danmaku_position_preset(),
+            scroll_speed=self._preferred_danmaku_scroll_speed(),
+            font_size=self._preferred_danmaku_font_size(),
         )
         if temp_path is None:
             return None
@@ -3044,6 +3117,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             try:
                 self._danmaku_loading_slot = "secondary"
                 track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+                if (
+                    track_id is not None
+                    and hasattr(self.video, "set_secondary_subtitle_ass_override")
+                    and getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
+                ):
+                    self.video.set_secondary_subtitle_ass_override("no")
+                    if hasattr(self.video, "apply_secondary_subtitle_mode"):
+                        self.video.apply_secondary_subtitle_mode("track", track_id=track_id)
                 self._danmaku_uses_secondary_slot = True
             except Exception as exc:
                 if self._is_mpv_command_error(exc):
@@ -3076,6 +3157,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=False)
             if track_id is not None and hasattr(self.video, "apply_subtitle_mode"):
                 self.video.apply_subtitle_mode("track", track_id=track_id)
+            if (
+                track_id is not None
+                and hasattr(self.video, "set_subtitle_ass_override")
+                and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
+            ):
+                self.video.set_subtitle_ass_override("no")
+                if hasattr(self.video, "apply_subtitle_mode"):
+                    self.video.apply_subtitle_mode("track", track_id=track_id)
         finally:
             self._danmaku_loading_slot = None
         self._danmaku_uses_secondary_slot = False
@@ -3592,11 +3681,63 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.danmaku_settings_button.setEnabled(True)
 
     def _refresh_danmaku_settings_color_controls(self) -> None:
-        if self._danmaku_uniform_color_edit is None:
+        enabled = self._preferred_danmaku_color_mode() == "uniform"
+        if self._danmaku_uniform_color_button is not None:
+            self._danmaku_uniform_color_button.setEnabled(enabled)
+
+    def _refresh_danmaku_uniform_color_button(self) -> None:
+        if self._danmaku_uniform_color_button is None:
             return
-        self._danmaku_uniform_color_edit.setEnabled(self._preferred_danmaku_color_mode() == "uniform")
+        color = self._preferred_danmaku_uniform_color()
+        preview = QColor(color)
+        foreground = "#000000" if preview.lightness() >= 160 else "#FFFFFF"
+        self._danmaku_uniform_color_button.setText(color)
+        self._danmaku_uniform_color_button.setStyleSheet(
+            "text-align: left; padding: 6px 10px; border: 1px solid #888;"
+            f" background-color: {color}; color: {foreground};"
+        )
+
+    def _ensure_danmaku_uniform_color_dialog(self) -> QColorDialog:
+        if self._danmaku_uniform_color_dialog is not None:
+            return self._danmaku_uniform_color_dialog
+        dialog = QColorDialog(self)
+        dialog.setWindowTitle("选择弹幕颜色")
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, False)
+        dialog.currentColorChanged.connect(self._preview_danmaku_uniform_color)
+        dialog.rejected.connect(self._restore_previewed_danmaku_uniform_color)
+        dialog.accepted.connect(self._clear_danmaku_uniform_color_preview)
+        self._danmaku_uniform_color_dialog = dialog
+        return dialog
+
+    def _open_danmaku_uniform_color_dialog(self) -> None:
+        dialog = self._ensure_danmaku_uniform_color_dialog()
+        self._danmaku_uniform_color_preview_original = self._preferred_danmaku_uniform_color()
+        dialog.blockSignals(True)
+        dialog.setCurrentColor(QColor(self._preferred_danmaku_uniform_color()))
+        dialog.blockSignals(False)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _preview_danmaku_uniform_color(self, color: QColor) -> None:
+        if not color.isValid():
+            return
+        self._save_danmaku_uniform_color(color.name().upper())
+
+    def _restore_previewed_danmaku_uniform_color(self) -> None:
+        if self._danmaku_uniform_color_preview_original is None:
+            return
+        self._save_danmaku_uniform_color(self._danmaku_uniform_color_preview_original)
+        self._clear_danmaku_uniform_color_preview()
+
+    def _clear_danmaku_uniform_color_preview(self) -> None:
+        self._danmaku_uniform_color_preview_original = None
 
     def _refresh_danmaku_settings_dialog_controls(self) -> None:
+        if self._danmaku_line_count_spin is not None:
+            self._danmaku_line_count_spin.blockSignals(True)
+            self._danmaku_line_count_spin.setValue(self._preferred_danmaku_line_count())
+            self._danmaku_line_count_spin.blockSignals(False)
         if self._danmaku_render_mode_combo is not None:
             self._danmaku_render_mode_combo.blockSignals(True)
             self._danmaku_render_mode_combo.setCurrentIndex(
@@ -3609,16 +3750,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 max(0, self._danmaku_color_mode_combo.findData(self._preferred_danmaku_color_mode()))
             )
             self._danmaku_color_mode_combo.blockSignals(False)
-        if self._danmaku_uniform_color_edit is not None:
-            self._danmaku_uniform_color_edit.blockSignals(True)
-            self._danmaku_uniform_color_edit.setText(self._preferred_danmaku_uniform_color())
-            self._danmaku_uniform_color_edit.blockSignals(False)
+        self._refresh_danmaku_uniform_color_button()
         if self._danmaku_position_preset_combo is not None:
             self._danmaku_position_preset_combo.blockSignals(True)
             self._danmaku_position_preset_combo.setCurrentIndex(
                 max(0, self._danmaku_position_preset_combo.findData(self._preferred_danmaku_position_preset()))
             )
             self._danmaku_position_preset_combo.blockSignals(False)
+        if self._danmaku_font_size_spin is not None:
+            self._danmaku_font_size_spin.blockSignals(True)
+            self._danmaku_font_size_spin.setValue(self._preferred_danmaku_font_size())
+            self._danmaku_font_size_spin.blockSignals(False)
+        if self._danmaku_scroll_speed_spin is not None:
+            self._danmaku_scroll_speed_spin.blockSignals(True)
+            self._danmaku_scroll_speed_spin.setValue(self._preferred_danmaku_scroll_speed())
+            self._danmaku_scroll_speed_spin.blockSignals(False)
         self._refresh_danmaku_settings_color_controls()
 
     def _ensure_danmaku_settings_dialog(self) -> QDialog:
@@ -3626,8 +3772,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return self._danmaku_settings_dialog
         dialog = QDialog(self)
         dialog.setWindowTitle("弹幕设置")
-        dialog.resize(420, 240)
+        dialog.resize(420, 320)
         layout = QVBoxLayout(dialog)
+
+        line_count_row = QHBoxLayout()
+        line_count_row.addWidget(QLabel("显示行数", dialog))
+        self._danmaku_line_count_spin = QSpinBox(dialog)
+        self._danmaku_line_count_spin.setRange(1, 10)
+        line_count_row.addWidget(self._danmaku_line_count_spin, 1)
+        layout.addLayout(line_count_row)
 
         render_row = QHBoxLayout()
         render_row.addWidget(QLabel("显示模式", dialog))
@@ -3658,9 +3811,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         uniform_color_row = QHBoxLayout()
         uniform_color_row.addWidget(QLabel("统一颜色", dialog))
-        self._danmaku_uniform_color_edit = QLineEdit(dialog)
-        uniform_color_row.addWidget(self._danmaku_uniform_color_edit, 1)
+        self._danmaku_uniform_color_edit = None
+        self._danmaku_uniform_color_button = QPushButton(dialog)
+        uniform_color_row.addWidget(self._danmaku_uniform_color_button, 1)
         layout.addLayout(uniform_color_row)
+
+        font_size_row = QHBoxLayout()
+        font_size_row.addWidget(QLabel("文字大小", dialog))
+        self._danmaku_font_size_spin = QSpinBox(dialog)
+        self._danmaku_font_size_spin.setRange(16, 72)
+        self._danmaku_font_size_spin.setSingleStep(2)
+        font_size_row.addWidget(self._danmaku_font_size_spin, 1)
+        layout.addLayout(font_size_row)
+
+        scroll_speed_row = QHBoxLayout()
+        scroll_speed_row.addWidget(QLabel("滚动速率", dialog))
+        self._danmaku_scroll_speed_spin = QDoubleSpinBox(dialog)
+        self._danmaku_scroll_speed_spin.setRange(0.5, 2.0)
+        self._danmaku_scroll_speed_spin.setSingleStep(0.1)
+        self._danmaku_scroll_speed_spin.setDecimals(1)
+        self._danmaku_scroll_speed_spin.setSuffix("x")
+        scroll_speed_row.addWidget(self._danmaku_scroll_speed_spin, 1)
+        layout.addLayout(scroll_speed_row)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
@@ -3670,18 +3842,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         actions.addWidget(close_button)
         layout.addLayout(actions)
 
+        self._danmaku_line_count_spin.valueChanged.connect(self._save_danmaku_line_count)
         self._danmaku_render_mode_combo.currentIndexChanged.connect(
             lambda index: self._save_danmaku_render_mode(self._danmaku_render_mode_combo.itemData(index))
         )
         self._danmaku_color_mode_combo.currentIndexChanged.connect(
             lambda index: self._save_danmaku_color_mode(self._danmaku_color_mode_combo.itemData(index))
         )
-        self._danmaku_uniform_color_edit.editingFinished.connect(
-            lambda: self._save_danmaku_uniform_color(self._danmaku_uniform_color_edit.text())
-        )
+        self._danmaku_uniform_color_button.clicked.connect(self._open_danmaku_uniform_color_dialog)
         self._danmaku_position_preset_combo.currentIndexChanged.connect(
             lambda index: self._save_danmaku_position_preset(self._danmaku_position_preset_combo.itemData(index))
         )
+        self._danmaku_font_size_spin.valueChanged.connect(self._save_danmaku_font_size)
+        self._danmaku_scroll_speed_spin.valueChanged.connect(self._save_danmaku_scroll_speed)
         reset_button.clicked.connect(self._restore_default_danmaku_render_settings)
         close_button.clicked.connect(dialog.close)
 
@@ -3696,7 +3869,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.config.preferred_danmaku_color_mode = "uniform"
         self.config.preferred_danmaku_uniform_color = "#FFFFFF"
         self.config.preferred_danmaku_position_preset = "top"
+        self.config.preferred_danmaku_line_count = 1
+        self.config.preferred_danmaku_scroll_speed = 1.0
+        self.config.preferred_danmaku_font_size = 32
         self._save_config()
+        self._refresh_danmaku_combo_from_preferences()
         self._refresh_danmaku_settings_dialog_controls()
         self._reload_active_danmaku_for_render_settings()
 

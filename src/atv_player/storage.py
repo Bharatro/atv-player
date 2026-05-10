@@ -9,6 +9,14 @@ _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
 
 
+def _normalize_danmaku_line_count(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(normalized, 10))
+
+
 def _normalize_danmaku_render_mode(value: object) -> str:
     text = str(value or "").strip()
     return text if text in _VALID_DANMAKU_RENDER_MODES else "static"
@@ -29,6 +37,22 @@ def _normalize_danmaku_uniform_color(value: object) -> str:
 def _normalize_danmaku_position_preset(value: object) -> str:
     text = str(value or "").strip()
     return text if text in _VALID_DANMAKU_POSITION_PRESETS else "top"
+
+
+def _normalize_danmaku_scroll_speed(value: object) -> float:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.5, min(round(normalized, 2), 2.0))
+
+
+def _normalize_danmaku_font_size(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 32
+    return max(16, min(normalized, 72))
 
 
 class SettingsRepository:
@@ -73,6 +97,8 @@ class SettingsRepository:
                     preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'uniform',
                     preferred_danmaku_uniform_color TEXT NOT NULL DEFAULT '#FFFFFF',
                     preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top',
+                    preferred_danmaku_scroll_speed REAL NOT NULL DEFAULT 1.0,
+                    preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32,
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB,
@@ -163,6 +189,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top'"
                 )
+            if "preferred_danmaku_scroll_speed" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_scroll_speed REAL NOT NULL DEFAULT 1.0"
+                )
+            if "preferred_danmaku_font_size" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
@@ -210,6 +244,8 @@ class SettingsRepository:
                     preferred_danmaku_color_mode,
                     preferred_danmaku_uniform_color,
                     preferred_danmaku_position_preset,
+                    preferred_danmaku_scroll_speed,
+                    preferred_danmaku_font_size,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -220,7 +256,7 @@ class SettingsRepository:
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, '', 1, 1, 'static', 'uniform', '#FFFFFF', 'top',
+                    0, 100, 0, 0, '', 1, 1, 'static', 'uniform', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', ''
                 )
                 ON CONFLICT(id) DO NOTHING
@@ -255,6 +291,8 @@ class SettingsRepository:
                     preferred_danmaku_color_mode,
                     preferred_danmaku_uniform_color,
                     preferred_danmaku_position_preset,
+                    preferred_danmaku_scroll_speed,
+                    preferred_danmaku_font_size,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -272,10 +310,13 @@ class SettingsRepository:
         values[14] = bool(values[14])
         values[15] = bool(values[15])
         values[17] = bool(values[17])
+        values[18] = _normalize_danmaku_line_count(values[18])
         values[19] = _normalize_danmaku_render_mode(values[19])
         values[20] = _normalize_danmaku_color_mode(values[20])
         values[21] = _normalize_danmaku_uniform_color(values[21])
         values[22] = _normalize_danmaku_position_preset(values[22])
+        values[23] = _normalize_danmaku_scroll_speed(values[23])
+        values[24] = _normalize_danmaku_font_size(values[24])
         return AppConfig(*values)
 
     def save_config(self, config: AppConfig) -> None:
@@ -307,6 +348,8 @@ class SettingsRepository:
                     preferred_danmaku_color_mode = ?,
                     preferred_danmaku_uniform_color = ?,
                     preferred_danmaku_position_preset = ?,
+                    preferred_danmaku_scroll_speed = ?,
+                    preferred_danmaku_font_size = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
                     player_main_splitter_state = ?,
@@ -335,11 +378,13 @@ class SettingsRepository:
                     int(config.player_wide_mode),
                     config.preferred_parse_key,
                     int(config.preferred_danmaku_enabled),
-                    config.preferred_danmaku_line_count,
+                    _normalize_danmaku_line_count(config.preferred_danmaku_line_count),
                     _normalize_danmaku_render_mode(config.preferred_danmaku_render_mode),
                     _normalize_danmaku_color_mode(config.preferred_danmaku_color_mode),
                     _normalize_danmaku_uniform_color(config.preferred_danmaku_uniform_color),
                     _normalize_danmaku_position_preset(config.preferred_danmaku_position_preset),
+                    _normalize_danmaku_scroll_speed(config.preferred_danmaku_scroll_speed),
+                    _normalize_danmaku_font_size(config.preferred_danmaku_font_size),
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,

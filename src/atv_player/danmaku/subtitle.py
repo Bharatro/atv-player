@@ -12,6 +12,7 @@ _LANE_HEIGHT = 40
 _DEFAULT_FONT_SIZE = 32
 _DEFAULT_UNIFORM_COLOR = "#FFFFFF"
 _SCROLL_MIN_DURATION_SECONDS = 8.0
+_DEFAULT_SCROLL_SPEED = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,8 +227,24 @@ def _assign_timed_records(records: list[_ParsedDanmaku], line_count: int, durati
     return timed
 
 
-def _scroll_duration_seconds(duration_seconds: float) -> float:
-    return max(duration_seconds, _SCROLL_MIN_DURATION_SECONDS)
+def _normalize_scroll_speed(value: float) -> float:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_SCROLL_SPEED
+    return max(0.5, min(round(normalized, 2), 2.0))
+
+
+def _normalize_font_size(value: int) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_FONT_SIZE
+    return max(16, min(normalized, 72))
+
+
+def _scroll_duration_seconds(duration_seconds: float, scroll_speed: float) -> float:
+    return max(1.0, max(duration_seconds, _SCROLL_MIN_DURATION_SECONDS) / _normalize_scroll_speed(scroll_speed))
 
 
 def render_danmaku_srt(xml_text: str, line_count: int = 1, duration_seconds: float = 4.0) -> str:
@@ -256,7 +273,7 @@ def _escape_ass_text(value: str) -> str:
     return value.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
 
 
-def _build_ass_header(primary_color: str) -> str:
+def _build_ass_header(primary_color: str, font_size: int) -> str:
     return "\n".join(
         [
             "[Script Info]",
@@ -268,7 +285,7 @@ def _build_ass_header(primary_color: str) -> str:
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Danmaku,sans-serif,{_DEFAULT_FONT_SIZE},{primary_color},{primary_color},&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,8,24,24,4,1",
+            f"Style: Danmaku,sans-serif,{font_size},{primary_color},{primary_color},&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,8,24,24,4,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -287,7 +304,7 @@ def _render_static_text(cue: _SubtitleCue, color_mode: str, uniform_color: str) 
     for line in cue.lines:
         text = _escape_ass_text(line.content)
         if color_mode == "source":
-            text = rf"{{\c{line.color}}}{text}"
+            text = rf"{{\1c{line.color}}}{text}"
         parts.append(text)
     return r"\N".join(parts)
 
@@ -311,10 +328,10 @@ def _lane_y(position_preset: str, line_index: int, mode: str) -> int:
 
 def _event_override(mode: str, y: int, color: str) -> str:
     if mode == "scroll":
-        return rf"{{\an8\move({_PLAY_RES_X + 80},{y},-400,{y})\c{color}}}"
+        return rf"{{\an8\move({_PLAY_RES_X + 80},{y},-400,{y})\1c{color}}}"
     if mode == "bottom":
-        return rf"{{\an2\pos(960,{y})\c{color}}}"
-    return rf"{{\an8\pos(960,{y})\c{color}}}"
+        return rf"{{\an2\pos(960,{y})\1c{color}}}"
+    return rf"{{\an8\pos(960,{y})\1c{color}}}"
 
 
 def _build_dynamic_events(
@@ -326,12 +343,13 @@ def _build_dynamic_events(
     color_mode: str,
     uniform_color: str,
     position_preset: str,
+    scroll_speed: float,
 ) -> list[str]:
     grouped = {"scroll": [], "top": [], "bottom": []}
     for record in records:
         grouped[_mode_for_record(render_mode, record.pos)].append(record)
     timed_records = [
-        *_assign_timed_records(grouped["scroll"], line_count, _scroll_duration_seconds(duration_seconds)),
+        *_assign_timed_records(grouped["scroll"], line_count, _scroll_duration_seconds(duration_seconds, scroll_speed)),
         *_assign_timed_records(grouped["top"], line_count, duration_seconds),
         *_assign_timed_records(grouped["bottom"], line_count, duration_seconds),
     ]
@@ -358,18 +376,22 @@ def render_danmaku_ass(
     color_mode: str = "uniform",
     uniform_color: str = _DEFAULT_UNIFORM_COLOR,
     position_preset: str = "top",
+    scroll_speed: float = _DEFAULT_SCROLL_SPEED,
+    font_size: int = _DEFAULT_FONT_SIZE,
 ) -> str:
-    normalized_line_count = max(1, min(int(line_count), 5))
+    normalized_line_count = max(1, min(int(line_count), 10))
     normalized_duration = max(1.0, float(duration_seconds))
     normalized_render_mode = _normalize_render_mode(render_mode)
     normalized_color_mode = _normalize_color_mode(color_mode)
     normalized_uniform_color = _normalize_hex_color(uniform_color)
     normalized_position_preset = _normalize_position_preset(position_preset)
+    normalized_scroll_speed = _normalize_scroll_speed(scroll_speed)
+    normalized_font_size = _normalize_font_size(font_size)
     records = _parse_danmaku_xml_records(xml_text)
     if not records:
         return ""
 
-    header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color))
+    header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color), normalized_font_size)
     if normalized_render_mode == "static":
         lines = _assign_static_lines(records, normalized_line_count, normalized_duration)
         cues = _build_cues(lines, normalized_line_count)
@@ -387,5 +409,6 @@ def render_danmaku_ass(
         color_mode=normalized_color_mode,
         uniform_color=normalized_uniform_color,
         position_preset=normalized_position_preset,
+        scroll_speed=normalized_scroll_speed,
     )
     return "\n".join([header, *events, ""])

@@ -296,6 +296,8 @@ def test_settings_repository_loads_new_danmaku_render_defaults(tmp_path: Path) -
     assert config.preferred_danmaku_color_mode == "uniform"
     assert config.preferred_danmaku_uniform_color == "#FFFFFF"
     assert config.preferred_danmaku_position_preset == "top"
+    assert config.preferred_danmaku_scroll_speed == 1.0
+    assert config.preferred_danmaku_font_size == 32
 
 
 def test_settings_repository_persists_new_danmaku_render_settings(tmp_path: Path) -> None:
@@ -305,6 +307,9 @@ def test_settings_repository_persists_new_danmaku_render_settings(tmp_path: Path
     config.preferred_danmaku_color_mode = "source"
     config.preferred_danmaku_uniform_color = "#00FF00"
     config.preferred_danmaku_position_preset = "mid_upper"
+    config.preferred_danmaku_scroll_speed = 0.8
+    config.preferred_danmaku_font_size = 40
+    config.preferred_danmaku_line_count = 8
 
     repo.save_config(config)
 
@@ -314,6 +319,9 @@ def test_settings_repository_persists_new_danmaku_render_settings(tmp_path: Path
     assert reloaded.preferred_danmaku_color_mode == "source"
     assert reloaded.preferred_danmaku_uniform_color == "#00FF00"
     assert reloaded.preferred_danmaku_position_preset == "mid_upper"
+    assert reloaded.preferred_danmaku_scroll_speed == 0.8
+    assert reloaded.preferred_danmaku_font_size == 40
+    assert reloaded.preferred_danmaku_line_count == 8
 
 
 def test_settings_repository_round_trip_persists_player_wide_mode(tmp_path: Path) -> None:

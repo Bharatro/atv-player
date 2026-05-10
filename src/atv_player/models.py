@@ -33,6 +33,8 @@ class AppConfig:
     preferred_danmaku_color_mode: str = "uniform"
     preferred_danmaku_uniform_color: str = "#FFFFFF"
     preferred_danmaku_position_preset: str = "top"
+    preferred_danmaku_scroll_speed: float = 1.0
+    preferred_danmaku_font_size: int = 32
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None

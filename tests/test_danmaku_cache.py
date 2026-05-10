@@ -16,6 +16,8 @@ def test_load_or_create_danmaku_ass_cache_reuses_existing_file(monkeypatch, tmp_
         color_mode="uniform",
         uniform_color="#FFFFFF",
         position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
     )
     second_path = danmaku_cache_module.load_or_create_danmaku_ass_cache(
         xml_text,
@@ -24,6 +26,8 @@ def test_load_or_create_danmaku_ass_cache_reuses_existing_file(monkeypatch, tmp_
         color_mode="uniform",
         uniform_color="#FFFFFF",
         position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
     )
 
     assert first_path is not None
@@ -43,14 +47,18 @@ def test_danmaku_ass_cache_path_changes_when_render_settings_change(monkeypatch,
         color_mode="uniform",
         uniform_color="#FFFFFF",
         position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
     )
     second = danmaku_cache_module.danmaku_ass_cache_path(
         xml_text,
-        1,
+        10,
         render_mode="mixed",
         color_mode="source",
         uniform_color="#00FF00",
         position_preset="bottom",
+        scroll_speed=0.5,
+        font_size=40,
     )
 
     assert first != second

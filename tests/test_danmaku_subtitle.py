@@ -82,8 +82,8 @@ def test_render_danmaku_ass_uses_uniform_color_and_scroll_mode() -> None:
     )
 
     assert "\\move(" in subtitle
-    assert "\\c&H0000FF&" in subtitle
-    assert "\\c&HFF0000&" not in subtitle
+    assert "\\1c&H0000FF&" in subtitle
+    assert "\\1c&HFF0000&" not in subtitle
 
 
 def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
@@ -103,6 +103,28 @@ def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
     )
 
     assert "Dialogue: 0,0:00:00.00,0:00:08.00" in subtitle
+
+
+def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">慢速大字</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=0.5,
+        font_size=40,
+    )
+
+    assert ",40," in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:16.00" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
@@ -125,3 +147,24 @@ def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> N
     assert "顶部" in subtitle
     assert "底部" in subtitle
     assert "\\move(" not in subtitle.split("顶部", 1)[0]
+
+
+def test_render_danmaku_ass_uses_source_color_in_static_mode() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16711680">红色</d>'
+        '<d p="0.5,1,25,255">蓝色</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=2,
+        render_mode="static",
+        color_mode="source",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "{\\1c&H0000FF&}红色" in subtitle
+    assert "{\\1c&HFF0000&}蓝色" in subtitle
