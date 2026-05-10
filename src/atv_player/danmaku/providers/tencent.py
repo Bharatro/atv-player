@@ -837,6 +837,53 @@ class TencentDanmakuProvider:
         without_tags = re.sub(r"<.*?>", "", value)
         return html.unescape(without_tags).strip()
 
+    def _parse_barrage_style(self, raw_style: object) -> dict[str, object]:
+        if isinstance(raw_style, dict):
+            return raw_style
+        if not isinstance(raw_style, str):
+            return {}
+        text = raw_style.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _normalize_barrage_position(self, raw_position: object) -> int:
+        try:
+            position = int(raw_position)
+        except (TypeError, ValueError):
+            return 1
+        if position == 2:
+            return 5
+        if position == 3:
+            return 4
+        return position if position in {1, 4, 5} else 1
+
+    def _normalize_barrage_color(self, style: dict[str, object]) -> str:
+        gradient_colors = style.get("gradient_colors")
+        if isinstance(gradient_colors, list):
+            for color in gradient_colors:
+                normalized = self._parse_barrage_color_value(color)
+                if normalized != "16777215":
+                    return normalized
+        return self._parse_barrage_color_value(style.get("color"))
+
+    def _parse_barrage_color_value(self, raw_color: object) -> str:
+        text = str(raw_color or "").strip()
+        if not text:
+            return "16777215"
+        try:
+            return str(int(text))
+        except ValueError:
+            normalized = text.lower().removeprefix("0x").lstrip("#")
+            try:
+                return str(int(normalized, 16))
+            except ValueError:
+                return "16777215"
+
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         response = self._get(
             page_url,
@@ -874,7 +921,7 @@ class TencentDanmakuProvider:
             for item in barrage_list:
                 content = str(item.get("content") or "").strip()
                 time_offset = round(float(item.get("time_offset") or 0.0) / 1000, 3)
-                style = item.get("content_style") if isinstance(item.get("content_style"), dict) else {}
+                style = self._parse_barrage_style(item.get("content_style"))
                 key = (time_offset, content)
                 if not content or key in seen:
                     continue
@@ -882,8 +929,8 @@ class TencentDanmakuProvider:
                 records.append(
                     DanmakuRecord(
                         time_offset=time_offset,
-                        pos=int(style.get("position") or 1),
-                        color=str(style.get("color") or 16777215),
+                        pos=self._normalize_barrage_position(style.get("position")),
+                        color=self._normalize_barrage_color(style),
                         content=content,
                     )
                 )

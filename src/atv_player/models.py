@@ -30,7 +30,7 @@ class AppConfig:
     preferred_danmaku_enabled: bool = True
     preferred_danmaku_line_count: int = 1
     preferred_danmaku_render_mode: str = "static"
-    preferred_danmaku_color_mode: str = "uniform"
+    preferred_danmaku_color_mode: str = "source"
     preferred_danmaku_uniform_color: str = "#FFFFFF"
     preferred_danmaku_position_preset: str = "top"
     preferred_danmaku_scroll_speed: float = 1.0

@@ -171,17 +171,87 @@ def _assign_lines(records: list[tuple[float, str]], line_count: int, duration_se
 
 
 def _assign_static_lines(records: list[_ParsedDanmaku], line_count: int, duration_seconds: float) -> list[_SubtitleLine]:
+    return _assign_static_lines_with_priority(records, line_count, duration_seconds, prioritize_colored=False)
+
+
+def _record_uses_non_default_source_color(record: _ParsedDanmaku) -> bool:
+    return _source_color_to_ass(record.color) != _hex_color_to_ass(_DEFAULT_UNIFORM_COLOR)
+
+
+def _assign_record_windows(
+    records: list[_ParsedDanmaku],
+    line_count: int,
+    duration_seconds: float,
+    *,
+    prioritize_colored: bool,
+) -> list[tuple[_ParsedDanmaku, int, float, float]]:
     available_at = [0.0] * line_count
-    lines: list[_SubtitleLine] = []
+    active_indices: list[int | None] = [None] * line_count
+    windows: list[dict[str, object]] = []
     for record in records:
-        slot = next((index for index, end in enumerate(available_at) if end <= record.time_offset), None)
+        current_time = record.time_offset
+        for index, active_index in enumerate(active_indices):
+            if active_index is None:
+                continue
+            if float(windows[active_index]["end"]) <= current_time:
+                active_indices[index] = None
+        slot = next((index for index, end in enumerate(available_at) if end <= current_time), None)
+        if slot is None and prioritize_colored and _record_uses_non_default_source_color(record):
+            white_slots = [
+                index
+                for index, active_index in enumerate(active_indices)
+                if active_index is not None
+                and not bool(windows[active_index]["colored"])
+            ]
+            if white_slots:
+                slot = max(white_slots, key=lambda index: float(windows[active_indices[index]]["end"]))
+                displaced_index = active_indices[slot]
+                if displaced_index is not None:
+                    windows[displaced_index]["end"] = current_time
+                active_indices[slot] = None
         if slot is None:
             continue
-        end = record.time_offset + duration_seconds
+        end = current_time + duration_seconds
         available_at[slot] = end
+        active_indices[slot] = len(windows)
+        windows.append(
+            {
+                "record": record,
+                "line_index": slot,
+                "start": current_time,
+                "end": end,
+                "colored": _record_uses_non_default_source_color(record),
+            }
+        )
+    return [
+        (
+            window["record"],
+            int(window["line_index"]),
+            float(window["start"]),
+            float(window["end"]),
+        )
+        for window in windows
+        if float(window["end"]) > float(window["start"])
+    ]
+
+
+def _assign_static_lines_with_priority(
+    records: list[_ParsedDanmaku],
+    line_count: int,
+    duration_seconds: float,
+    *,
+    prioritize_colored: bool,
+) -> list[_SubtitleLine]:
+    lines: list[_SubtitleLine] = []
+    for record, slot, start, end in _assign_record_windows(
+        records,
+        line_count,
+        duration_seconds,
+        prioritize_colored=prioritize_colored,
+    ):
         lines.append(
             _SubtitleLine(
-                start=record.time_offset,
+                start=start,
                 end=end,
                 line_index=slot,
                 content=record.content,
@@ -214,16 +284,21 @@ def _build_cues(lines: list[_SubtitleLine], line_count: int) -> list[_SubtitleCu
     return cues
 
 
-def _assign_timed_records(records: list[_ParsedDanmaku], line_count: int, duration_seconds: float) -> list[_TimedDanmaku]:
-    available_at = [0.0] * line_count
+def _assign_timed_records(
+    records: list[_ParsedDanmaku],
+    line_count: int,
+    duration_seconds: float,
+    *,
+    prioritize_colored: bool = False,
+) -> list[_TimedDanmaku]:
     timed: list[_TimedDanmaku] = []
-    for record in records:
-        slot = next((index for index, end in enumerate(available_at) if end <= record.time_offset), None)
-        if slot is None:
-            continue
-        end = record.time_offset + duration_seconds
-        available_at[slot] = end
-        timed.append(_TimedDanmaku(record=record, line_index=slot, start=record.time_offset, end=end))
+    for record, slot, start, end in _assign_record_windows(
+        records,
+        line_count,
+        duration_seconds,
+        prioritize_colored=prioritize_colored,
+    ):
+        timed.append(_TimedDanmaku(record=record, line_index=slot, start=start, end=end))
     return timed
 
 
@@ -349,9 +424,30 @@ def _build_dynamic_events(
     for record in records:
         grouped[_mode_for_record(render_mode, record.pos)].append(record)
     timed_records = [
-        *_assign_timed_records(grouped["scroll"], line_count, _scroll_duration_seconds(duration_seconds, scroll_speed)),
-        *_assign_timed_records(grouped["top"], line_count, duration_seconds),
-        *_assign_timed_records(grouped["bottom"], line_count, duration_seconds),
+        *(
+            _assign_timed_records(
+                grouped["scroll"],
+                line_count,
+                _scroll_duration_seconds(duration_seconds, scroll_speed),
+                prioritize_colored=color_mode == "source",
+            )
+        ),
+        *(
+            _assign_timed_records(
+                grouped["top"],
+                line_count,
+                duration_seconds,
+                prioritize_colored=color_mode == "source",
+            )
+        ),
+        *(
+            _assign_timed_records(
+                grouped["bottom"],
+                line_count,
+                duration_seconds,
+                prioritize_colored=color_mode == "source",
+            )
+        ),
     ]
     timed_records.sort(key=lambda item: (item.start, item.line_index, item.record.content))
     events: list[str] = []
@@ -393,7 +489,12 @@ def render_danmaku_ass(
 
     header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color), normalized_font_size)
     if normalized_render_mode == "static":
-        lines = _assign_static_lines(records, normalized_line_count, normalized_duration)
+        lines = _assign_static_lines_with_priority(
+            records,
+            normalized_line_count,
+            normalized_duration,
+            prioritize_colored=normalized_color_mode == "source",
+        )
         cues = _build_cues(lines, normalized_line_count)
         events = [
             f"Dialogue: 0,{_format_ass_timestamp(cue.start)},{_format_ass_timestamp(cue.end)},Danmaku,,0,0,0,,{_render_static_text(cue, normalized_color_mode, normalized_uniform_color)}"

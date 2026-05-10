@@ -406,6 +406,10 @@ def test_player_window_uses_color_palette_button_in_danmaku_settings_dialog(qtbo
     assert window._danmaku_uniform_color_edit is None
     assert isinstance(window._danmaku_uniform_color_button, QPushButton)
     assert window._danmaku_uniform_color_button.text() == "#FFFFFF"
+    assert window._danmaku_uniform_color_button.isEnabled() is False
+
+    window._danmaku_color_mode_combo.setCurrentIndex(window._danmaku_color_mode_combo.findData("uniform"))
+
     assert window._danmaku_uniform_color_button.isEnabled() is True
 
     window._danmaku_uniform_color_button.click()
@@ -8673,6 +8677,7 @@ def test_player_window_reloads_active_danmaku_after_uniform_color_change(qtbot) 
     )
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    window.config.preferred_danmaku_color_mode = "uniform"
     window.open_session(session)
     saved["called"] = 0
     initial_count = len(window.video.loaded_danmaku_paths)
@@ -8747,6 +8752,7 @@ def test_player_window_reloads_active_danmaku_after_color_mode_change(qtbot) -> 
     )
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    window.config.preferred_danmaku_color_mode = "uniform"
     window.open_session(session)
     saved["called"] = 0
     initial_count = len(window.video.loaded_danmaku_paths)

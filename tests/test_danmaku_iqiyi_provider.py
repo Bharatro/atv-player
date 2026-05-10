@@ -504,6 +504,41 @@ def test_iqiyi_resolve_treats_small_show_time_values_as_seconds_not_milliseconds
         (2.0, "第二秒"),
         (175.0, "一百七十五秒"),
     ]
+    assert [record.color for record in records[:2]] == ["16777215", "16777215"]
+
+
+def test_iqiyi_resolve_parses_hex_color_values() -> None:
+    page_info = {
+        "duration": "00:05:00",
+        "tvName": "彩色弹幕",
+        "albumId": 6421036798758301,
+        "tvId": 3831645445180500,
+        "cid": 2,
+    }
+    segment = zlib.compress(
+        (
+            "<danmu><bulletInfoList>"
+            "<bulletInfo><showTime>1000</showTime><content>红色</content><color>ff0000</color></bulletInfo>"
+            "<bulletInfo><showTime>2000</showTime><content>绿色</content><color>00FF00</color></bulletInfo>"
+            "</bulletInfoList></danmu>"
+        ).encode("utf-8")
+    )
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://www.iqiyi.com/v_demo_colors.html":
+            return JsonResponse(
+                text=f'<html><script>window.Q.PageInfo.playPageInfo={json.dumps(page_info)};</script></html>'
+            )
+        return JsonResponse(content=segment)
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.iqiyi.com/v_demo_colors.html")
+
+    assert [(record.content, record.color) for record in records] == [
+        ("红色", "16711680"),
+        ("绿色", "65280"),
+    ]
 
 
 def test_iqiyi_resolve_raises_when_page_info_is_missing() -> None:

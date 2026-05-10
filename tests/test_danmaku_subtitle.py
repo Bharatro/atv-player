@@ -168,3 +168,47 @@ def test_render_danmaku_ass_uses_source_color_in_static_mode() -> None:
 
     assert "{\\1c&H0000FF&}红色" in subtitle
     assert "{\\1c&HFF0000&}蓝色" in subtitle
+
+
+def test_render_danmaku_ass_prioritizes_colored_static_comments_when_lines_are_limited() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">白色占位</d>'
+        '<d p="1.0,1,25,16711680">红色保留</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        duration_seconds=4.0,
+        render_mode="static",
+        color_mode="source",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "白色占位" in subtitle
+    assert "{\\1c&H0000FF&}红色保留" in subtitle
+
+
+def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_limited() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">白色滚动</d>'
+        '<d p="1.0,1,25,65280">绿色滚动</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        duration_seconds=4.0,
+        render_mode="scroll_only",
+        color_mode="source",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "白色滚动" in subtitle
+    assert "{\\an8\\move(2000,60,-400,60)\\1c&H00FF00&}绿色滚动" in subtitle

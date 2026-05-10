@@ -2165,9 +2165,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _preferred_danmaku_color_mode(self) -> str:
         if self.config is None:
-            return "uniform"
-        value = str(getattr(self.config, "preferred_danmaku_color_mode", "uniform") or "").strip()
-        return value if value in {"uniform", "source"} else "uniform"
+            return "source"
+        value = str(getattr(self.config, "preferred_danmaku_color_mode", "source") or "").strip()
+        return value if value in {"uniform", "source"} else "source"
 
     def _preferred_danmaku_uniform_color(self) -> str:
         if self.config is None:
@@ -2261,7 +2261,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _save_danmaku_color_mode(self, value: str) -> None:
         if self.config is None:
             return
-        normalized = value if value in {"uniform", "source"} else "uniform"
+        normalized = value if value in {"uniform", "source"} else "source"
         if self.config.preferred_danmaku_color_mode == normalized:
             return
         self.config.preferred_danmaku_color_mode = normalized
@@ -3817,7 +3817,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.config is None:
             return
         self.config.preferred_danmaku_render_mode = "static"
-        self.config.preferred_danmaku_color_mode = "uniform"
+        self.config.preferred_danmaku_color_mode = "source"
         self.config.preferred_danmaku_uniform_color = "#FFFFFF"
         self.config.preferred_danmaku_position_preset = "top"
         self.config.preferred_danmaku_line_count = 1

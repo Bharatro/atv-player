@@ -24,7 +24,7 @@ def _normalize_danmaku_render_mode(value: object) -> str:
 
 def _normalize_danmaku_color_mode(value: object) -> str:
     text = str(value or "").strip()
-    return text if text in _VALID_DANMAKU_COLOR_MODES else "uniform"
+    return text if text in _VALID_DANMAKU_COLOR_MODES else "source"
 
 
 def _normalize_danmaku_uniform_color(value: object) -> str:
@@ -94,7 +94,7 @@ class SettingsRepository:
                     preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_render_mode TEXT NOT NULL DEFAULT 'static',
-                    preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'uniform',
+                    preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'source',
                     preferred_danmaku_uniform_color TEXT NOT NULL DEFAULT '#FFFFFF',
                     preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top',
                     preferred_danmaku_scroll_speed REAL NOT NULL DEFAULT 1.0,
@@ -179,7 +179,7 @@ class SettingsRepository:
                 )
             if "preferred_danmaku_color_mode" not in columns:
                 conn.execute(
-                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'uniform'"
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'source'"
                 )
             if "preferred_danmaku_uniform_color" not in columns:
                 conn.execute(
@@ -256,7 +256,7 @@ class SettingsRepository:
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, '', 1, 1, 'static', 'uniform', '#FFFFFF', 'top', 1.0, 32,
+                    0, 100, 0, 0, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', ''
                 )
                 ON CONFLICT(id) DO NOTHING

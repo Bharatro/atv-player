@@ -382,7 +382,14 @@ class IqiyiDanmakuProvider:
         return round(value, 3)
 
     def _normalize_color(self, raw_color) -> str:
-        try:
-            return str(int(str(raw_color or "16777215").strip()))
-        except ValueError:
+        text = str(raw_color or "").strip()
+        if not text:
             return "16777215"
+        try:
+            return str(int(text))
+        except ValueError:
+            normalized = text.lower().removeprefix("0x").lstrip("#")
+            try:
+                return str(int(normalized, 16))
+            except ValueError:
+                return "16777215"

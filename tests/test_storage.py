@@ -293,7 +293,7 @@ def test_settings_repository_loads_new_danmaku_render_defaults(tmp_path: Path) -
     config = repo.load_config()
 
     assert config.preferred_danmaku_render_mode == "static"
-    assert config.preferred_danmaku_color_mode == "uniform"
+    assert config.preferred_danmaku_color_mode == "source"
     assert config.preferred_danmaku_uniform_color == "#FFFFFF"
     assert config.preferred_danmaku_position_preset == "top"
     assert config.preferred_danmaku_scroll_speed == 1.0
