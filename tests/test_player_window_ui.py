@@ -10967,6 +10967,52 @@ def test_player_window_replaces_active_route_playlist_when_playback_loader_retur
     assert window.playlist.item(0).text() == "S1 - 1"
 
 
+def test_player_window_async_loader_plays_replacement_item_after_route_replacement(qtbot) -> None:
+    ready = threading.Event()
+    controller = FakePlayerController()
+    replacement = [
+        PlayItem(title="离线A1.mp4", url="http://resolved/offline-a1.mp4", vod_id="1@107920@0@0", play_source="磁力线"),
+        PlayItem(title="第2集", url="", vod_id="magnet:?xt=urn:btih:bbbb6396e03acb19d72eb2d779a22b2dc00f66bb", play_source="磁力线"),
+    ]
+
+    def load_item(item: PlayItem):
+        assert item.vod_id == "magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"
+        assert ready.wait(timeout=1)
+        return PlaybackLoadResult(replacement_playlist=replacement, replacement_start_index=0)
+
+    window = PlayerWindow(controller, config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="磁力片源"),
+        playlist=[
+            PlayItem(
+                title="磁力1",
+                url="",
+                vod_id="magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33",
+                play_source="磁力线",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=load_item,
+        async_playback_loader=True,
+    )
+
+    window.open_session(session)
+
+    assert window.video.load_calls == []
+    assert "正在加载播放地址: 磁力1" in window.log_view.toPlainText()
+
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/offline-a1.mp4", 0)], timeout=1000)
+    assert window.session is not None
+    assert [item.title for item in window.session.playlist] == ["离线A1.mp4", "第2集"]
+    assert window.current_index == 0
+
+
 def test_player_window_route_replacement_keeps_other_route_groups_unchanged(qtbot) -> None:
     controller = FakePlayerController()
     first_group = [PlayItem(title="第1集", url="http://line/1.m3u8", play_source="播放源 1")]

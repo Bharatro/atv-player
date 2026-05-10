@@ -1185,6 +1185,43 @@ class SpiderPluginController:
         parse_required = int(payload.get("parse") or 0) == 1
         item.parse_required = parse_required
         url = str(payload.get("url") or "").strip()
+        if _looks_like_offline_download_link(url):
+            if self._offline_download_detail_loader is None:
+                raise ValueError("当前插件未配置磁力链接解析")
+            try:
+                payload = self._offline_download_detail_loader(url)
+                detail = _map_vod_item(payload["list"][0])
+            except (KeyError, IndexError) as exc:
+                logger.exception(
+                    "Spider plugin offline download detail failed plugin=%s source=%s",
+                    self._plugin_name,
+                    url,
+                )
+                raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
+            replacement = self._build_offline_download_replacement_playlist(detail, item.play_source)
+            if not replacement:
+                raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            session.detail_resolver = self._resolve_folder_like_detail
+            session.resolved_vod_by_id = {}
+            merged_playlist, replacement_start_index = self._replace_current_playlist_item(
+                session.playlist,
+                item,
+                replacement,
+            )
+            logger.info(
+                "Spider plugin resolved offline download playlist from playerContent plugin=%s source=%s items=%s",
+                self._plugin_name,
+                url,
+                len(replacement),
+            )
+            if cover_source:
+                replacement_item = merged_playlist[replacement_start_index]
+                replacement_item.video_cover_override = cover_source
+                session.video_cover_override = cover_source
+            return PlaybackLoadResult(
+                replacement_playlist=merged_playlist,
+                replacement_start_index=replacement_start_index,
+            )
         if _looks_like_drive_share_link(url):
             if self._drive_detail_loader is None:
                 raise ValueError("当前插件未配置网盘解析")

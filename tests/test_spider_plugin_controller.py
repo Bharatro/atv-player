@@ -2232,6 +2232,67 @@ def test_controller_replaces_only_current_magnet_item_when_offline_download_retu
     assert resolved.items[0].url == "http://192.168.50.60:4567/p/web/1@107920?ac=web&ids=1$107920$1"
 
 
+def test_controller_resolves_player_content_magnet_url_via_offline_download_loader() -> None:
+    class PlayerContentMagnetSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "磁力片源",
+                        "vod_play_from": "磁力线",
+                        "vod_play_url": "磁力1$/play/1",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):  # noqa: A002
+            assert flag == "磁力线"
+            assert id == "/play/1"
+            return {
+                "parse": 0,
+                "jx": 0,
+                "playUrl": "",
+                "url": "magnet:?xt=urn:btih:98c6ca6ef890af0e858852e462282cd7f17a86a4",
+                "header": {},
+            }
+
+    offline_calls: list[str] = []
+
+    def load_offline_detail(link: str) -> dict:
+        offline_calls.append(link)
+        return {
+            "list": [
+                {
+                    "vod_id": "1$107919$1",
+                    "vod_name": "离线下载结果 A",
+                    "vod_play_from": "丫仙女",
+                    "vod_play_url": "离线A1.mp4(6.11 GB)$1@107920@0@0",
+                    "path": "/我的115云盘/alist-tvbox-offline/A/~playlist",
+                    "items": [],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        PlayerContentMagnetSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        offline_download_detail_loader=load_offline_detail,
+    )
+
+    request = controller.build_request("/detail/magnet")
+
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlist[0])
+
+    assert result is not None
+    assert offline_calls == ["magnet:?xt=urn:btih:98c6ca6ef890af0e858852e462282cd7f17a86a4"]
+    assert [item.title for item in result.replacement_playlist] == ["离线A1.mp4(6.11 GB)"]
+    assert [item.vod_id for item in result.replacement_playlist] == ["1@107920@0@0"]
+    assert result.replacement_start_index == 0
+
+
 def test_controller_returns_replacement_playlist_for_quark_drive_route() -> None:
     spider = DriveLinkSpider()
 
