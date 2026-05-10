@@ -123,6 +123,20 @@ class ExternalResultController(FakeDoubanController):
         return super().load_items(category_id, page, filters)
 
 
+class VariablePageSizePosterController(FakeDoubanController):
+    uses_result_length_for_pagination = True
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        if page == 1:
+            items = [
+                VodItem(vod_id=f"{category_id}-{page}-{index}", vod_name=f"{category_id}-{page}-{index}", vod_pic="poster-cat")
+                for index in range(20)
+            ]
+        else:
+            items = [VodItem(vod_id=f"{category_id}-{page}-last", vod_name=f"{category_id}-{page}-last", vod_pic="poster-cat")]
+        return items, 41
+
+
 class FilterablePosterController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -306,15 +320,25 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.category_list.isHidden() is True
 
 
+def test_poster_grid_page_prefers_inferred_page_size_over_default_page_size(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(VariablePageSizePosterController()))
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 20)
+
+    assert page.page_label.text() == "第 1 / 3 页"
+    assert page.next_page_button.isEnabled() is True
+
+
 def test_poster_grid_page_external_results_can_request_next_page(qtbot) -> None:
     controller = ExternalResultController()
     page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
 
     requested_pages: list[int] = []
+    items = [VodItem(vod_id=f"s{index}", vod_name=f"全局搜索结果-{index}") for index in range(30)]
 
     page.show_external_results(
-        items=[VodItem(vod_id="s1", vod_name="全局搜索结果")],
+        items=items,
         total=61,
         page=1,
         empty_message="无搜索结果",

@@ -148,6 +148,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._external_empty_message = "暂无内容"
         self._external_page_loader: Callable[[int], None] | None = None
         self._external_loading = False
+        self._infer_page_size_from_items = bool(getattr(controller, "uses_result_length_for_pagination", False))
         self._search_row: QHBoxLayout | None = None
         self._search_controls_container: QWidget | None = None
         self.category_list = QListWidget()
@@ -184,6 +185,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.current_page = 1
         self.page_size = 30
         self.total_items = 0
+        self._estimated_page_size: int | None = None
         self._category_filter_state: dict[str, dict[str, str]] = {}
         self._current_card_columns = self._MIN_CARD_COLUMNS
         self._categories_request_id = 0
@@ -588,8 +590,27 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         fit_columns = max(self._MIN_CARD_COLUMNS, fit_columns)
         return min(fit_columns, self._MAX_CARD_COLUMNS)
 
+    def _effective_page_size(self) -> int:
+        return self._estimated_page_size or self.page_size
+
+    def _total_pages(self) -> int:
+        page_size = max(1, self._effective_page_size())
+        return max(1, (self.total_items + page_size - 1) // page_size)
+
+    def _update_page_size_estimate(self, item_count: int, total: int, page: int) -> None:
+        if not self._infer_page_size_from_items:
+            return
+        if page <= 1:
+            self._estimated_page_size = None
+        if item_count <= 0 or total <= item_count:
+            return
+        if self._estimated_page_size is None:
+            self._estimated_page_size = item_count
+            return
+        self._estimated_page_size = max(self._estimated_page_size, item_count)
+
     def _update_pagination(self) -> None:
-        total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
+        total_pages = self._total_pages()
         self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
         if self._external_results_active:
             pagination_enabled = self._external_page_loader is not None and not self._external_loading
@@ -619,7 +640,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.load_items(self.selected_category_id, self.current_page)
 
     def next_page(self) -> None:
-        total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
+        total_pages = self._total_pages()
         if self._external_results_active:
             if self._external_page_loader is None or self._external_loading or self.current_page >= total_pages:
                 return
@@ -723,6 +744,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.current_page = page
         self.items = list(items)
         self.total_items = total
+        self._update_page_size_estimate(len(self.items), total, self.current_page)
         self.status_label.setText("" if self.items else empty_message)
         self._render_cards()
         self._update_pagination()

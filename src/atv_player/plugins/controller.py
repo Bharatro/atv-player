@@ -422,6 +422,7 @@ class SpiderPluginController:
         danmaku_preference_store=None,
         base_url_loader: Callable[[], str] | None = None,
     ) -> None:
+        self.uses_result_length_for_pagination = True
         self._spider = spider
         self._plugin_name = plugin_name
         self.supports_search = bool(search_enabled and callable(getattr(self._spider, "searchContent", None)))
