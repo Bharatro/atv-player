@@ -86,6 +86,25 @@ def test_render_danmaku_ass_uses_uniform_color_and_scroll_mode() -> None:
     assert "\\c&HFF0000&" not in subtitle
 
 
+def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">慢一点</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "Dialogue: 0,0:00:00.00,0:00:08.00" in subtitle
+
+
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
     xml_text = (
         '<?xml version="1.0" encoding="UTF-8"?><i>'

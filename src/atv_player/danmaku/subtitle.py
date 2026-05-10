@@ -11,6 +11,7 @@ _PLAY_RES_Y = 1080
 _LANE_HEIGHT = 40
 _DEFAULT_FONT_SIZE = 32
 _DEFAULT_UNIFORM_COLOR = "#FFFFFF"
+_SCROLL_MIN_DURATION_SECONDS = 8.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,10 @@ def _assign_timed_records(records: list[_ParsedDanmaku], line_count: int, durati
     return timed
 
 
+def _scroll_duration_seconds(duration_seconds: float) -> float:
+    return max(duration_seconds, _SCROLL_MIN_DURATION_SECONDS)
+
+
 def render_danmaku_srt(xml_text: str, line_count: int = 1, duration_seconds: float = 4.0) -> str:
     normalized_line_count = max(1, min(int(line_count), 5))
     normalized_duration = max(1.0, float(duration_seconds))
@@ -326,7 +331,7 @@ def _build_dynamic_events(
     for record in records:
         grouped[_mode_for_record(render_mode, record.pos)].append(record)
     timed_records = [
-        *_assign_timed_records(grouped["scroll"], line_count, duration_seconds),
+        *_assign_timed_records(grouped["scroll"], line_count, _scroll_duration_seconds(duration_seconds)),
         *_assign_timed_records(grouped["top"], line_count, duration_seconds),
         *_assign_timed_records(grouped["bottom"], line_count, duration_seconds),
     ]
