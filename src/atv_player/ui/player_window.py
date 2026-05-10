@@ -316,11 +316,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
+        self._danmaku_settings_dialog: QDialog | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
+        self._danmaku_render_mode_combo: QComboBox | None = None
+        self._danmaku_color_mode_combo: QComboBox | None = None
+        self._danmaku_uniform_color_edit: QLineEdit | None = None
+        self._danmaku_position_preset_combo: QComboBox | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
@@ -412,6 +417,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
+        self.danmaku_settings_button = self._create_icon_button("danmaku.svg", "弹幕设置")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
@@ -554,6 +560,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         control_group_layout.addWidget(self.wide_button)
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.danmaku_source_button)
+        control_group_layout.addWidget(self.danmaku_settings_button)
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
         control_group_layout.addWidget(self.danmaku_combo)
@@ -638,6 +645,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
         self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
+        self.danmaku_settings_button.clicked.connect(self._open_danmaku_settings_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
@@ -2139,6 +2147,32 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return 1
         return max(1, min(int(getattr(self.config, "preferred_danmaku_line_count", 1)), 5))
 
+    def _preferred_danmaku_render_mode(self) -> str:
+        if self.config is None:
+            return "static"
+        value = str(getattr(self.config, "preferred_danmaku_render_mode", "static") or "").strip()
+        return value if value in {"static", "scroll_only", "mixed"} else "static"
+
+    def _preferred_danmaku_color_mode(self) -> str:
+        if self.config is None:
+            return "uniform"
+        value = str(getattr(self.config, "preferred_danmaku_color_mode", "uniform") or "").strip()
+        return value if value in {"uniform", "source"} else "uniform"
+
+    def _preferred_danmaku_uniform_color(self) -> str:
+        if self.config is None:
+            return "#FFFFFF"
+        value = str(getattr(self.config, "preferred_danmaku_uniform_color", "#FFFFFF") or "").strip().upper()
+        if len(value) == 7 and value.startswith("#"):
+            return value
+        return "#FFFFFF"
+
+    def _preferred_danmaku_position_preset(self) -> str:
+        if self.config is None:
+            return "top"
+        value = str(getattr(self.config, "preferred_danmaku_position_preset", "top") or "").strip()
+        return value if value in {"top", "upper", "mid_upper", "bottom"} else "top"
+
     def _preferred_danmaku_combo_index(self) -> int:
         if not self._preferred_danmaku_enabled():
             return 1
@@ -2163,6 +2197,61 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.config.preferred_danmaku_enabled = enabled
         self.config.preferred_danmaku_line_count = line_count
         self._save_config()
+
+    def _save_danmaku_render_mode(self, value: str) -> None:
+        if self.config is None:
+            return
+        normalized = value if value in {"static", "scroll_only", "mixed"} else "static"
+        if self.config.preferred_danmaku_render_mode == normalized:
+            return
+        self.config.preferred_danmaku_render_mode = normalized
+        self._save_config()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_color_mode(self, value: str) -> None:
+        if self.config is None:
+            return
+        normalized = value if value in {"uniform", "source"} else "uniform"
+        if self.config.preferred_danmaku_color_mode == normalized:
+            return
+        self.config.preferred_danmaku_color_mode = normalized
+        self._save_config()
+        self._refresh_danmaku_settings_color_controls()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_uniform_color(self, value: str) -> None:
+        if self.config is None:
+            return
+        normalized = str(value or "").strip().upper()
+        if len(normalized) != 7 or not normalized.startswith("#"):
+            normalized = "#FFFFFF"
+        if self.config.preferred_danmaku_uniform_color == normalized:
+            return
+        self.config.preferred_danmaku_uniform_color = normalized
+        self._save_config()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_position_preset(self, value: str) -> None:
+        if self.config is None:
+            return
+        normalized = value if value in {"top", "upper", "mid_upper", "bottom"} else "top"
+        if self.config.preferred_danmaku_position_preset == normalized:
+            return
+        self.config.preferred_danmaku_position_preset = normalized
+        self._save_config()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _reload_active_danmaku_for_render_settings(self) -> None:
+        if not self._preferred_danmaku_enabled():
+            return
+        if not self._danmaku_active:
+            return
+        if not self._current_play_item_danmaku_xml():
+            return
+        try:
+            self._enable_danmaku(self._preferred_danmaku_line_count())
+        except Exception as exc:
+            self._append_log(f"弹幕设置应用失败: {exc}")
 
     def _current_item_requires_parse(self) -> bool:
         if self.session is None:
@@ -2869,7 +2958,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _write_danmaku_subtitle_file(self, xml_text: str, line_count: int) -> Path | None:
         self._cleanup_danmaku_temp_file()
-        temp_path = load_or_create_danmaku_ass_cache(xml_text, line_count)
+        temp_path = load_or_create_danmaku_ass_cache(
+            xml_text,
+            line_count,
+            render_mode=self._preferred_danmaku_render_mode(),
+            color_mode=self._preferred_danmaku_color_mode(),
+            uniform_color=self._preferred_danmaku_uniform_color(),
+            position_preset=self._preferred_danmaku_position_preset(),
+        )
         if temp_path is None:
             return None
         self._danmaku_temp_path = temp_path
@@ -3480,6 +3576,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
         action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
+        menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu
 
@@ -3492,6 +3589,123 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _refresh_danmaku_source_entry_points(self) -> None:
         self.danmaku_source_button.setEnabled(True)
+        self.danmaku_settings_button.setEnabled(True)
+
+    def _refresh_danmaku_settings_color_controls(self) -> None:
+        if self._danmaku_uniform_color_edit is None:
+            return
+        self._danmaku_uniform_color_edit.setEnabled(self._preferred_danmaku_color_mode() == "uniform")
+
+    def _refresh_danmaku_settings_dialog_controls(self) -> None:
+        if self._danmaku_render_mode_combo is not None:
+            self._danmaku_render_mode_combo.blockSignals(True)
+            self._danmaku_render_mode_combo.setCurrentIndex(
+                max(0, self._danmaku_render_mode_combo.findData(self._preferred_danmaku_render_mode()))
+            )
+            self._danmaku_render_mode_combo.blockSignals(False)
+        if self._danmaku_color_mode_combo is not None:
+            self._danmaku_color_mode_combo.blockSignals(True)
+            self._danmaku_color_mode_combo.setCurrentIndex(
+                max(0, self._danmaku_color_mode_combo.findData(self._preferred_danmaku_color_mode()))
+            )
+            self._danmaku_color_mode_combo.blockSignals(False)
+        if self._danmaku_uniform_color_edit is not None:
+            self._danmaku_uniform_color_edit.blockSignals(True)
+            self._danmaku_uniform_color_edit.setText(self._preferred_danmaku_uniform_color())
+            self._danmaku_uniform_color_edit.blockSignals(False)
+        if self._danmaku_position_preset_combo is not None:
+            self._danmaku_position_preset_combo.blockSignals(True)
+            self._danmaku_position_preset_combo.setCurrentIndex(
+                max(0, self._danmaku_position_preset_combo.findData(self._preferred_danmaku_position_preset()))
+            )
+            self._danmaku_position_preset_combo.blockSignals(False)
+        self._refresh_danmaku_settings_color_controls()
+
+    def _ensure_danmaku_settings_dialog(self) -> QDialog:
+        if self._danmaku_settings_dialog is not None:
+            return self._danmaku_settings_dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("弹幕设置")
+        dialog.resize(420, 240)
+        layout = QVBoxLayout(dialog)
+
+        render_row = QHBoxLayout()
+        render_row.addWidget(QLabel("显示模式", dialog))
+        self._danmaku_render_mode_combo = QComboBox(dialog)
+        self._danmaku_render_mode_combo.addItem("静态", "static")
+        self._danmaku_render_mode_combo.addItem("仅滚动", "scroll_only")
+        self._danmaku_render_mode_combo.addItem("混合", "mixed")
+        render_row.addWidget(self._danmaku_render_mode_combo, 1)
+        layout.addLayout(render_row)
+
+        position_row = QHBoxLayout()
+        position_row.addWidget(QLabel("位置预设", dialog))
+        self._danmaku_position_preset_combo = QComboBox(dialog)
+        self._danmaku_position_preset_combo.addItem("顶部", "top")
+        self._danmaku_position_preset_combo.addItem("顶部偏下", "upper")
+        self._danmaku_position_preset_combo.addItem("中上", "mid_upper")
+        self._danmaku_position_preset_combo.addItem("底部", "bottom")
+        position_row.addWidget(self._danmaku_position_preset_combo, 1)
+        layout.addLayout(position_row)
+
+        color_mode_row = QHBoxLayout()
+        color_mode_row.addWidget(QLabel("颜色模式", dialog))
+        self._danmaku_color_mode_combo = QComboBox(dialog)
+        self._danmaku_color_mode_combo.addItem("统一颜色", "uniform")
+        self._danmaku_color_mode_combo.addItem("保留原色", "source")
+        color_mode_row.addWidget(self._danmaku_color_mode_combo, 1)
+        layout.addLayout(color_mode_row)
+
+        uniform_color_row = QHBoxLayout()
+        uniform_color_row.addWidget(QLabel("统一颜色", dialog))
+        self._danmaku_uniform_color_edit = QLineEdit(dialog)
+        uniform_color_row.addWidget(self._danmaku_uniform_color_edit, 1)
+        layout.addLayout(uniform_color_row)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        reset_button = QPushButton("恢复默认", dialog)
+        close_button = QPushButton("关闭", dialog)
+        actions.addWidget(reset_button)
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+
+        self._danmaku_render_mode_combo.currentIndexChanged.connect(
+            lambda index: self._save_danmaku_render_mode(self._danmaku_render_mode_combo.itemData(index))
+        )
+        self._danmaku_color_mode_combo.currentIndexChanged.connect(
+            lambda index: self._save_danmaku_color_mode(self._danmaku_color_mode_combo.itemData(index))
+        )
+        self._danmaku_uniform_color_edit.editingFinished.connect(
+            lambda: self._save_danmaku_uniform_color(self._danmaku_uniform_color_edit.text())
+        )
+        self._danmaku_position_preset_combo.currentIndexChanged.connect(
+            lambda index: self._save_danmaku_position_preset(self._danmaku_position_preset_combo.itemData(index))
+        )
+        reset_button.clicked.connect(self._restore_default_danmaku_render_settings)
+        close_button.clicked.connect(dialog.close)
+
+        self._danmaku_settings_dialog = dialog
+        self._refresh_danmaku_settings_dialog_controls()
+        return dialog
+
+    def _restore_default_danmaku_render_settings(self) -> None:
+        if self.config is None:
+            return
+        self.config.preferred_danmaku_render_mode = "static"
+        self.config.preferred_danmaku_color_mode = "uniform"
+        self.config.preferred_danmaku_uniform_color = "#FFFFFF"
+        self.config.preferred_danmaku_position_preset = "top"
+        self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _open_danmaku_settings_dialog(self) -> None:
+        dialog = self._ensure_danmaku_settings_dialog()
+        self._refresh_danmaku_settings_dialog_controls()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _ensure_danmaku_source_dialog(self) -> QDialog:
         if self._danmaku_source_dialog is not None:

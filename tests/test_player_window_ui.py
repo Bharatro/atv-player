@@ -274,6 +274,14 @@ def test_player_window_shows_danmaku_source_button_with_custom_icon(qtbot) -> No
     assert window.danmaku_source_button.isEnabled() is True
 
 
+def test_player_window_shows_danmaku_settings_button(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.danmaku_settings_button.toolTip() == "弹幕设置"
+    assert window.danmaku_settings_button.isEnabled() is True
+
+
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
     item = PlayItem(
         title="第1集",
@@ -301,6 +309,7 @@ def test_player_window_video_context_menu_contains_danmaku_source_action_when_ca
     menu = window._build_video_context_menu()
 
     assert any(action.text() == "弹幕源" for action in menu.actions())
+    assert any(action.text() == "弹幕设置" for action in menu.actions())
 
 
 def test_player_window_video_context_menu_keeps_danmaku_source_action_enabled_without_candidates(qtbot) -> None:
@@ -364,6 +373,26 @@ def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> No
     assert window._danmaku_source_title_edit.text() == "红果短剧"
     assert window._danmaku_source_episode_edit.text() == "1集"
     assert window._danmaku_source_provider_list.count() == 1
+
+
+def test_player_window_saves_danmaku_render_mode_from_dialog(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+    window._danmaku_render_mode_combo.setCurrentIndex(window._danmaku_render_mode_combo.findData("mixed"))
+
+    assert dialog.windowTitle() == "弹幕设置"
+    assert config.preferred_danmaku_render_mode == "mixed"
+    assert saved["called"] == 1
 
 
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
@@ -8516,6 +8545,96 @@ def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) ->
     assert window.danmaku_combo.currentText() == "3行"
 
 
+def test_player_window_reloads_active_danmaku_after_uniform_color_change(qtbot) -> None:
+    saved = {"called": 0}
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self.removed_danmaku_track_ids: list[int] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self.removed_danmaku_track_ids.append(track_id)
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+    saved["called"] = 0
+    initial_count = len(window.video.loaded_danmaku_paths)
+    initial_path = window.video.loaded_danmaku_paths[-1]
+
+    window._save_danmaku_uniform_color("#00FF00")
+
+    assert saved["called"] == 1
+    assert len(window.video.loaded_danmaku_paths) == initial_count + 1
+    assert window.video.removed_danmaku_track_ids == [70]
+    assert window.video.loaded_danmaku_paths[-1] != initial_path
+
+
+def test_player_window_saves_settings_without_enabling_danmaku_when_currently_off(qtbot) -> None:
+    saved = {"called": 0}
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(preferred_danmaku_enabled=False),
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    window._save_danmaku_render_mode("mixed")
+
+    assert window.config.preferred_danmaku_enabled is False
+    assert window.config.preferred_danmaku_render_mode == "mixed"
+    assert saved["called"] == 1
+
+
 def test_player_window_saves_preferred_danmaku_selection_when_user_changes_combo(qtbot) -> None:
     saved = {"called": 0}
 
@@ -11728,6 +11847,16 @@ def visible_danmaku_source_dialogs() -> list[QDialog]:
         for widget in QApplication.topLevelWidgets()
         if isinstance(widget, QDialog)
         and widget.windowTitle() == "弹幕源"
+        and widget.isVisible()
+    ]
+
+
+def visible_danmaku_settings_dialogs() -> list[QDialog]:
+    return [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, QDialog)
+        and widget.windowTitle() == "弹幕设置"
         and widget.isVisible()
     ]
 
