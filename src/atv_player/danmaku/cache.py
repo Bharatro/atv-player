@@ -12,7 +12,7 @@ from atv_player.paths import app_cache_dir
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
 _DANMAKU_ASS_CACHE_VERSION = "v3"
 _DANMAKU_XML_CACHE_VERSION = "v1"
-_DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v1"
+_DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v2"
 
 
 def danmaku_cache_dir() -> Path:
@@ -158,6 +158,9 @@ def load_cached_danmaku_source_search_result(name: str, reg_src: str) -> Danmaku
                     episode_match=bool(option_payload.get("episode_match")),
                     preferred_by_history=bool(option_payload.get("preferred_by_history")),
                     resolve_ready=bool(option_payload.get("resolve_ready", True)),
+                    resolve_context=dict(option_payload.get("resolve_context") or {})
+                    if isinstance(option_payload.get("resolve_context"), dict)
+                    else {},
                 )
             )
         groups.append(
@@ -199,6 +202,7 @@ def save_cached_danmaku_source_search_result(
                         "episode_match": option.episode_match,
                         "preferred_by_history": option.preferred_by_history,
                         "resolve_ready": option.resolve_ready,
+                        "resolve_context": option.resolve_context,
                     }
                     for option in group.options
                 ],

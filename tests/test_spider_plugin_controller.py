@@ -1,6 +1,7 @@
 import logging
 import time
 from pathlib import Path
+import zlib
 
 import pytest
 
@@ -8,11 +9,23 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
 from atv_player.controllers.player_controller import PlayerController
+from atv_player.danmaku.providers.iqiyi import IqiyiDanmakuProvider
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
-from atv_player.danmaku.service import build_danmaku_series_key
+from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
 from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction, PlaybackDetailField
 from atv_player.plugins.controller import SpiderPluginController
+
+
+class JsonResponse:
+    def __init__(self, payload=None, text: str = "", status_code: int = 200, content: bytes = b"") -> None:
+        self._payload = payload
+        self.text = text
+        self.status_code = status_code
+        self.content = content
+
+    def json(self):
+        return self._payload
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> None:
@@ -1732,6 +1745,87 @@ def test_controller_refresh_danmaku_sources_restores_override_result_cache_after
     assert restarted.selected_danmaku_provider == "tencent"
     assert restarted.selected_danmaku_url == "https://v.qq.com/demo"
     assert restarted.danmaku_candidates == result.groups
+
+
+def test_controller_can_restore_cached_iqiyi_source_after_restart(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+
+    segment = zlib.compress(
+        (
+            "<root>"
+            "<bulletInfoList>"
+            "<bulletInfo><showTime>1500</showTime><content>重启后恢复成功</content><color>255</color></bulletInfo>"
+            "</bulletInfoList>"
+            "</root>"
+        ).encode("utf-8")
+    )
+
+    def fake_get(url: str, **kwargs):
+        if "search.video.iqiyi.com/o" in url:
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "channel": "电视剧,2",
+                                    "itemTotalNumber": 36,
+                                    "albumTitle": "八千里路云和月",
+                                },
+                                "videoinfos": [
+                                    {
+                                        "itemTitle": "八千里路云和月第10集",
+                                        "itemNumber": 10,
+                                        "itemLink": "http://www.iqiyi.com/v_20imo31bths.html",
+                                        "tvId": 123456789000,
+                                        "albumId": 6421036798758301,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/v_20imo31bths.html":
+            return JsonResponse(text="<html><head><title>shell page</title></head><body></body></html>")
+        if url.endswith("123456789000_300_1.z"):
+            return JsonResponse(content=segment)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    first_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="八千里路云和月",
+        search_enabled=True,
+        danmaku_service=DanmakuService({"iqiyi": IqiyiDanmakuProvider(get=fake_get)}, provider_order=["iqiyi"]),
+    )
+    first_item = PlayItem(title="第10集", url="https://stream.example/10.m3u8", media_title="八千里路云和月")
+
+    first_controller.refresh_danmaku_sources(first_item, query_override="八千里路云和月 第10集", force_refresh=True)
+
+    restarted_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="八千里路云和月",
+        search_enabled=True,
+        danmaku_service=DanmakuService({"iqiyi": IqiyiDanmakuProvider(get=fake_get)}, provider_order=["iqiyi"]),
+    )
+    restarted_item = PlayItem(title="第10集", url="https://stream.example/10.m3u8", media_title="八千里路云和月")
+
+    assert restarted_controller.load_cached_danmaku_sources(restarted_item) is True
+    xml_text = restarted_controller.switch_danmaku_source(restarted_item, restarted_item.selected_danmaku_url)
+
+    assert "重启后恢复成功" in xml_text
+    assert restarted_item.selected_danmaku_provider == "iqiyi"
+    assert restarted_item.selected_danmaku_url == "https://www.iqiyi.com/v_20imo31bths.html"
 
 
 def test_controller_passes_playitem_duration_to_search_danmu_sources() -> None:

@@ -112,6 +112,7 @@ def test_save_and_load_cached_danmaku_source_search_result(monkeypatch, tmp_path
                         episode_match=True,
                         preferred_by_history=True,
                         resolve_ready=True,
+                        resolve_context={"tv_id": 123456789000, "album_id": 6421036798758301},
                     )
                 ],
             )

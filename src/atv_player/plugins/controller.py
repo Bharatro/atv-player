@@ -774,7 +774,7 @@ class SpiderPluginController:
                 item.selected_danmaku_provider = candidate.provider
                 item.selected_danmaku_url = candidate.url
                 item.selected_danmaku_title = candidate.name
-                item.danmaku_xml = self._danmaku_service.resolve_danmu(candidate.url)
+                item.danmaku_xml = self._resolve_danmaku_xml(candidate.url, candidate)
                 self._save_danmaku_xml_cache(item, search_name, reg_src, item.danmaku_xml, playlist)
                 logger.info(
                     "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
@@ -911,6 +911,12 @@ class SpiderPluginController:
         for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
             save_cached_danmaku_xml(cache_query_name, reg_src, xml_text)
 
+    def _resolve_danmaku_xml(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
+        resolve_method = self._danmaku_service.resolve_danmu
+        if option is not None and "option" in inspect.signature(resolve_method).parameters:
+            return resolve_method(page_url, option=option)
+        return resolve_method(page_url)
+
     def _apply_danmaku_source_search_result(self, item: PlayItem, result) -> None:
         item.danmaku_candidates = result.groups
         item.selected_danmaku_provider = result.default_provider
@@ -960,6 +966,7 @@ class SpiderPluginController:
                     ratio=getattr(item, "ratio", 0.0),
                     simi=getattr(item, "simi", 0.0),
                     duration_seconds=getattr(item, "duration_seconds", 0),
+                    resolve_context=dict(getattr(item, "resolve_context", {})),
                 )
             )
         source_groups = [
@@ -1024,7 +1031,15 @@ class SpiderPluginController:
         )
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
-        xml_text = self._danmaku_service.resolve_danmu(page_url)
+        selected_option = None
+        for group in item.danmaku_candidates:
+            for option in group.options:
+                if option.url == page_url:
+                    selected_option = option
+                    break
+            if selected_option is not None:
+                break
+        xml_text = self._resolve_danmaku_xml(page_url, selected_option)
         item.danmaku_xml = xml_text
         item.selected_danmaku_url = page_url
         item.selected_danmaku_title = self._lookup_selected_danmaku_title(item.danmaku_candidates, page_url)

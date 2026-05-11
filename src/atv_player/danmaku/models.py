@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +15,7 @@ class DanmakuSearchItem:
     ep_id: int | None = None
     season_id: int | None = None
     search_type: str = ""
+    resolve_context: dict[str, str | int | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,7 @@ class DanmakuSourceOption:
     episode_match: bool = False
     preferred_by_history: bool = False
     resolve_ready: bool = True
+    resolve_context: dict[str, str | int | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

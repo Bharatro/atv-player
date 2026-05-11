@@ -146,9 +146,23 @@ class IqiyiDanmakuProvider:
                         ratio=ratio,
                         simi=ratio,
                         duration_seconds=self._to_int(metadata.get("duration_seconds")) or 0,
+                        resolve_context=dict(metadata),
                     )
                 )
         return results
+
+    def prime_resolve_context(self, page_url: str, resolve_context: dict[str, str | int | None] | None) -> None:
+        if not isinstance(resolve_context, dict):
+            return
+        metadata = {
+            "tv_id": resolve_context.get("tv_id"),
+            "album_id": resolve_context.get("album_id"),
+            "category_id": resolve_context.get("category_id"),
+            "duration_seconds": resolve_context.get("duration_seconds"),
+        }
+        if not any(value not in ("", None) for value in metadata.values()):
+            return
+        self._remember_metadata(self._normalize_iqiyi_url(page_url), metadata)
 
     def _collect_search_videos(self, item: dict, album_info: dict) -> list[dict]:
         videos = list(item.get("videoinfos") or album_info.get("videoinfos") or [])

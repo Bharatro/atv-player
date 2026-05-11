@@ -195,6 +195,7 @@ class DanmakuService:
                     duration_seconds=item.duration_seconds,
                     episode_match=extract_episode_number(item.name) == requested_episode if requested_episode is not None else False,
                     preferred_by_history=item.url == preferred_page_url,
+                    resolve_context=dict(item.resolve_context),
                 )
             )
         groups = [
@@ -432,11 +433,15 @@ class DanmakuService:
                 return group.options[0]
         return None
 
-    def resolve_danmu(self, page_url: str) -> str:
+    def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         for key in self._provider_order:
             provider = self._providers.get(key)
             if provider is None or not provider.supports(page_url):
                 continue
+            if option is not None and option.url == page_url:
+                prime_resolve_context = getattr(provider, "prime_resolve_context", None)
+                if callable(prime_resolve_context):
+                    prime_resolve_context(page_url, option.resolve_context)
             records = provider.resolve(page_url)
             if not records:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
