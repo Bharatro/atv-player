@@ -1,5 +1,5 @@
 from atv_player.controllers.bilibili_controller import BilibiliController
-from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem, PlaybackDetailAction
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem, PlaybackDetailAction, PlaybackDetailField
 
 
 class TextResponse:
@@ -385,6 +385,39 @@ def test_build_request_exposes_bilibili_detail_action_runner() -> None:
     assert refreshed == [
         PlaybackDetailAction(id="favorite_collection", label="已收藏歌单", active=True),
         PlaybackDetailAction(id="favorite_track", label="已收藏歌曲", active=True),
+    ]
+
+
+def test_build_request_maps_bilibili_stat_ext_into_vod_detail_fields() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV14rd3BJEDV",
+                "vod_name": "你是我的哆啦A梦-AI",
+                "vod_play_url": "正片$BV14rd3BJEDV",
+                "ext": {
+                    "coin": 11058,
+                    "danmaku": 774,
+                    "favorite": 23111,
+                    "like": 41129,
+                    "reply": 962,
+                    "share": 2047,
+                    "view": 2387191,
+                },
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("BV14rd3BJEDV")
+
+    assert request.vod.detail_fields == [
+        PlaybackDetailField(label="投币", value="1.1万"),
+        PlaybackDetailField(label="点赞", value="4.1万"),
+        PlaybackDetailField(label="收藏", value="2.3万"),
+        PlaybackDetailField(label="回复", value="962"),
+        PlaybackDetailField(label="弹幕", value="774"),
     ]
 
 

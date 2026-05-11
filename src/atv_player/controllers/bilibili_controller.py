@@ -17,11 +17,19 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailField,
     VodItem,
 )
 
 _JAVA_MAP_HEADER_ENTRY_RE = re.compile(r"(?:^|,\s*)([A-Za-z0-9-]+)=(.*?)(?=,\s*[A-Za-z0-9-]+=|$)")
 _BILIBILI_DANMAKU_URL_RE = re.compile(r"^https?://comment\.bilibili\.com/\d+\.xml(?:\?.*)?$", re.IGNORECASE)
+_BILIBILI_DETAIL_FIELD_SPECS = (
+    ("coin", "投币"),
+    ("like", "点赞"),
+    ("favorite", "收藏"),
+    ("reply", "回复"),
+    ("danmaku", "弹幕"),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +83,44 @@ def _map_detail_actions(payload: object) -> list[PlaybackDetailAction]:
             )
         )
     return actions
+
+
+def _map_bilibili_detail_fields(payload: object) -> list[PlaybackDetailField]:
+    if not isinstance(payload, dict):
+        return []
+    fields: list[PlaybackDetailField] = []
+    for key, label in _BILIBILI_DETAIL_FIELD_SPECS:
+        raw_value = payload.get(key)
+        if raw_value is None:
+            continue
+        value = _format_bilibili_stat_value(raw_value)
+        if not value:
+            continue
+        fields.append(PlaybackDetailField(label=label, value=value))
+    return fields
+
+
+def _format_bilibili_stat_value(raw_value: object) -> str:
+    if isinstance(raw_value, bool):
+        return str(raw_value)
+    if isinstance(raw_value, int | float):
+        if raw_value >= 10000:
+            return f"{raw_value / 10000:.1f}万"
+        if isinstance(raw_value, float) and raw_value.is_integer():
+            return str(int(raw_value))
+        return str(raw_value)
+    value = str(raw_value).strip()
+    if not value:
+        return ""
+    try:
+        numeric_value = float(value)
+    except ValueError:
+        return value
+    if numeric_value >= 10000:
+        return f"{numeric_value / 10000:.1f}万"
+    if numeric_value.is_integer():
+        return str(int(numeric_value))
+    return value
 
 
 class BilibiliController:
@@ -169,6 +215,12 @@ class BilibiliController:
     def _map_bilibili_items(self, payload: dict) -> list[VodItem]:
         return [self._decorate_card_subtitle(_map_item(item)) for item in payload.get("list", [])]
 
+    def _map_bilibili_detail(self, payload: dict[str, object]) -> VodItem:
+        detail = _map_vod_item(payload)
+        detail.detail_fields = _map_bilibili_detail_fields(payload.get("ext"))
+        detail.detail_style = "bilibili"
+        return detail
+
     def load_items(
         self,
         category_id: str,
@@ -208,9 +260,7 @@ class BilibiliController:
             return None
         try:
             payload = self._api_client.get_bilibili_detail(item.vod_id)
-            detail = _map_vod_item(payload["list"][0])
-            detail.detail_style = "bilibili"
-            return detail
+            return self._map_bilibili_detail(payload["list"][0])
         except (KeyError, IndexError):
             return None
 
@@ -273,8 +323,7 @@ class BilibiliController:
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_bilibili_detail(vod_id)
-        detail = _map_vod_item(payload["list"][0])
-        detail.detail_style = "bilibili"
+        detail = self._map_bilibili_detail(payload["list"][0])
         playlists = self._build_playlists(detail)
         if not playlists and detail.items:
             playlists = [list(detail.items)]
