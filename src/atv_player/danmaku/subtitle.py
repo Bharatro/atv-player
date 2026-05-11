@@ -110,8 +110,8 @@ def _source_color_to_ass(value: str) -> str:
 
 def _position_band_start(position_preset: str) -> int:
     return {
-        "top": 10,
-        "upper": 150,
+        "top": 0,
+        "upper": 120,
         "mid_upper": 280,
         "bottom": 760,
     }.get(position_preset, 30)

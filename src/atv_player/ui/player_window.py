@@ -332,6 +332,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_search_provider_combo: QComboBox | None = None
+        self._danmaku_source_status_label: QLabel | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
@@ -3884,6 +3885,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         columns.addWidget(self._danmaku_source_provider_list, 1)
         columns.addWidget(self._danmaku_source_option_list, 2)
         layout.addLayout(columns)
+        self._danmaku_source_status_label = QLabel("", dialog)
+        layout.addWidget(self._danmaku_source_status_label)
         actions = QHBoxLayout()
         rerun_button = QPushButton("重新搜索", dialog)
         self._danmaku_source_rerun_button = rerun_button
@@ -3919,6 +3922,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._danmaku_source_search_provider_combo is None:
             return ""
         return str(self._danmaku_source_search_provider_combo.currentData() or "")
+
+    def _danmaku_provider_label(self, provider_key: str) -> str:
+        for key, label in _DANMAKU_SEARCH_PROVIDER_OPTIONS:
+            if key == provider_key:
+                return label
+        return provider_key or "全部"
+
+    def _selected_danmaku_source_provider_from_dialog(self) -> str:
+        current_item = self._current_play_item()
+        selected_url = self._selected_danmaku_source_url_from_dialog()
+        if current_item is None or not selected_url:
+            return current_item.selected_danmaku_provider if current_item is not None else ""
+        for group in current_item.danmaku_candidates:
+            for option in group.options:
+                if option.url == selected_url:
+                    return option.provider
+        return current_item.selected_danmaku_provider
 
     def _populate_danmaku_source_provider_list(self, groups) -> None:
         if self._danmaku_source_provider_list is None:
@@ -4020,6 +4040,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
             self._danmaku_source_rerun_button.setEnabled(bool(current_item is not None and not current_item.danmaku_pending))
+        if self._danmaku_source_status_label is not None:
+            self._danmaku_source_status_label.setText(current_item.danmaku_status_text if current_item is not None else "")
 
     def _start_danmaku_source_task(
         self,
@@ -4041,6 +4063,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 succeeded = True
             finally:
                 item.danmaku_pending = False
+                item.danmaku_status_text = ""
                 self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
 
         self._enqueue_controller_task(error_prefix, run)
@@ -4084,6 +4107,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item.danmaku_search_episode = episode
         current_item.danmaku_search_query = " ".join(part for part in (title, episode) if part).strip()
         current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
+        current_item.danmaku_status_text = (
+            f"搜索中（{self._danmaku_provider_label(current_item.danmaku_search_provider)}）..."
+        )
         current_item.danmaku_search_query_overridden = True
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
@@ -4107,6 +4133,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item.danmaku_search_episode = ""
         current_item.danmaku_search_query = ""
         current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
+        current_item.danmaku_status_text = (
+            f"搜索中（{self._danmaku_provider_label(current_item.danmaku_search_provider)}）..."
+        )
         current_item.danmaku_search_query_overridden = False
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
@@ -4128,6 +4157,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         selected_url = self._selected_danmaku_source_url_from_dialog()
         if not selected_url:
             return
+        selected_provider = self._selected_danmaku_source_provider_from_dialog()
+        current_item.danmaku_status_text = f"下载中（{self._danmaku_provider_label(selected_provider)}）..."
         self._start_danmaku_source_task(
             current_item,
             error_prefix="弹幕切换失败",

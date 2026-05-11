@@ -828,10 +828,13 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     assert item.danmaku_pending is True
     assert window._danmaku_source_title_edit.text() == "红果短剧 腾讯版"
     assert window._danmaku_source_episode_edit.text() == "2集"
+    assert window._danmaku_source_status_label is not None
+    assert window._danmaku_source_status_label.text() == "搜索中（全部）..."
     qtbot.waitUntil(
         lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", True, 120, "")]
     )
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
+    qtbot.waitUntil(lambda: window._danmaku_source_status_label.text() == "")
     qtbot.waitUntil(
         lambda: window._danmaku_source_option_list is not None
         and window._danmaku_source_option_list.count() == 1
@@ -1043,7 +1046,10 @@ def test_player_window_manual_danmaku_source_switch_logs_failure_without_raising
     window._switch_current_item_danmaku_source()
 
     assert item.danmaku_pending is True
+    assert window._danmaku_source_status_label is not None
+    assert window._danmaku_source_status_label.text() == "下载中（腾讯）..."
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
+    qtbot.waitUntil(lambda: window._danmaku_source_status_label.text() == "")
     qtbot.waitUntil(lambda: "弹幕切换失败: switch boom" in window.log_view.toPlainText())
 
 
