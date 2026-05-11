@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 import zlib
 
 import httpx
@@ -606,3 +608,43 @@ def test_iqiyi_resolve_supports_nested_play_page_data_and_bullet_info_list_paylo
     records = provider.resolve("https://www.iqiyi.com/v_nested.html")
 
     assert [(record.time_offset, record.content) for record in records] == [(1.25, "嵌套结构")]
+
+
+def test_iqiyi_resolve_downloads_segments_with_max_concurrency_of_four() -> None:
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://www.iqiyi.com/v_19rr1lm35o.html":
+            page_info = {
+                "duration": "00:25:01",
+                "tvName": "剑来 第1集",
+                "albumId": 2024,
+                "tvId": 987654321,
+                "cid": 4,
+            }
+            return JsonResponse(text=f'<html><script>window.Q.PageInfo.playPageInfo={json.dumps(page_info)};</script></html>')
+        if "cmts.iqiyi.com" in url and url.endswith(".z"):
+            page_index = int(url.rsplit("_", 1)[-1].split(".", 1)[0])
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            segment = zlib.compress(
+                (
+                    "<danmu>"
+                    f"<bulletInfo><showTime>{page_index * 1000}</showTime><content>第{page_index}页</content><color>255</color></bulletInfo>"
+                    "</danmu>"
+                ).encode("utf-8")
+            )
+            return JsonResponse(content=segment)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.iqiyi.com/v_19rr1lm35o.html")
+
+    assert len(records) == 6
+    assert state["max_active"] == 4

@@ -13,6 +13,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number, normalize_name, strip_episode_suffix
 
 
@@ -159,11 +160,17 @@ class YoukuDanmakuProvider:
         segment_count = max(1, math.ceil(duration_seconds / self._SEGMENT_SECONDS))
         items: list[dict] = []
         failure_count = 0
-        for mat in range(segment_count):
-            try:
-                items.extend(self._fetch_segment_items(page_url, vid, mat, cna, tk, tk_enc))
-            except httpx.HTTPError:
-                failure_count += 1
+        for batch in iter_bounded_settled(
+            range(segment_count),
+            lambda mat: self._fetch_segment_items(page_url, vid, mat, cna, tk, tk_enc),
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    if isinstance(settled.error, httpx.HTTPError):
+                        failure_count += 1
+                        continue
+                    raise settled.error
+                items.extend(settled.value or [])
         if not items and failure_count >= segment_count:
             raise DanmakuResolveError("优酷弹幕分段请求失败")
         return items

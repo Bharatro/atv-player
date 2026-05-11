@@ -1,3 +1,6 @@
+import threading
+import time
+
 import httpx
 
 from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
@@ -1289,6 +1292,51 @@ def test_tencent_provider_resolve_parses_string_content_style_and_gradient_color
         (1.0, 5, "16711680", "顶部渐变"),
         (2.0, 4, "65280", "底部单色"),
     ]
+
+
+def test_tencent_provider_resolve_downloads_segments_with_max_concurrency_of_four() -> None:
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://v.qq.com/x/cover/demo/vid123.html":
+            return httpx.Response(200, text='<script>var DATA={"videoId":"vid123","duration":151};</script>')
+        if url == "https://dm.video.qq.com/barrage/base/vid123":
+            return httpx.Response(404, json={})
+        if "https://dm.video.qq.com/barrage/segment/vid123/" in url:
+            segment_start = int(url.rstrip("/").rsplit("/", 2)[-2])
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            return httpx.Response(
+                200,
+                json={
+                    "barrage_list": [
+                        {
+                            "time_offset": segment_start + 1000,
+                            "content": f"第{segment_start // 30000}段",
+                            "content_style": {"position": 1, "color": 16777215},
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(url)
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://v.qq.com/x/cover/demo/vid123.html")
+
+    assert len(records) == 6
+    assert state["max_active"] == 4
 
 
 def test_tencent_provider_supports_vqq_urls() -> None:

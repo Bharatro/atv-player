@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
@@ -278,8 +278,12 @@ def test_player_window_shows_danmaku_settings_button(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window.danmaku_settings_button.toolTip() == "弹幕设置"
+    assert window.danmaku_settings_button.toolTip() == "弹幕设置 (Ctrl+D)"
     assert window.danmaku_settings_button.isEnabled() is True
+    assert (
+        window.danmaku_settings_button.icon().pixmap(24, 24).toImage()
+        != window.danmaku_source_button.icon().pixmap(24, 24).toImage()
+    )
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
@@ -393,6 +397,24 @@ def test_player_window_saves_danmaku_render_mode_from_dialog(qtbot) -> None:
     assert dialog.windowTitle() == "弹幕设置"
     assert config.preferred_danmaku_render_mode == "mixed"
     assert saved["called"] == 1
+
+
+def test_player_window_disables_danmaku_position_preset_in_static_mode(qtbot) -> None:
+    config = AppConfig()
+    config.preferred_danmaku_render_mode = "static"
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    assert window._danmaku_position_preset_combo is not None
+    assert window._danmaku_position_preset_combo.isEnabled() is False
+
+    window._danmaku_render_mode_combo.setCurrentIndex(window._danmaku_render_mode_combo.findData("mixed"))
+
+    assert window._danmaku_position_preset_combo.isEnabled() is True
 
 
 def test_player_window_uses_color_palette_button_in_danmaku_settings_dialog(qtbot) -> None:
@@ -12133,7 +12155,30 @@ def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("Enter", "切换全屏") in rows
     assert ("W", "切换宽屏") in rows
     assert ("D", "打开弹幕源") in rows
+    assert ("Ctrl+D", "打开弹幕设置") in rows
     assert ("I", "显示视频信息") in rows
+
+
+def test_player_window_ctrl_d_shortcut_opens_danmaku_settings_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    shortcuts = [
+        shortcut
+        for shortcut in window._shortcut_bindings
+        if shortcut.key().toString(QKeySequence.SequenceFormat.PortableText) == "Ctrl+D"
+    ]
+
+    assert len(shortcuts) == 1
+
+    shortcuts[0].activated.emit()
+
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
 
 
 def test_player_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
@@ -12384,6 +12429,40 @@ def test_player_window_escape_closes_danmaku_source_dialog_without_returning_to_
     window._open_danmaku_source_dialog()
     qtbot.waitUntil(lambda: len(visible_danmaku_source_dialogs()) == 1)
     dialog = visible_danmaku_source_dialogs()[0]
+
+    window.escape_shortcut.activated.emit()
+
+    qtbot.waitUntil(lambda: not dialog.isVisible())
+    assert window.isVisible() is True
+    assert pauses["count"] == 0
+    assert config.last_active_window == "player"
+
+
+def test_player_window_escape_closes_danmaku_settings_dialog_without_returning_to_main(qtbot) -> None:
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+        def position_seconds(self) -> int:
+            return 0
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window.video = FakeVideo()
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    window._open_danmaku_settings_dialog()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+    dialog = visible_danmaku_settings_dialogs()[0]
 
     window.escape_shortcut.activated.emit()
 

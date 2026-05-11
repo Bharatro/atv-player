@@ -170,6 +170,27 @@ def test_render_danmaku_ass_uses_source_color_in_static_mode() -> None:
     assert "{\\1c&HFF0000&}蓝色" in subtitle
 
 
+def test_render_danmaku_ass_keeps_static_comments_top_aligned_regardless_of_position_preset() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">固定顶部</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="bottom",
+    )
+
+    assert ",8," in subtitle
+    assert "\\pos(" not in subtitle
+    assert "\\move(" not in subtitle
+
+
 def test_render_danmaku_ass_prioritizes_colored_static_comments_when_lines_are_limited() -> None:
     xml_text = (
         '<?xml version="1.0" encoding="UTF-8"?><i>'

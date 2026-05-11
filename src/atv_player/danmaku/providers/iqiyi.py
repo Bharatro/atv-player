@@ -11,6 +11,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import normalize_name, similarity_score
 
 
@@ -74,38 +75,48 @@ class IqiyiDanmakuProvider:
         records: list[DanmakuRecord] = []
         seen: set[tuple[float, str]] = set()
         parse_failures = 0
-        for page_index in range(1, total_pages + 1):
-            segment_url = self._segment_url(tvid, page_index)
-            segment_response = self._get(
-                segment_url,
-                params={
-                    "rn": "0.0123456789123456",
-                    "business": "danmu",
-                    "is_iqiyi": "true",
-                    "is_video_page": "true",
-                    "tvid": tvid,
-                    "albumid": album_id,
-                    "categoryid": category_id,
-                    "qypid": "01010021010000000000",
-                },
-                headers=dict(self._PAGE_HEADERS),
-                follow_redirects=True,
-                timeout=10.0,
-            )
-            try:
-                xml_text = zlib.decompress(segment_response.content, 15 + 32).decode("utf-8", errors="ignore")
-                for record in self._parse_segment_records(xml_text, duration_seconds):
-                    key = (record.time_offset, record.content)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    records.append(record)
-            except Exception:
-                parse_failures += 1
+        page_indexes = range(1, total_pages + 1)
+        for batch in iter_bounded_settled(
+            page_indexes,
+            lambda page_index: self._fetch_segment_content(tvid, album_id, category_id, page_index),
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    raise settled.error
+                try:
+                    xml_text = zlib.decompress(settled.value or b"", 15 + 32).decode("utf-8", errors="ignore")
+                    for record in self._parse_segment_records(xml_text, duration_seconds):
+                        key = (record.time_offset, record.content)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        records.append(record)
+                except Exception:
+                    parse_failures += 1
         if parse_failures == total_pages and not records:
             raise DanmakuResolveError("爱奇艺弹幕分片解析失败")
         records.sort(key=lambda record: (record.time_offset, record.content))
         return records
+
+    def _fetch_segment_content(self, tvid: str, album_id: str | int, category_id: str | int, page_index: int) -> bytes:
+        segment_url = self._segment_url(tvid, page_index)
+        segment_response = self._get(
+            segment_url,
+            params={
+                "rn": "0.0123456789123456",
+                "business": "danmu",
+                "is_iqiyi": "true",
+                "is_video_page": "true",
+                "tvid": tvid,
+                "albumid": album_id,
+                "categoryid": category_id,
+                "qypid": "01010021010000000000",
+            },
+            headers=dict(self._PAGE_HEADERS),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        return segment_response.content
 
     def _extract_search_items(self, payload: dict, query_name: str) -> list[DanmakuSearchItem]:
         data = payload.get("data")

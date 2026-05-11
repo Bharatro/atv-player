@@ -13,6 +13,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import normalize_name, similarity_score
 
 
@@ -111,8 +112,11 @@ class BilibiliDanmakuProvider:
         for search_type in ("media_bangumi", "media_ft"):
             payload = self._search_payload(normalized, search_type)
             items.extend(self._parse_search_results(payload, normalized, search_type))
+        if not items:
+            payload = self._search_payload(normalized, "video")
+            items.extend(self._parse_search_results(payload, normalized, "video"))
         items = self._expand_season_search_items(items, normalized)
-        items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY[item.search_type], -item.ratio, -item.simi))
+        items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY.get(item.search_type, 99), -item.ratio, -item.simi))
         for item in items:
             self._metadata_by_url[item.url] = item
         return items
@@ -127,7 +131,14 @@ class BilibiliDanmakuProvider:
             ).text
             return self._parse_xml_records(xml_text)
         candidate = self._metadata_by_url.get(page_url) or self._candidate_from_page_url(page_url)
-        cid = self._resolve_cid(candidate)
+        cid, duration_seconds = self._resolve_danmaku_target(candidate)
+        if duration_seconds > 0:
+            try:
+                records = self._resolve_seg_records(candidate.url, cid, duration_seconds)
+            except DanmakuResolveError:
+                records = []
+            if records:
+                return records
         xml_text = self._get(
             f"https://comment.bilibili.com/{cid}.xml",
             headers={"user-agent": "Mozilla/5.0", "referer": page_url},
@@ -289,26 +300,38 @@ class BilibiliDanmakuProvider:
         return title
 
     def _resolve_cid(self, candidate: DanmakuSearchItem) -> int:
+        cid, _duration_seconds = self._resolve_danmaku_target(candidate)
+        return cid
+
+    def _resolve_danmaku_target(self, candidate: DanmakuSearchItem) -> tuple[int, int]:
         if candidate.cid is not None:
-            return candidate.cid
+            return candidate.cid, max(0, int(candidate.duration_seconds))
         if candidate.ep_id is not None:
-            cid = self._cid_from_season(ep_id=candidate.ep_id, season_id=candidate.season_id, title=candidate.name)
+            cid, duration_seconds = self._cid_duration_from_season(
+                ep_id=candidate.ep_id,
+                season_id=candidate.season_id,
+                title=candidate.name,
+            )
             if cid is not None:
-                return cid
+                return cid, duration_seconds
         if candidate.season_id is not None:
-            cid = self._cid_from_season(ep_id=None, season_id=candidate.season_id, title=candidate.name)
+            cid, duration_seconds = self._cid_duration_from_season(
+                ep_id=None,
+                season_id=candidate.season_id,
+                title=candidate.name,
+            )
             if cid is not None:
-                return cid
+                return cid, duration_seconds
         if candidate.bvid or candidate.aid is not None:
-            cid = self._cid_from_pagelist(candidate)
+            cid, duration_seconds = self._cid_duration_from_pagelist(candidate)
             if cid is not None:
-                return cid
+                return cid, duration_seconds
         cid = self._cid_from_html(candidate.url)
         if cid is None:
             raise DanmakuResolveError(f"Bilibili page missing cid: {candidate.url}")
-        return cid
+        return cid, 0
 
-    def _cid_from_season(self, ep_id: int | None, season_id: int | None, title: str) -> int | None:
+    def _cid_duration_from_season(self, ep_id: int | None, season_id: int | None, title: str) -> tuple[int | None, int]:
         payload = self._season_payload(ep_id=ep_id, season_id=season_id)
         episodes = self._season_episodes(payload)
         if ep_id is not None:
@@ -316,7 +339,7 @@ class BilibiliDanmakuProvider:
                 if self._to_int(episode.get("ep_id")) == ep_id:
                     cid = self._to_int(episode.get("cid"))
                     if cid is not None:
-                        return cid
+                        return cid, self._parse_duration_seconds(episode.get("duration"))
         target = normalize_name(title)
         if target:
             for episode in episodes:
@@ -326,10 +349,10 @@ class BilibiliDanmakuProvider:
                 if candidate_name == target:
                     cid = self._to_int(episode.get("cid"))
                     if cid is not None:
-                        return cid
+                        return cid, self._parse_duration_seconds(episode.get("duration"))
         if episodes:
-            return self._to_int(episodes[0].get("cid"))
-        return None
+            return self._to_int(episodes[0].get("cid")), self._parse_duration_seconds(episodes[0].get("duration"))
+        return None, 0
 
     def _season_payload(self, ep_id: int | None, season_id: int | None) -> dict:
         params = {"ep_id": ep_id} if ep_id is not None else {"season_id": season_id}
@@ -344,6 +367,11 @@ class BilibiliDanmakuProvider:
     def _season_episodes(self, payload: dict) -> list[dict]:
         result = payload.get("result") or {}
         episodes: list[dict] = []
+        main_section = result.get("main_section") or {}
+        if isinstance(main_section, dict):
+            for episode in main_section.get("episodes") or []:
+                if isinstance(episode, dict):
+                    episodes.append(episode)
         for episode in result.get("episodes") or []:
             if isinstance(episode, dict):
                 episodes.append(episode)
@@ -355,7 +383,7 @@ class BilibiliDanmakuProvider:
                     episodes.append(episode)
         return episodes
 
-    def _cid_from_pagelist(self, candidate: DanmakuSearchItem) -> int | None:
+    def _cid_duration_from_pagelist(self, candidate: DanmakuSearchItem) -> tuple[int | None, int]:
         params = {"bvid": candidate.bvid} if candidate.bvid else {"aid": candidate.aid}
         payload = self._get(
             "https://api.bilibili.com/x/player/pagelist",
@@ -368,10 +396,124 @@ class BilibiliDanmakuProvider:
         for page in pages:
             part = normalize_name(str(page.get("part") or ""))
             if part and target and (part == target or part in target or target in part):
-                return self._to_int(page.get("cid"))
+                return self._to_int(page.get("cid")), self._parse_duration_seconds(page.get("duration"))
         if pages:
-            return self._to_int(pages[0].get("cid"))
-        return None
+            return self._to_int(pages[0].get("cid")), self._parse_duration_seconds(pages[0].get("duration"))
+        return None, 0
+
+    def _resolve_seg_records(self, page_url: str, cid: int, duration_seconds: int) -> list[DanmakuRecord]:
+        max_segments = max(1, int(math.ceil(max(1, duration_seconds) / 360)))
+        records: list[DanmakuRecord] = []
+        stop_after_batch = False
+        for batch in iter_bounded_settled(
+            range(1, max_segments + 1),
+            lambda segment_index: self._fetch_seg_response(page_url, cid, segment_index),
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    raise settled.error
+                response = settled.value
+                if getattr(response, "status_code", 200) >= 400:
+                    stop_after_batch = True
+                    break
+                payload = bytes(getattr(response, "content", b"") or b"")
+                if not payload:
+                    continue
+                records.extend(self._parse_seg_records(payload))
+            if stop_after_batch:
+                break
+        records.sort(key=lambda record: record.time_offset)
+        return records
+
+    def _fetch_seg_response(self, page_url: str, cid: int, segment_index: int):
+        return self._get(
+            "https://api.bilibili.com/x/v2/dm/web/seg.so",
+            params={"type": 1, "oid": cid, "segment_index": segment_index},
+            headers={"user-agent": "Mozilla/5.0", "referer": page_url},
+            timeout=10.0,
+            follow_redirects=True,
+        )
+
+    def _parse_seg_records(self, payload: bytes) -> list[DanmakuRecord]:
+        index = 0
+        records: list[DanmakuRecord] = []
+        while index < len(payload):
+            tag, index = self._read_varint(payload, index)
+            field_number = tag >> 3
+            wire_type = tag & 0x07
+            if field_number == 1 and wire_type == 2:
+                size, index = self._read_varint(payload, index)
+                end = min(len(payload), index + size)
+                record = self._parse_seg_elem(payload[index:end])
+                if record is not None:
+                    records.append(record)
+                index = end
+                continue
+            index = self._skip_wire_value(payload, index, wire_type)
+        return records
+
+    def _parse_seg_elem(self, payload: bytes) -> DanmakuRecord | None:
+        index = 0
+        progress_ms = 0
+        pos = 1
+        color = 16777215
+        content = ""
+        while index < len(payload):
+            tag, index = self._read_varint(payload, index)
+            field_number = tag >> 3
+            wire_type = tag & 0x07
+            if wire_type == 0:
+                value, index = self._read_varint(payload, index)
+                if field_number == 2:
+                    progress_ms = value
+                elif field_number == 3:
+                    pos = value
+                elif field_number == 5:
+                    color = value
+                continue
+            if wire_type == 2:
+                size, index = self._read_varint(payload, index)
+                end = min(len(payload), index + size)
+                if field_number == 7:
+                    content = payload[index:end].decode("utf-8", errors="ignore").strip()
+                index = end
+                continue
+            index = self._skip_wire_value(payload, index, wire_type)
+        if not content:
+            return None
+        return DanmakuRecord(
+            time_offset=max(0.0, float(progress_ms) / 1000.0),
+            pos=max(1, int(pos)),
+            color=str(max(0, int(color))),
+            content=content,
+        )
+
+    def _read_varint(self, payload: bytes, index: int) -> tuple[int, int]:
+        shift = 0
+        value = 0
+        while index < len(payload):
+            byte = payload[index]
+            index += 1
+            value |= (byte & 0x7F) << shift
+            if not byte & 0x80:
+                return value, index
+            shift += 7
+            if shift >= 64:
+                break
+        raise DanmakuResolveError("Bilibili seg payload is invalid")
+
+    def _skip_wire_value(self, payload: bytes, index: int, wire_type: int) -> int:
+        if wire_type == 0:
+            _value, index = self._read_varint(payload, index)
+            return index
+        if wire_type == 1:
+            return min(len(payload), index + 8)
+        if wire_type == 2:
+            size, index = self._read_varint(payload, index)
+            return min(len(payload), index + size)
+        if wire_type == 5:
+            return min(len(payload), index + 4)
+        raise DanmakuResolveError("Bilibili seg payload uses unsupported wire type")
 
     def _cid_from_html(self, page_url: str) -> int | None:
         text = self._get(

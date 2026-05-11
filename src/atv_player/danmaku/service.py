@@ -13,6 +13,7 @@ from atv_player.danmaku.providers import (
     TencentDanmakuProvider,
     YoukuDanmakuProvider,
 )
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.providers.base import DanmakuProvider
 from atv_player.danmaku.utils import (
     build_xml,
@@ -322,18 +323,25 @@ class DanmakuService:
         self, provider_keys: list[str], query_name: str, original_name: str | None = None
     ) -> list[DanmakuSearchItem]:
         results: list[DanmakuSearchItem] = []
-        for key in provider_keys:
-            try:
-                provider_items = self._providers[key].search(query_name, original_name=original_name)
-            except Exception as exc:
-                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, query_name, exc)
-                continue
-            for item in provider_items:
-                if should_filter_name(query_name, item.name):
+        for batch in iter_bounded_settled(
+            provider_keys,
+            lambda key: (key, self._providers[key].search(query_name, original_name=original_name)),
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    logger.warning(
+                        "Danmaku provider search failed provider_batch name=%s error=%s",
+                        query_name,
+                        settled.error,
+                    )
                     continue
-                ratio = item.ratio or similarity_score(query_name, item.name)
-                simi = item.simi or ratio
-                results.append(replace(item, ratio=ratio, simi=simi))
+                key, provider_items = settled.value
+                for item in provider_items:
+                    if should_filter_name(query_name, item.name):
+                        continue
+                    ratio = item.ratio or similarity_score(query_name, item.name)
+                    simi = item.simi or ratio
+                    results.append(replace(item, ratio=ratio, simi=simi))
         return results
 
     def _danmaku_source_option_sort_key(

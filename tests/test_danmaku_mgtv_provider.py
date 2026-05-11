@@ -1,3 +1,6 @@
+import threading
+import time
+
 import httpx
 import pytest
 
@@ -422,3 +425,64 @@ def test_mgtv_resolve_ignores_empty_segment_items() -> None:
     records = provider.resolve("https://www.mgtv.com/b/555/1001.html")
 
     assert records == [DanmakuRecord(time_offset=2.0, pos=1, color="16777215", content="保留")]
+
+
+def test_mgtv_resolve_falls_back_to_white_when_v2_color_is_present_but_invalid() -> None:
+    def fake_get(url: str, **kwargs):
+        if "video/info" in url:
+            return httpx.Response(200, json={"data": {"info": {"time": "00:30"}}})
+        if "getctlbarrage" in url:
+            return httpx.Response(200, json={"data": {"cdn_list": "bullet.mgtv.com", "cdn_version": "v1"}})
+        if url == "https://bullet.mgtv.com/v1/0.json":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "time": 1000,
+                                "content": "无效颜色",
+                                "v2_color": {"color_left": "oops", "color_right": "rgb(999,0,0)"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError((url, kwargs))
+
+    provider = MgtvDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.mgtv.com/b/555/1001.html")
+
+    assert records == [DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="无效颜色")]
+
+
+def test_mgtv_resolve_downloads_segments_with_max_concurrency_of_four() -> None:
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    def fake_get(url: str, **kwargs):
+        if "video/info" in url:
+            return httpx.Response(200, json={"data": {"info": {"time": "05:10"}}})
+        if "getctlbarrage" in url:
+            return httpx.Response(200, json={"data": {"cdn_list": "bullet.mgtv.com", "cdn_version": "v1"}})
+        if url.startswith("https://bullet.mgtv.com/v1/") and url.endswith(".json"):
+            segment_index = int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            return httpx.Response(
+                200,
+                json={"data": {"items": [{"time": segment_index * 60000 + 1000, "content": f"第{segment_index}段"}]}},
+            )
+        raise AssertionError((url, kwargs))
+
+    provider = MgtvDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.mgtv.com/b/555/1001.html")
+
+    assert len(records) == 6
+    assert state["max_active"] == 4

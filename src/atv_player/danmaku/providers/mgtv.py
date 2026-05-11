@@ -5,6 +5,7 @@ from math import ceil
 
 import httpx
 
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.utils import should_filter_name
@@ -77,15 +78,21 @@ class MgtvDanmakuProvider:
         duration_seconds = self._video_duration(collection_id, video_id)
         segment_urls = self._segment_urls(collection_id, video_id, duration_seconds)
         records: list[DanmakuRecord] = []
-        for segment_url in segment_urls:
-            response = self._get(
-                segment_url,
-                headers=self._json_headers(),
-                follow_redirects=True,
-                timeout=10.0,
-            )
-            records.extend(self._segment_records(response.json()))
+        for batch in iter_bounded_settled(segment_urls, self._fetch_segment_payload):
+            for settled in batch:
+                if settled.error is not None:
+                    raise settled.error
+                records.extend(self._segment_records(settled.value or {}))
         return records
+
+    def _fetch_segment_payload(self, segment_url: str) -> dict:
+        response = self._get(
+            segment_url,
+            headers=self._json_headers(),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        return response.json()
 
     def supports(self, page_url: str) -> bool:
         return "mgtv.com" in page_url

@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 from atv_player.danmaku.errors import DanmakuResolveError, ProviderNotSupportedError
@@ -40,6 +43,32 @@ class FailingSearchProvider(FakeProvider):
         raise RuntimeError(f"{self.key} search boom")
 
 
+class SlowSearchProvider(FakeProvider):
+    def __init__(
+        self,
+        key: str,
+        items: list[DanmakuSearchItem],
+        records: list[DanmakuRecord],
+        *,
+        state: dict[str, int],
+        lock: threading.Lock,
+    ) -> None:
+        super().__init__(key, items, records)
+        self._state = state
+        self._lock = lock
+
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
+        self.search_calls.append(name)
+        self.original_name_calls.append(original_name)
+        with self._lock:
+            self._state["active"] += 1
+            self._state["max_active"] = max(self._state["max_active"], self._state["active"])
+        time.sleep(0.05)
+        with self._lock:
+            self._state["active"] -= 1
+        return list(self.items)
+
+
 def test_search_danmu_prefers_provider_from_reg_src() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -58,6 +87,28 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert [item.provider for item in results] == ["tencent"]
     assert tencent.search_calls == ["剑来"]
     assert youku.search_calls == []
+
+
+def test_search_danmu_searches_providers_with_max_concurrency_of_four() -> None:
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+    providers = {}
+    provider_order = []
+    for index, key in enumerate(["tencent", "youku", "bilibili", "iqiyi", "mgtv"], start=1):
+        providers[key] = SlowSearchProvider(
+            key,
+            [DanmakuSearchItem(provider=key, name="剑来", url=f"https://{key}/item", ratio=0.8, simi=0.8)],
+            [],
+            state=state,
+            lock=lock,
+        )
+        provider_order.append(key)
+    service = DanmakuService(providers, provider_order=provider_order)
+
+    results = service.search_danmu("剑来")
+
+    assert len(results) == 5
+    assert state["max_active"] == 4
 
 
 def test_search_danmu_sources_groups_results_by_provider_and_marks_default() -> None:

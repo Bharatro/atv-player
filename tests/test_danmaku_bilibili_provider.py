@@ -1,5 +1,8 @@
 import json
+import threading
+import time
 import pytest
+import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuSearchItem
@@ -13,6 +16,40 @@ class JsonResponse:
 
     def json(self):
         return self._payload
+
+
+def _encode_varint(value: int) -> bytes:
+    number = int(value)
+    output = bytearray()
+    while True:
+        chunk = number & 0x7F
+        number >>= 7
+        if number:
+            output.append(chunk | 0x80)
+        else:
+            output.append(chunk)
+            return bytes(output)
+
+
+def _encode_field_varint(field_number: int, value: int) -> bytes:
+    return _encode_varint((field_number << 3) | 0) + _encode_varint(value)
+
+
+def _encode_field_string(field_number: int, value: str) -> bytes:
+    payload = value.encode("utf-8")
+    return _encode_varint((field_number << 3) | 2) + _encode_varint(len(payload)) + payload
+
+
+def _build_bilibili_seg_reply(*, progress_ms: int, mode: int, color: int, content: str) -> bytes:
+    elem = b"".join(
+        (
+            _encode_field_varint(2, progress_ms),
+            _encode_field_varint(3, mode),
+            _encode_field_varint(5, color),
+            _encode_field_string(7, content),
+        )
+    )
+    return _encode_varint((1 << 3) | 2) + _encode_varint(len(elem)) + elem
 
 
 def test_bilibili_search_orders_bangumi_and_ft_results_and_skips_normal_video_search() -> None:
@@ -94,6 +131,58 @@ def test_bilibili_search_orders_bangumi_and_ft_results_and_skips_normal_video_se
     assert items[1].url == "https://www.bilibili.com/bangumi/play/ep5002"
 
 
+def test_bilibili_search_falls_back_to_video_results_when_pgc_search_is_empty() -> None:
+    search_types: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/abc123.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/def456.png",
+                        }
+                    },
+                }
+            )
+        if "search/type" in url:
+            search_types.append(params["search_type"])
+            if params["search_type"] == "video":
+                return JsonResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "result": [
+                                {
+                                    "title": "凡人修仙传 第1集",
+                                    "bvid": "BVvideo1",
+                                    "aid": 9001,
+                                    "cid": 777001,
+                                    "duration": "24:00",
+                                    "arcurl": "https://www.bilibili.com/video/BVvideo1",
+                                }
+                            ]
+                        },
+                    }
+                )
+            return JsonResponse({"code": 0, "data": {"result": []}})
+        return JsonResponse({"code": 0, "data": {}}, text="")
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    items = provider.search("凡人修仙传 第1集")
+
+    assert search_types == ["media_bangumi", "media_ft", "video"]
+    assert [(item.name, item.url, item.bvid, item.cid, item.duration_seconds, item.search_type) for item in items] == [
+        ("凡人修仙传 第1集", "https://www.bilibili.com/video/BVvideo1", "BVvideo1", 777001, 1440, "video"),
+    ]
+
+
 def test_bilibili_search_maps_duration_from_search_payload() -> None:
     def fake_get(url: str, **kwargs):
         params = kwargs.get("params") or {}
@@ -172,7 +261,7 @@ def test_bilibili_search_retries_once_after_ticket_refresh() -> None:
     items = provider.search("凡人修仙传 第1集")
 
     assert items == []
-    assert search_attempts["count"] == 3
+    assert search_attempts["count"] == 4
     assert any("GenWebTicket" in url for url in calls)
 
 
@@ -250,6 +339,70 @@ def test_bilibili_search_expands_season_result_into_episode_candidates() -> None
     assert [(item.name, item.url, item.ep_id, item.cid, item.duration_seconds) for item in items] == [
         ("牧神记 第1集", "https://www.bilibili.com/bangumi/play/ep9001", 9001, 7001, 1440),
         ("牧神记 第2集", "https://www.bilibili.com/bangumi/play/ep9002", 9002, 7002, 1500),
+    ]
+
+
+def test_bilibili_search_expands_main_section_episode_candidates() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/abc123.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/def456.png",
+                        }
+                    },
+                }
+            )
+        if "search/type" in url:
+            if params["search_type"] == "media_bangumi":
+                return JsonResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "result": [
+                                {
+                                    "title": "灵笼",
+                                    "season_id": 98765,
+                                    "url": "//www.bilibili.com/bangumi/play/ss98765",
+                                }
+                            ]
+                        },
+                    }
+                )
+            return JsonResponse({"code": 0, "data": {"result": []}})
+        if "pgc/view/web/season" in url and params.get("season_id") == 98765:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "title": "灵笼",
+                        "main_section": {
+                            "episodes": [
+                                {
+                                    "ep_id": 88001,
+                                    "cid": 77001,
+                                    "share_copy": "灵笼 第1集",
+                                    "duration": 1440,
+                                }
+                            ]
+                        },
+                    },
+                }
+            )
+        return JsonResponse({"code": 0, "data": {}}, text="")
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    items = provider.search("灵笼")
+
+    assert [(item.name, item.url, item.ep_id, item.cid, item.duration_seconds) for item in items] == [
+        ("灵笼 第1集", "https://www.bilibili.com/bangumi/play/ep88001", 88001, 77001, 1440),
     ]
 
 
@@ -468,6 +621,44 @@ def test_bilibili_resolve_prefers_cached_candidate_cid_and_parses_xml() -> None:
     assert records[0].pos == 1
     assert records[0].color == "16777215"
     assert records[0].content == "第一条"
+
+
+def test_bilibili_resolve_uses_seg_api_and_preserves_colors() -> None:
+    seen: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        seen.append(url)
+        if "x/v2/dm/web/seg.so" in url:
+            return httpx.Response(
+                200,
+                content=b"".join(
+                    (
+                        _build_bilibili_seg_reply(progress_ms=1000, mode=1, color=16777215, content="白色"),
+                        _build_bilibili_seg_reply(progress_ms=2500, mode=4, color=16711680, content="红色"),
+                    )
+                ),
+            )
+        if "comment.bilibili.com" in url:
+            raise AssertionError("seg.so 已命中时不应回退 comment XML")
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/video/BVseg1"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="测试视频",
+        url="https://www.bilibili.com/video/BVseg1",
+        cid=4321001,
+        duration_seconds=180,
+        search_type="video",
+    )
+
+    records = provider.resolve("https://www.bilibili.com/video/BVseg1")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (1.0, 1, "16777215", "白色"),
+        (2.5, 4, "16711680", "红色"),
+    ]
+    assert any("x/v2/dm/web/seg.so" in url for url in seen)
 
 
 def test_bilibili_resolve_uses_season_api_then_pagelist_then_html_fallback() -> None:
@@ -692,3 +883,43 @@ def test_bilibili_resolve_raises_clear_error_when_no_cid_can_be_found() -> None:
 
     with pytest.raises(DanmakuResolveError, match="missing cid"):
         provider.resolve("https://www.bilibili.com/video/BVnone")
+
+
+def test_bilibili_resolve_downloads_segments_with_max_concurrency_of_four() -> None:
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    def fake_get(url: str, **kwargs):
+        if "x/v2/dm/web/seg.so" in url:
+            segment_index = int((kwargs.get("params") or {})["segment_index"])
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            return httpx.Response(
+                200,
+                content=_build_bilibili_seg_reply(
+                    progress_ms=segment_index * 1000,
+                    mode=1,
+                    color=16777215,
+                    content=f"第{segment_index}段",
+                ),
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/video/BVseg6"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="测试视频",
+        url="https://www.bilibili.com/video/BVseg6",
+        cid=4321006,
+        duration_seconds=1801,
+        search_type="video",
+    )
+
+    records = provider.resolve("https://www.bilibili.com/video/BVseg6")
+
+    assert len(records) == 6
+    assert state["max_active"] == 4

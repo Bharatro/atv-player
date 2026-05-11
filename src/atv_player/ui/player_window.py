@@ -426,7 +426,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
-        self.danmaku_settings_button = self._create_icon_button("danmaku.svg", "弹幕设置")
+        self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
@@ -2256,6 +2256,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.config.preferred_danmaku_render_mode = normalized
         self._save_config()
+        self._refresh_danmaku_settings_position_controls()
         self._reload_active_danmaku_for_render_settings()
 
     def _save_danmaku_color_mode(self, value: str) -> None:
@@ -3636,6 +3637,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._danmaku_uniform_color_button is not None:
             self._danmaku_uniform_color_button.setEnabled(enabled)
 
+    def _refresh_danmaku_settings_position_controls(self) -> None:
+        enabled = self._preferred_danmaku_render_mode() != "static"
+        if self._danmaku_position_preset_combo is not None:
+            self._danmaku_position_preset_combo.setEnabled(enabled)
+
     def _refresh_danmaku_uniform_color_button(self) -> None:
         if self._danmaku_uniform_color_button is None:
             return
@@ -3717,6 +3723,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._danmaku_scroll_speed_spin.setValue(self._preferred_danmaku_scroll_speed())
             self._danmaku_scroll_speed_spin.blockSignals(False)
         self._refresh_danmaku_settings_color_controls()
+        self._refresh_danmaku_settings_position_controls()
 
     def _ensure_danmaku_settings_dialog(self) -> QDialog:
         if self._danmaku_settings_dialog is not None:
@@ -4497,6 +4504,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
             (QKeySequence("W"), self.wide_button.click),
             (QKeySequence("D"), self._open_danmaku_source_dialog),
+            (QKeySequence("Ctrl+D"), self._open_danmaku_settings_dialog),
             (QKeySequence("I"), self._toggle_video_info_from_menu),
             (QKeySequence("M"), self._toggle_mute),
             (QKeySequence("-"), lambda: self._step_speed(-1)),
@@ -4673,7 +4681,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         dialog.close()
 
+    def _close_danmaku_settings_dialog(self) -> None:
+        dialog = self._danmaku_settings_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog.close()
+
     def _dismiss_escape_dialog(self) -> bool:
+        dialog = self._danmaku_settings_dialog
+        if dialog is not None and dialog.isVisible():
+            self._close_danmaku_settings_dialog()
+            return True
         dialog = self._danmaku_source_dialog
         if dialog is not None and dialog.isVisible():
             self._close_danmaku_source_dialog()
@@ -4686,6 +4704,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _return_to_main(self) -> None:
         self._close_help_dialog()
         self._close_danmaku_source_dialog()
+        self._close_danmaku_settings_dialog()
         self._close_video_context_menu()
         self._remember_restore_state()
         try:

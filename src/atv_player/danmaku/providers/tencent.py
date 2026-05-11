@@ -10,6 +10,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number
 
 
@@ -898,43 +899,56 @@ class TencentDanmakuProvider:
         segment_urls, used_base_segment_index = self._resolve_segment_urls(video_id, duration)
         records: list[DanmakuRecord] = []
         seen: set[tuple[float, str]] = set()
-        for segment_index, segment_url in enumerate(segment_urls):
-            segment_response = self._get(
-                segment_url,
-                headers={
-                    "User-Agent": self._UA_PC,
-                    "Referer": "https://v.qq.com/",
-                    "Accept": "application/json,text/plain,*/*",
-                },
-                follow_redirects=True,
-                timeout=10.0,
-            )
-            try:
-                payload = segment_response.json()
-            except Exception:
-                continue
-            barrage_list = payload.get("barrage_list") or []
-            if not barrage_list:
-                if not used_base_segment_index and segment_index > 0:
-                    break
-                continue
-            for item in barrage_list:
-                content = str(item.get("content") or "").strip()
-                time_offset = round(float(item.get("time_offset") or 0.0) / 1000, 3)
-                style = self._parse_barrage_style(item.get("content_style"))
-                key = (time_offset, content)
-                if not content or key in seen:
+        stop_after_batch = False
+        segment_rows = list(enumerate(segment_urls))
+        for batch in iter_bounded_settled(segment_rows, self._fetch_segment_response):
+            for settled in batch:
+                if settled.error is not None:
+                    raise settled.error
+                segment_index, segment_response = settled.value
+                try:
+                    payload = segment_response.json()
+                except Exception:
                     continue
-                seen.add(key)
-                records.append(
-                    DanmakuRecord(
-                        time_offset=time_offset,
-                        pos=self._normalize_barrage_position(style.get("position")),
-                        color=self._normalize_barrage_color(style),
-                        content=content,
+                barrage_list = payload.get("barrage_list") or []
+                if not barrage_list:
+                    if not used_base_segment_index and segment_index > 0:
+                        stop_after_batch = True
+                        break
+                    continue
+                for item in barrage_list:
+                    content = str(item.get("content") or "").strip()
+                    time_offset = round(float(item.get("time_offset") or 0.0) / 1000, 3)
+                    style = self._parse_barrage_style(item.get("content_style"))
+                    key = (time_offset, content)
+                    if not content or key in seen:
+                        continue
+                    seen.add(key)
+                    records.append(
+                        DanmakuRecord(
+                            time_offset=time_offset,
+                            pos=self._normalize_barrage_position(style.get("position")),
+                            color=self._normalize_barrage_color(style),
+                            content=content,
+                        )
                     )
-                )
+            if stop_after_batch:
+                break
         return records
+
+    def _fetch_segment_response(self, row: tuple[int, str]) -> tuple[int, httpx.Response]:
+        segment_index, segment_url = row
+        segment_response = self._get(
+            segment_url,
+            headers={
+                "User-Agent": self._UA_PC,
+                "Referer": "https://v.qq.com/",
+                "Accept": "application/json,text/plain,*/*",
+            },
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        return segment_index, segment_response
 
     def _resolve_segment_urls(self, video_id: str, duration: int) -> tuple[list[str], bool]:
         segment_urls = self._segment_urls_from_base(video_id)
