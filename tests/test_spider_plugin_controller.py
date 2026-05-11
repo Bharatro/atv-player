@@ -980,7 +980,7 @@ def test_controller_uses_media_title_only_for_short_bare_numeric_playlists() -> 
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -1009,7 +1009,7 @@ def test_controller_keeps_implicit_numeric_suffix_for_long_bare_numeric_playlist
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -1038,7 +1038,7 @@ def test_controller_uses_date_title_for_non_drive_variety_playlist_search() -> N
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -1256,7 +1256,7 @@ def test_controller_resolves_danmaku_when_spider_enables_plugin_level_danmaku() 
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return [DanmakuSearchItem(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/x/cover/demo.html")]
 
@@ -1821,7 +1821,7 @@ def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_rec
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return [
                 DanmakuSearchItem(provider="tencent", name="10", url="https://v.qq.com/x/cover/mzc00200xxpsogl/t4101te90vx.html"),
@@ -1861,7 +1861,7 @@ def test_controller_ignores_legacy_player_content_danmu_flag_when_plugin_level_d
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return [DanmakuSearchItem(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/x/cover/demo.html")]
 
@@ -1889,7 +1889,7 @@ def test_controller_ignores_legacy_player_content_danmu_flag_when_plugin_level_d
 
 def test_controller_ignores_danmaku_resolution_failures_without_breaking_playback(caplog) -> None:
     class FailingDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             raise RuntimeError("danmu boom")
 
     controller = SpiderPluginController(
@@ -1917,7 +1917,7 @@ def test_controller_uses_cached_danmaku_xml_without_network_lookup(monkeypatch) 
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -1957,7 +1957,7 @@ def test_controller_uses_default_query_xml_cache_alias_after_manual_override_res
     xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached</d></i>'
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2052,7 +2052,7 @@ def test_controller_rebuild_request_auto_loads_danmaku_xml_after_manual_override
             second_calls.append(("search", f"{name}|{reg_src}"))
             return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
 
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             second_calls.append(("search-legacy", f"{name}|{reg_src}"))
             return []
 
@@ -2380,7 +2380,7 @@ def test_controller_resolves_danmaku_for_drive_replacement_playlist_items() -> N
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return [DanmakuSearchItem(provider="tencent", name=name, url="https://v.qq.com/x/cover/demo.html")]
 
@@ -2441,7 +2441,7 @@ def test_controller_falls_back_to_first_episode_when_single_drive_item_has_no_ep
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2484,7 +2484,7 @@ def test_controller_extracts_episode_number_from_sxxexx_style_titles() -> None:
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2532,7 +2532,7 @@ def test_controller_extracts_episode_number_from_numeric_title_with_size_suffix(
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2580,7 +2580,7 @@ def test_controller_uses_media_title_only_for_year_prefixed_movie_filename() -> 
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2636,7 +2636,7 @@ def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_ep
     calls: list[tuple[str, str]] = []
 
     class FakeDanmakuService:
-        def search_danmu(self, name: str, reg_src: str = ""):
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
             calls.append(("search", f"{name}|{reg_src}"))
             return []
 
@@ -2680,6 +2680,61 @@ def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_ep
         [
         ("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a"),
         ("search", "网盘剧集 2集|http://m/2.mp4"),
+        ]
+    )
+
+
+def test_controller_prefers_cjk_bar_separated_drive_titles_over_playlist_position() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {"title": "01~(894.9 MB)", "url": "http://m/1.mp4", "path": "/S1/01~4K.mp4", "size": 11},
+                        {"title": "01丨(974.69 MB)", "url": "http://m/1b.mp4", "path": "/S1/01丨4K.mp4", "size": 12},
+                        {"title": "02丨(819.27 MB)", "url": "http://m/2.mp4", "path": "/S1/02丨4K.mp4", "size": 13},
+                        {"title": "03-(704.61 MB)", "url": "http://m/3.mp4", "path": "/S1/03-4K.mp4", "size": 14},
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    request.playback_loader(result.replacement_playlist[1])
+    request.playback_loader(result.replacement_playlist[2])
+    _wait_until(lambda: len(calls) == 3)
+
+    assert sorted(calls) == sorted(
+        [
+            ("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a"),
+            ("search", "网盘剧集 1集|http://m/1b.mp4"),
+            ("search", "网盘剧集 2集|http://m/2.mp4"),
         ]
     )
 

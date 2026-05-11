@@ -46,6 +46,10 @@ def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
     assert extract_episode_number("0002 剑来-笼中雀") == 2
 
 
+def test_extract_episode_number_supports_cjk_bar_separated_prefix_titles() -> None:
+    assert extract_episode_number("01丨4K.mp4") == 1
+
+
 def test_infer_playlist_episode_number_prefers_current_title() -> None:
     playlist = [
         PlayItem(title="0001 剑来-总管坐镇剑气长城", url="http://m/1.mp4", index=0),
@@ -64,6 +68,18 @@ def test_infer_playlist_episode_number_prefers_trailing_episode_over_range_prefi
     ]
 
     assert infer_playlist_episode_number(playlist[1], playlist) == 2
+
+
+def test_infer_playlist_episode_number_prefers_cjk_bar_separated_prefix_titles_over_playlist_position() -> None:
+    playlist = [
+        PlayItem(title="01~4K.mp4", url="http://m/1.mp4", index=0),
+        PlayItem(title="01丨4K.mp4", url="http://m/1b.mp4", index=1),
+        PlayItem(title="02丨4K.mp4", url="http://m/2.mp4", index=2),
+        PlayItem(title="03-4K.mp4", url="http://m/3.mp4", index=3),
+    ]
+
+    assert infer_playlist_episode_number(playlist[1], playlist) == 1
+    assert infer_playlist_episode_number(playlist[2], playlist) == 2
 
 
 def test_infer_playlist_episode_number_falls_back_to_playlist_position() -> None:
