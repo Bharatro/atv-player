@@ -858,11 +858,13 @@ class SpiderPluginController:
         force_refresh: bool = False,
         media_duration_seconds: int = 0,
         playlist: list[PlayItem] | None = None,
+        provider_filter: str = "",
     ) -> str:
         series_key = build_danmaku_series_key(item.media_title or query_name)
         target_duration = media_duration_seconds if media_duration_seconds > 0 else int(item.duration_seconds or 0)
         item.danmaku_series_key = series_key
         item.danmaku_search_query = query_name
+        item.danmaku_search_provider = provider_filter
         preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
         item.danmaku_search_title = self._resolve_danmaku_search_title(item, preference)
         item.danmaku_search_episode = self._resolve_danmaku_search_episode(item, playlist)
@@ -871,21 +873,28 @@ class SpiderPluginController:
         else:
             item.danmaku_search_query = query_name
         query_name = item.danmaku_search_query
-        if not force_refresh and self.load_cached_danmaku_sources(item, media_duration_seconds=target_duration, playlist=playlist):
+        if (
+            not provider_filter
+            and not force_refresh
+            and self.load_cached_danmaku_sources(item, media_duration_seconds=target_duration, playlist=playlist)
+        ):
             return item.selected_danmaku_url
         if hasattr(self._danmaku_service, "search_danmu_sources"):
-            result = self._danmaku_service.search_danmu_sources(
-                query_name,
-                reg_src,
-                preferred_provider=preference.provider if preference is not None else "",
-                preferred_page_url=preference.page_url if preference is not None else "",
-                media_duration_seconds=target_duration,
-            )
+            search_method = self._danmaku_service.search_danmu_sources
+            search_kwargs = {
+                "preferred_provider": preference.provider if preference is not None else "",
+                "preferred_page_url": preference.page_url if preference is not None else "",
+                "media_duration_seconds": target_duration,
+            }
+            if "provider_filter" in inspect.signature(search_method).parameters:
+                search_kwargs["provider_filter"] = provider_filter
+            result = search_method(query_name, reg_src, **search_kwargs)
         else:
-            candidates = self._danmaku_service.search_danmu(query_name, reg_src)
+            candidates = self._danmaku_service.search_danmu(query_name, reg_src, provider_filter=provider_filter)
             result = self._legacy_source_search_result(candidates)
-        for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
-            save_cached_danmaku_source_search_result(cache_query_name, reg_src, result)
+        if not provider_filter:
+            for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
+                save_cached_danmaku_source_search_result(cache_query_name, reg_src, result)
         self._apply_danmaku_source_search_result(item, result)
         if result.groups and item.danmaku_search_title:
             self._save_danmaku_search_title_preference(item)
@@ -975,6 +984,7 @@ class SpiderPluginController:
         playlist: list[PlayItem] | None = None,
         force_refresh: bool = False,
         media_duration_seconds: int = 0,
+        provider_filter: str = "",
     ) -> None:
         if search_title_override is None and search_episode_override is None and query_override is not None:
             query_name = query_override.strip()
@@ -1010,6 +1020,7 @@ class SpiderPluginController:
             force_refresh=force_refresh,
             media_duration_seconds=media_duration_seconds,
             playlist=playlist,
+            provider_filter=provider_filter,
         )
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:

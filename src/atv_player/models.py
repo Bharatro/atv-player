@@ -106,6 +106,7 @@ class PlayItem:
     danmaku_search_title: str = ""
     danmaku_search_episode: str = ""
     danmaku_search_query: str = ""
+    danmaku_search_provider: str = ""
     danmaku_search_query_overridden: bool = False
     danmaku_candidates: list[DanmakuSourceGroup] = field(default_factory=list)
     selected_danmaku_url: str = ""

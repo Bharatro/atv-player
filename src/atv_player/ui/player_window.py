@@ -67,6 +67,15 @@ from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
+_DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
+    ("", "全部"),
+    ("tencent", "腾讯"),
+    ("youku", "优酷"),
+    ("bilibili", "B站"),
+    ("iqiyi", "爱奇艺"),
+    ("mgtv", "芒果"),
+]
+
 
 class ClickableSlider(QSlider):
     """A QSlider that allows clicking on the groove to set position directly."""
@@ -322,6 +331,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_settings_dialog: QDialog | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
+        self._danmaku_source_search_provider_combo: QComboBox | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
@@ -3858,8 +3868,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         episode_column.addWidget(QLabel("集数", dialog))
         self._danmaku_source_episode_edit = QLineEdit(dialog)
         episode_column.addWidget(self._danmaku_source_episode_edit)
+        source_column = QVBoxLayout()
+        source_column.addWidget(QLabel("搜索来源", dialog))
+        self._danmaku_source_search_provider_combo = QComboBox(dialog)
+        for provider_key, provider_label in _DANMAKU_SEARCH_PROVIDER_OPTIONS:
+            self._danmaku_source_search_provider_combo.addItem(provider_label, provider_key)
+        source_column.addWidget(self._danmaku_source_search_provider_combo)
         search_row.addLayout(title_column, 2)
         search_row.addLayout(episode_column, 1)
+        search_row.addLayout(source_column, 1)
         layout.addLayout(search_row)
         columns = QHBoxLayout()
         self._danmaku_source_provider_list = QListWidget(dialog)
@@ -3880,8 +3897,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         actions.addWidget(switch_button)
         layout.addLayout(actions)
         self._danmaku_source_provider_list.currentRowChanged.connect(self._handle_danmaku_source_provider_changed)
+        self._danmaku_source_search_provider_combo.currentIndexChanged.connect(
+            self._handle_danmaku_search_provider_changed
+        )
         self._danmaku_source_dialog = dialog
         return dialog
+
+    def _set_danmaku_search_provider_combo_value(self, provider_key: str) -> None:
+        if self._danmaku_source_search_provider_combo is None:
+            return
+        target_index = 0
+        for index in range(self._danmaku_source_search_provider_combo.count()):
+            if self._danmaku_source_search_provider_combo.itemData(index) == provider_key:
+                target_index = index
+                break
+        self._danmaku_source_search_provider_combo.blockSignals(True)
+        self._danmaku_source_search_provider_combo.setCurrentIndex(target_index)
+        self._danmaku_source_search_provider_combo.blockSignals(False)
+
+    def _selected_danmaku_search_provider_from_dialog(self) -> str:
+        if self._danmaku_source_search_provider_combo is None:
+            return ""
+        return str(self._danmaku_source_search_provider_combo.currentData() or "")
 
     def _populate_danmaku_source_provider_list(self, groups) -> None:
         if self._danmaku_source_provider_list is None:
@@ -3937,6 +3974,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         group = current_item.danmaku_candidates[index]
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, group.provider)
 
+    def _handle_danmaku_search_provider_changed(self, _index: int) -> None:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return
+        current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
+
     def _open_danmaku_source_dialog(self) -> None:
         current_item = self._current_play_item()
         if current_item is None:
@@ -3953,6 +3996,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)
         if self._danmaku_source_episode_edit is not None:
             self._danmaku_source_episode_edit.setText(current_item.danmaku_search_episode)
+        self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
         self._refresh_danmaku_source_dialog_actions(current_item)
@@ -3967,6 +4011,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)
         if self._danmaku_source_episode_edit is not None:
             self._danmaku_source_episode_edit.setText(current_item.danmaku_search_episode)
+        self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
         self._refresh_danmaku_source_dialog_actions(current_item)
@@ -4038,6 +4083,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item.danmaku_search_title = title
         current_item.danmaku_search_episode = episode
         current_item.danmaku_search_query = " ".join(part for part in (title, episode) if part).strip()
+        current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
         current_item.danmaku_search_query_overridden = True
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
@@ -4049,6 +4095,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 search_episode_override=episode,
                 force_refresh=True,
                 media_duration_seconds=media_duration_seconds,
+                provider_filter=current_item.danmaku_search_provider,
             ),
         )
 
@@ -4059,6 +4106,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item.danmaku_search_title = ""
         current_item.danmaku_search_episode = ""
         current_item.danmaku_search_query = ""
+        current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
         current_item.danmaku_search_query_overridden = False
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
@@ -4069,6 +4117,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 query_override=None,
                 force_refresh=True,
                 media_duration_seconds=media_duration_seconds,
+                provider_filter=current_item.danmaku_search_provider,
             ),
         )
 

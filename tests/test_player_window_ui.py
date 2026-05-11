@@ -617,6 +617,7 @@ def test_player_window_opens_danmaku_source_dialog_by_loading_cached_search_resu
             query_override: str | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ) -> None:
             self.refresh_calls += 1
 
@@ -660,6 +661,7 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
             search_episode_override: str | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ) -> None:
             self.calls.append((query_override, search_title_override, search_episode_override))
             item.danmaku_search_title = "红果短剧"
@@ -709,6 +711,7 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
             query_override: str | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ) -> None:
             self.calls.append(query_override)
 
@@ -758,9 +761,17 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
             search_episode_override: str | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ) -> None:
             self.calls.append(
-                (query_override, search_title_override, search_episode_override, force_refresh, media_duration_seconds)
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
             )
             time.sleep(0.05)
             item.danmaku_search_title = search_title_override or ""
@@ -768,6 +779,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
             item.danmaku_search_query = " ".join(
                 part for part in (item.danmaku_search_title, item.danmaku_search_episode) if part
             ).strip()
+            item.danmaku_search_provider = provider_filter
             item.danmaku_candidates = [
                 DanmakuSourceGroup(
                     provider="tencent",
@@ -817,7 +829,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     assert window._danmaku_source_title_edit.text() == "红果短剧 腾讯版"
     assert window._danmaku_source_episode_edit.text() == "2集"
     qtbot.waitUntil(
-        lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", True, 120)]
+        lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", True, 120, "")]
     )
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
     qtbot.waitUntil(
@@ -841,6 +853,7 @@ def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot)
             search_episode_override: str | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ) -> None:
             self.calls.append((query_override, search_title_override, search_episode_override, media_duration_seconds))
             item.danmaku_search_title = "红果短剧"
@@ -873,6 +886,76 @@ def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot)
     window._reset_current_item_danmaku_search_query()
 
     qtbot.waitUntil(lambda: controller.calls == [(None, None, None, 120)])
+
+
+def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, str | None, str | None, bool, int, str]] = []
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
+            item.danmaku_search_provider = provider_filter
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="youku",
+                    provider_label="优酷",
+                    options=[DanmakuSourceOption(provider="youku", name="优酷结果", url="https://v.youku.com/demo")],
+                )
+            ]
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_title="红果短剧",
+        danmaku_search_episode="1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_search_provider_combo is not None
+    assert window._danmaku_source_search_provider_combo.currentText() == "全部"
+
+    window._danmaku_source_search_provider_combo.setCurrentIndex(2)
+    window._rerun_current_item_danmaku_search()
+
+    qtbot.waitUntil(
+        lambda: controller.calls == [(None, "红果短剧", "1集", True, 120, "youku")]
+    )
+    assert item.danmaku_search_provider == "youku"
 
 
 def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qtbot, monkeypatch) -> None:

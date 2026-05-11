@@ -178,8 +178,9 @@ class DanmakuService:
         preferred_provider: str = "",
         preferred_page_url: str = "",
         media_duration_seconds: int = 0,
+        provider_filter: str = "",
     ) -> DanmakuSourceSearchResult:
-        flat_results = self.search_danmu(name, reg_src)
+        flat_results = self.search_danmu(name, reg_src, provider_filter=provider_filter)
         flat_results = _filter_search_items_by_media_duration_gap(flat_results, media_duration_seconds)
         requested_episode = extract_episode_number(normalize_name(name))
         grouped: dict[str, list[DanmakuSourceOption]] = {}
@@ -242,14 +243,18 @@ class DanmakuService:
             )
         return self._group_ranked_source_rows(ranked_rows, preferred_provider, preferred_page_url, reg_src)
 
-    def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
+    def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
         search_keyword = strip_episode_suffix(normalized) or normalized
         requested_episode = extract_episode_number(normalized)
         explicit_episode_request = has_explicit_episode_marker(normalized)
         primary_query = search_keyword
         preferred_key = self._preferred_provider_key(reg_src)
-        provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
+        if provider_filter:
+            provider_keys = [provider_filter] if provider_filter in self._providers else []
+            preferred_key = provider_filter if provider_filter in self._providers else None
+        else:
+            provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query, normalized)
         results = _filter_too_short_duration_candidates(results)
         if requested_episode is not None:
@@ -259,7 +264,7 @@ class DanmakuService:
                 if extract_episode_number(item.name) == requested_episode
                 and episode_title_matches(normalized, item.name)
             ]
-            if not matching and preferred_key is not None:
+            if not matching and preferred_key is not None and not provider_filter:
                 fallback_keys = [
                     key for key in self._provider_order if key in self._providers and key != preferred_key
                 ]

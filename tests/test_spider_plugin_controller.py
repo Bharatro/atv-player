@@ -1340,6 +1340,7 @@ def test_controller_research_danmaku_uses_temporary_query_only_for_current_item(
             preferred_provider: str = "",
             preferred_page_url: str = "",
             media_duration_seconds: int = 0,
+            provider_filter: str = "",
         ):
             calls.append(name)
             return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
@@ -1357,6 +1358,47 @@ def test_controller_research_danmaku_uses_temporary_query_only_for_current_item(
     assert item.danmaku_search_query == "红果短剧 腾讯版"
     assert item.danmaku_search_query_overridden is True
     assert calls[-1] == "红果短剧 腾讯版"
+
+
+def test_controller_refresh_danmaku_sources_passes_temporary_provider_filter_only_to_search() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            calls.append((name, provider_filter))
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="youku",
+                        provider_label="优酷",
+                        options=[DanmakuSourceOption(provider="youku", name="候选", url="https://v.youku.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.youku.com/demo",
+                default_provider="youku",
+            )
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧")
+
+    controller.refresh_danmaku_sources(item, force_refresh=True, provider_filter="youku")
+
+    assert calls == [("红果短剧 1集", "youku")]
+    assert item.selected_danmaku_provider == "youku"
+    assert item.danmaku_search_provider == "youku"
 
 
 def test_controller_refresh_danmaku_sources_uses_saved_search_title_for_same_series(tmp_path) -> None:
