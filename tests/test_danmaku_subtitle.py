@@ -86,6 +86,32 @@ def test_render_danmaku_ass_uses_uniform_color_and_scroll_mode() -> None:
     assert "\\1c&HFF0000&" not in subtitle
 
 
+def test_render_danmaku_outputs_count_intro_before_real_comments() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="1.0,1,25,16777215">第一条</d>'
+        '<d p="2.0,1,25,16777215">第二条</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(xml_text, line_count=2, duration_seconds=4.0)
+
+    assert "2条弹幕来袭！" in subtitle
+    assert subtitle.index("2条弹幕来袭！") < subtitle.index("第一条")
+
+
+def test_render_danmaku_keeps_count_intro_visible_for_longer() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="1.0,1,25,16777215">第一条</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(xml_text, line_count=1, duration_seconds=4.0)
+
+    assert "Dialogue: 0,0:00:00.00,0:00:03.00,Danmaku,,0,0,0,,1条弹幕来袭！" in subtitle
+
+
 def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
     xml_text = (
         '<?xml version="1.0" encoding="UTF-8"?><i>'
@@ -102,7 +128,7 @@ def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
         position_preset="top",
     )
 
-    assert "Dialogue: 0,0:00:00.00,0:00:09.00" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:12.00" in subtitle
 
 
 def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
@@ -124,7 +150,26 @@ def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
     )
 
     assert ",40," in subtitle
-    assert "Dialogue: 0,0:00:00.00,0:00:18.00" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:24.00" in subtitle
+
+
+def test_render_danmaku_ass_places_top_scroll_comments_closer_to_top_edge() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">更靠上</d>'
+        "</i>"
+    )
+
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+    )
+
+    assert "{\\an8\\move(2000,30,-400,30)\\1c&HFFFFFF&}更靠上" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
@@ -232,4 +277,4 @@ def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_l
     )
 
     assert "白色滚动" in subtitle
-    assert "{\\an8\\move(2000,60,-400,60)\\1c&H00FF00&}绿色滚动" in subtitle
+    assert "{\\an8\\move(2000,30,-400,30)\\1c&H00FF00&}绿色滚动" in subtitle

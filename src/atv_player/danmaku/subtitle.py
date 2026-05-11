@@ -11,8 +11,10 @@ _PLAY_RES_Y = 1080
 _LANE_HEIGHT = 40
 _DEFAULT_FONT_SIZE = 32
 _DEFAULT_UNIFORM_COLOR = "#FFFFFF"
-_SCROLL_MIN_DURATION_SECONDS = 10.0
+_SCROLL_MIN_DURATION_SECONDS = 12.0
 _DEFAULT_SCROLL_SPEED = 1.0
+_INTRO_LEAD_SECONDS = 1.0
+_INTRO_MIN_DURATION_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,11 +110,11 @@ def _source_color_to_ass(value: str) -> str:
 
 def _position_band_start(position_preset: str) -> int:
     return {
-        "top": 60,
+        "top": 30,
         "upper": 150,
         "mid_upper": 280,
         "bottom": 760,
-    }.get(position_preset, 60)
+    }.get(position_preset, 30)
 
 
 def _parse_danmaku_xml_records(xml_text: str) -> list[_ParsedDanmaku]:
@@ -409,6 +411,33 @@ def _event_override(mode: str, y: int, color: str) -> str:
     return rf"{{\an8\pos(960,{y})\1c{color}}}"
 
 
+def _build_intro_event(
+    records: list[_ParsedDanmaku],
+    *,
+    render_mode: str,
+    color_mode: str,
+    uniform_color: str,
+    position_preset: str,
+) -> str:
+    if not records:
+        return ""
+    intro_start = max(0.0, records[0].time_offset - _INTRO_LEAD_SECONDS)
+    intro_end = max(records[0].time_offset, intro_start + _INTRO_MIN_DURATION_SECONDS)
+    text = _escape_ass_text(f"{len(records)}条弹幕来袭！")
+    if render_mode == "static":
+        return (
+            f"Dialogue: 0,{_format_ass_timestamp(intro_start)},{_format_ass_timestamp(intro_end)},"
+            f"Danmaku,,0,0,0,,{text}"
+        )
+    color = _line_color(color_mode, uniform_color, "16777215")
+    y = max(20, _position_band_start(position_preset) - _LANE_HEIGHT)
+    override = _event_override("top", y, color)
+    return (
+        f"Dialogue: 0,{_format_ass_timestamp(intro_start)},{_format_ass_timestamp(intro_end)},"
+        f"Danmaku,,0,0,0,,{override}{text}"
+    )
+
+
 def _build_dynamic_events(
     records: list[_ParsedDanmaku],
     *,
@@ -488,6 +517,13 @@ def render_danmaku_ass(
         return ""
 
     header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color), normalized_font_size)
+    intro_event = _build_intro_event(
+        records,
+        render_mode=normalized_render_mode,
+        color_mode=normalized_color_mode,
+        uniform_color=normalized_uniform_color,
+        position_preset=normalized_position_preset,
+    )
     if normalized_render_mode == "static":
         lines = _assign_static_lines_with_priority(
             records,
@@ -500,7 +536,7 @@ def render_danmaku_ass(
             f"Dialogue: 0,{_format_ass_timestamp(cue.start)},{_format_ass_timestamp(cue.end)},Danmaku,,0,0,0,,{_render_static_text(cue, normalized_color_mode, normalized_uniform_color)}"
             for cue in cues
         ]
-        return "\n".join([header, *events, ""])
+        return "\n".join([header, intro_event, *events, ""])
 
     events = _build_dynamic_events(
         records,
@@ -512,4 +548,4 @@ def render_danmaku_ass(
         position_preset=normalized_position_preset,
         scroll_speed=normalized_scroll_speed,
     )
-    return "\n".join([header, *events, ""])
+    return "\n".join([header, intro_event, *events, ""])
