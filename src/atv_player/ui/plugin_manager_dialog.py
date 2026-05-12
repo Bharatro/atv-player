@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from atv_player.models import SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
 
 
@@ -414,7 +415,6 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
-        progress.setCancelButton(None)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._import_in_progress = True
         self.import_github_button.setEnabled(False)
@@ -423,6 +423,17 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
             result = self.plugin_manager.import_github_repository(
                 repo_url,
                 progress_callback=lambda event: self._update_import_progress(progress, event),
+                cancel_callback=lambda: progress.wasCanceled(),
+            )
+        except SpiderPluginImportCancelled as exc:
+            result = exc.result
+            if result.imported_count or result.updated_count:
+                self.plugin_tabs_dirty = True
+            self.reload_plugins()
+            QMessageBox.information(
+                self,
+                "导入已取消",
+                f"已取消：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
             )
         except Exception as exc:
             QMessageBox.warning(self, "导入失败", str(exc))

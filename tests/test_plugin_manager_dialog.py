@@ -426,6 +426,9 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
             self.labels.append(text)
             progress_updates.append((self.values[-1] if self.values else 0, self.maximums[-1] if self.maximums else 0, text))
 
+        def wasCanceled(self) -> bool:
+            return False
+
         def show(self) -> None:
             pass
 
@@ -484,6 +487,9 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_keeps_cancel_button(
 
         def setLabelText(self, text: str) -> None:
             pass
+
+        def wasCanceled(self) -> bool:
+            return False
 
         def show(self) -> None:
             pass
