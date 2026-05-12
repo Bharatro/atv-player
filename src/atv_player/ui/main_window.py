@@ -1584,6 +1584,93 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._plugin_pages.append((page, controller, plugin_id))
         self._plugin_tab_definitions.append(tab_definition)
 
+    def _load_plugin_definitions_with_manager(self, method_name: str, *args):
+        if self._plugin_manager is None:
+            return []
+        method = getattr(self._plugin_manager, method_name, None)
+        if not callable(method):
+            return []
+        try:
+            loaded_plugins = method(
+                *args,
+                drive_detail_loader=self._drive_detail_loader,
+                offline_download_detail_loader=self._offline_download_detail_loader,
+            )
+        except TypeError as exc:
+            if "offline_download_detail_loader" not in str(exc):
+                if "drive_detail_loader" not in str(exc):
+                    raise
+                loaded_plugins = method(
+                    *args,
+                    drive_detail_loader=self._drive_detail_loader,
+                )
+            else:
+                try:
+                    loaded_plugins = method(
+                        *args,
+                        drive_detail_loader=self._drive_detail_loader,
+                    )
+                except TypeError as drive_exc:
+                    if "drive_detail_loader" not in str(drive_exc):
+                        raise
+                    loaded_plugins = method(*args)
+        if isinstance(loaded_plugins, Iterable):
+            return list(loaded_plugins)
+        return []
+
+    def _reload_changed_plugin_tabs(self, changed_plugin_ids: list[str]) -> bool:
+        if self._plugin_manager is None or not changed_plugin_ids:
+            return False
+        list_plugins = getattr(self._plugin_manager, "list_plugins", None)
+        load_plugins = getattr(self._plugin_manager, "load_plugins", None)
+        if not callable(list_plugins) or not callable(load_plugins):
+            return False
+
+        current_plugins = list_plugins()
+        enabled_order = [str(plugin.id) for plugin in current_plugins if getattr(plugin, "enabled", False)]
+        changed_id_set = {str(plugin_id) for plugin_id in changed_plugin_ids if str(plugin_id)}
+        changed_enabled_ids = [plugin_id for plugin_id in enabled_order if plugin_id in changed_id_set]
+        loaded_definitions = self._load_plugin_definitions_with_manager("load_plugins", changed_enabled_ids)
+        loaded_by_id = {str(_plugin_value(definition, "id") or ""): definition for definition in loaded_definitions}
+
+        existing_definitions = {
+            str(_plugin_value(definition, "id") or ""): definition
+            for definition in self._plugin_definitions
+        }
+        existing_pages = {
+            current_plugin_id: (page, controller, current_plugin_id)
+            for page, controller, current_plugin_id in self._plugin_pages
+        }
+        existing_tab_definitions = {definition.key.removeprefix("plugin:"): definition for definition in self._plugin_tab_definitions}
+
+        for plugin_id in changed_id_set:
+            if plugin_id in loaded_by_id:
+                page_entry = existing_pages.pop(plugin_id, None)
+                if page_entry is not None:
+                    page_entry[0].deleteLater()
+                existing_tab_definitions.pop(plugin_id, None)
+                existing_definitions[plugin_id] = loaded_by_id[plugin_id]
+                page, controller, current_plugin_id, tab_definition = self._create_plugin_page_entry(loaded_by_id[plugin_id])
+                existing_pages[plugin_id] = (page, controller, current_plugin_id)
+                existing_tab_definitions[plugin_id] = tab_definition
+                continue
+            if plugin_id not in enabled_order:
+                page_entry = existing_pages.pop(plugin_id, None)
+                if page_entry is not None:
+                    page_entry[0].deleteLater()
+                existing_tab_definitions.pop(plugin_id, None)
+                existing_definitions.pop(plugin_id, None)
+
+        ordered_definitions = [existing_definitions[plugin_id] for plugin_id in enabled_order if plugin_id in existing_definitions]
+        ordered_pages = [existing_pages[plugin_id] for plugin_id in enabled_order if plugin_id in existing_pages]
+        ordered_tabs = [existing_tab_definitions[plugin_id] for plugin_id in enabled_order if plugin_id in existing_tab_definitions]
+
+        self._plugin_definitions = ordered_definitions
+        self._plugin_pages = ordered_pages
+        self._plugin_tab_definitions = ordered_tabs
+        self._refresh_visible_tabs()
+        return True
+
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:
             page.deleteLater()
@@ -1701,34 +1788,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         dialog.exec()
         if not bool(getattr(dialog, "plugin_tabs_dirty", False)):
             return
-        load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
-        if callable(load_enabled_plugins):
-            try:
-                loaded_plugins = load_enabled_plugins(
-                    drive_detail_loader=self._drive_detail_loader,
-                    offline_download_detail_loader=self._offline_download_detail_loader,
-                )
-            except TypeError as exc:
-                if "offline_download_detail_loader" not in str(exc):
-                    if "drive_detail_loader" not in str(exc):
-                        raise
-                    loaded_plugins = load_enabled_plugins(
-                        drive_detail_loader=self._drive_detail_loader,
-                    )
-                else:
-                    try:
-                        loaded_plugins = load_enabled_plugins(
-                            drive_detail_loader=self._drive_detail_loader,
-                        )
-                    except TypeError as drive_exc:
-                        if "drive_detail_loader" not in str(drive_exc):
-                            raise
-                        loaded_plugins = load_enabled_plugins()
-            if isinstance(loaded_plugins, Iterable):
-                self._plugin_definitions = list(loaded_plugins)
-            else:
-                self._plugin_definitions = []
-            self._rebuild_spider_plugin_tabs()
+        changed_plugin_ids = [str(plugin_id) for plugin_id in getattr(dialog, "changed_plugin_ids", []) if str(plugin_id)]
+        if self._reload_changed_plugin_tabs(changed_plugin_ids):
+            return
+        self._plugin_definitions = self._load_plugin_definitions_with_manager("load_enabled_plugins")
+        self._rebuild_spider_plugin_tabs()
 
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:

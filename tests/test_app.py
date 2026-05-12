@@ -1318,6 +1318,65 @@ def test_main_window_does_not_reload_plugins_when_plugin_manager_closes_without_
     assert captured_rebuilds == []
 
 
+def test_main_window_reloads_only_changed_plugins_when_plugin_manager_closes(qtbot, monkeypatch) -> None:
+    changed_definition = {"id": "plugin-2", "title": "插件2-新", "controller": object(), "search_enabled": True}
+    load_all_calls: list[str] = []
+    load_changed_calls: list[tuple[str, ...]] = []
+
+    class SelectivePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            load_all_calls.append("all")
+            return []
+
+        def load_plugins(self, plugin_ids, drive_detail_loader=None, offline_download_detail_loader=None):
+            load_changed_calls.append(tuple(str(plugin_id) for plugin_id in plugin_ids))
+            return [changed_definition]
+
+        def list_plugins(self):
+            return [
+                type("Plugin", (), {"id": "plugin-1", "enabled": True})(),
+                type("Plugin", (), {"id": "plugin-2", "enabled": True})(),
+            ]
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=SelectivePluginManager(),
+        spider_plugins=[
+            {"id": "plugin-1", "title": "插件1", "controller": object(), "search_enabled": True},
+            {"id": "plugin-2", "title": "插件2", "controller": object(), "search_enabled": True},
+        ],
+    )
+    qtbot.addWidget(window)
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+            self.parent = parent
+            self.plugin_tabs_dirty = True
+            self.changed_plugin_ids = ["plugin-2"]
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "PluginManagerDialog", FakeDialog)
+
+    window._open_plugin_manager()
+
+    assert load_all_calls == []
+    assert load_changed_calls == [("plugin-2",)]
+    assert [definition["id"] for definition in window._plugin_definitions] == ["plugin-1", "plugin-2"]
+    assert window._plugin_definitions[1]["title"] == "插件2-新"
+
+
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()

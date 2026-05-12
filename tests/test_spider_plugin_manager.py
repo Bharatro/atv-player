@@ -176,6 +176,18 @@ class RunnableActionLoader(FakeLoader):
         )
 
 
+def test_manager_load_plugins_loads_only_requested_enabled_plugins(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    first = repository.add_plugin("local", "/plugins/a.py", "插件A", enabled=True)
+    second = repository.add_plugin("local", "/plugins/b.py", "插件B", enabled=True)
+    repository.add_plugin("local", "/plugins/c.py", "插件C", enabled=False)
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    definitions = manager.load_plugins([second.id, "999", "3"])
+
+    assert [definition.id for definition in definitions] == [second.id]
+
+
 def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader())

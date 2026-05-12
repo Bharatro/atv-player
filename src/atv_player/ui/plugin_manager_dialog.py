@@ -56,8 +56,11 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self._init_async_guard()
         self.plugin_manager = plugin_manager
         self.plugin_tabs_dirty = False
+        self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
         self._refresh_in_progress = False
+        self._initial_plugin_snapshot: dict[int, tuple] = {}
+        self._initial_plugin_snapshot_captured = False
         self.setWindowTitle("插件管理")
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
@@ -152,6 +155,12 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self._pending_plugin_action_id = None
         self._plugin_actions_cache.clear()
         plugins = self.plugin_manager.list_plugins()
+        current_snapshot = self._plugin_snapshot(plugins)
+        if not self._initial_plugin_snapshot_captured:
+            self._initial_plugin_snapshot = current_snapshot
+            self._initial_plugin_snapshot_captured = True
+        self.changed_plugin_ids = self._diff_plugin_ids(self._initial_plugin_snapshot, current_snapshot)
+        self.plugin_tabs_dirty = bool(self.changed_plugin_ids)
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
             name_item = QTableWidgetItem(plugin.display_name or "")
@@ -168,6 +177,34 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
             self.plugin_table.setItem(row, 6, QTableWidgetItem(loaded_at))
         self._restore_selection(selected_plugin_id)
         self._sync_action_state()
+
+    def _plugin_snapshot(self, plugins) -> dict[int, tuple]:
+        snapshot: dict[int, tuple] = {}
+        for plugin in plugins:
+            snapshot[int(plugin.id)] = (
+                plugin.source_type,
+                plugin.source_value,
+                plugin.display_name,
+                bool(plugin.enabled),
+                int(plugin.sort_order),
+                plugin.cached_file_path,
+                int(plugin.last_loaded_at),
+                plugin.last_error,
+                plugin.config_text,
+                int(plugin.plugin_version),
+            )
+        return snapshot
+
+    def _diff_plugin_ids(
+        self,
+        previous: dict[int, tuple],
+        current: dict[int, tuple],
+    ) -> list[int]:
+        changed = set(previous) ^ set(current)
+        for plugin_id in set(previous) & set(current):
+            if previous[plugin_id] != current[plugin_id]:
+                changed.add(plugin_id)
+        return sorted(changed)
 
     def _has_selection(self) -> bool:
         return bool(self._selected_rows())

@@ -461,6 +461,44 @@ class SpiderPluginManager:
             definitions.append(definition)
         return definitions
 
+    def load_plugins(
+        self,
+        plugin_ids: tuple[str, ...] | list[str] | tuple[int, ...] | list[int],
+        drive_detail_loader=None,
+        offline_download_detail_loader=None,
+    ) -> list[SpiderPluginDefinition]:
+        requested_ids = {str(plugin_id) for plugin_id in plugin_ids if str(plugin_id)}
+        if not requested_ids:
+            return []
+        definitions: list[SpiderPluginDefinition] = []
+        plugins = [plugin for plugin in self._repository.list_plugins() if plugin.enabled and str(plugin.id) in requested_ids]
+        plugins.sort(key=lambda plugin: plugin.sort_order)
+        for plugin in plugins:
+            try:
+                loaded = self._loader.load(plugin)
+            except Exception as exc:
+                self._repository.update_plugin(
+                    plugin.id,
+                    display_name=plugin.display_name,
+                    enabled=plugin.enabled,
+                    cached_file_path=plugin.cached_file_path,
+                    last_loaded_at=plugin.last_loaded_at,
+                    last_error=str(exc),
+                    config_text=plugin.config_text,
+                    plugin_version=plugin.plugin_version,
+                )
+                self._repository.append_log(plugin.id, "error", str(exc))
+                continue
+            definitions.append(
+                self._build_plugin_definition(
+                    plugin,
+                    loaded,
+                    drive_detail_loader=drive_detail_loader,
+                    offline_download_detail_loader=offline_download_detail_loader,
+                )
+            )
+        return definitions
+
 
 __all__ = [
     "LoadedSpiderPlugin",
