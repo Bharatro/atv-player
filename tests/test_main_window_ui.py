@@ -1491,6 +1491,80 @@ def test_main_window_detail_field_link_click_opens_browser(qtbot, monkeypatch) -
     assert opened == ["https://example.com"]
 
 
+def test_main_window_bilibili_metadata_category_click_loads_builtin_bilibili_results(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RoutedBilibiliController(FakeStaticController):
+        def __init__(self) -> None:
+            self.category_calls: list[tuple[str, int]] = []
+
+        def load_categories(self):
+            return [type("Category", (), {"type_id": "recommend", "type_name": "推荐", "filters": []})()]
+
+        def load_items(self, category_id: str, page: int, filters=None):
+            self.category_calls.append((category_id, page))
+            return [VodItem(vod_id="bili-1", vod_name="UP视频")], 1
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="B站详情"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="bilibili",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    controller = RoutedBilibiliController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        bilibili_controller=controller,
+        config=AppConfig(),
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+    request = controller.build_request("BV1xx411c7mD")
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    assert callable(runner)
+
+    runner(
+        session["playlist"][0],
+        PlaybackDetailFieldAction(target="bilibili", type="category", value="up:378885845"),
+    )
+
+    qtbot.waitUntil(lambda: controller.category_calls == [("up:378885845", 1)])
+    assert window.bilibili_page is not None
+    qtbot.waitUntil(lambda: bool(window.bilibili_page.items) and window.bilibili_page.items[0].vod_name == "UP视频")
+    assert window.nav_tabs.currentWidget() is window.bilibili_page
+
+
 def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> None:
     class FailingBrowseController(FakeStaticController):
         def build_request_from_detail(self, vod_id: str):
