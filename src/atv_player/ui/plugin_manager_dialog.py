@@ -53,22 +53,25 @@ class PluginManagerDialog(QDialog):
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
 
-        self.plugin_table = QTableWidget(0, 6, self)
-        self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "地址", "启用", "状态", "最近加载"])
+        self.plugin_table = QTableWidget(0, 7, self)
+        self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "版本", "地址", "启用", "状态", "最近加载"])
         self.plugin_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.plugin_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.plugin_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         header = self.plugin_table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self.plugin_table.setColumnWidth(1, 72)
-        self.plugin_table.setColumnWidth(3, 64)
-        self.plugin_table.setColumnWidth(4, 160)
-        self.plugin_table.setColumnWidth(5, 168)
+        self.plugin_table.setColumnWidth(2, 64)
+        self.plugin_table.setColumnWidth(4, 64)
+        self.plugin_table.setColumnWidth(5, 160)
+        self.plugin_table.setColumnWidth(6, 168)
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
         self.import_github_button = QPushButton("从 GitHub 导入")
@@ -143,31 +146,41 @@ class PluginManagerDialog(QDialog):
             name_item.setData(256, plugin.id)
             self.plugin_table.setItem(row, 0, name_item)
             self.plugin_table.setItem(row, 1, QTableWidgetItem(_display_source_type(plugin.source_type)))
-            self.plugin_table.setItem(row, 2, QTableWidgetItem(plugin.source_value))
-            self.plugin_table.setItem(row, 3, QTableWidgetItem("是" if plugin.enabled else "否"))
-            self.plugin_table.setItem(row, 4, QTableWidgetItem(plugin.last_error or "正常"))
+            self.plugin_table.setItem(row, 2, QTableWidgetItem(str(plugin.plugin_version)))
+            self.plugin_table.setItem(row, 3, QTableWidgetItem(plugin.source_value))
+            self.plugin_table.setItem(row, 4, QTableWidgetItem("是" if plugin.enabled else "否"))
+            self.plugin_table.setItem(row, 5, QTableWidgetItem(plugin.last_error or "正常"))
             loaded_at = ""
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
-            self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
+            self.plugin_table.setItem(row, 6, QTableWidgetItem(loaded_at))
         self._restore_selection(selected_plugin_id)
         self._sync_action_state()
 
     def _has_selection(self) -> bool:
+        return bool(self._selected_rows())
+
+    def _selected_rows(self) -> list[int]:
         selection_model = self.plugin_table.selectionModel()
-        return bool(selection_model is not None and selection_model.hasSelection())
+        if selection_model is None:
+            return []
+        return sorted(index.row() for index in selection_model.selectedRows())
+
+    def _has_single_selection(self) -> bool:
+        return len(self._selected_rows()) == 1
 
     def _sync_action_state(self) -> None:
         has_selection = self._has_selection()
-        row = self.plugin_table.currentRow()
+        has_single_selection = self._has_single_selection()
+        row = self.plugin_table.currentRow() if has_single_selection else -1
         last_row = self.plugin_table.rowCount() - 1
-        self.rename_button.setEnabled(has_selection)
-        self.config_button.setEnabled(has_selection)
-        self.toggle_button.setEnabled(has_selection)
-        self.up_button.setEnabled(has_selection and row > 0)
-        self.down_button.setEnabled(has_selection and row >= 0 and row < last_row)
-        self.refresh_button.setEnabled(has_selection)
-        self.logs_button.setEnabled(has_selection)
+        self.rename_button.setEnabled(has_single_selection)
+        self.config_button.setEnabled(has_single_selection)
+        self.toggle_button.setEnabled(has_single_selection)
+        self.up_button.setEnabled(has_single_selection and row > 0)
+        self.down_button.setEnabled(has_single_selection and row >= 0 and row < last_row)
+        self.refresh_button.setEnabled(has_single_selection)
+        self.logs_button.setEnabled(has_single_selection)
         self.delete_button.setEnabled(has_selection)
         self._schedule_plugin_action_reload()
 
@@ -263,6 +276,8 @@ class PluginManagerDialog(QDialog):
             return
 
     def _selected_plugin_id(self) -> int | None:
+        if not self._has_single_selection():
+            return None
         row = self.plugin_table.currentRow()
         if row < 0:
             return None
@@ -270,6 +285,15 @@ class PluginManagerDialog(QDialog):
         if item is None:
             return None
         return int(item.data(256))
+
+    def _selected_plugin_ids(self) -> list[int]:
+        plugin_ids: list[int] = []
+        for row in self._selected_rows():
+            item = self.plugin_table.item(row, 0)
+            if item is None:
+                continue
+            plugin_ids.append(int(item.data(256)))
+        return plugin_ids
 
     def _prompt_display_name(self, current: str) -> str:
         value, accepted = QInputDialog.getText(self, "编辑名称", "显示名称", text=current)
@@ -383,7 +407,7 @@ class PluginManagerDialog(QDialog):
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
             return
-        enabled_item = self.plugin_table.item(self.plugin_table.currentRow(), 3)
+        enabled_item = self.plugin_table.item(self.plugin_table.currentRow(), 4)
         if enabled_item is None:
             return
         enabled_text = enabled_item.text()
@@ -408,10 +432,11 @@ class PluginManagerDialog(QDialog):
         self.reload_plugins()
 
     def _delete_selected(self) -> None:
-        plugin_id = self._selected_plugin_id()
-        if plugin_id is None:
+        plugin_ids = self._selected_plugin_ids()
+        if not plugin_ids:
             return
-        self.plugin_manager.delete_plugin(plugin_id)
+        for plugin_id in plugin_ids:
+            self.plugin_manager.delete_plugin(plugin_id)
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 

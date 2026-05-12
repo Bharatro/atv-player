@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel
 
 from atv_player.models import (
@@ -9,6 +9,18 @@ from atv_player.models import (
     SpiderPluginLogEntry,
 )
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
+
+
+def _select_rows(dialog: PluginManagerDialog, *rows: int) -> None:
+    dialog.plugin_table.clearSelection()
+    selection_model = dialog.plugin_table.selectionModel()
+    assert selection_model is not None
+    for row in rows:
+        index = dialog.plugin_table.model().index(row, 0)
+        selection_model.select(
+            index,
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
 
 
 class FakePluginManager:
@@ -22,6 +34,7 @@ class FakePluginManager:
                 enabled=True,
                 sort_order=0,
                 config_text="token=local",
+                plugin_version=3,
             ),
             SpiderPluginConfig(
                 id=2,
@@ -32,6 +45,7 @@ class FakePluginManager:
                 sort_order=1,
                 last_error="下载失败",
                 config_text="token=remote\ncookie=1\n",
+                plugin_version=7,
             ),
         ]
         self.logs = {
@@ -121,8 +135,10 @@ def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
     assert dialog.plugin_table.rowCount() == 2
     assert dialog.plugin_table.item(0, 0).text() == "本地A"
     assert dialog.plugin_table.item(0, 1).text() == "本地"
+    assert dialog.plugin_table.item(0, 2).text() == "3"
     assert dialog.plugin_table.item(1, 1).text() == "远程"
-    assert dialog.plugin_table.item(1, 4).text() == "下载失败"
+    assert dialog.plugin_table.item(1, 2).text() == "7"
+    assert dialog.plugin_table.item(1, 5).text() == "下载失败"
 
 
 def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> None:
@@ -134,16 +150,18 @@ def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> N
 
     header = dialog.plugin_table.horizontalHeader()
 
-    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
     assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Fixed
-    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Fixed
-    assert header.sectionResizeMode(4) == QHeaderView.ResizeMode.Interactive
-    assert header.sectionResizeMode(5) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(4) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(5) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(6) == QHeaderView.ResizeMode.Fixed
     assert dialog.plugin_table.columnWidth(1) >= 60
-    assert dialog.plugin_table.columnWidth(3) >= 50
-    assert dialog.plugin_table.columnWidth(4) >= 120
-    assert dialog.plugin_table.columnWidth(5) >= 150
+    assert dialog.plugin_table.columnWidth(2) >= 50
+    assert dialog.plugin_table.columnWidth(4) >= 50
+    assert dialog.plugin_table.columnWidth(5) >= 120
+    assert dialog.plugin_table.columnWidth(6) >= 150
     assert dialog.plugin_table.viewport().width() >= 900
 
 
@@ -153,6 +171,7 @@ def test_plugin_manager_dialog_uses_read_only_row_selection_for_actionable_table
 
     assert dialog.plugin_table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert dialog.plugin_table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
+    assert dialog.plugin_table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
 
 
 def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> None:
@@ -170,6 +189,24 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
     assert dialog.refresh_button.isEnabled() is False
     assert dialog.logs_button.isEnabled() is False
     assert dialog.delete_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.config_button.isEnabled() is False
+    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.up_button.isEnabled() is False
+    assert dialog.down_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.logs_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is True
 
 
 def test_plugin_manager_dialog_shows_empty_custom_action_state_without_selection(qtbot) -> None:
@@ -274,6 +311,19 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.move_calls == [(2, -1)]
     assert manager.refresh_calls == [2]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._delete_selected()
+
+    assert manager.delete_calls == [1, 2]
 
 
 def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:
