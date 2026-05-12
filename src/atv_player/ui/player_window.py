@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import queue
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QCloseEvent,
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedLayout,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -515,8 +517,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_poster_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_poster_overlay.setText("")
         self.video_poster_overlay.hide()
-        self.metadata_view = QTextEdit()
+        self.metadata_view = QTextBrowser()
         self.metadata_view.setReadOnly(True)
+        self.metadata_view.setOpenLinks(False)
+        self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.details = QWidget()
@@ -817,30 +821,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _render_detail_fields(self) -> None:
         self._clear_detail_field_rows()
-        fields = self._current_detail_fields()
-        self.detail_fields_widget.setHidden(not fields)
-        for field in fields:
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-            row_layout.addWidget(QLabel(f"{field.label}:"))
-            for index, part in enumerate(field.value_parts):
-                if index > 0:
-                    row_layout.addWidget(QLabel("/"))
-                if part.action is None:
-                    row_layout.addWidget(QLabel(part.label))
-                    continue
-                button = QPushButton(part.label)
-                button.setCursor(Qt.CursorShape.PointingHandCursor)
-                button.setFlat(True)
-                button.setStyleSheet("text-align: left; color: #2d6cdf; padding: 0; border: none;")
-                button.clicked.connect(
-                    lambda _checked=False, action=part.action: self._run_detail_field_action(action)
-                )
-                row_layout.addWidget(button)
-            row_layout.addStretch(1)
-            self.detail_fields_layout.addWidget(row_widget)
+        self.detail_fields_widget.setHidden(True)
 
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
@@ -866,6 +847,39 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.session.detail_field_runner(current_item, action)
         except Exception as exc:
             self._append_log(f"详情跳转失败[{action.type}]: {exc}")
+
+    def _detail_field_plain_text(self, field: PlaybackDetailField) -> str:
+        values = " / ".join(part.label for part in field.value_parts)
+        return f"{field.label}: {values}".rstrip()
+
+    def _detail_field_action_url(self, action: PlaybackDetailFieldAction) -> QUrl:
+        url = QUrl("atv-player://detail-field")
+        query = QUrlQuery()
+        query.addQueryItem("action_type", action.type)
+        query.addQueryItem("action_value", action.value)
+        url.setQuery(query)
+        return url
+
+    def _detail_field_html(self, field: PlaybackDetailField) -> str:
+        parts: list[str] = []
+        for part in field.value_parts:
+            if part.action is None:
+                parts.append(html.escape(part.label))
+                continue
+            href = html.escape(self._detail_field_action_url(part.action).toString())
+            label = html.escape(part.label)
+            parts.append(f'<a href="{href}">{label}</a>')
+        return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
+
+    def _handle_metadata_link(self, url: QUrl) -> None:
+        if url.scheme() != "atv-player" or url.host() != "detail-field":
+            return
+        query = QUrlQuery(url)
+        action_type = query.queryItemValue("action_type").strip()
+        action_value = query.queryItemValue("action_value").strip()
+        if not action_type or not action_value:
+            return
+        self._run_detail_field_action(PlaybackDetailFieldAction(type=action_type, value=action_value))
 
     def _set_detail_actions_enabled(self, enabled: bool) -> None:
         for index in range(self.detail_actions_layout.count()):
@@ -1243,6 +1257,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 lines = ["当前节目:", vod.epg_current]
                 if getattr(vod, "epg_schedule", ""):
                     lines.extend(["", "今日节目单:", vod.epg_schedule])
+                lines.extend(self._detail_field_plain_text(field) for field in self._current_detail_fields())
                 return "\n".join(lines)
             rows = [
                 ("标题", vod.vod_name),
@@ -1251,7 +1266,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            return "\n".join(f"{label}: {value}".rstrip() for label, value in rows)
+            lines = [f"{label}: {value}".rstrip() for label, value in rows]
+            lines.extend(self._detail_field_plain_text(field) for field in self._current_detail_fields())
+            return "\n".join(lines)
         rows = [
             ("名称", vod.vod_name),
             ("类型", vod.type_name),
@@ -1270,16 +1287,59 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
         lines = [f"{label}: {value}".rstrip() for label, value in rows]
+        lines.extend(self._detail_field_plain_text(field) for field in self._current_detail_fields())
         lines.append("")
         lines.append("简介:")
         lines.append(vod.vod_content)
         return "\n".join(lines)
 
+    def _format_metadata_html(self, vod) -> str:
+        if getattr(vod, "detail_style", "") == "live":
+            if getattr(vod, "epg_current", ""):
+                parts = [html.escape("当前节目:"), html.escape(vod.epg_current).replace("\n", "<br>")]
+                if getattr(vod, "epg_schedule", ""):
+                    parts.extend(["", html.escape("今日节目单:"), html.escape(vod.epg_schedule).replace("\n", "<br>")])
+                parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+                return "<br>".join(parts)
+            rows = [
+                ("标题", vod.vod_name),
+                ("平台", vod.vod_director),
+                ("类型", vod.type_name),
+                ("主播", vod.vod_actor),
+                ("人气", vod.vod_remarks),
+            ]
+            parts = [html.escape(f"{label}: {value}".rstrip()) for label, value in rows]
+            parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+            return "<br>".join(parts)
+        rows = [
+            ("名称", vod.vod_name),
+            ("类型", vod.type_name),
+            ("年代", vod.vod_year),
+            ("地区", vod.vod_area),
+            ("语言", vod.vod_lang),
+            ("评分", vod.vod_remarks),
+            ("导演", vod.vod_director),
+            ("演员", vod.vod_actor),
+            ("豆瓣ID", str(vod.dbid) if vod.dbid else ""),
+        ]
+        if getattr(vod, "detail_style", "") == "bilibili":
+            rows = [
+                (label, value)
+                for label, value in rows
+                if label not in {"年代", "地区", "语言", "豆瓣ID"}
+            ]
+        parts = [html.escape(f"{label}: {value}".rstrip()) for label, value in rows]
+        parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+        parts.append("")
+        parts.append(html.escape("简介:"))
+        parts.append(html.escape(vod.vod_content).replace("\n", "<br>"))
+        return "<br>".join(parts)
+
     def _render_metadata(self) -> None:
         if self.session is None:
             self.metadata_view.clear()
             return
-        self.metadata_view.setPlainText(self._format_metadata_text(self.session.vod))
+        self.metadata_view.setHtml(self._format_metadata_html(self.session.vod))
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:
