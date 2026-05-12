@@ -1325,6 +1325,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             pause=pause,
         ):
             return
+        current_item = self.session.playlist[self.current_index]
+        if not current_item.url:
+            self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            return
         self._refresh_parse_combo_enabled_state()
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
@@ -3821,7 +3825,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
-        action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
+        menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu

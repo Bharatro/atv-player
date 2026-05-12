@@ -1068,6 +1068,7 @@ def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
 def test_player_window_shows_route_selector_for_single_group(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
+    window.video = RecordingVideo()
     session = PlayerSession(
         vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
         playlist=[PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="网盘线(夸克)")],
@@ -1086,6 +1087,8 @@ def test_player_window_shows_route_selector_for_single_group(qtbot) -> None:
     assert window.playlist_group_combo.isHidden() is False
     assert window.playlist_group_combo.count() == 1
     assert window.playlist_group_combo.itemText(0) == "网盘线(夸克)"
+    assert window.video.load_calls == []
+    assert "播放失败: 没有可用的播放地址: 查看" in window.log_view.toPlainText()
 
 
 def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
@@ -1576,10 +1579,12 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     qtbot.addWidget(window)
 
     assert window.details is not None
+    assert window.log_section is not None
     assert window.metadata_view.isReadOnly() is True
     assert window.log_view.isReadOnly() is True
     assert window.details.layout().indexOf(window.metadata_view) != -1
-    assert window.details.layout().indexOf(window.log_view) != -1
+    assert window.details.layout().indexOf(window.log_section) != -1
+    assert window.log_section.layout().indexOf(window.log_view) != -1
 
 
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
@@ -1689,7 +1694,7 @@ def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) 
     assert window.poster_label is not None
     assert details_layout.indexOf(window.poster_label) != -1
     assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.metadata_view)
-    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.log_view)
+    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.log_section)
     assert window.poster_label.alignment() == Qt.AlignmentFlag.AlignCenter
     assert window.poster_label.minimumHeight() > 0
 
@@ -4271,9 +4276,6 @@ def test_player_window_disables_audio_selector_when_current_item_has_no_embedded
         def audio_tracks(self) -> list[AudioTrack]:
             return []
 
-        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
-            return track_id
-
         def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
             return None
 
@@ -4613,6 +4615,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "音轨",
         "弹幕配置",
         "弹幕源",
+        "弹幕设置",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
@@ -5379,6 +5382,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "音轨",
         "弹幕配置",
         "弹幕源",
+        "弹幕设置",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
@@ -11718,12 +11722,14 @@ def test_player_window_route_selector_uses_formatted_spider_play_source_label(qt
 
     window = PlayerWindow(controller, config=None, save_config=lambda: None)
     qtbot.addWidget(window)
+    window.video = RecordingVideo()
 
     window.open_session(session)
 
     assert window.playlist_group_combo.count() == 2
     assert window.playlist_group_combo.itemText(0) == "播放源 1"
     assert window.playlist_group_combo.itemText(1) == "网盘线(夸克)"
+    assert window.video.load_calls == []
 
 
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:
