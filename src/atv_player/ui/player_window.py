@@ -54,6 +54,8 @@ from atv_player.models import (
     ExternalSubtitleSelection,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -528,6 +530,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_actions_layout.setSpacing(6)
         details_layout.addWidget(self.detail_actions_widget)
+        self.detail_fields_widget = QWidget()
+        self.detail_fields_layout = QVBoxLayout(self.detail_fields_widget)
+        self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_fields_layout.setSpacing(4)
+        details_layout.addWidget(self.detail_fields_widget)
         details_layout.addWidget(QLabel("影片详情"))
         details_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(QLabel("播放日志"))
@@ -784,17 +791,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return []
         return [action for action in self.session.playlist[self.current_index].detail_actions if action.visible]
 
-    def _current_metadata_detail_fields(self) -> list[tuple[str, str]]:
+    def _current_detail_fields(self) -> list[PlaybackDetailField]:
         if self.session is None:
             return []
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
-                return [(field.label, field.value) for field in item_fields]
-        return [(field.label, field.value) for field in self.session.vod.detail_fields]
-
-    def _inline_detail_field_lines(self) -> list[str]:
-        return [f"{label}: {value}" for label, value in self._current_metadata_detail_fields()]
+                return list(item_fields)
+        return list(self.session.vod.detail_fields)
 
     def _clear_detail_action_buttons(self) -> None:
         while self.detail_actions_layout.count():
@@ -802,6 +806,41 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+
+    def _clear_detail_field_rows(self) -> None:
+        while self.detail_fields_layout.count():
+            item = self.detail_fields_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _render_detail_fields(self) -> None:
+        self._clear_detail_field_rows()
+        fields = self._current_detail_fields()
+        self.detail_fields_widget.setHidden(not fields)
+        for field in fields:
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            row_layout.addWidget(QLabel(f"{field.label}:"))
+            for index, part in enumerate(field.value_parts):
+                if index > 0:
+                    row_layout.addWidget(QLabel("/"))
+                if part.action is None:
+                    row_layout.addWidget(QLabel(part.label))
+                    continue
+                button = QPushButton(part.label)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setFlat(True)
+                button.setStyleSheet("text-align: left; color: #2d6cdf; padding: 0; border: none;")
+                button.clicked.connect(
+                    lambda _checked=False, action=part.action: self._run_detail_field_action(action)
+                )
+                row_layout.addWidget(button)
+            row_layout.addStretch(1)
+            self.detail_fields_layout.addWidget(row_widget)
 
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
@@ -816,6 +855,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             button.setProperty("detail_action_base_enabled", action.enabled)
             button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
             self.detail_actions_layout.addWidget(button)
+
+    def _run_detail_field_action(self, action: PlaybackDetailFieldAction) -> None:
+        if self.session is None or self.session.detail_field_runner is None:
+            return
+        if not (0 <= self.current_index < len(self.session.playlist)):
+            return
+        current_item = self.session.playlist[self.current_index]
+        try:
+            self.session.detail_field_runner(current_item, action)
+        except Exception as exc:
+            self._append_log(f"详情跳转失败[{action.type}]: {exc}")
 
     def _set_detail_actions_enabled(self, enabled: bool) -> None:
         for index in range(self.detail_actions_layout.count()):
@@ -935,6 +985,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.current_index = session.start_index
         self._render_poster()
         self._render_metadata()
+        self._render_detail_fields()
         self._reset_log()
         self.current_speed = session.speed
         self.opening_spin.blockSignals(True)
@@ -1200,9 +1251,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            lines = [f"{label}: {value}".rstrip() for label, value in rows]
-            lines.extend(self._inline_detail_field_lines())
-            return "\n".join(lines)
+            return "\n".join(f"{label}: {value}".rstrip() for label, value in rows)
         rows = [
             ("名称", vod.vod_name),
             ("类型", vod.type_name),
@@ -1221,7 +1270,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
         lines = [f"{label}: {value}".rstrip() for label, value in rows]
-        lines.extend(self._inline_detail_field_lines())
         lines.append("")
         lines.append("简介:")
         lines.append(vod.vod_content)
@@ -1239,6 +1287,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.session.vod = resolved_vod
         self._render_poster()
         self._render_metadata()
+        self._render_detail_fields()
 
     def _resolve_current_play_item(self) -> VodItem | None:
         if self.session is None:
@@ -1267,6 +1316,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.playlist.setCurrentRow(self.current_index)
             self._refresh_danmaku_source_entry_points()
             self._render_metadata()
+            self._render_detail_fields()
             self._render_detail_actions()
             self._load_current_item(
                 start_position_seconds=start_position_seconds,
@@ -1783,6 +1833,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._apply_playback_loader_result(load_result)
         self._render_poster()
         self._render_metadata()
+        self._render_detail_fields()
         self._refresh_parse_combo_enabled_state()
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
