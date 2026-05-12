@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.ui.main_window import MainWindow
@@ -13,7 +13,7 @@ class FakeStaticController:
     def load_categories(self):
         return []
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters=None):
         return [], 0
 
 
@@ -59,6 +59,7 @@ class FakePlayerController:
         playback_loader=None,
         async_playback_loader=False,
         detail_action_runner=None,
+        detail_field_runner=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -76,6 +77,7 @@ class FakePlayerController:
             "restore_history": restore_history,
             "async_playback_loader": async_playback_loader,
             "detail_action_runner": detail_action_runner,
+            "detail_field_runner": detail_field_runner,
             "danmaku_controller": danmaku_controller,
             "playback_history_loader": playback_history_loader,
             "playback_history_saver": playback_history_saver,
@@ -1053,13 +1055,14 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             detail_resolver=None,
             resolved_vod_by_id=None,
             use_local_history=True,
-            restore_history=False,
-            playback_loader=None,
-            async_playback_loader=False,
-            detail_action_runner=None,
-            danmaku_controller=None,
-            playback_progress_reporter=None,
-            playback_stopper=None,
+        restore_history=False,
+        playback_loader=None,
+        async_playback_loader=False,
+        detail_action_runner=None,
+        detail_field_runner=None,
+        danmaku_controller=None,
+        playback_progress_reporter=None,
+        playback_stopper=None,
             playback_history_loader=None,
             playback_history_saver=None,
             initial_log_message="",
@@ -1079,6 +1082,7 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 playback_loader=playback_loader,
                 async_playback_loader=async_playback_loader,
                 detail_action_runner=detail_action_runner,
+                detail_field_runner=detail_field_runner,
                 danmaku_controller=danmaku_controller,
                 playback_progress_reporter=playback_progress_reporter,
                 playback_stopper=playback_stopper,
@@ -1216,6 +1220,277 @@ def test_main_window_passes_detail_action_runner_to_player_controller(qtbot) -> 
     assert session["detail_action_runner"] is detail_action_runner
 
 
+def test_main_window_detail_field_category_click_loads_plugin_results(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RoutedPluginController(FakeStaticController):
+        def __init__(self) -> None:
+            self.category_calls: list[tuple[str, int]] = []
+            self.search_calls: list[tuple[str, int]] = []
+            self.build_request_calls: list[str] = []
+
+        def load_categories(self):
+            return [type("Category", (), {"type_id": "movie", "type_name": "电影", "filters": []})()]
+
+        def load_items(self, category_id: str, page: int, filters=None):
+            self.category_calls.append((category_id, page))
+            return [VodItem(vod_id="cat-1", vod_name="分类结果")], 1
+
+        def search_items(self, keyword: str, page: int):
+            self.search_calls.append((keyword, page))
+            return [VodItem(vod_id="search-1", vod_name="搜索结果")], 1
+
+        def build_request(self, vod_id: str):
+            self.build_request_calls.append(vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="详情结果"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_key="plugin-1",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    controller = RoutedPluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件1", "controller": controller, "search_enabled": True}],
+    )
+    qtbot.addWidget(window)
+    request = controller.build_request("detail-1")
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    runner(session["playlist"][0], PlaybackDetailFieldAction(type="category", value="movie"))
+
+    qtbot.waitUntil(lambda: controller.category_calls == [("movie", 1)])
+    plugin_page = window._plugin_pages[0][0]
+    qtbot.waitUntil(lambda: bool(plugin_page.items) and plugin_page.items[0].vod_name == "分类结果")
+    assert window.nav_tabs.currentWidget() is plugin_page
+
+
+def test_main_window_detail_field_search_click_loads_plugin_results(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RoutedPluginController(FakeStaticController):
+        def __init__(self) -> None:
+            self.search_calls: list[tuple[str, int]] = []
+
+        def load_categories(self):
+            return []
+
+        def search_items(self, keyword: str, page: int):
+            self.search_calls.append((keyword, page))
+            return [VodItem(vod_id="search-1", vod_name="搜索结果")], 1
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="详情结果"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_key="plugin-1",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    controller = RoutedPluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件1", "controller": controller, "search_enabled": True}],
+    )
+    qtbot.addWidget(window)
+    request = controller.build_request("detail-1")
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    runner(session["playlist"][0], PlaybackDetailFieldAction(type="search", value="演员1"))
+
+    qtbot.waitUntil(lambda: controller.search_calls == [("演员1", 1)])
+    plugin_page = window._plugin_pages[0][0]
+    qtbot.waitUntil(lambda: bool(plugin_page.items) and plugin_page.items[0].vod_name == "搜索结果")
+    assert window.nav_tabs.currentWidget() is plugin_page
+
+
+def test_main_window_detail_field_detail_click_opens_new_plugin_request(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RoutedPluginController(FakeStaticController):
+        def __init__(self) -> None:
+            self.build_request_calls: list[str] = []
+
+        def load_categories(self):
+            return []
+
+        def build_request(self, vod_id: str):
+            self.build_request_calls.append(vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name=f"详情:{vod_id}"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_key="plugin-1",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    controller = RoutedPluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件1", "controller": controller, "search_enabled": True}],
+    )
+    qtbot.addWidget(window)
+    request = controller.build_request("detail-1")
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    runner(session["playlist"][0], PlaybackDetailFieldAction(type="detail", value="detail-2"))
+
+    qtbot.waitUntil(lambda: controller.build_request_calls == ["detail-1", "detail-2"])
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2)
+    assert window.player_window.opened[-1][0]["vod"].vod_id == "detail-2"
+
+
+def test_main_window_detail_field_link_click_opens_browser(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RoutedPluginController(FakeStaticController):
+        def load_categories(self):
+            return []
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="详情结果"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_key="plugin-1",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    opened: list[str] = []
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    monkeypatch.setattr(main_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+    controller = RoutedPluginController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件1", "controller": controller, "search_enabled": True}],
+    )
+    qtbot.addWidget(window)
+    request = controller.build_request("detail-1")
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    runner(session["playlist"][0], PlaybackDetailFieldAction(type="link", value="https://example.com"))
+
+    assert opened == ["https://example.com"]
+
+
 def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> None:
     class FailingBrowseController(FakeStaticController):
         def build_request_from_detail(self, vod_id: str):
@@ -1350,6 +1625,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             playback_loader=None,
             async_playback_loader=False,
             detail_action_runner=None,
+            detail_field_runner=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
             playback_stopper=None,
@@ -1371,6 +1647,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 playback_loader,
                 async_playback_loader,
                 detail_action_runner,
+                detail_field_runner,
                 danmaku_controller,
                 playback_progress_reporter,
                 playback_stopper,

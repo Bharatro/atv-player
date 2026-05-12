@@ -60,6 +60,45 @@ Rules:
 - these rows are inserted into the existing player metadata text block
 - on normal detail pages, they appear after `豆瓣ID` and before `简介`
 
+## Clickable Detail Fields
+
+Custom detail rows can also expose clickable value items.
+
+Supported `value` shapes:
+
+```python
+{"label": "播放", "value": "12万"}
+{"label": "演员", "value": ["演员1", "演员2"]}
+{
+    "label": "演员",
+    "value": [
+        {"label": "演员1", "action": {"type": "search", "value": "演员1"}},
+        {"label": "演员2", "action": {"type": "detail", "value": "actor-2"}},
+    ],
+}
+```
+
+Supported action types:
+
+- `category`
+- `detail`
+- `search`
+- `link`
+
+Behavior:
+
+- `category` loads the current spider plugin's `categoryContent(...)` result in the plugin tab
+- `search` loads the current spider plugin's `searchContent(...)` result in the plugin tab
+- `detail` opens a new player detail request through the current spider plugin's `detailContent(...)`
+- `link` opens the given URL in the system browser
+
+Rules:
+
+- object items must provide non-blank `label`
+- malformed actions fall back to plain display text
+- rows with no remaining displayable values are ignored
+- multiple value items are rendered in source order and shown as separate clickable/plain entries
+
 ## Two Action Sources
 
 Python spider plugins now have two different places to provide player-detail actions:
