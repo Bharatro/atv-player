@@ -73,9 +73,38 @@ class PlaybackDetailAction:
 
 
 @dataclass(slots=True)
+class PlaybackDetailFieldAction:
+    type: str
+    value: str
+
+
+@dataclass(slots=True)
+class PlaybackDetailValuePart:
+    label: str
+    action: PlaybackDetailFieldAction | None = None
+
+
+@dataclass(slots=True, init=False)
 class PlaybackDetailField:
     label: str
-    value: str
+    value_parts: list[PlaybackDetailValuePart]
+
+    def __init__(
+        self,
+        label: str,
+        value: str = "",
+        value_parts: list[PlaybackDetailValuePart] | None = None,
+    ) -> None:
+        self.label = label
+        if value_parts is not None:
+            self.value_parts = list(value_parts)
+            return
+        normalized = str(value or "").strip()
+        self.value_parts = [PlaybackDetailValuePart(label=normalized)] if normalized else []
+
+    @property
+    def value(self) -> str:
+        return " / ".join(part.label for part in self.value_parts)
 
 
 @dataclass(slots=True)
@@ -311,6 +340,7 @@ class OpenPlayerRequest:
     playback_loader: Callable[..., PlaybackLoadResult | None] | None = None
     async_playback_loader: bool = False
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
+    detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

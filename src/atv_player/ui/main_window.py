@@ -7,8 +7,8 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut, QIcon
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -26,7 +26,7 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
@@ -1472,6 +1472,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             playback_loader=request.playback_loader,
             async_playback_loader=request.async_playback_loader,
             detail_action_runner=request.detail_action_runner,
+            detail_field_runner=request.detail_field_runner,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
@@ -1490,7 +1491,64 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if callable(append_status_log):
             append_status_log(message)
 
+    def _plugin_page_context_by_id(self, plugin_id: str) -> tuple[PosterGridPage, _PluginController] | None:
+        for page, controller, current_plugin_id in self._plugin_pages:
+            if current_plugin_id == plugin_id:
+                return page, controller
+        return None
+
+    def _prepare_request_for_open(self, request: OpenPlayerRequest) -> OpenPlayerRequest:
+        if request.source_kind != "plugin" or request.detail_field_runner is not None or not request.source_key:
+            return request
+        context = self._plugin_page_context_by_id(request.source_key)
+        if context is None:
+            return request
+        page, controller = context
+        request.detail_field_runner = (
+            lambda item, action, page=page, controller=controller, plugin_id=request.source_key: self._run_plugin_detail_field_action(
+                controller,
+                page,
+                plugin_id,
+                item,
+                action,
+            )
+        )
+        return request
+
+    def _run_plugin_detail_field_action(
+        self,
+        controller: _PluginController,
+        page: PosterGridPage,
+        plugin_id: str,
+        item: PlayItem,
+        action: PlaybackDetailFieldAction,
+    ) -> None:
+        if action.type == "detail":
+            def build_request() -> OpenPlayerRequest:
+                request = controller.build_request(action.value)
+                request.source_kind = "plugin"
+                request.source_key = plugin_id
+                return request
+
+            self._start_plugin_open_request(build_request)
+            return
+        if action.type == "link":
+            if not QDesktopServices.openUrl(QUrl(action.value)):
+                self._append_player_status_log(f"详情跳转失败[link]: 无法打开链接 {action.value}")
+            return
+        if action.type == "category":
+            self._show_main_again()
+            page.selected_category_id = action.value
+            self.nav_tabs.setCurrentWidget(page)
+            self._start_media_load(page, lambda: controller.load_items(action.value, 1), empty_message="当前分类暂无内容")
+            return
+        if action.type == "search":
+            self._show_main_again()
+            self.nav_tabs.setCurrentWidget(page)
+            self._start_media_load(page, lambda: controller.search_items(action.value, 1), empty_message="无搜索结果")
+
     def _open_player_immediately(self, request, restore_paused_state: bool = False) -> None:
+        request = self._prepare_request_for_open(request)
         try:
             session = self._create_player_session(request)
         except Exception as exc:
@@ -1541,6 +1599,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.hide()
 
     def open_player(self, request, restore_paused_state: bool = False) -> None:
+        request = self._prepare_request_for_open(request)
         request_id = self._next_player_session_request_id()
 
         def run() -> None:
