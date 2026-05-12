@@ -44,6 +44,20 @@ class FakePluginManager:
         self.dialog_opened = 0
 
 
+class WidthAwarePluginManager(FakePluginManager):
+    pass
+
+
+class CountingSpiderController(FakeSpiderController):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.load_calls = 0
+
+    def load_categories(self):
+        self.load_calls += 1
+        return []
+
+
 class FakePlayerController:
     def create_session(
         self,
@@ -255,6 +269,7 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     )
 
     qtbot.addWidget(window)
+    window.resize(920, 520)
     window.show()
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
@@ -270,6 +285,260 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "播放记录",
     ]
     assert window.plugin_manager_button.text() == "插件管理"
+
+
+def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkeypatch) -> None:
+    controllers = [FakeSpiderController(f"插件{i}") for i in range(1, 6)]
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": controller, "search_enabled": True}
+            for index, controller in enumerate(controllers, start=1)
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 220)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+        "豆瓣电影",
+        "电报影视",
+        "网络直播",
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+        "插件1",
+        "插件2",
+        "文件浏览",
+        "播放记录",
+    ]
+    assert window.plugin_overflow_button.isVisible() is True
+    assert window.plugin_overflow_button.text() == "更多(3)"
+    assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件3", "插件4", "插件5"]
+
+
+def test_main_window_hides_more_button_when_all_plugin_tabs_fit(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-1", "title": "插件1", "controller": FakeSpiderController("插件1"), "search_enabled": True},
+            {"id": "plugin-2", "title": "插件2", "controller": FakeSpiderController("插件2"), "search_enabled": True},
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+
+    assert window.plugin_overflow_button.isVisible() is False
+    assert window._hidden_plugin_tab_definitions == []
+
+
+def test_main_window_hides_all_plugin_tabs_when_fixed_tabs_exhaust_width(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-1", "title": "插件1", "controller": FakeSpiderController("插件1"), "search_enabled": True},
+            {"id": "plugin-2", "title": "插件2", "controller": FakeSpiderController("插件2"), "search_enabled": True},
+            {"id": "plugin-3", "title": "插件3", "controller": FakeSpiderController("插件3"), "search_enabled": True},
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 0)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+
+    assert "插件1" not in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+    assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件1", "插件2", "插件3"]
+    assert window.plugin_overflow_button.text() == "更多(3)"
+
+
+def test_main_window_does_not_lock_width_to_all_visible_plugin_tabs(qtbot) -> None:
+    baseline_window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(baseline_window)
+    baseline_window.resize(640, 480)
+    baseline_window.show()
+    baseline_width = baseline_window.width()
+    baseline_window.close()
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": FakeSpiderController(f"插件{index}"), "search_enabled": True}
+            for index in range(1, 31)
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(640, 480)
+    window.show()
+
+    assert window.width() == baseline_width
+    assert len(window._hidden_plugin_tab_definitions) > 0
+
+
+def test_main_window_plugin_overflow_drawer_filters_hidden_plugins(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-1", "title": "短剧一号", "controller": FakeSpiderController("短剧一号"), "search_enabled": True},
+            {"id": "plugin-2", "title": "短剧二号", "controller": FakeSpiderController("短剧二号"), "search_enabled": True},
+            {"id": "plugin-3", "title": "音乐插件", "controller": FakeSpiderController("音乐插件"), "search_enabled": True},
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 100)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+
+    assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["短剧二号", "音乐插件"]
+
+    window._plugin_overflow_drawer.search_edit.setText("音乐")
+
+    assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["音乐插件"]
+
+
+def test_main_window_selecting_hidden_plugin_from_drawer_switches_content_without_rebuilding_pages(
+    qtbot, monkeypatch,
+) -> None:
+    controllers = [CountingSpiderController(f"插件{i}") for i in range(1, 4)]
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": controller, "search_enabled": True}
+            for index, controller in enumerate(controllers, start=1)
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 100)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    original_pages = [page for page, _controller, _plugin_id in window._plugin_pages]
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+
+    window._plugin_overflow_drawer.select_plugin_by_title("插件3")
+
+    assert window._active_widget is original_pages[2]
+    assert window.nav_tabs.currentWidget() is original_pages[2]
+    assert window._plugin_pages[2][0] is original_pages[2]
+    assert controllers[2].load_calls <= 1
+
+
+def test_main_window_resize_keeps_active_hidden_plugin_page_instance(qtbot, monkeypatch) -> None:
+    controllers = [CountingSpiderController(f"插件{i}") for i in range(1, 4)]
+    available_width = {"value": 100}
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": controller, "search_enabled": True}
+            for index, controller in enumerate(controllers, start=1)
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: available_width["value"])
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    original_pages = [page for page, _controller, _plugin_id in window._plugin_pages]
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+    window._plugin_overflow_drawer.select_plugin_by_title("插件3")
+
+    available_width["value"] = 600
+    window._refresh_navigation_tabs()
+
+    assert window.nav_tabs.currentWidget() is original_pages[2]
+    assert window._plugin_pages[2][0] is original_pages[2]
+    assert controllers[2].load_calls <= 1
 
 
 def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) -> None:

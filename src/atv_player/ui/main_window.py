@@ -7,7 +7,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTabWidget,
+    QStackedWidget,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +36,7 @@ from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
+from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
 
@@ -198,6 +200,118 @@ class _GlobalSearchResult:
     page_number: int
 
 
+class _NavigationTabs(QWidget):
+    currentChanged = Signal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.tab_bar = QTabBar(self)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setMovable(False)
+        self.tab_bar.setDocumentMode(True)
+        self.tab_bar.setUsesScrollButtons(False)
+        self.plugin_overflow_button = QPushButton("更多", self)
+        self.plugin_overflow_button.hide()
+        self.content_stack = QStackedWidget(self)
+        self._visible_widgets: list[QWidget] = []
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        nav_row = QHBoxLayout()
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(8)
+        nav_row.addWidget(self.tab_bar, 1)
+        nav_row.addWidget(self.plugin_overflow_button, 0)
+        layout.addLayout(nav_row)
+        layout.addWidget(self.content_stack, 1)
+        self.tab_bar.currentChanged.connect(self._handle_tab_bar_changed)
+
+    def _handle_tab_bar_changed(self, index: int) -> None:
+        widget = self.widget(index)
+        if widget is None:
+            return
+        self.content_stack.setCurrentWidget(widget)
+        if not self.signalsBlocked():
+            self.currentChanged.emit(index)
+
+    def clear(self) -> None:
+        while self.tab_bar.count() > 0:
+            self.tab_bar.removeTab(self.tab_bar.count() - 1)
+        self._visible_widgets = []
+
+    def ensure_widget(self, widget: QWidget) -> None:
+        if self.content_stack.indexOf(widget) < 0:
+            self.content_stack.addWidget(widget)
+
+    def addTab(self, widget: QWidget, title: str) -> int:
+        self.ensure_widget(widget)
+        self._visible_widgets.append(widget)
+        return self.tab_bar.addTab(title)
+
+    def count(self) -> int:
+        return self.tab_bar.count()
+
+    def tabText(self, index: int) -> str:
+        return self.tab_bar.tabText(index)
+
+    def currentWidget(self) -> QWidget | None:
+        return self.content_stack.currentWidget()
+
+    def currentIndex(self) -> int:
+        current_widget = self.currentWidget()
+        if current_widget is None:
+            return -1
+        return self.indexOf(current_widget)
+
+    def widget(self, index: int) -> QWidget | None:
+        if 0 <= index < len(self._visible_widgets):
+            return self._visible_widgets[index]
+        return None
+
+    def indexOf(self, widget: QWidget) -> int:
+        try:
+            return self._visible_widgets.index(widget)
+        except ValueError:
+            return -1
+
+    def setCurrentIndex(self, index: int) -> None:
+        widget = self.widget(index)
+        if widget is None:
+            return
+        self.tab_bar.setCurrentIndex(index)
+        self.content_stack.setCurrentWidget(widget)
+
+    def setCurrentWidget(self, widget: QWidget) -> None:
+        self.ensure_widget(widget)
+        index = self.indexOf(widget)
+        if index >= 0:
+            self.tab_bar.setCurrentIndex(index)
+            self.content_stack.setCurrentWidget(widget)
+            return
+        if self.tab_bar.currentIndex() != -1:
+            self.tab_bar.setCurrentIndex(-1)
+        self.content_stack.setCurrentWidget(widget)
+        if not self.signalsBlocked():
+            self.currentChanged.emit(-1)
+
+    def blockSignals(self, block: bool) -> bool:
+        previous = super().blockSignals(block)
+        self.tab_bar.blockSignals(block)
+        return previous
+
+    def minimumSizeHint(self) -> QSize:
+        content_hint = self.content_stack.minimumSizeHint()
+        nav_height = max(self.tab_bar.minimumSizeHint().height(), self.plugin_overflow_button.minimumSizeHint().height())
+        spacing = self.layout().spacing() if self.layout() is not None else 0
+        return QSize(0, nav_height + spacing + content_hint.height())
+
+    def sizeHint(self) -> QSize:
+        content_hint = self.content_stack.sizeHint()
+        nav_height = max(self.tab_bar.sizeHint().height(), self.plugin_overflow_button.sizeHint().height())
+        spacing = self.layout().spacing() if self.layout() is not None else 0
+        return QSize(0, nav_height + spacing + content_hint.height())
+
+
 class MainWindow(QMainWindow, AsyncGuardMixin):
     logout_requested = Signal()
     _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
@@ -253,7 +367,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._static_tab_definitions: list[_TabDefinition] = []
         self._trailing_tab_definitions: list[_TabDefinition] = []
         self._plugin_tab_definitions: list[_TabDefinition] = []
-        self.nav_tabs = QTabWidget()
+        self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
+        self._active_widget: QWidget | None = None
+        self.nav_tabs = _NavigationTabs()
+        self.plugin_overflow_button = self.nav_tabs.plugin_overflow_button
+        self._tab_width_measure_bar = QTabBar(self)
+        self._tab_width_measure_bar.setDocumentMode(True)
+        self._tab_width_measure_bar.hide()
+        self._plugin_overflow_drawer = PluginTabDrawer(self.nav_tabs)
+        self._plugin_overflow_drawer.hide()
         self.global_search_container = QWidget()
         self.global_search_edit = QLineEdit()
         self.global_search_button = QPushButton("搜索")
@@ -454,6 +576,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         ]
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
+        self.plugin_overflow_button.clicked.connect(self._toggle_plugin_overflow_drawer)
+        self._plugin_overflow_drawer.plugin_selected.connect(self._handle_hidden_plugin_selected)
+        self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         self.global_search_button.clicked.connect(self._start_global_search)
@@ -597,7 +722,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.help_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.help_shortcut.activated.connect(self._show_shortcut_help)
 
-        self._refresh_visible_tabs()
+        self._refresh_navigation_tabs()
         self._sync_global_search_action_state()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
@@ -632,10 +757,66 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             for key, result in self._global_search_results.items()
         }
 
-    def _refresh_visible_tabs(self) -> None:
-        current_widget = self.nav_tabs.currentWidget()
-        definitions = self._visible_tab_definitions()
+    def _plugin_tab_title_width(self, title: str) -> int:
+        self._tab_width_measure_bar.setFont(self.nav_tabs.tab_bar.font())
+        index = self._tab_width_measure_bar.addTab(title)
+        width = self._tab_width_measure_bar.tabSizeHint(index).width()
+        self._tab_width_measure_bar.removeTab(index)
+        return width
+
+    def _plugin_overflow_button_width(self) -> int:
+        return max(self.plugin_overflow_button.sizeHint().width(), 84)
+
+    def _available_plugin_tab_width(self) -> int:
+        tab_bar_width = self.nav_tabs.tab_bar.width()
+        if tab_bar_width <= 0:
+            tab_bar_width = max(
+                self.nav_tabs.width() - self._plugin_overflow_button_width() - 8,
+                0,
+            )
+        static_width = sum(self._plugin_tab_title_width(definition.title) for definition in self._static_tab_definitions)
+        trailing_width = sum(
+            self._plugin_tab_title_width(definition.title)
+            for definition in self._trailing_tab_definitions
+            if not definition.global_search_only
+        )
+        available = tab_bar_width - static_width - trailing_width
+        return max(available, 0)
+
+    def _split_visible_and_hidden_plugin_tabs(self) -> tuple[list[_TabDefinition], list[_TabDefinition]]:
+        available = self._available_plugin_tab_width()
+        if not self._plugin_tab_definitions:
+            return [], []
+        visible: list[_TabDefinition] = []
+        hidden: list[_TabDefinition] = []
+        used = 0
+        for definition in self._plugin_tab_definitions:
+            width = self._plugin_tab_title_width(definition.title)
+            if used + width <= available:
+                visible.append(definition)
+                used += width
+            else:
+                hidden.append(definition)
+        return visible, hidden
+
+    def _refresh_navigation_tabs(self) -> None:
+        current_widget = self._active_widget or self.nav_tabs.currentWidget()
         title_overrides = self._global_search_title_overrides() if self._global_search_active else {}
+        for definition in self._all_tab_definitions():
+            self.nav_tabs.ensure_widget(definition.page)
+        if self._global_search_active:
+            definitions = [definition for definition in self._all_tab_definitions() if definition.key in self._global_search_results]
+            self._hidden_plugin_tab_definitions = []
+            self.plugin_overflow_button.hide()
+            self._close_plugin_overflow_drawer()
+        else:
+            visible_plugins, hidden_plugins = self._split_visible_and_hidden_plugin_tabs()
+            self._hidden_plugin_tab_definitions = hidden_plugins
+            self.plugin_overflow_button.setVisible(bool(hidden_plugins))
+            self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
+            if not hidden_plugins:
+                self._close_plugin_overflow_drawer()
+            definitions = [*self._static_tab_definitions, *visible_plugins, *self._trailing_tab_definitions]
 
         self.nav_tabs.blockSignals(True)
         self.nav_tabs.clear()
@@ -647,11 +828,21 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             current_index = self.nav_tabs.indexOf(current_widget)
             if current_index >= 0:
                 self.nav_tabs.setCurrentIndex(current_index)
+                self._sync_plugin_overflow_drawer()
+                return
+            if not self._global_search_active and self._tab_key_for_widget(current_widget) is not None:
+                self.nav_tabs.setCurrentWidget(current_widget)
+                self._sync_plugin_overflow_drawer()
                 return
         if not self._global_search_active and self._restore_saved_tab_selection(definitions):
+            self._sync_plugin_overflow_drawer()
             return
         if self.nav_tabs.count() > 0:
             self.nav_tabs.setCurrentIndex(0)
+        self._sync_plugin_overflow_drawer()
+
+    def _refresh_visible_tabs(self) -> None:
+        self._refresh_navigation_tabs()
 
     def _restore_saved_tab_selection(self, definitions: list[_TabDefinition]) -> bool:
         selected_key = getattr(self.config, "last_selected_tab", "douban") or "douban"
@@ -708,9 +899,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._sync_global_search_action_state()
 
     def _handle_tab_changed(self, index: int) -> None:
-        widget = self.nav_tabs.widget(index)
+        widget = self.nav_tabs.widget(index) if index >= 0 else self.nav_tabs.currentWidget()
         if widget is None:
             return
+        self._active_widget = widget
+        self._sync_plugin_overflow_drawer()
         if self._global_search_active:
             return
         self._remember_selected_tab(widget)
@@ -748,6 +941,60 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
                 self.history_page.ensure_loaded()
+
+    def _overflow_drawer_items(self) -> list[tuple[str, str, bool]]:
+        active_key = self._tab_key_for_widget(self._active_widget or self.nav_tabs.currentWidget())
+        return [
+            (definition.key, definition.title, definition.key == active_key)
+            for definition in self._hidden_plugin_tab_definitions
+        ]
+
+    def _position_plugin_overflow_drawer(self) -> None:
+        content_geometry = self.nav_tabs.content_stack.geometry()
+        if content_geometry.width() <= 0 or content_geometry.height() <= 0:
+            return
+        drawer_width = min(self._plugin_overflow_drawer.width(), content_geometry.width())
+        self._plugin_overflow_drawer.setGeometry(
+            content_geometry.x() + content_geometry.width() - drawer_width,
+            content_geometry.y(),
+            drawer_width,
+            content_geometry.height(),
+        )
+
+    def _sync_plugin_overflow_drawer(self, *, reset_search: bool = False) -> None:
+        if not self._hidden_plugin_tab_definitions:
+            self._close_plugin_overflow_drawer()
+            return
+        if reset_search:
+            self._plugin_overflow_drawer.search_edit.clear()
+        self._plugin_overflow_drawer.set_plugins(self._overflow_drawer_items())
+        if self._plugin_overflow_drawer.isVisible():
+            self._position_plugin_overflow_drawer()
+
+    def _toggle_plugin_overflow_drawer(self) -> None:
+        if self._plugin_overflow_drawer.isVisible():
+            self._close_plugin_overflow_drawer()
+            return
+        self._open_plugin_overflow_drawer()
+
+    def _open_plugin_overflow_drawer(self) -> None:
+        if not self._hidden_plugin_tab_definitions:
+            return
+        self._sync_plugin_overflow_drawer(reset_search=True)
+        self._position_plugin_overflow_drawer()
+        self._plugin_overflow_drawer.show()
+        self._plugin_overflow_drawer.raise_()
+        self._plugin_overflow_drawer.search_edit.setFocus()
+
+    def _close_plugin_overflow_drawer(self) -> None:
+        self._plugin_overflow_drawer.hide()
+
+    def _handle_hidden_plugin_selected(self, plugin_key: str) -> None:
+        definition = next((item for item in self._plugin_tab_definitions if item.key == plugin_key), None)
+        if definition is None:
+            return
+        self._close_plugin_overflow_drawer()
+        self.nav_tabs.setCurrentWidget(definition.page)
 
     def _handle_douban_search_requested(self, keyword: str) -> None:
         self.global_search_edit.setText(keyword)
@@ -1217,6 +1464,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
             return
+        self._close_plugin_overflow_drawer()
         self._close_help_dialog()
         dialog = PluginManagerDialog(self._plugin_manager, self)
         dialog.exec()
@@ -1254,6 +1502,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:
             return
+        self._close_plugin_overflow_drawer()
         self._close_help_dialog()
         dialog = LiveSourceManagerDialog(self._live_source_manager, self)
         dialog.exec()
@@ -1849,8 +2098,19 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         super().keyPressEvent(event)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._refresh_navigation_tabs()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_navigation_tabs()
+        if self._plugin_overflow_drawer.isVisible():
+            self._position_plugin_overflow_drawer()
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self._deactivate_async_guard()
+        self._close_plugin_overflow_drawer()
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         if self.isVisible():
             self.config.last_active_window = "main"
