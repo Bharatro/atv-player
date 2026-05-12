@@ -3813,6 +3813,23 @@ def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
     assert window.details.isHidden() is False
 
 
+def test_player_window_can_hide_only_playback_log_section(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    window.toggle_log_button.click()
+
+    assert window.details.isHidden() is False
+    assert window.metadata_view.isHidden() is False
+    assert window.log_section.isHidden() is True
+
+    window.toggle_log_button.click()
+
+    assert window.details.isHidden() is False
+    assert window.log_section.isHidden() is False
+
+
 def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -3984,9 +4001,13 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.fullscreen_button.text() == ""
     assert window.toggle_playlist_button.text() == ""
     assert window.toggle_details_button.text() == ""
+    assert window.toggle_log_button.text() == ""
     assert window.play_button.toolTip() == "播放/暂停 (Space)"
     assert window.mute_button.toolTip() == "静音 (M)"
     assert window.fullscreen_button.toolTip() == "全屏 (Enter)"
+    assert window.toggle_log_button.toolTip() == "播放日志"
+    assert window.toggle_log_button.isCheckable() is True
+    assert window.toggle_log_button.isChecked() is True
     assert isinstance(window.speed_combo, QComboBox)
     assert window.volume_slider.maximum() == 100
 

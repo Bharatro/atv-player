@@ -444,12 +444,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.wide_button.setChecked(bool(self.config.player_wide_mode))
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
+        self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
+        self.toggle_log_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
+        self.toggle_log_button.setChecked(True)
 
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
@@ -545,8 +548,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         details_layout.addWidget(self.detail_fields_widget)
         details_layout.addWidget(QLabel("影片详情"))
         details_layout.addWidget(self.metadata_view, 3)
-        details_layout.addWidget(QLabel("播放日志"))
-        details_layout.addWidget(self.log_view, 1)
+        self.log_section = QWidget()
+        log_layout = QVBoxLayout(self.log_section)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(6)
+        log_layout.addWidget(QLabel("播放日志"))
+        log_layout.addWidget(self.log_view, 1)
+        details_layout.addWidget(self.log_section, 1)
 
         self.report_timer = QTimer(self)
         self.report_timer.setInterval(5000)
@@ -564,6 +572,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_actions.setContentsMargins(0, 0, 0, 0)
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
+        sidebar_actions.addWidget(self.toggle_log_button)
 
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(72)
@@ -679,6 +688,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
+        self.toggle_log_button.clicked.connect(self._toggle_log_visibility)
         self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
         self.danmaku_settings_button.clicked.connect(self._open_danmaku_settings_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
@@ -2163,6 +2173,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         )
 
     def _update_sidebar_visibility(self) -> None:
+        self._apply_visibility_state()
+
+    def _toggle_log_visibility(self) -> None:
         self._apply_visibility_state()
 
     def _change_playlist_group(self, playlist_index: int) -> None:
@@ -4844,6 +4857,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.sidebar_container.setHidden(sidebar_hidden)
         self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
         self.details.setHidden(is_fullscreen or not self.toggle_details_button.isChecked())
+        self.log_section.setHidden(
+            is_fullscreen
+            or not self.toggle_details_button.isChecked()
+            or not self.toggle_log_button.isChecked()
+        )
 
     def _format_time(self, seconds: int) -> str:
         total_seconds = max(int(seconds), 0)
