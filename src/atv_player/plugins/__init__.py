@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+import re
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from pathlib import PurePosixPath
+from urllib.parse import quote, unquote, urlparse
+
+import httpx
 
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
-from atv_player.models import SpiderPluginAction, SpiderPluginActionContext, SpiderPluginConfig
+from atv_player.models import (
+    SpiderPluginAction,
+    SpiderPluginActionContext,
+    SpiderPluginConfig,
+    SpiderPluginImportProgress,
+    SpiderPluginImportResult,
+)
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.plugins.loader import LoadedSpiderPlugin, SpiderPluginLoader
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -18,6 +29,9 @@ class SpiderPluginDefinition:
     title: str
     controller: object
     search_enabled: bool
+
+
+_PLUGIN_VERSION_PATTERN = re.compile(r"^\s*//@version:(\d+)\s*$")
 
 
 def _default_plugin_name(source_type: str, source_value: str) -> str:
@@ -46,16 +60,42 @@ def _coerce_plugin_action(payload: object) -> SpiderPluginAction | None:
     )
 
 
+def _parse_github_repo(value: str) -> tuple[str, str]:
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https" or parsed.netloc != "github.com":
+        raise ValueError("请输入 GitHub 仓库地址")
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        raise ValueError("请输入 GitHub 仓库地址")
+    return parts[0], parts[1]
+
+
+def _parse_plugin_version(source_text: str) -> int:
+    for line in source_text.splitlines()[:16]:
+        matched = _PLUGIN_VERSION_PATTERN.match(line)
+        if matched:
+            return int(matched.group(1))
+    return 1
+
+
+def _raw_github_url(owner: str, repo: str, branch: str, relative_path: str) -> str:
+    encoded_parts = [quote(part) for part in PurePosixPath(relative_path).parts]
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{'/'.join(encoded_parts)}"
+
+
 class SpiderPluginManager:
     def __init__(
         self,
         repository: SpiderPluginRepository,
         loader: SpiderPluginLoader,
         playback_history_repository=None,
+        *,
+        get=httpx.get,
     ) -> None:
         self._repository = repository
         self._loader = loader
         self._playback_history_repository = playback_history_repository
+        self._get = get
         self._playback_parser_service = None
         self._preferred_parse_key_loader = None
         self._base_url_loader = None
@@ -84,6 +124,7 @@ class SpiderPluginManager:
             last_loaded_at=plugin.last_loaded_at,
             last_error=plugin.last_error,
             config_text=plugin.config_text,
+            plugin_version=plugin.plugin_version,
         )
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
@@ -96,6 +137,7 @@ class SpiderPluginManager:
             last_loaded_at=plugin.last_loaded_at,
             last_error=plugin.last_error,
             config_text=plugin.config_text,
+            plugin_version=plugin.plugin_version,
         )
 
     def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
@@ -108,6 +150,7 @@ class SpiderPluginManager:
             last_loaded_at=plugin.last_loaded_at,
             last_error=plugin.last_error,
             config_text=config_text,
+            plugin_version=plugin.plugin_version,
         )
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
@@ -126,6 +169,7 @@ class SpiderPluginManager:
                 last_loaded_at=plugin.last_loaded_at,
                 last_error=str(exc),
                 config_text=plugin.config_text,
+                plugin_version=plugin.plugin_version,
             )
             self._repository.append_log(plugin.id, "error", str(exc))
             return
@@ -137,6 +181,7 @@ class SpiderPluginManager:
             last_loaded_at=int(time.time()),
             last_error="",
             config_text=plugin.config_text,
+            plugin_version=plugin.plugin_version,
         )
 
     def delete_plugin(self, plugin_id: int) -> None:
@@ -144,6 +189,55 @@ class SpiderPluginManager:
 
     def list_logs(self, plugin_id: int):
         return self._repository.list_logs(plugin_id)
+
+    def _emit_import_progress(
+        self,
+        callback: Callable[[SpiderPluginImportProgress], None] | None,
+        *,
+        stage: str,
+        current: int = 0,
+        total: int = 0,
+        message: str,
+    ) -> None:
+        if callback is None:
+            return
+        callback(
+            SpiderPluginImportProgress(
+                stage=stage,
+                current=current,
+                total=total,
+                message=message,
+            )
+        )
+
+    def _fetch_json(self, url: str) -> object:
+        response = self._get(url, timeout=15.0, follow_redirects=True)
+        if response.status_code >= 300:
+            raise httpx.HTTPStatusError(
+                f"Error response {response.status_code} while requesting {url}",
+                request=response.request,
+                response=response,
+            )
+        return response.json()
+
+    def _fetch_text(self, url: str) -> str:
+        response = self._get(url, timeout=15.0, follow_redirects=True)
+        if response.status_code >= 300:
+            raise httpx.HTTPStatusError(
+                f"Error response {response.status_code} while requesting {url}",
+                request=response.request,
+                response=response,
+            )
+        return response.text
+
+    def _load_github_default_branch(self, owner: str, repo: str) -> str:
+        payload = self._fetch_json(f"https://api.github.com/repos/{owner}/{repo}")
+        if not isinstance(payload, dict):
+            raise ValueError("无法解析仓库默认分支")
+        branch = str(payload.get("default_branch") or "").strip()
+        if not branch:
+            raise ValueError("无法解析仓库默认分支")
+        return branch
 
     def _get_plugin(self, plugin_id: int) -> SpiderPluginConfig:
         return self._repository.get_plugin(plugin_id)
@@ -208,6 +302,71 @@ class SpiderPluginManager:
             self._repository.append_log(plugin.id, "error", f"插件动作执行失败[{action_id}]: {exc}")
             raise
 
+    def import_github_repository(
+        self,
+        repo_url: str,
+        *,
+        progress_callback: Callable[[SpiderPluginImportProgress], None] | None = None,
+    ) -> SpiderPluginImportResult:
+        owner, repo = _parse_github_repo(repo_url)
+        self._emit_import_progress(progress_callback, stage="resolve_repo", message="正在解析仓库信息")
+        default_branch = self._load_github_default_branch(owner, repo)
+        self._emit_import_progress(progress_callback, stage="fetch_manifest", message="正在读取 spiders_v2.json")
+        manifest = self._fetch_json(_raw_github_url(owner, repo, default_branch, "spiders_v2.json"))
+        if not isinstance(manifest, list):
+            raise ValueError("spiders_v2.json 格式无效")
+
+        result = SpiderPluginImportResult()
+        valid_entries = [entry for entry in manifest if isinstance(entry, dict) and str(entry.get("file") or "").strip()]
+        total = len(valid_entries)
+        for index, entry in enumerate(valid_entries, start=1):
+            file_path = str(entry.get("file") or "").strip()
+            self._emit_import_progress(
+                progress_callback,
+                stage="import_plugin",
+                current=index,
+                total=total,
+                message=f"正在导入 {file_path}",
+            )
+            path = PurePosixPath(file_path)
+            if path.is_absolute() or ".." in path.parts:
+                result.skipped_count += 1
+                continue
+            try:
+                source_url = _raw_github_url(owner, repo, default_branch, file_path)
+                source_text = self._fetch_text(source_url)
+                plugin_version = _parse_plugin_version(source_text)
+                existing = self._repository.find_plugin_by_source_value(source_url)
+                if existing is None:
+                    plugin = self._repository.add_plugin(
+                        "remote",
+                        source_url,
+                        _default_plugin_name("remote", source_url),
+                        enabled=bool(entry.get("valid", True)),
+                        plugin_version=plugin_version,
+                    )
+                    self.refresh_plugin(plugin.id)
+                    result.imported_count += 1
+                    continue
+                if existing.plugin_version == plugin_version:
+                    result.skipped_count += 1
+                    continue
+                self._repository.update_plugin(
+                    existing.id,
+                    display_name=existing.display_name,
+                    enabled=existing.enabled,
+                    cached_file_path=existing.cached_file_path,
+                    last_loaded_at=existing.last_loaded_at,
+                    last_error=existing.last_error,
+                    config_text=existing.config_text,
+                    plugin_version=plugin_version,
+                )
+                self.refresh_plugin(existing.id)
+                result.updated_count += 1
+            except Exception:
+                result.skipped_count += 1
+        return result
+
     def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
         for plugin in self._repository.list_plugins():
@@ -224,6 +383,7 @@ class SpiderPluginManager:
                     last_loaded_at=plugin.last_loaded_at,
                     last_error=str(exc),
                     config_text=plugin.config_text,
+                    plugin_version=plugin.plugin_version,
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import httpx
 import pytest
 
 import atv_player.danmaku.cache as danmaku_cache_module
@@ -8,7 +9,12 @@ import atv_player.plugins.controller as spider_controller_module
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.models import PlayItem
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import SpiderPluginAction, SpiderPluginConfig
+from atv_player.models import (
+    SpiderPluginAction,
+    SpiderPluginConfig,
+    SpiderPluginImportProgress,
+    SpiderPluginImportResult,
+)
 from atv_player.plugins import SpiderPluginManager
 from atv_player.plugins.loader import LoadedSpiderPlugin
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -181,6 +187,143 @@ def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp
     assert len(plugins) == 1
     assert plugins[0].source_type == "remote"
     assert plugins[0].display_name == "红果短剧"
+
+
+def test_manager_import_github_repository_imports_manifest_plugins_and_disables_invalid_entries(tmp_path: Path) -> None:
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"file": "py/潮流APP.txt", "valid": True},
+                {"file": "py/双星.txt", "valid": False},
+                {"file": "py/无版本.txt"},
+            ],
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt": httpx.Response(
+            200,
+            text="//@version:6\nprint('a')\n",
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt": httpx.Response(
+            200,
+            text="  //@version:2\nprint('b')\n",
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%97%A0%E7%89%88%E6%9C%AC.txt": httpx.Response(
+            200,
+            text="print('c')\n",
+        ),
+    }
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_github_repository(
+        "https://github.com/har01d5/tvbox",
+        progress_callback=lambda event: progress_events.append(
+            (event.stage, event.current, event.total, event.message)
+        ),
+    )
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=3, updated_count=0, skipped_count=0)
+    assert [plugin.source_value for plugin in plugins] == [
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt",
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt",
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%97%A0%E7%89%88%E6%9C%AC.txt",
+    ]
+    assert [plugin.plugin_version for plugin in plugins] == [6, 2, 1]
+    assert [plugin.enabled for plugin in plugins] == [True, False, True]
+    assert progress_events == [
+        ("resolve_repo", 0, 0, "正在解析仓库信息"),
+        ("fetch_manifest", 0, 0, "正在读取 spiders_v2.json"),
+        ("import_plugin", 1, 3, "正在导入 py/潮流APP.txt"),
+        ("import_plugin", 2, 3, "正在导入 py/双星.txt"),
+        ("import_plugin", 3, 3, "正在导入 py/无版本.txt"),
+    ]
+
+
+def test_manager_import_github_repository_skips_same_version_and_updates_existing_version(tmp_path: Path) -> None:
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"file": "py/潮流APP.txt", "valid": True},
+                {"file": "py/双星.txt", "valid": True},
+            ],
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt": httpx.Response(
+            200,
+            text="//@version:6\nprint('same')\n",
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt": httpx.Response(
+            200,
+            text="//@version:7\nprint('new')\n",
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    repository.add_plugin(
+        "remote",
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt",
+        "潮流APP",
+        enabled=True,
+        plugin_version=6,
+    )
+    existing = repository.add_plugin(
+        "remote",
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt",
+        "双星",
+        enabled=False,
+        plugin_version=6,
+    )
+    repository.update_plugin(
+        existing.id,
+        display_name="双星自定义",
+        enabled=False,
+        cached_file_path=existing.cached_file_path,
+        last_loaded_at=existing.last_loaded_at,
+        last_error=existing.last_error,
+        config_text="token=keep\n",
+        plugin_version=existing.plugin_version,
+    )
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_github_repository("https://github.com/har01d5/tvbox")
+
+    plugins = repository.list_plugins()
+    updated = next(
+        plugin
+        for plugin in plugins
+        if plugin.source_value == "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt"
+    )
+
+    assert result == SpiderPluginImportResult(imported_count=0, updated_count=1, skipped_count=1)
+    assert len(plugins) == 2
+    assert updated.plugin_version == 7
+    assert updated.enabled is False
+    assert updated.display_name == "双星自定义"
+    assert updated.config_text == "token=keep\n"
 
 
 def test_manager_list_plugin_actions_normalizes_visible_actions(tmp_path: Path) -> None:

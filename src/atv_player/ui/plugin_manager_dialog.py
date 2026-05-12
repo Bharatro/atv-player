@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QFileDialog,
     QHeaderView,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -40,6 +42,8 @@ QLabel {
 
 
 class PluginManagerDialog(QDialog):
+    _ACTION_RELOAD_DELAY_MS = 75
+
     def __init__(self, plugin_manager, parent=None) -> None:
         super().__init__(parent)
         self.plugin_manager = plugin_manager
@@ -54,13 +58,18 @@ class PluginManagerDialog(QDialog):
         header = self.plugin_table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.plugin_table.setColumnWidth(1, 72)
+        self.plugin_table.setColumnWidth(3, 64)
+        self.plugin_table.setColumnWidth(4, 160)
+        self.plugin_table.setColumnWidth(5, 168)
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
+        self.import_github_button = QPushButton("从 GitHub 导入")
         self.rename_button = QPushButton("编辑名称")
         self.config_button = QPushButton("编辑配置")
         self.toggle_button = QPushButton("启用/禁用")
@@ -75,11 +84,17 @@ class PluginManagerDialog(QDialog):
         self.plugin_actions_layout = QHBoxLayout(self.plugin_actions_widget)
         self.plugin_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.plugin_action_buttons: list[QWidget] = []
+        self._plugin_actions_cache: dict[int, list] = {}
+        self._pending_plugin_action_id: int | None = None
+        self._plugin_action_reload_timer = QTimer(self)
+        self._plugin_action_reload_timer.setSingleShot(True)
+        self._plugin_action_reload_timer.timeout.connect(self._load_pending_plugin_actions)
 
         actions = QHBoxLayout()
         for button in (
             self.add_local_button,
             self.add_remote_button,
+            self.import_github_button,
             self.rename_button,
             self.config_button,
             self.toggle_button,
@@ -101,6 +116,7 @@ class PluginManagerDialog(QDialog):
 
         self.add_local_button.clicked.connect(self._add_local_plugin)
         self.add_remote_button.clicked.connect(self._add_remote_plugin)
+        self.import_github_button.clicked.connect(self._import_github_repository)
         self.rename_button.clicked.connect(self._rename_selected)
         self.config_button.clicked.connect(self._edit_selected_config)
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
@@ -115,6 +131,9 @@ class PluginManagerDialog(QDialog):
 
     def reload_plugins(self) -> None:
         selected_plugin_id = self._selected_plugin_id()
+        self._plugin_action_reload_timer.stop()
+        self._pending_plugin_action_id = None
+        self._plugin_actions_cache.clear()
         plugins = self.plugin_manager.list_plugins()
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
@@ -131,7 +150,6 @@ class PluginManagerDialog(QDialog):
             self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
         self._restore_selection(selected_plugin_id)
         self._sync_action_state()
-        self._reload_plugin_actions()
 
     def _has_selection(self) -> bool:
         selection_model = self.plugin_table.selectionModel()
@@ -149,7 +167,7 @@ class PluginManagerDialog(QDialog):
         self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
-        self._reload_plugin_actions()
+        self._schedule_plugin_action_reload()
 
     def _clear_plugin_action_buttons(self) -> None:
         while self.plugin_actions_layout.count():
@@ -172,13 +190,8 @@ class PluginManagerDialog(QDialog):
         self.plugin_actions_layout.addStretch(1)
         self.plugin_action_buttons.append(label)
 
-    def _reload_plugin_actions(self) -> None:
+    def _render_plugin_actions(self, actions) -> None:
         self._clear_plugin_action_buttons()
-        plugin_id = self._selected_plugin_id()
-        if plugin_id is None:
-            self._show_placeholder_action_button("无动作")
-            return
-        actions = self.plugin_manager.list_plugin_actions(plugin_id)
         if not actions:
             self._show_placeholder_action_button("无动作")
             return
@@ -195,6 +208,33 @@ class PluginManagerDialog(QDialog):
             self.plugin_actions_layout.addWidget(button)
             self.plugin_action_buttons.append(button)
         self.plugin_actions_layout.addStretch(1)
+
+    def _schedule_plugin_action_reload(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        self._plugin_action_reload_timer.stop()
+        self._pending_plugin_action_id = plugin_id
+        if plugin_id is None:
+            self._render_plugin_actions([])
+            return
+        cached_actions = self._plugin_actions_cache.get(plugin_id)
+        if cached_actions is not None:
+            self._render_plugin_actions(cached_actions)
+            return
+        self._clear_plugin_action_buttons()
+        self._show_placeholder_action_button("加载中")
+        self._plugin_action_reload_timer.start(self._ACTION_RELOAD_DELAY_MS)
+
+    def _load_pending_plugin_actions(self) -> None:
+        plugin_id = self._pending_plugin_action_id
+        if plugin_id is None:
+            return
+        try:
+            actions = self.plugin_manager.list_plugin_actions(plugin_id)
+        except Exception:
+            actions = []
+        self._plugin_actions_cache[plugin_id] = actions
+        if self._selected_plugin_id() == plugin_id:
+            self._render_plugin_actions(actions)
 
     def _run_plugin_action(self, action_id: str) -> None:
         plugin_id = self._selected_plugin_id()
@@ -244,6 +284,17 @@ class PluginManagerDialog(QDialog):
         value, accepted = QInputDialog.getText(self, "添加远程插件", "Python 文件 URL")
         return value.strip() if accepted else ""
 
+    def _prompt_github_repo_url(self) -> str:
+        value, accepted = QInputDialog.getText(self, "从 GitHub 导入", "GitHub 仓库 URL")
+        return value.strip() if accepted else ""
+
+    def _update_import_progress(self, dialog: QProgressDialog, event) -> None:
+        maximum = max(event.total, 0)
+        dialog.setRange(0, maximum)
+        dialog.setValue(event.current if maximum else 0)
+        dialog.setLabelText(event.message)
+        QApplication.processEvents()
+
     def _add_local_plugin(self) -> None:
         path = self._pick_local_plugin_path()
         if not path:
@@ -257,6 +308,33 @@ class PluginManagerDialog(QDialog):
             return
         self.plugin_manager.add_remote_plugin(url)
         self.reload_plugins()
+
+    def _import_github_repository(self) -> None:
+        repo_url = self._prompt_github_repo_url()
+        if not repo_url:
+            return
+        progress = QProgressDialog("", "", 0, 0, self)
+        progress.setWindowTitle("从 GitHub 导入")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        try:
+            result = self.plugin_manager.import_github_repository(
+                repo_url,
+                progress_callback=lambda event: self._update_import_progress(progress, event),
+            )
+        except Exception as exc:
+            progress.close()
+            QMessageBox.warning(self, "导入失败", str(exc))
+            return
+        progress.close()
+        self.reload_plugins()
+        QMessageBox.information(
+            self,
+            "导入完成",
+            f"导入完成：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
+        )
 
     def _rename_selected(self) -> None:
         plugin_id = self._selected_plugin_id()

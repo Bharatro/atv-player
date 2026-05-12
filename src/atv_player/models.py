@@ -290,6 +290,22 @@ class SpiderPluginConfig:
     last_loaded_at: int = 0
     last_error: str = ""
     config_text: str = ""
+    plugin_version: int = 1
+
+
+@dataclass(slots=True)
+class SpiderPluginImportProgress:
+    stage: str
+    current: int = 0
+    total: int = 0
+    message: str = ""
+
+
+@dataclass(slots=True)
+class SpiderPluginImportResult:
+    imported_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
 
 
 @dataclass(slots=True)

@@ -1,7 +1,13 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel
 
-from atv_player.models import SpiderPluginAction, SpiderPluginConfig, SpiderPluginLogEntry
+from atv_player.models import (
+    SpiderPluginAction,
+    SpiderPluginConfig,
+    SpiderPluginImportProgress,
+    SpiderPluginImportResult,
+    SpiderPluginLogEntry,
+)
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 
 
@@ -38,8 +44,12 @@ class FakePluginManager:
         self.refresh_calls: list[int] = []
         self.add_local_calls: list[str] = []
         self.add_remote_calls: list[str] = []
+        self.github_import_calls: list[str] = []
         self.delete_calls: list[int] = []
         self.action_calls: list[tuple[int, str, object]] = []
+        self.progress_events: list[tuple[str, int, int, str]] = []
+        self.action_query_calls: list[int] = []
+        self.github_import_result = SpiderPluginImportResult(imported_count=2, updated_count=1, skipped_count=3)
         self.actions = {
             1: [SpiderPluginAction(id="qr_login", label="扫码登录")],
             2: [
@@ -60,6 +70,19 @@ class FakePluginManager:
 
     def add_remote_plugin(self, url: str) -> None:
         self.add_remote_calls.append(url)
+
+    def import_github_repository(self, repo_url: str, *, progress_callback=None):
+        self.github_import_calls.append(repo_url)
+        if progress_callback is not None:
+            for event in (
+                SpiderPluginImportProgress(stage="resolve_repo", message="正在解析仓库信息"),
+                SpiderPluginImportProgress(stage="fetch_manifest", message="正在读取 spiders_v2.json"),
+                SpiderPluginImportProgress(stage="import_plugin", current=1, total=2, message="正在导入 py/a.txt"),
+                SpiderPluginImportProgress(stage="import_plugin", current=2, total=2, message="正在导入 py/b.txt"),
+            ):
+                self.progress_events.append((event.stage, event.current, event.total, event.message))
+                progress_callback(event)
+        return self.github_import_result
 
     def rename_plugin(self, plugin_id: int, display_name: str) -> None:
         self.rename_calls.append((plugin_id, display_name))
@@ -83,6 +106,7 @@ class FakePluginManager:
         return self.logs.get(plugin_id, [])
 
     def list_plugin_actions(self, plugin_id: int):
+        self.action_query_calls.append(plugin_id)
         return list(self.actions.get(plugin_id, []))
 
     def run_plugin_action(self, plugin_id: int, action_id: str, parent=None) -> None:
@@ -112,6 +136,14 @@ def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> N
 
     assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(4) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(5) == QHeaderView.ResizeMode.Fixed
+    assert dialog.plugin_table.columnWidth(1) >= 60
+    assert dialog.plugin_table.columnWidth(3) >= 50
+    assert dialog.plugin_table.columnWidth(4) >= 120
+    assert dialog.plugin_table.columnWidth(5) >= 150
     assert dialog.plugin_table.viewport().width() >= 900
 
 
@@ -160,7 +192,7 @@ def test_plugin_manager_dialog_shows_disabled_no_action_button_when_plugin_has_n
     qtbot.addWidget(dialog)
     dialog.show()
     dialog.plugin_table.selectRow(0)
-    dialog._sync_action_state()
+    qtbot.wait(100)
 
     assert [button.text() for button in dialog.plugin_action_buttons] == ["无动作"]
     assert isinstance(dialog.plugin_action_buttons[0], QLabel)
@@ -177,7 +209,7 @@ def test_plugin_manager_dialog_does_not_accumulate_placeholder_action_widgets_ac
     dialog.plugin_table.selectRow(0)
     for _ in range(3):
         dialog._sync_action_state()
-        qtbot.wait(0)
+        qtbot.wait(100)
 
     placeholders = [widget for widget in dialog.plugin_actions_widget.findChildren(QLabel) if widget.text() == "无动作"]
 
@@ -208,7 +240,7 @@ def test_plugin_manager_dialog_renders_dynamic_plugin_action_buttons(qtbot) -> N
     dialog.show()
 
     dialog.plugin_table.selectRow(1)
-    dialog._sync_action_state()
+    qtbot.wait(100)
 
     assert [button.text() for button in dialog.plugin_action_buttons] == ["刷新 Cookie"]
     assert dialog.plugin_action_buttons[0].isEnabled() is False
@@ -244,13 +276,68 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.delete_calls == [2]
 
 
+def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    progress_updates: list[tuple[int, int, str]] = []
+    summary_messages: list[str] = []
+
+    class FakeProgressDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            self.values: list[int] = []
+            self.maximums: list[int] = []
+            self.labels: list[str] = []
+
+        def setWindowTitle(self, title: str) -> None:
+            pass
+
+        def setMinimumDuration(self, duration: int) -> None:
+            pass
+
+        def setAutoClose(self, auto_close: bool) -> None:
+            pass
+
+        def setAutoReset(self, auto_reset: bool) -> None:
+            pass
+
+        def setRange(self, minimum: int, maximum: int) -> None:
+            self.maximums.append(maximum)
+
+        def setValue(self, value: int) -> None:
+            self.values.append(value)
+
+        def setLabelText(self, text: str) -> None:
+            self.labels.append(text)
+            progress_updates.append((self.values[-1] if self.values else 0, self.maximums[-1] if self.maximums else 0, text))
+
+        def show(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
+    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: summary_messages.append(args[2]))
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
+
+    dialog._import_github_repository()
+
+    assert manager.github_import_calls == ["https://github.com/har01d5/tvbox"]
+    assert progress_updates[-1] == (2, 2, "正在导入 py/b.txt")
+    assert summary_messages == ["导入完成：新增 2 个，更新 1 个，跳过 3 个。"]
+
+
 def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbot, monkeypatch) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
     qtbot.addWidget(dialog)
     dialog.show()
     dialog.plugin_table.selectRow(0)
-    dialog._sync_action_state()
+    qtbot.wait(100)
 
     reload_calls: list[str] = []
     original_reload = dialog.reload_plugins
@@ -265,6 +352,37 @@ def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbo
 
     assert manager.action_calls == [(1, "qr_login", dialog)]
     assert reload_calls == ["reload"]
+
+
+def test_plugin_manager_dialog_debounces_action_loading_to_final_selected_plugin(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.selectRow(0)
+    dialog.plugin_table.selectRow(1)
+    dialog.plugin_table.selectRow(0)
+    qtbot.wait(100)
+
+    assert manager.action_query_calls == [1]
+    assert [button.text() for button in dialog.plugin_action_buttons] == ["扫码登录"]
+
+
+def test_plugin_manager_dialog_caches_loaded_actions_per_plugin_during_session(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.selectRow(0)
+    qtbot.wait(100)
+    dialog.plugin_table.selectRow(1)
+    qtbot.wait(100)
+    dialog.plugin_table.selectRow(0)
+    qtbot.wait(100)
+
+    assert manager.action_query_calls == [1, 2]
 
 
 def test_plugin_manager_dialog_edit_config_allows_empty_string_and_keeps_raw_current_value(

@@ -45,6 +45,8 @@ class SpiderPluginRepository:
             plugin_columns = {row[1] for row in conn.execute("PRAGMA table_info(spider_plugins)").fetchall()}
             if "config_text" not in plugin_columns:
                 conn.execute("ALTER TABLE spider_plugins ADD COLUMN config_text TEXT NOT NULL DEFAULT ''")
+            if "plugin_version" not in plugin_columns:
+                conn.execute("ALTER TABLE spider_plugins ADD COLUMN plugin_version INTEGER NOT NULL DEFAULT 1")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS spider_plugin_logs (
@@ -85,7 +87,15 @@ class SpiderPluginRepository:
                     "ALTER TABLE spider_plugin_playback_history ADD COLUMN playlist_index INTEGER NOT NULL DEFAULT 0"
                 )
 
-    def add_plugin(self, source_type: str, source_value: str, display_name: str) -> SpiderPluginConfig:
+    def add_plugin(
+        self,
+        source_type: str,
+        source_value: str,
+        display_name: str,
+        *,
+        enabled: bool = True,
+        plugin_version: int = 1,
+    ) -> SpiderPluginConfig:
         with self._connect() as conn:
             next_order = conn.execute(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM spider_plugins"
@@ -94,11 +104,11 @@ class SpiderPluginRepository:
                 """
                 INSERT INTO spider_plugins (
                     source_type, source_value, display_name, enabled, sort_order,
-                    cached_file_path, last_loaded_at, last_error, config_text
+                    cached_file_path, last_loaded_at, last_error, config_text, plugin_version
                 )
-                VALUES (?, ?, ?, 1, ?, '', 0, '', '')
+                VALUES (?, ?, ?, ?, ?, '', 0, '', '', ?)
                 """,
-                (source_type, source_value, display_name, next_order),
+                (source_type, source_value, display_name, int(enabled), next_order, int(plugin_version)),
             )
         return self.get_plugin(_require_lastrowid(cursor))
 
@@ -107,7 +117,7 @@ class SpiderPluginRepository:
             row = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error, config_text
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
                 FROM spider_plugins
                 WHERE id = ?
                 """,
@@ -116,6 +126,7 @@ class SpiderPluginRepository:
         assert row is not None
         values = list(row)
         values[4] = bool(values[4])
+        values[10] = int(values[10])
         return SpiderPluginConfig(*values)
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
@@ -123,7 +134,7 @@ class SpiderPluginRepository:
             rows = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error, config_text
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
                 FROM spider_plugins
                 ORDER BY sort_order ASC, id ASC
                 """
@@ -132,6 +143,7 @@ class SpiderPluginRepository:
         for row in rows:
             values = list(row)
             values[4] = bool(values[4])
+            values[10] = int(values[10])
             plugins.append(SpiderPluginConfig(*values))
         return plugins
 
@@ -145,13 +157,14 @@ class SpiderPluginRepository:
         last_loaded_at: int,
         last_error: str,
         config_text: str,
+        plugin_version: int = 1,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE spider_plugins
                 SET display_name = ?, enabled = ?, cached_file_path = ?,
-                    last_loaded_at = ?, last_error = ?, config_text = ?
+                    last_loaded_at = ?, last_error = ?, config_text = ?, plugin_version = ?
                 WHERE id = ?
                 """,
                 (
@@ -161,9 +174,28 @@ class SpiderPluginRepository:
                     last_loaded_at,
                     last_error,
                     config_text,
+                    int(plugin_version),
                     plugin_id,
                 ),
             )
+
+    def find_plugin_by_source_value(self, source_value: str) -> SpiderPluginConfig | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, source_type, source_value, display_name, enabled, sort_order,
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+                FROM spider_plugins
+                WHERE source_value = ?
+                """,
+                (source_value,),
+            ).fetchone()
+        if row is None:
+            return None
+        values = list(row)
+        values[4] = bool(values[4])
+        values[10] = int(values[10])
+        return SpiderPluginConfig(*values)
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         plugins = self.list_plugins()
