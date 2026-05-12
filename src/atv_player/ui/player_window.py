@@ -452,7 +452,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_log_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
-        self.toggle_log_button.setChecked(True)
+        self.toggle_log_button.setChecked(bool(getattr(self.config, "player_log_visible", True)))
 
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
@@ -2176,6 +2176,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._apply_visibility_state()
 
     def _toggle_log_visibility(self) -> None:
+        if self.config is not None and getattr(self.config, "player_log_visible", True) != self.toggle_log_button.isChecked():
+            self.config.player_log_visible = self.toggle_log_button.isChecked()
+            self._save_config()
         self._apply_visibility_state()
 
     def _change_playlist_group(self, playlist_index: int) -> None:

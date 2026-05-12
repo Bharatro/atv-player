@@ -3852,6 +3852,21 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     assert window.details.isHidden() is True
 
 
+def test_player_window_hides_details_in_fullscreen_even_when_log_toggle_is_on(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.toggle_log_button.isChecked() is True
+
+    window.toggle_fullscreen()
+
+    assert window.isFullScreen() is True
+    assert window.sidebar_actions_widget.isHidden() is True
+    assert window.details.isHidden() is True
+    assert window.log_section.isHidden() is True
+
+
 def test_player_window_escape_shortcut_exits_fullscreen_instead_of_returning_to_main(qtbot) -> None:
     emitted = {"count": 0}
     window = PlayerWindow(FakePlayerController())
@@ -12211,6 +12226,29 @@ def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
     restored.show()
 
     assert restored.main_splitter.saveState() == QByteArray(config.player_main_splitter_state)
+
+
+def test_player_window_persists_playback_log_visibility(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.toggle_log_button.click()
+
+    assert config.player_log_visible is False
+    assert saved["count"] >= 1
+
+    restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+
+    assert restored.toggle_log_button.isChecked() is False
+    assert restored.log_section.isHidden() is True
 
 
 def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot, monkeypatch) -> None:
