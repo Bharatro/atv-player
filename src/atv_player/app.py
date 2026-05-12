@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 import logging
@@ -241,6 +242,63 @@ class AppCoordinator(QObject):
             self.main_window = None
         return self.login_window
 
+    def _call_plugin_loader(
+        self,
+        loader,
+        *,
+        drive_detail_loader,
+        offline_download_detail_loader,
+        prioritized_plugin_ids: tuple[str, ...] = (),
+    ):
+        try:
+            parameters = inspect.signature(loader).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        kwargs = {}
+        if accepts_kwargs or "drive_detail_loader" in parameters:
+            kwargs["drive_detail_loader"] = drive_detail_loader
+        if accepts_kwargs or "offline_download_detail_loader" in parameters:
+            kwargs["offline_download_detail_loader"] = offline_download_detail_loader
+        if accepts_kwargs or "prioritized_plugin_ids" in parameters:
+            kwargs["prioritized_plugin_ids"] = prioritized_plugin_ids
+        return loader(**kwargs)
+
+    def _startup_prioritized_plugin_ids(self, config: AppConfig) -> tuple[str, ...]:
+        prioritized: list[str] = []
+        if config.last_playback_source == "plugin" and config.last_playback_source_key:
+            prioritized.append(config.last_playback_source_key)
+        if config.last_selected_tab.startswith("plugin:"):
+            prioritized.append(config.last_selected_tab.removeprefix("plugin:"))
+        deduplicated: list[str] = []
+        for plugin_id in prioritized:
+            if plugin_id and plugin_id not in deduplicated:
+                deduplicated.append(plugin_id)
+        return tuple(deduplicated)
+
+    def _load_startup_spider_plugins(
+        self,
+        drive_detail_loader,
+        offline_download_detail_loader,
+        prioritized_plugin_ids: tuple[str, ...] = (),
+    ):
+        iter_enabled_plugins = getattr(self._plugin_manager, "iter_enabled_plugins", None)
+        if callable(iter_enabled_plugins):
+            return self._call_plugin_loader(
+                iter_enabled_plugins,
+                drive_detail_loader=drive_detail_loader,
+                offline_download_detail_loader=offline_download_detail_loader,
+                prioritized_plugin_ids=prioritized_plugin_ids,
+            )
+        return self._call_plugin_loader(
+            self._plugin_manager.load_enabled_plugins,
+            drive_detail_loader=drive_detail_loader,
+            offline_download_detail_loader=offline_download_detail_loader,
+        )
+
     def _show_main(self):
         self._close_api_client()
         self._api_client = self._build_api_client()
@@ -248,27 +306,12 @@ class AppCoordinator(QObject):
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
-        try:
-            spider_plugins = self._plugin_manager.load_enabled_plugins(
-                drive_detail_loader=drive_detail_loader,
-                offline_download_detail_loader=offline_download_detail_loader,
-            )
-        except TypeError as exc:
-            if "offline_download_detail_loader" not in str(exc):
-                if "drive_detail_loader" not in str(exc):
-                    raise
-                spider_plugins = self._plugin_manager.load_enabled_plugins(
-                    drive_detail_loader=drive_detail_loader,
-                )
-            else:
-                try:
-                    spider_plugins = self._plugin_manager.load_enabled_plugins(
-                        drive_detail_loader=drive_detail_loader,
-                    )
-                except TypeError as drive_exc:
-                    if "drive_detail_loader" not in str(drive_exc):
-                        raise
-                    spider_plugins = self._plugin_manager.load_enabled_plugins()
+        prioritized_plugin_ids = self._startup_prioritized_plugin_ids(config)
+        plugin_loader_task = lambda: self._load_startup_spider_plugins(
+            drive_detail_loader,
+            offline_download_detail_loader,
+            prioritized_plugin_ids,
+        )
         live_epg_service = _NullLiveEpgService()
         if self._live_epg_repository is not None:
             live_epg_service = LiveEpgService(
@@ -350,7 +393,7 @@ class AppCoordinator(QObject):
             bool(capabilities.get("emby")),
             bool(capabilities.get("jellyfin")),
             bool(capabilities.get("feiniu")),
-            len(spider_plugins),
+            0,
         )
         self.main_window = MainWindow(
             browse_controller=browse_controller,
@@ -367,7 +410,8 @@ class AppCoordinator(QObject):
             jellyfin_controller=jellyfin_controller,
             feiniu_controller=feiniu_controller,
             pansou_controller=pansou_controller,
-            spider_plugins=spider_plugins,
+            spider_plugins=[],
+            plugin_loader_task=plugin_loader_task,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
             offline_download_detail_loader=offline_download_detail_loader,

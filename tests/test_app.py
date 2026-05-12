@@ -429,6 +429,8 @@ class FakePlayerController:
         use_local_history=True,
         restore_history=False,
         playback_loader=None,
+        detail_action_runner=None,
+        detail_field_runner=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -449,6 +451,8 @@ class FakePlayerController:
             "use_local_history": use_local_history,
             "restore_history": restore_history,
             "playback_loader": playback_loader,
+            "detail_action_runner": detail_action_runner,
+            "detail_field_runner": detail_field_runner,
             "danmaku_controller": danmaku_controller,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
@@ -662,10 +666,61 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     coordinator = AppCoordinator(repo)
     widget = coordinator._show_main()
     qtbot.addWidget(widget)
+    widget.resize(920, 520)
+    widget.show()
 
-    assert widget.nav_tabs.tabText(6) == "红果短剧"
+    qtbot.waitUntil(
+        lambda: widget.nav_tabs.count() > 6 and widget.nav_tabs.tabText(6) == "红果短剧"
+    )
     assert callable(captured_loader["drive"])
     assert callable(captured_loader["offline"])
+
+
+def test_app_coordinator_shows_main_window_before_startup_plugins_finish_loading(qtbot, monkeypatch, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            base_url="http://127.0.0.1:4567",
+            username="alice",
+            token="token-123",
+            vod_token="vod-123",
+        )
+    )
+
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    class FakePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            load_started.set()
+            assert release_load.wait(timeout=5), "plugin load was never released"
+            return [{"id": "plugin-1", "title": "红果短剧", "controller": object(), "search_enabled": True}]
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+
+    coordinator = AppCoordinator(repo)
+    widget = coordinator._show_main()
+    qtbot.addWidget(widget)
+    widget.show()
+
+    assert load_started.wait(timeout=1)
+    assert widget is coordinator.main_window
+    assert "插件加载中" in [widget.nav_tabs.tabText(i) for i in range(widget.nav_tabs.count())]
+
+    release_load.set()
 
 
 def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
@@ -709,6 +764,109 @@ def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, 
 
     assert captured["parser_service"] is not None
     assert callable(captured["offline_loader"])
+
+
+def test_app_coordinator_passes_startup_plugin_loader_task_into_main_window(monkeypatch, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))
+    captured = {"plugin_loader_task": None}
+
+    class FakeSignal:
+        def connect(self, callback) -> None:
+            return None
+
+    class FakeMainWindow:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["plugin_loader_task"] = kwargs.get("plugin_loader_task")
+            self.logout_requested = FakeSignal()
+
+    class FakePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            return []
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+
+    coordinator = AppCoordinator(repo)
+    coordinator._show_main()
+
+    assert callable(captured["plugin_loader_task"])
+
+
+def test_app_coordinator_startup_plugin_loader_prioritizes_last_plugin_restore_targets(
+    monkeypatch, tmp_path,
+) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            base_url="http://127.0.0.1:4567",
+            token="token-123",
+            vod_token="vod-123",
+            last_playback_source="plugin",
+            last_playback_source_key="plugin-9",
+            last_selected_tab="plugin:plugin-2",
+        )
+    )
+    captured = {"plugin_loader_task": None, "prioritized_plugin_ids": None}
+
+    class FakeSignal:
+        def connect(self, callback) -> None:
+            return None
+
+    class FakeMainWindow:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["plugin_loader_task"] = kwargs.get("plugin_loader_task")
+            self.logout_requested = FakeSignal()
+
+    class FakePluginManager:
+        def iter_enabled_plugins(
+            self,
+            drive_detail_loader=None,
+            offline_download_detail_loader=None,
+            *,
+            prioritized_plugin_ids=(),
+        ):
+            del drive_detail_loader, offline_download_detail_loader
+            captured["prioritized_plugin_ids"] = tuple(prioritized_plugin_ids)
+            return iter([])
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+
+    coordinator = AppCoordinator(repo)
+    coordinator._show_main()
+
+    assert callable(captured["plugin_loader_task"])
+    list(captured["plugin_loader_task"]())
+    assert captured["prioritized_plugin_ids"] == ("plugin-9", "plugin-2")
 
 
 def test_app_coordinator_wires_danmaku_service_into_plugin_manager(monkeypatch, tmp_path) -> None:

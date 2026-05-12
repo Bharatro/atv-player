@@ -326,6 +326,24 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
     assert updated.config_text == "token=keep\n"
 
 
+def test_manager_iter_enabled_plugins_prioritizes_requested_plugin_ids(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+    plugin1 = repository.add_plugin("local", "/tmp/1.py", "插件1")
+    plugin2 = repository.add_plugin("local", "/tmp/2.py", "插件2")
+    plugin3 = repository.add_plugin("local", "/tmp/3.py", "插件3")
+    repository.move_plugin(plugin3.id, -1)
+    repository.move_plugin(plugin3.id, -1)
+
+    definitions = list(
+        manager.iter_enabled_plugins(
+            prioritized_plugin_ids=(str(plugin2.id), str(plugin1.id)),
+        )
+    )
+
+    assert [definition.id for definition in definitions] == [plugin2.id, plugin1.id, plugin3.id]
+
+
 def test_manager_list_plugin_actions_normalizes_visible_actions(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")

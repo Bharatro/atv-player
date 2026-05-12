@@ -29,6 +29,7 @@ class SpiderPluginDefinition:
     title: str
     controller: object
     search_enabled: bool
+    sort_order: int = 0
 
 
 _PLUGIN_VERSION_PATTERN = re.compile(r"^\s*//@version:(\d+)\s*$")
@@ -254,6 +255,51 @@ class SpiderPluginManager:
     def _append_plugin_log(self, plugin_id: int, level: str, message: str) -> None:
         self._repository.append_log(plugin_id, level, message)
 
+    def _build_plugin_definition(
+        self,
+        plugin,
+        loaded,
+        *,
+        drive_detail_loader=None,
+        offline_download_detail_loader=None,
+    ) -> SpiderPluginDefinition:
+        title = self._plugin_title(plugin, loaded)
+        controller = SpiderPluginController(
+            loaded.spider,
+            plugin_name=title,
+            search_enabled=loaded.search_enabled,
+            drive_detail_loader=drive_detail_loader,
+            offline_download_detail_loader=offline_download_detail_loader,
+            playback_parser_service=self._playback_parser_service,
+            preferred_parse_key_loader=self._preferred_parse_key_loader,
+            base_url_loader=self._base_url_loader,
+            danmaku_service=self._danmaku_service,
+            danmaku_preference_store=self._danmaku_preference_store,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(
+                "spider_plugin",
+                vod_id,
+                source_key=str(plugin_id),
+            ),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload, source_name=title, plugin_id=plugin.id: self._playback_history_repository.save_history(
+                "spider_plugin",
+                vod_id,
+                payload,
+                source_key=str(plugin_id),
+                source_name=source_name,
+            ),
+        )
+        return SpiderPluginDefinition(
+            id=plugin.id,
+            title=title,
+            controller=controller,
+            search_enabled=loaded.search_enabled,
+            sort_order=plugin.sort_order,
+        )
+
     def _build_action_context(
         self,
         plugin: SpiderPluginConfig,
@@ -367,11 +413,23 @@ class SpiderPluginManager:
                 result.skipped_count += 1
         return result
 
-    def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None) -> list[SpiderPluginDefinition]:
-        definitions: list[SpiderPluginDefinition] = []
-        for plugin in self._repository.list_plugins():
-            if not plugin.enabled:
-                continue
+    def iter_enabled_plugins(
+        self,
+        drive_detail_loader=None,
+        offline_download_detail_loader=None,
+        *,
+        prioritized_plugin_ids: tuple[str, ...] | list[str] = (),
+    ):
+        prioritized_order = {str(plugin_id): index for index, plugin_id in enumerate(prioritized_plugin_ids)}
+        plugins = [plugin for plugin in self._repository.list_plugins() if plugin.enabled]
+        plugins.sort(
+            key=lambda plugin: (
+                prioritized_order.get(str(plugin.id), len(prioritized_order)),
+                plugin.sort_order,
+                plugin.id,
+            )
+        )
+        for plugin in plugins:
             try:
                 loaded = self._loader.load(plugin)
             except Exception as exc:
@@ -387,43 +445,20 @@ class SpiderPluginManager:
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
-            title = self._plugin_title(plugin, loaded)
-            controller = SpiderPluginController(
-                loaded.spider,
-                plugin_name=title,
-                search_enabled=loaded.search_enabled,
+            yield self._build_plugin_definition(
+                plugin,
+                loaded,
                 drive_detail_loader=drive_detail_loader,
                 offline_download_detail_loader=offline_download_detail_loader,
-                playback_parser_service=self._playback_parser_service,
-                preferred_parse_key_loader=self._preferred_parse_key_loader,
-                base_url_loader=self._base_url_loader,
-                danmaku_service=self._danmaku_service,
-                danmaku_preference_store=self._danmaku_preference_store,
-                playback_history_loader=None
-                if self._playback_history_repository is None
-                else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(
-                    "spider_plugin",
-                    vod_id,
-                    source_key=str(plugin_id),
-                ),
-                playback_history_saver=None
-                if self._playback_history_repository is None
-                else lambda vod_id, payload, source_name=title, plugin_id=plugin.id: self._playback_history_repository.save_history(
-                    "spider_plugin",
-                    vod_id,
-                    payload,
-                    source_key=str(plugin_id),
-                    source_name=source_name,
-                ),
             )
-            definitions.append(
-                SpiderPluginDefinition(
-                    id=plugin.id,
-                    title=title,
-                    controller=controller,
-                    search_enabled=loaded.search_enabled,
-                )
-            )
+
+    def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None) -> list[SpiderPluginDefinition]:
+        definitions: list[SpiderPluginDefinition] = []
+        for definition in self.iter_enabled_plugins(
+            drive_detail_loader=drive_detail_loader,
+            offline_download_detail_loader=offline_download_detail_loader,
+        ):
+            definitions.append(definition)
         return definitions
 
 

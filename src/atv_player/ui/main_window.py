@@ -171,6 +171,12 @@ class _GlobalSearchSignals(QObject):
     failed = Signal(int, str)
 
 
+class _StartupPluginLoadSignals(QObject):
+    loaded = Signal(int, object)
+    finished = Signal(int)
+    failed = Signal(int, str)
+
+
 @dataclass(slots=True)
 class _MediaLoadResult:
     page: PosterGridPage
@@ -333,6 +339,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             feiniu_controller=None,
             pansou_controller=None,
             spider_plugins=None,
+            plugin_loader_task=None,
             plugin_manager=None,
             drive_detail_loader=None,
             offline_download_detail_loader=None,
@@ -354,6 +361,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._plugin_definitions = list(spider_plugins or [])
+        self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
         self._offline_download_detail_loader = offline_download_detail_loader
@@ -368,6 +376,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._trailing_tab_definitions: list[_TabDefinition] = []
         self._plugin_tab_definitions: list[_TabDefinition] = []
         self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
+        self._startup_plugin_load_started = False
+        self._startup_plugin_load_request_id = 0
+        self._startup_plugin_load_state = "loading" if callable(plugin_loader_task) else "idle"
+        self._startup_plugin_load_error = ""
+        selected_tab = str(getattr(config, "last_selected_tab", "") or "")
+        self._startup_plugin_pending_tab_restore_key = (
+            selected_tab if callable(plugin_loader_task) and selected_tab.startswith("plugin:") else ""
+        )
+        self._startup_plugin_pending_player_restore = False
         self._active_widget: QWidget | None = None
         self.nav_tabs = _NavigationTabs()
         self.plugin_overflow_button = self.nav_tabs.plugin_overflow_button
@@ -376,11 +393,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._tab_width_measure_bar.hide()
         self._plugin_overflow_drawer = PluginTabDrawer(self.nav_tabs)
         self._plugin_overflow_drawer.hide()
+        self._startup_plugin_placeholder_page = QWidget(self)
         self.global_search_container = QWidget()
         self.global_search_edit = QLineEdit()
         self.global_search_button = QPushButton("搜索")
         self.global_search_clear_button = QPushButton("清空")
         self.global_search_status_label = QLabel("")
+        self.startup_plugin_status_label = QLabel("")
+        self.startup_plugin_retry_button = QPushButton("重试加载插件")
+        self.startup_plugin_retry_button.hide()
         self.plugin_manager_button = QPushButton("插件管理")
         self.live_source_manager_button = QPushButton("直播源管理")
         self.logout_button = QPushButton("退出登录")
@@ -497,6 +518,19 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_signals = _GlobalSearchSignals()
         self._connect_async_signal(self._global_search_signals.succeeded, self._handle_global_search_succeeded)
         self._connect_async_signal(self._global_search_signals.failed, self._handle_global_search_failed)
+        self._startup_plugin_load_signals = _StartupPluginLoadSignals()
+        self._connect_async_signal(
+            self._startup_plugin_load_signals.loaded,
+            self._handle_startup_plugin_loaded,
+        )
+        self._connect_async_signal(
+            self._startup_plugin_load_signals.finished,
+            self._handle_startup_plugin_load_finished,
+        )
+        self._connect_async_signal(
+            self._startup_plugin_load_signals.failed,
+            self._handle_startup_plugin_load_failed,
+        )
         self._global_search_request_id = 0
         self._global_search_pending_keys: set[str] = set()
         self._global_search_results: dict[str, _GlobalSearchResult] = {}
@@ -579,6 +613,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.plugin_overflow_button.clicked.connect(self._toggle_plugin_overflow_drawer)
         self._plugin_overflow_drawer.plugin_selected.connect(self._handle_hidden_plugin_selected)
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
+        self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         self.global_search_button.clicked.connect(self._start_global_search)
@@ -594,6 +629,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.header_layout.addStretch(1)
         self.header_layout.addWidget(self.global_search_container)
         self.header_layout.addStretch(1)
+        self.header_layout.addWidget(self.startup_plugin_status_label)
+        self.header_layout.addWidget(self.startup_plugin_retry_button)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
         self.header_layout.addWidget(self.logout_button)
@@ -723,6 +760,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.help_shortcut.activated.connect(self._show_shortcut_help)
 
         self._refresh_navigation_tabs()
+        self._sync_startup_plugin_loading_ui()
         self._sync_global_search_action_state()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
@@ -732,6 +770,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _all_tab_definitions(self) -> list[_TabDefinition]:
         return [*self._static_tab_definitions, *self._plugin_tab_definitions, *self._trailing_tab_definitions]
+
+    def _startup_plugin_placeholder_definition(self) -> _TabDefinition | None:
+        if (
+            self._global_search_active
+            or self._startup_plugin_load_state == "idle"
+            or self._plugin_tab_definitions
+        ):
+            return None
+        title = "插件加载中" if self._startup_plugin_load_state == "loading" else "插件加载失败"
+        return _TabDefinition("plugin:startup-placeholder", title, self._startup_plugin_placeholder_page)
 
     @staticmethod
     def _initial_category_id_for_tab(config: Any, tab_key: str) -> str:
@@ -756,6 +804,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             key: f"{result.title}({result.total})"
             for key, result in self._global_search_results.items()
         }
+
+    def _sync_startup_plugin_loading_ui(self) -> None:
+        if self._startup_plugin_load_state == "failed":
+            self.startup_plugin_status_label.setText(self._startup_plugin_load_error or "插件加载失败")
+            self.startup_plugin_retry_button.show()
+            return
+        self.startup_plugin_status_label.setText("")
+        self.startup_plugin_retry_button.hide()
 
     def _plugin_tab_title_width(self, title: str) -> int:
         self._tab_width_measure_bar.setFont(self.nav_tabs.tab_bar.font())
@@ -811,12 +867,19 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._close_plugin_overflow_drawer()
         else:
             visible_plugins, hidden_plugins = self._split_visible_and_hidden_plugin_tabs()
-            self._hidden_plugin_tab_definitions = hidden_plugins
-            self.plugin_overflow_button.setVisible(bool(hidden_plugins))
-            self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
-            if not hidden_plugins:
+            placeholder_definition = self._startup_plugin_placeholder_definition()
+            if placeholder_definition is not None:
+                self._hidden_plugin_tab_definitions = []
+                self.plugin_overflow_button.hide()
                 self._close_plugin_overflow_drawer()
-            definitions = [*self._static_tab_definitions, *visible_plugins, *self._trailing_tab_definitions]
+                definitions = [*self._static_tab_definitions, placeholder_definition, *self._trailing_tab_definitions]
+            else:
+                self._hidden_plugin_tab_definitions = hidden_plugins
+                self.plugin_overflow_button.setVisible(bool(hidden_plugins))
+                self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
+                if not hidden_plugins:
+                    self._close_plugin_overflow_drawer()
+                definitions = [*self._static_tab_definitions, *visible_plugins, *self._trailing_tab_definitions]
 
         self.nav_tabs.blockSignals(True)
         self.nav_tabs.clear()
@@ -862,6 +925,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _remember_selected_tab(self, widget: QWidget) -> None:
         selected_key = self._tab_key_for_widget(widget)
+        if (
+            self._startup_plugin_pending_tab_restore_key
+            and self._startup_plugin_load_state == "loading"
+            and selected_key != self._startup_plugin_pending_tab_restore_key
+        ):
+            return
         if selected_key is None or self.config.last_selected_tab == selected_key:
             return
         self.config.last_selected_tab = selected_key
@@ -903,6 +972,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if widget is None:
             return
         self._active_widget = widget
+        selected_key = self._tab_key_for_widget(widget)
+        if (
+            self._startup_plugin_pending_tab_restore_key
+            and self._startup_plugin_load_started
+            and self._startup_plugin_load_state == "loading"
+            and widget is not self._startup_plugin_placeholder_page
+            and selected_key != self._startup_plugin_pending_tab_restore_key
+        ):
+            self._startup_plugin_pending_tab_restore_key = ""
         self._sync_plugin_overflow_drawer()
         if self._global_search_active:
             return
@@ -999,6 +1077,85 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _handle_douban_search_requested(self, keyword: str) -> None:
         self.global_search_edit.setText(keyword)
         self._start_global_search()
+
+    def _start_startup_plugin_load(self) -> None:
+        if self._startup_plugin_load_started or not callable(self._plugin_loader_task):
+            return
+        self._startup_plugin_load_started = True
+        self._startup_plugin_load_request_id += 1
+        request_id = self._startup_plugin_load_request_id
+
+        def run() -> None:
+            try:
+                plugins = self._plugin_loader_task()
+                if plugins is None:
+                    plugins = []
+                for plugin in plugins:
+                    if self._is_window_alive():
+                        self._startup_plugin_load_signals.loaded.emit(request_id, plugin)
+                if self._is_window_alive():
+                    self._startup_plugin_load_signals.finished.emit(request_id)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._startup_plugin_load_signals.failed.emit(request_id, str(exc))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_startup_plugin_loaded(self, request_id: int, plugin) -> None:
+        if request_id != self._startup_plugin_load_request_id:
+            return
+        self._append_plugin_definition(plugin)
+        self._refresh_visible_tabs()
+        if self._startup_plugin_pending_tab_restore_key:
+            for page, _controller, plugin_id in self._plugin_pages:
+                if f"plugin:{plugin_id}" == self._startup_plugin_pending_tab_restore_key:
+                    self.nav_tabs.setCurrentWidget(page)
+                    break
+        if (
+            self._startup_plugin_pending_player_restore
+            and self.config.last_playback_source == "plugin"
+            and self.config.last_playback_source_key
+            and self._plugin_controller_by_id(self.config.last_playback_source_key) is not None
+        ):
+            self._startup_plugin_pending_player_restore = False
+            self._start_restore_last_player()
+
+    def _handle_startup_plugin_load_finished(self, request_id: int) -> None:
+        if request_id != self._startup_plugin_load_request_id:
+            return
+        self._startup_plugin_load_state = "idle"
+        self._startup_plugin_load_error = ""
+        self._sync_startup_plugin_loading_ui()
+        self._startup_plugin_pending_tab_restore_key = ""
+        if self._startup_plugin_pending_player_restore:
+            self._startup_plugin_pending_player_restore = False
+            self._start_restore_last_player()
+        self._refresh_visible_tabs()
+
+    def _handle_startup_plugin_load_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._startup_plugin_load_request_id:
+            return
+        self._startup_plugin_load_state = "failed"
+        self._startup_plugin_load_error = message or "插件加载失败"
+        self._sync_startup_plugin_loading_ui()
+        self._startup_plugin_pending_tab_restore_key = ""
+        if self._startup_plugin_pending_player_restore:
+            self._startup_plugin_pending_player_restore = False
+            self.config.last_active_window = "main"
+            self._save_config()
+        self._refresh_navigation_tabs()
+
+    def _retry_startup_plugin_load(self) -> None:
+        if self._startup_plugin_load_state == "loading":
+            return
+        self._startup_plugin_load_state = "loading"
+        self._startup_plugin_load_error = ""
+        self._startup_plugin_load_started = False
+        self._plugin_definitions = []
+        self._rebuild_spider_plugin_tabs()
+        self._sync_startup_plugin_loading_ui()
+        self._refresh_navigation_tabs()
+        self._start_startup_plugin_load()
 
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
@@ -1388,36 +1545,52 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             daemon=True,
         ).start()
 
+    def _create_plugin_page_entry(
+        self,
+        definition,
+    ) -> tuple[PosterGridPage, _PluginController, str, _TabDefinition]:
+        controller = cast(_PluginController, _plugin_value(definition, "controller"))
+        plugin_id = str(_plugin_value(definition, "id") or "")
+        title = str(_plugin_value(definition, "title") or "插件")
+        page = PosterGridPage(
+            controller,
+            click_action="open",
+            search_enabled=bool(_plugin_value(definition, "search_enabled")),
+            initial_category_id=self._initial_category_id_for_tab(self.config, f"plugin:{plugin_id}"),
+        )
+        page.item_open_requested.connect(
+            lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(
+                controller,
+                plugin_id,
+                item,
+            )
+        )
+        page.unauthorized.connect(self.logout_requested.emit)
+        page.selected_category_changed.connect(
+            lambda category_id, page=page: self._handle_selected_category_changed(page, category_id)
+        )
+        tab_definition = _TabDefinition(f"plugin:{plugin_id}", title, page, controller)
+        return page, controller, plugin_id, tab_definition
+
+    def _append_plugin_definition(self, definition) -> None:
+        plugin_id = str(_plugin_value(definition, "id") or "")
+        if any(current_plugin_id == plugin_id for _page, _controller, current_plugin_id in self._plugin_pages):
+            return
+        self._plugin_definitions.append(definition)
+        self._append_plugin_page_from_definition(definition)
+
+    def _append_plugin_page_from_definition(self, definition) -> None:
+        page, controller, plugin_id, tab_definition = self._create_plugin_page_entry(definition)
+        self._plugin_pages.append((page, controller, plugin_id))
+        self._plugin_tab_definitions.append(tab_definition)
+
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:
             page.deleteLater()
         self._plugin_pages = []
         self._plugin_tab_definitions = []
         for definition in self._plugin_definitions:
-            controller = cast(_PluginController, _plugin_value(definition, "controller"))
-            plugin_id = str(_plugin_value(definition, "id") or "")
-            title = str(_plugin_value(definition, "title") or "插件")
-            page = PosterGridPage(
-                controller,
-                click_action="open",
-                search_enabled=bool(_plugin_value(definition, "search_enabled")),
-                initial_category_id=self._initial_category_id_for_tab(self.config, f"plugin:{plugin_id}"),
-            )
-            page.item_open_requested.connect(
-                lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(
-                    controller,
-                    plugin_id,
-                    item,
-                )
-            )
-            page.unauthorized.connect(self.logout_requested.emit)
-            page.selected_category_changed.connect(
-                lambda category_id, page=page: self._handle_selected_category_changed(page, category_id)
-            )
-            self._plugin_pages.append((page, controller, plugin_id))
-            self._plugin_tab_definitions.append(
-                _TabDefinition(f"plugin:{plugin_id}", title, page, controller)
-            )
+            self._append_plugin_page_from_definition(definition)
         self._refresh_visible_tabs()
 
     def _build_placeholder_player_request(
@@ -1448,6 +1621,64 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             initial_log_message="正在加载详情...",
             is_placeholder=True,
         )
+
+    def _current_player_session_is_placeholder(self) -> bool:
+        if self.player_window is None:
+            return False
+        session = getattr(self.player_window, "session", None)
+        if session is None:
+            return False
+        if isinstance(session, dict):
+            return bool(session.get("is_placeholder"))
+        return bool(getattr(session, "is_placeholder", False))
+
+    def _build_restore_placeholder_request(self) -> OpenPlayerRequest | None:
+        source_kind = self.config.last_playback_source or "browse"
+        if source_kind != "plugin":
+            return None
+        plugin_key = self.config.last_playback_source_key or ""
+        plugin_title = next(
+            (
+                definition.title
+                for definition in self._plugin_tab_definitions
+                if definition.key == f"plugin:{plugin_key}"
+            ),
+            "",
+        )
+        vod_id = self.config.last_playback_vod_id or plugin_key
+        vod_name = plugin_title or self.config.last_playback_vod_id or "恢复播放"
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name=vod_name),
+            playlist=[],
+            clicked_index=0,
+            source_kind=source_kind,
+            source_key=plugin_key,
+            source_mode=self.config.last_playback_mode or "detail",
+            source_path=self.config.last_playback_path,
+            source_vod_id=self.config.last_playback_vod_id or vod_id,
+            source_clicked_vod_id=self.config.last_playback_clicked_vod_id,
+            use_local_history=False,
+            initial_log_message="正在恢复播放...",
+            is_placeholder=True,
+        )
+
+    def _open_restore_placeholder_if_needed(self) -> None:
+        if self.player_window is not None:
+            return
+        placeholder_request = self._build_restore_placeholder_request()
+        if placeholder_request is None:
+            return
+        self._open_player_immediately(placeholder_request, restore_paused_state=True)
+
+    def _discard_restore_placeholder_and_return_to_main(self) -> None:
+        if not self._current_player_session_is_placeholder():
+            return
+        close_player = getattr(self.player_window, "close", None) if self.player_window is not None else None
+        if callable(close_player):
+            close_player()
+        self.player_window = None
+        if self.isHidden():
+            self._show_main_again()
 
     def _open_spider_item(self, controller, plugin_id: str, item: Any) -> None:
         placeholder_request = self._build_placeholder_player_request(item, source_kind="plugin", source_key=plugin_id)
@@ -1898,6 +2129,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if request_id != self._player_session_request_id:
             return
         if restore_paused_state:
+            self._discard_restore_placeholder_and_return_to_main()
             self.config.last_active_window = "main"
             self._save_config()
         self.show_error(message)
@@ -1983,6 +2215,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         return None
 
     def _start_restore_last_player(self) -> int:
+        if (
+            self._startup_plugin_load_state == "loading"
+            and self.config.last_playback_source == "plugin"
+            and self._plugin_controller_by_id(self.config.last_playback_source_key) is None
+        ):
+            self._startup_plugin_pending_player_restore = True
+            return self._restore_request_id
+        if self.config.last_playback_source == "plugin":
+            self._open_restore_placeholder_if_needed()
         self._restore_request_id += 1
         request_id = self._restore_request_id
 
@@ -2011,6 +2252,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _handle_restore_failed(self, request_id: int) -> None:
         if request_id != self._restore_request_id:
             return
+        self._discard_restore_placeholder_and_return_to_main()
         self.config.last_active_window = "main"
         self._save_config()
 
@@ -2101,6 +2343,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._refresh_navigation_tabs()
+        self._start_startup_plugin_load()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2110,6 +2353,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._deactivate_async_guard()
+        self._startup_plugin_load_request_id += 1
         self._close_plugin_overflow_drawer()
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         if self.isVisible():

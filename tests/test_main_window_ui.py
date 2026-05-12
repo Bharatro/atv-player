@@ -287,6 +287,597 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     assert window.plugin_manager_button.text() == "插件管理"
 
 
+def test_main_window_shows_startup_plugin_loading_placeholder_tab(qtbot) -> None:
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        load_started.set()
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return []
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert load_started.wait(timeout=1)
+    assert "插件加载中" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+    release_load.set()
+
+
+def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot) -> None:
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return [
+            {"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True},
+            {"id": "plugin-2", "title": "短剧二号", "controller": FakeSpiderController("短剧二号"), "search_enabled": False},
+        ]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    release_load.set()
+
+    qtbot.waitUntil(
+        lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+            "豆瓣电影",
+            "电报影视",
+            "网络直播",
+            "Emby",
+            "Jellyfin",
+            "飞牛影视",
+            "红果短剧",
+            "短剧二号",
+            "文件浏览",
+            "播放记录",
+        ]
+    )
+
+
+def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_finishes(qtbot) -> None:
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        yield {
+            "id": "plugin-2",
+            "title": "短剧二号",
+            "controller": FakeSpiderController("短剧二号"),
+            "search_enabled": False,
+            "sort_order": 0,
+        }
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        yield {
+            "id": "plugin-1",
+            "title": "红果短剧",
+            "controller": FakeSpiderController("红果短剧"),
+            "search_enabled": True,
+            "sort_order": 1,
+        }
+
+    config = AppConfig(last_selected_tab="plugin:plugin-2")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    qtbot.waitUntil(
+        lambda: len(window._plugin_pages) == 1
+        and [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+            "豆瓣电影",
+            "电报影视",
+            "网络直播",
+            "Emby",
+            "Jellyfin",
+            "飞牛影视",
+            "短剧二号",
+            "文件浏览",
+            "播放记录",
+        ]
+    )
+    assert window._startup_plugin_load_state == "loading"
+    assert window.nav_tabs.currentWidget() is window._plugin_pages[0][0]
+
+    release_load.set()
+
+    qtbot.waitUntil(
+        lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+            "豆瓣电影",
+            "电报影视",
+            "网络直播",
+            "Emby",
+            "Jellyfin",
+            "飞牛影视",
+            "短剧二号",
+            "红果短剧",
+            "文件浏览",
+            "播放记录",
+        ]
+    )
+
+
+def test_main_window_restores_last_selected_plugin_tab_after_async_startup_load(qtbot) -> None:
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return [
+            {"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True},
+            {"id": "plugin-2", "title": "短剧二号", "controller": FakeSpiderController("短剧二号"), "search_enabled": False},
+        ]
+
+    config = AppConfig(last_selected_tab="plugin:plugin-2")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    assert config.last_selected_tab == "plugin:plugin-2"
+    release_load.set()
+
+    qtbot.waitUntil(
+        lambda: len(window._plugin_pages) > 1 and window.nav_tabs.currentWidget() is window._plugin_pages[1][0]
+    )
+    assert config.last_selected_tab == "plugin:plugin-2"
+
+
+def test_main_window_restores_plugin_player_as_soon_as_target_plugin_arrives_during_startup_load(
+    qtbot, monkeypatch,
+) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestorePluginController:
+        def __init__(self, vod_name: str) -> None:
+            self.vod_name = vod_name
+
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name=self.vod_name),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        yield {
+            "id": "plugin-1",
+            "title": "插件一",
+            "controller": RestorePluginController("插件电影"),
+            "search_enabled": False,
+            "sort_order": 0,
+        }
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        yield {
+            "id": "plugin-2",
+            "title": "插件二",
+            "controller": RestorePluginController("插件二电影"),
+            "search_enabled": False,
+            "sort_order": 1,
+        }
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) >= 2)
+    assert window._startup_plugin_load_state == "loading"
+    assert window.player_window.opened[0][0]["is_placeholder"] is True
+    assert window.player_window.opened[1][1] is True
+    assert window.player_window.opened[1][0]["vod"].vod_name == "插件电影"
+
+    release_load.set()
+    qtbot.waitUntil(lambda: len(window._plugin_pages) == 2)
+    assert len(window.player_window.opened) >= 2
+
+
+def test_main_window_plugin_restore_opens_placeholder_player_while_restore_request_loads(
+    qtbot, monkeypatch,
+) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+            self.logs: list[str] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+            message = session.get("initial_log_message", "")
+            if message:
+                self.logs.append(message)
+
+        def append_status_log(self, message: str) -> None:
+            self.logs.append(message)
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class SlowRestorePluginController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self._event = threading.Event()
+
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            self.calls.append(vod_id)
+            assert self._event.wait(timeout=5), "restore request was never released"
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+        def release(self) -> None:
+            self._event.set()
+
+    controller = SlowRestorePluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    assert window.isHidden() is True
+    assert window.player_window.opened[0][0]["is_placeholder"] is True
+    assert window.player_window.logs == ["正在恢复播放..."]
+    assert controller.calls == ["vod-1"]
+
+    controller.release()
+
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2)
+    assert window.player_window.opened[1][0]["is_placeholder"] is False
+    assert window.player_window.opened[1][0]["vod"].vod_name == "插件电影"
+    assert window.player_window.opened[1][1] is True
+
+
+def test_main_window_defers_plugin_player_restore_until_async_startup_load_finishes(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestorePluginController:
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return [
+            {"id": "plugin-1", "title": "插件一", "controller": RestorePluginController(), "search_enabled": False},
+        ]
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window._start_restore_last_player()
+
+    assert window.player_window is None
+    release_load.set()
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) >= 2)
+    assert window.player_window.opened[0][0]["is_placeholder"] is True
+    assert window.player_window.opened[1][1] is True
+
+
+def test_main_window_shows_retry_after_startup_plugin_load_failure(qtbot) -> None:
+    attempts = {"count": 0}
+
+    def plugin_loader_task():
+        attempts["count"] += 1
+        raise RuntimeError("boom")
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(lambda: window.startup_plugin_retry_button.isVisible())
+    assert "插件加载失败" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+
+def test_main_window_retry_restarts_startup_plugin_loading(qtbot) -> None:
+    attempts = {"count": 0}
+
+    def plugin_loader_task():
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("boom")
+        return [{"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True}]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    qtbot.waitUntil(lambda: window.startup_plugin_retry_button.isVisible())
+    window.startup_plugin_retry_button.click()
+
+    qtbot.waitUntil(lambda: "红果短剧" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())])
+    assert attempts["count"] == 2
+
+
+def test_main_window_ignores_late_startup_plugin_results_after_close(qtbot) -> None:
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return [{"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True}]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window.close()
+    release_load.set()
+
+    qtbot.wait(100)
+
+
+def test_main_window_applies_plugin_overflow_after_async_startup_load(qtbot, monkeypatch) -> None:
+    def plugin_loader_task():
+        return [
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": FakeSpiderController(f"插件{index}"), "search_enabled": True}
+            for index in range(1, 6)
+        ]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 220)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+
+    qtbot.waitUntil(lambda: window.plugin_overflow_button.text() == "更多(3)")
+    assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件3", "插件4", "插件5"]
+
+
 def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkeypatch) -> None:
     controllers = [FakeSpiderController(f"插件{i}") for i in range(1, 6)]
     window = MainWindow(
@@ -1204,6 +1795,7 @@ def test_main_window_clear_global_search_restores_original_tabs_and_titles(qtbot
     )
 
     qtbot.addWidget(window)
+    window.resize(920, 520)
     window.show()
 
     original_titles = [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
