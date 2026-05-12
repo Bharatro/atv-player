@@ -73,9 +73,38 @@ class PlaybackDetailAction:
 
 
 @dataclass(slots=True)
+class PlaybackDetailFieldAction:
+    type: str
+    value: str
+
+
+@dataclass(slots=True)
+class PlaybackDetailValuePart:
+    label: str
+    action: PlaybackDetailFieldAction | None = None
+
+
+@dataclass(slots=True, init=False)
 class PlaybackDetailField:
     label: str
-    value: str
+    value_parts: list[PlaybackDetailValuePart]
+
+    def __init__(
+        self,
+        label: str,
+        value: str = "",
+        value_parts: list[PlaybackDetailValuePart] | None = None,
+    ) -> None:
+        self.label = label
+        if value_parts is not None:
+            self.value_parts = list(value_parts)
+            return
+        normalized = str(value or "").strip()
+        self.value_parts = [PlaybackDetailValuePart(label=normalized)] if normalized else []
+
+    @property
+    def value(self) -> str:
+        return " / ".join(part.label for part in self.value_parts)
 
 
 @dataclass(slots=True)

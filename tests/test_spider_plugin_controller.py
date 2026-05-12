@@ -332,6 +332,81 @@ class DetailFieldPayloadSpider(FakeSpider):
         return payload
 
 
+class ClickableDetailFieldPayloadSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$/play/1",
+                    "ext": [
+                        {
+                            "label": "演员",
+                            "value": [
+                                {"label": "演员1", "action": {"type": "search", "value": "演员1"}},
+                                {"label": "演员2", "action": {"type": "detail", "value": "actor-2"}},
+                            ],
+                        },
+                        {"label": "标签", "value": ["动作", "冒险"]},
+                    ],
+                }
+            ]
+        }
+
+
+class InvalidClickableDetailFieldPayloadSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$/play/1",
+                    "ext": [
+                        {
+                            "label": "导演",
+                            "value": [
+                                {"label": "导演1", "action": {"type": "unknown", "value": "director-1"}},
+                                {"label": "", "action": {"type": "search", "value": "ignored"}},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+
+def _detail_field_signature(fields: list[PlaybackDetailField]) -> list[tuple[str, list[tuple[str, str | None, str | None]]]]:
+    signature: list[tuple[str, list[tuple[str, str | None, str | None]]]] = []
+    for field in fields:
+        parts = getattr(field, "value_parts", None)
+        if parts is None:
+            signature.append(
+                (
+                    field.label,
+                    [(str(getattr(field, "value", "")).strip(), None, None)],
+                )
+            )
+            continue
+        signature.append(
+            (
+                field.label,
+                [
+                    (
+                        getattr(part, "label", ""),
+                        getattr(getattr(part, "action", None), "type", None),
+                        getattr(getattr(part, "action", None), "value", None),
+                    )
+                    for part in parts
+                ],
+            )
+        )
+    return signature
+
+
 class FlakyCoverPayloadSpider(FakeSpider):
     def __init__(self) -> None:
         self._calls: dict[str, int] = {}
@@ -3116,6 +3191,25 @@ def test_spider_controller_maps_detailcontent_ext_to_vod_detail_fields() -> None
         PlaybackDetailField(label="更新", value="2026-05-08"),
     ]
     assert request.playlist[0].detail_fields == []
+
+
+def test_spider_controller_maps_clickable_detailcontent_ext_value_objects() -> None:
+    controller = SpiderPluginController(ClickableDetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert _detail_field_signature(request.vod.detail_fields) == [
+        ("演员", [("演员1", "search", "演员1"), ("演员2", "detail", "actor-2")]),
+        ("标签", [("动作", None, None), ("冒险", None, None)]),
+    ]
+
+
+def test_spider_controller_downgrades_invalid_detail_field_actions_to_plain_text() -> None:
+    controller = SpiderPluginController(InvalidClickableDetailFieldPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert _detail_field_signature(request.vod.detail_fields) == [
+        ("导演", [("导演1", None, None)]),
+    ]
 
 
 def test_spider_controller_maps_playercontent_ext_to_current_play_item_detail_fields() -> None:

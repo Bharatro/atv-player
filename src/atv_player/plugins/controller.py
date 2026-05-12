@@ -36,7 +36,9 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlayItem,
     PlaybackDetailAction,
+    PlaybackDetailFieldAction,
     PlaybackDetailField,
+    PlaybackDetailValuePart,
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
@@ -334,11 +336,44 @@ def _map_playback_detail_fields(payload: object) -> list[PlaybackDetailField]:
         if not isinstance(raw_field, Mapping):
             continue
         label = str(raw_field.get("label") or "").strip()
-        value = str(raw_field.get("value") or "").strip()
-        if not label or not value:
+        value_parts = _map_playback_detail_field_value_parts(raw_field.get("value"))
+        if not label or not value_parts:
             continue
-        fields.append(PlaybackDetailField(label=label, value=value))
+        fields.append(PlaybackDetailField(label=label, value_parts=value_parts))
     return fields
+
+
+def _map_playback_detail_field_action(payload: object) -> PlaybackDetailFieldAction | None:
+    if not isinstance(payload, Mapping):
+        return None
+    action_type = str(payload.get("type") or "").strip()
+    value = str(payload.get("value") or "").strip()
+    if action_type not in {"category", "detail", "search", "link"} or not value:
+        return None
+    return PlaybackDetailFieldAction(type=action_type, value=value)
+
+
+def _map_playback_detail_field_value_parts(payload: object) -> list[PlaybackDetailValuePart]:
+    if isinstance(payload, list):
+        parts: list[PlaybackDetailValuePart] = []
+        for raw_item in payload:
+            if isinstance(raw_item, Mapping):
+                label = str(raw_item.get("label") or "").strip()
+                if not label:
+                    continue
+                parts.append(
+                    PlaybackDetailValuePart(
+                        label=label,
+                        action=_map_playback_detail_field_action(raw_item.get("action")),
+                    )
+                )
+                continue
+            label = str(raw_item or "").strip()
+            if label:
+                parts.append(PlaybackDetailValuePart(label=label))
+        return parts
+    label = str(payload or "").strip()
+    return [PlaybackDetailValuePart(label=label)] if label else []
 
 
 def _merge_playback_detail_actions(
