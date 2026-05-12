@@ -47,6 +47,8 @@ class PluginManagerDialog(QDialog):
     def __init__(self, plugin_manager, parent=None) -> None:
         super().__init__(parent)
         self.plugin_manager = plugin_manager
+        self.plugin_tabs_dirty = False
+        self._import_in_progress = False
         self.setWindowTitle("插件管理")
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
@@ -245,6 +247,7 @@ class PluginManagerDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "插件动作失败", str(exc))
             return
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _restore_selection(self, plugin_id: int | None) -> None:
@@ -300,6 +303,7 @@ class PluginManagerDialog(QDialog):
         if not path:
             return
         self.plugin_manager.add_local_plugin(path)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _add_remote_plugin(self) -> None:
@@ -307,9 +311,12 @@ class PluginManagerDialog(QDialog):
         if not url:
             return
         self.plugin_manager.add_remote_plugin(url)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _import_github_repository(self) -> None:
+        if self._import_in_progress:
+            return
         repo_url = self._prompt_github_repo_url()
         if not repo_url:
             return
@@ -318,6 +325,10 @@ class PluginManagerDialog(QDialog):
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._import_in_progress = True
+        self.import_github_button.setEnabled(False)
         progress.show()
         try:
             result = self.plugin_manager.import_github_repository(
@@ -325,16 +336,20 @@ class PluginManagerDialog(QDialog):
                 progress_callback=lambda event: self._update_import_progress(progress, event),
             )
         except Exception as exc:
-            progress.close()
             QMessageBox.warning(self, "导入失败", str(exc))
-            return
-        progress.close()
-        self.reload_plugins()
-        QMessageBox.information(
-            self,
-            "导入完成",
-            f"导入完成：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
-        )
+        else:
+            if result.imported_count or result.updated_count:
+                self.plugin_tabs_dirty = True
+            self.reload_plugins()
+            QMessageBox.information(
+                self,
+                "导入完成",
+                f"导入完成：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
+            )
+        finally:
+            progress.close()
+            self._import_in_progress = False
+            self.import_github_button.setEnabled(True)
 
     def _rename_selected(self) -> None:
         plugin_id = self._selected_plugin_id()
@@ -348,6 +363,7 @@ class PluginManagerDialog(QDialog):
         if not display_name:
             return
         self.plugin_manager.rename_plugin(plugin_id, display_name)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _edit_selected_config(self) -> None:
@@ -372,6 +388,7 @@ class PluginManagerDialog(QDialog):
             return
         enabled_text = enabled_item.text()
         self.plugin_manager.set_plugin_enabled(plugin_id, enabled_text != "是")
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _move_selected(self, direction: int) -> None:
@@ -379,6 +396,7 @@ class PluginManagerDialog(QDialog):
         if plugin_id is None:
             return
         self.plugin_manager.move_plugin(plugin_id, direction)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _refresh_selected(self) -> None:
@@ -386,6 +404,7 @@ class PluginManagerDialog(QDialog):
         if plugin_id is None:
             return
         self.plugin_manager.refresh_plugin(plugin_id)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _delete_selected(self) -> None:
@@ -393,6 +412,7 @@ class PluginManagerDialog(QDialog):
         if plugin_id is None:
             return
         self.plugin_manager.delete_plugin(plugin_id)
+        self.plugin_tabs_dirty = True
         self.reload_plugins()
 
     def _show_logs(self) -> None:

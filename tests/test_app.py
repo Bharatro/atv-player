@@ -1067,6 +1067,7 @@ def test_main_window_reloads_plugins_with_drive_detail_loader_after_plugin_manag
     class FakeDialog:
         def __init__(self, manager, parent=None) -> None:
             self.manager = manager
+            self.plugin_tabs_dirty = True
 
         def exec(self) -> int:
             return 1
@@ -1107,6 +1108,7 @@ def test_main_window_reloads_plugins_with_offline_download_loader_after_plugin_m
         def __init__(self, manager, parent=None) -> None:
             self.manager = manager
             self.parent = parent
+            self.plugin_tabs_dirty = True
 
         def exec(self) -> int:
             return 1
@@ -1116,6 +1118,46 @@ def test_main_window_reloads_plugins_with_offline_download_loader_after_plugin_m
     window._open_plugin_manager()
 
     assert captured_loaders == [offline_download_detail_loader]
+
+
+def test_main_window_does_not_reload_plugins_when_plugin_manager_closes_without_structural_changes(qtbot, monkeypatch) -> None:
+    captured_rebuilds: list[str] = []
+
+    class QuietPluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None):
+            captured_rebuilds.append("load")
+            return []
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=QuietPluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+            self.parent = parent
+            self.plugin_tabs_dirty = False
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "PluginManagerDialog", FakeDialog)
+    monkeypatch.setattr(window, "_rebuild_spider_plugin_tabs", lambda: captured_rebuilds.append("rebuild"))
+
+    window._open_plugin_manager()
+
+    assert captured_rebuilds == []
 
 
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:

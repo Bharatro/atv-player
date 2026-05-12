@@ -290,6 +290,8 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
             self.values: list[int] = []
             self.maximums: list[int] = []
             self.labels: list[str] = []
+            self.cancel_button = object()
+            self.window_modality = None
 
         def setWindowTitle(self, title: str) -> None:
             pass
@@ -302,6 +304,12 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
 
         def setAutoReset(self, auto_reset: bool) -> None:
             pass
+
+        def setCancelButton(self, button) -> None:
+            self.cancel_button = button
+
+        def setWindowModality(self, modality) -> None:
+            self.window_modality = modality
 
         def setRange(self, minimum: int, maximum: int) -> None:
             self.maximums.append(maximum)
@@ -329,6 +337,79 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
     assert manager.github_import_calls == ["https://github.com/har01d5/tvbox"]
     assert progress_updates[-1] == (2, 2, "正在导入 py/b.txt")
     assert summary_messages == ["导入完成：新增 2 个，更新 1 个，跳过 3 个。"]
+
+
+def test_plugin_manager_dialog_import_progress_is_modal_and_has_no_cancel_button(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    captured: dict[str, object] = {}
+
+    class FakeProgressDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["instance"] = self
+            self.cancel_button = "present"
+            self.window_modality = None
+
+        def setWindowTitle(self, title: str) -> None:
+            pass
+
+        def setMinimumDuration(self, duration: int) -> None:
+            pass
+
+        def setAutoClose(self, auto_close: bool) -> None:
+            pass
+
+        def setAutoReset(self, auto_reset: bool) -> None:
+            pass
+
+        def setCancelButton(self, button) -> None:
+            self.cancel_button = button
+
+        def setWindowModality(self, modality) -> None:
+            self.window_modality = modality
+
+        def setRange(self, minimum: int, maximum: int) -> None:
+            pass
+
+        def setValue(self, value: int) -> None:
+            pass
+
+        def setLabelText(self, text: str) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
+    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: None)
+    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
+
+    dialog._import_github_repository()
+
+    progress = captured["instance"]
+    assert progress.cancel_button is None
+    assert progress.window_modality == Qt.WindowModality.WindowModal
+
+
+def test_plugin_manager_dialog_ignores_reentrant_github_import_requests(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog._import_in_progress = True
+
+    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+
+    dialog._import_github_repository()
+
+    assert manager.github_import_calls == []
 
 
 def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbot, monkeypatch) -> None:

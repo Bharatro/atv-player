@@ -1220,6 +1220,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._close_help_dialog()
         dialog = PluginManagerDialog(self._plugin_manager, self)
         dialog.exec()
+        if not bool(getattr(dialog, "plugin_tabs_dirty", False)):
+            return
         load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
         if callable(load_enabled_plugins):
             try:
