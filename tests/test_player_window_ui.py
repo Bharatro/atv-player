@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
