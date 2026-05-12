@@ -76,6 +76,7 @@ class PlaybackDetailAction:
 class PlaybackDetailFieldAction:
     type: str
     value: str
+    target: str = ""
 
 
 @dataclass(slots=True)

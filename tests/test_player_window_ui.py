@@ -3522,7 +3522,7 @@ def test_player_window_renders_bilibili_cr_link_inside_metadata_value(qtbot) -> 
     assert "导演: Harold" in plain_text
     assert "action_target=bilibili" in html
     assert "action_type=category" in html
-    assert "action_value=up%3A378885845" in html
+    assert "action_value=up:378885845" in html
 
 
 def test_player_window_renders_multiple_cr_links_with_plain_separators(qtbot) -> None:

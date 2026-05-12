@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import html
+import json
 import queue
+import re
 import threading
 import time
 import tempfile
@@ -79,6 +81,8 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
 ]
+
+_INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*?)\[/a\]", re.DOTALL)
 
 
 class ClickableSlider(QSlider):
@@ -852,13 +856,63 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         values = " / ".join(part.label for part in field.value_parts)
         return f"{field.label}: {values}".rstrip()
 
-    def _detail_field_action_url(self, action: PlaybackDetailFieldAction) -> QUrl:
+    def _metadata_action_url(self, action: PlaybackDetailFieldAction) -> QUrl:
         url = QUrl("atv-player://detail-field")
         query = QUrlQuery()
+        if action.target:
+            query.addQueryItem("action_target", action.target)
         query.addQueryItem("action_type", action.type)
         query.addQueryItem("action_value", action.value)
         url.setQuery(query)
         return url
+
+    def _metadata_action_from_payload(self, payload: object) -> PlaybackDetailFieldAction | None:
+        if not isinstance(payload, dict):
+            return None
+        action_type = str(payload.get("type") or "").strip()
+        action_value = str(payload.get("value") or "").strip()
+        action_target = str(payload.get("target") or "").strip()
+        if not action_type or not action_value:
+            return None
+        if action_target not in {"", "bilibili"}:
+            return None
+        return PlaybackDetailFieldAction(type=action_type, value=action_value, target=action_target)
+
+    def _render_metadata_value_html(self, value: object) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+
+        parts: list[str] = []
+        start = 0
+        for match in _INLINE_METADATA_CR_RE.finditer(text):
+            plain_chunk = text[start:match.start()]
+            if plain_chunk:
+                parts.append(html.escape(plain_chunk).replace("\n", "<br>"))
+
+            action = None
+            try:
+                payload = json.loads(match.group("payload"))
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                action = self._metadata_action_from_payload(payload)
+
+            if action is None:
+                parts.append(html.escape(match.group(0)).replace("\n", "<br>"))
+            else:
+                href = html.escape(self._metadata_action_url(action).toString())
+                label = html.escape(match.group("label"))
+                parts.append(f'<a href="{href}">{label}</a>')
+            start = match.end()
+
+        tail = text[start:]
+        if tail:
+            parts.append(html.escape(tail).replace("\n", "<br>"))
+        return "".join(parts)
+
+    def _metadata_row_html(self, label: str, value: object) -> str:
+        return f"{html.escape(label)}: {self._render_metadata_value_html(value)}".rstrip()
 
     def _detail_field_html(self, field: PlaybackDetailField) -> str:
         parts: list[str] = []
@@ -866,7 +920,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if part.action is None:
                 parts.append(html.escape(part.label))
                 continue
-            href = html.escape(self._detail_field_action_url(part.action).toString())
+            href = html.escape(self._metadata_action_url(part.action).toString())
             label = html.escape(part.label)
             parts.append(f'<a href="{href}">{label}</a>')
         return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
@@ -875,11 +929,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if url.scheme() != "atv-player" or url.host() != "detail-field":
             return
         query = QUrlQuery(url)
-        action_type = query.queryItemValue("action_type").strip()
-        action_value = query.queryItemValue("action_value").strip()
+        action_target = query.queryItemValue("action_target", QUrl.ComponentFormattingOption.FullyDecoded).strip()
+        action_type = query.queryItemValue("action_type", QUrl.ComponentFormattingOption.FullyDecoded).strip()
+        action_value = query.queryItemValue("action_value", QUrl.ComponentFormattingOption.FullyDecoded).strip()
         if not action_type or not action_value:
             return
-        self._run_detail_field_action(PlaybackDetailFieldAction(type=action_type, value=action_value))
+        if action_target not in {"", "bilibili"}:
+            return
+        self._run_detail_field_action(
+            PlaybackDetailFieldAction(type=action_type, value=action_value, target=action_target)
+        )
 
     def _set_detail_actions_enabled(self, enabled: bool) -> None:
         for index in range(self.detail_actions_layout.count()):
@@ -1296,9 +1355,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _format_metadata_html(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "live":
             if getattr(vod, "epg_current", ""):
-                parts = [html.escape("当前节目:"), html.escape(vod.epg_current).replace("\n", "<br>")]
+                parts = [html.escape("当前节目:"), self._render_metadata_value_html(vod.epg_current)]
                 if getattr(vod, "epg_schedule", ""):
-                    parts.extend(["", html.escape("今日节目单:"), html.escape(vod.epg_schedule).replace("\n", "<br>")])
+                    parts.extend(["", html.escape("今日节目单:"), self._render_metadata_value_html(vod.epg_schedule)])
                 parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
                 return "<br>".join(parts)
             rows = [
@@ -1308,7 +1367,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            parts = [html.escape(f"{label}: {value}".rstrip()) for label, value in rows]
+            parts = [self._metadata_row_html(label, value) for label, value in rows]
             parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
             return "<br>".join(parts)
         rows = [
@@ -1328,11 +1387,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 for label, value in rows
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
-        parts = [html.escape(f"{label}: {value}".rstrip()) for label, value in rows]
+        parts = [self._metadata_row_html(label, value) for label, value in rows]
         parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
         parts.append("")
         parts.append(html.escape("简介:"))
-        parts.append(html.escape(vod.vod_content).replace("\n", "<br>"))
+        parts.append(self._render_metadata_value_html(vod.vod_content))
         return "<br>".join(parts)
 
     def _render_metadata(self) -> None:
