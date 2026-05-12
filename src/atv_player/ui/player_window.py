@@ -912,7 +912,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         return "".join(parts)
 
     def _metadata_row_html(self, label: str, value: object) -> str:
-        return f"{html.escape(label)}: {self._render_metadata_value_html(value)}".rstrip()
+        text = str(value or "")
+        if "[a=cr:" not in text:
+            trimmed = text.rstrip()
+            leading_spaces = len(trimmed) - len(trimmed.lstrip(" "))
+            value_html = html.escape(trimmed[leading_spaces:]).replace("\n", "<br>")
+            if leading_spaces:
+                value_html = ("&nbsp;" * leading_spaces) + value_html
+            return f"{html.escape(label)}: {value_html}".rstrip()
+        return f"{html.escape(label)}: {self._render_metadata_value_html(text)}".rstrip()
 
     def _detail_field_html(self, field: PlaybackDetailField) -> str:
         parts: list[str] = []

@@ -1498,21 +1498,27 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         return None
 
     def _prepare_request_for_open(self, request: OpenPlayerRequest) -> OpenPlayerRequest:
-        if request.source_kind != "plugin" or request.detail_field_runner is not None or not request.source_key:
+        if request.detail_field_runner is not None:
             return request
-        context = self._plugin_page_context_by_id(request.source_key)
-        if context is None:
-            return request
-        page, controller = context
-        request.detail_field_runner = (
-            lambda item, action, page=page, controller=controller, plugin_id=request.source_key: self._run_plugin_detail_field_action(
-                controller,
-                page,
-                plugin_id,
-                item,
-                action,
+        if request.source_kind == "plugin" and request.source_key:
+            context = self._plugin_page_context_by_id(request.source_key)
+            if context is None:
+                return request
+            page, controller = context
+            request.detail_field_runner = (
+                lambda item, action, page=page, controller=controller, plugin_id=request.source_key: self._run_plugin_detail_field_action(
+                    controller,
+                    page,
+                    plugin_id,
+                    item,
+                    action,
+                )
             )
-        )
+            return request
+        if request.source_kind == "bilibili" and self.bilibili_page is not None:
+            request.detail_field_runner = (
+                lambda item, action, page=self.bilibili_page: self._run_bilibili_detail_field_action(page, item, action)
+            )
         return request
 
     def _run_plugin_detail_field_action(
@@ -1546,6 +1552,23 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._show_main_again()
             self.nav_tabs.setCurrentWidget(page)
             self._start_media_load(page, lambda: controller.search_items(action.value, 1), empty_message="无搜索结果")
+
+    def _run_bilibili_detail_field_action(
+        self,
+        page: PosterGridPage,
+        item: PlayItem,
+        action: PlaybackDetailFieldAction,
+    ) -> None:
+        if action.type == "link":
+            if not QDesktopServices.openUrl(QUrl(action.value)):
+                self._append_player_status_log(f"详情跳转失败[link]: 无法打开链接 {action.value}")
+            return
+        if action.target != "bilibili" or action.type != "category":
+            return
+        self._show_main_again()
+        page.selected_category_id = action.value
+        self.nav_tabs.setCurrentWidget(page)
+        self._start_media_load(page, lambda: self.bilibili_controller.load_items(action.value, 1), empty_message="当前分类暂无内容")
 
     def _open_player_immediately(self, request, restore_paused_state: bool = False) -> None:
         request = self._prepare_request_for_open(request)

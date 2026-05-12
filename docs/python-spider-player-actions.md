@@ -99,6 +99,20 @@ Rules:
 - rows with no remaining displayable values are ignored
 - multiple value items are rendered in source order and shown as separate clickable/plain entries
 
+## Inline Metadata CR Links
+
+Backends that populate plain string metadata fields such as `vod_director`, `vod_actor`, or `vod_content` can embed clickable segments with:
+
+    [a=cr:{"target":"bilibili","type":"category","value":"up:378885845"}/]Harold[/a]
+
+Rules:
+
+- `label` is the visible text between `[a=cr:...]` and `[/a]`
+- `type` and `value` are required
+- `target` is optional
+- `target="bilibili"` routes through the built-in Bilibili tab instead of any spider-plugin `categoryContent(...)`
+- multiple clickable segments may appear in one string field, separated by ordinary text such as ` / ` or `、`
+
 ## Two Action Sources
 
 Python spider plugins now have two different places to provide player-detail actions:
