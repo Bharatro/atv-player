@@ -3499,6 +3499,110 @@ def test_player_window_renders_clickable_detail_field_value_parts_inside_metadat
     assert clicked == [PlaybackDetailFieldAction(type="search", value="演员1")]
 
 
+def test_player_window_renders_bilibili_cr_link_inside_metadata_value(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            vod_director='[a=cr:{"target":"bilibili","type":"category","value":"up:378885845"}/]Harold[/a]',
+            vod_content="简介文本",
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    plain_text = window.metadata_view.toPlainText()
+    assert "导演: Harold" in plain_text
+    assert "action_target=bilibili" in html
+    assert "action_type=category" in html
+    assert "action_value=up%3A378885845" in html
+
+
+def test_player_window_renders_multiple_cr_links_with_plain_separators(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            vod_actor=(
+                '[a=cr:{"type":"search","value":"演员1"}/]演员1[/a]'
+                " / "
+                '[a=cr:{"type":"search","value":"演员2"}/]演员2[/a]'
+            ),
+            vod_content="简介文本",
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    plain_text = window.metadata_view.toPlainText()
+    assert "演员: 演员1 / 演员2" in plain_text
+    assert html.count("action_type=search") == 2
+
+
+def test_player_window_degrades_invalid_cr_markup_to_plain_text(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            vod_director='[a=cr:{"target":"bilibili","type":"category"}/]Harold[/a]',
+            vod_content="简介文本",
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    plain_text = window.metadata_view.toPlainText()
+    assert '[a=cr:{"target":"bilibili","type":"category"}/]Harold[/a]' in plain_text
+    assert "action_target=bilibili" not in html
+
+
+def test_player_window_metadata_link_dispatches_action_target(qtbot) -> None:
+    clicked: list[PlaybackDetailFieldAction] = []
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_field_runner=lambda _item, action: clicked.append(action),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._handle_metadata_link(
+        QUrl(
+            "atv-player://detail-field?"
+            "action_target=bilibili&action_type=category&action_value=up%3A378885845"
+        )
+    )
+
+    assert clicked == [
+        PlaybackDetailFieldAction(target="bilibili", type="category", value="up:378885845")
+    ]
+
+
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(
