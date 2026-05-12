@@ -382,12 +382,25 @@ def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
 
 
 def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:
-    manager = FakePluginManager()
+    progress_updates: list[tuple[int, int, str]] = []
+    process_event_calls: list[str] = []
+    observed: dict[str, object] = {}
+
+    class ObservingPluginManager(FakePluginManager):
+        def import_github_repository(self, repo_url: str, *, progress_callback=None, cancel_callback=None):
+            observed["progress_updates_before_import"] = list(progress_updates)
+            observed["process_event_calls_before_import"] = list(process_event_calls)
+            return super().import_github_repository(
+                repo_url,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+            )
+
+    manager = ObservingPluginManager()
     dialog = PluginManagerDialog(manager)
     qtbot.addWidget(dialog)
     dialog.show()
 
-    progress_updates: list[tuple[int, int, str]] = []
     summary_messages: list[str] = []
 
     class FakeProgressDialog:
@@ -438,16 +451,22 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
     monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: summary_messages.append(args[2]))
-    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "atv_player.ui.plugin_manager_dialog.QApplication.processEvents",
+        lambda *args, **kwargs: process_event_calls.append("processed"),
+    )
 
     dialog._import_github_repository()
 
     assert manager.github_import_calls == ["https://github.com/har01d5/tvbox"]
+    assert observed["progress_updates_before_import"] == [(0, 0, "正在准备导入...")]
+    assert observed["process_event_calls_before_import"] == ["processed"]
+    assert progress_updates[0] == (0, 0, "正在准备导入...")
     assert progress_updates[-1] == (2, 2, "正在导入 py/b.txt")
     assert summary_messages == ["导入完成：新增 2 个，更新 1 个，跳过 3 个。"]
 
 
-def test_plugin_manager_dialog_import_progress_is_modal_and_keeps_cancel_button(qtbot, monkeypatch) -> None:
+def test_plugin_manager_dialog_import_progress_is_modal_and_shows_cancel_text(qtbot, monkeypatch) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
     qtbot.addWidget(dialog)
@@ -456,8 +475,10 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_keeps_cancel_button(
     captured: dict[str, object] = {}
 
     class FakeProgressDialog:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, label_text: str, cancel_text: str, minimum: int, maximum: int, parent) -> None:
             captured["instance"] = self
+            self.label_text = label_text
+            self.cancel_text = cancel_text
             self.cancel_button = "present"
             self.window_modality = None
 
@@ -505,6 +526,8 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_keeps_cancel_button(
     dialog._import_github_repository()
 
     progress = captured["instance"]
+    assert progress.label_text == ""
+    assert progress.cancel_text == "取消"
     assert progress.cancel_button == "present"
     assert progress.window_modality == Qt.WindowModality.WindowModal
 

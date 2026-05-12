@@ -410,7 +410,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         repo_url = self._prompt_github_repo_url()
         if not repo_url:
             return
-        progress = QProgressDialog("", "", 0, 0, self)
+        progress = QProgressDialog("", "取消", 0, 0, self)
         progress.setWindowTitle("从 GitHub 导入")
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
@@ -418,7 +418,9 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._import_in_progress = True
         self.import_github_button.setEnabled(False)
+        progress.setLabelText("正在准备导入...")
         progress.show()
+        QApplication.processEvents()
         try:
             result = self.plugin_manager.import_github_repository(
                 repo_url,
