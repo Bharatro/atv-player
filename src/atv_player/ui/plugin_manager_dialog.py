@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import partial
+import threading
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from atv_player.ui.async_guard import AsyncGuardMixin
 
 
 def _display_source_type(source_type: str) -> str:
@@ -41,14 +43,21 @@ QLabel {
 """
 
 
-class PluginManagerDialog(QDialog):
+class _PluginRefreshSignals(QObject):
+    completed = Signal()
+    failed = Signal(str)
+
+
+class PluginManagerDialog(QDialog, AsyncGuardMixin):
     _ACTION_RELOAD_DELAY_MS = 75
 
     def __init__(self, plugin_manager, parent=None) -> None:
         super().__init__(parent)
+        self._init_async_guard()
         self.plugin_manager = plugin_manager
         self.plugin_tabs_dirty = False
         self._import_in_progress = False
+        self._refresh_in_progress = False
         self.setWindowTitle("插件管理")
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
@@ -91,6 +100,9 @@ class PluginManagerDialog(QDialog):
         self.plugin_action_buttons: list[QWidget] = []
         self._plugin_actions_cache: dict[int, list] = {}
         self._pending_plugin_action_id: int | None = None
+        self._refresh_signals = _PluginRefreshSignals(self)
+        self._connect_async_signal(self._refresh_signals.completed, self._handle_refresh_completed)
+        self._connect_async_signal(self._refresh_signals.failed, self._handle_refresh_failed)
         self._plugin_action_reload_timer = QTimer(self)
         self._plugin_action_reload_timer.setSingleShot(True)
         self._plugin_action_reload_timer.timeout.connect(self._load_pending_plugin_actions)
@@ -170,10 +182,26 @@ class PluginManagerDialog(QDialog):
         return len(self._selected_rows()) == 1
 
     def _sync_action_state(self) -> None:
+        if self._refresh_in_progress:
+            self.add_local_button.setEnabled(False)
+            self.add_remote_button.setEnabled(False)
+            self.import_github_button.setEnabled(False)
+            self.rename_button.setEnabled(False)
+            self.config_button.setEnabled(False)
+            self.toggle_button.setEnabled(False)
+            self.up_button.setEnabled(False)
+            self.down_button.setEnabled(False)
+            self.refresh_button.setEnabled(False)
+            self.logs_button.setEnabled(False)
+            self.delete_button.setEnabled(False)
+            return
         has_selection = self._has_selection()
         has_single_selection = self._has_single_selection()
         row = self.plugin_table.currentRow() if has_single_selection else -1
         last_row = self.plugin_table.rowCount() - 1
+        self.add_local_button.setEnabled(True)
+        self.add_remote_button.setEnabled(True)
+        self.import_github_button.setEnabled(not self._import_in_progress)
         self.rename_button.setEnabled(has_single_selection)
         self.config_button.setEnabled(has_single_selection)
         self.toggle_button.setEnabled(has_single_selection)
@@ -424,12 +452,33 @@ class PluginManagerDialog(QDialog):
         self.reload_plugins()
 
     def _refresh_selected(self) -> None:
+        if self._refresh_in_progress:
+            return
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
             return
-        self.plugin_manager.refresh_plugin(plugin_id)
+        self._refresh_in_progress = True
+        self._sync_action_state()
+
+        def run() -> None:
+            try:
+                self.plugin_manager.refresh_plugin(plugin_id)
+            except Exception as exc:
+                self._refresh_signals.failed.emit(str(exc))
+                return
+            self._refresh_signals.completed.emit()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_refresh_completed(self) -> None:
+        self._refresh_in_progress = False
         self.plugin_tabs_dirty = True
         self.reload_plugins()
+
+    def _handle_refresh_failed(self, message: str) -> None:
+        self._refresh_in_progress = False
+        self.reload_plugins()
+        QMessageBox.warning(self, "刷新失败", message)
 
     def _delete_selected(self) -> None:
         plugin_ids = self._selected_plugin_ids()

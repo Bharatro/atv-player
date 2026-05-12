@@ -1,3 +1,5 @@
+import types
+
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel
 
@@ -8,6 +10,7 @@ from atv_player.models import (
     SpiderPluginImportResult,
     SpiderPluginLogEntry,
 )
+import atv_player.ui.plugin_manager_dialog as plugin_manager_dialog_module
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 
 
@@ -301,7 +304,6 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     dialog._rename_selected()
     dialog._toggle_selected_enabled()
     dialog._move_selected(-1)
-    dialog._refresh_selected()
     dialog._delete_selected()
 
     assert manager.add_local_calls == ["/plugins/红果短剧.py"]
@@ -309,8 +311,54 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.rename_calls == [(2, "远程重命名")]
     assert manager.toggle_calls == [(2, True)]
     assert manager.move_calls == [(2, -1)]
-    assert manager.refresh_calls == [2]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_refresh_runs_in_background_and_reloads_on_completion(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(1)
+
+    reload_calls: list[str] = []
+
+    def tracked_reload() -> None:
+        reload_calls.append("reload")
+        PluginManagerDialog.reload_plugins(dialog)
+
+    monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
+
+    started_threads: list[object] = []
+
+    class FakeThread:
+        def __init__(self, *, target, daemon) -> None:
+            self.target = target
+            self.daemon = daemon
+            self.started = False
+            started_threads.append(self)
+
+        def start(self) -> None:
+            self.started = True
+
+    monkeypatch.setattr(
+        plugin_manager_dialog_module,
+        "threading",
+        types.SimpleNamespace(Thread=FakeThread),
+        raising=False,
+    )
+
+    dialog._refresh_selected()
+
+    assert manager.refresh_calls == []
+    assert len(started_threads) == 1
+    assert started_threads[0].started is True
+    assert dialog.refresh_button.isEnabled() is False
+
+    started_threads[0].target()
+    qtbot.waitUntil(lambda: manager.refresh_calls == [2], timeout=1000)
+    qtbot.waitUntil(lambda: reload_calls == ["reload"], timeout=1000)
+    assert dialog.refresh_button.isEnabled() is True
 
 
 def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
