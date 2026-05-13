@@ -216,6 +216,31 @@ def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None
     return None, None
 
 
+def _stream_pair_format_selector(video_format: dict | None, audio_format: dict | None) -> str:
+    video_format_id = str((video_format or {}).get("format_id") or "").strip()
+    audio_format_id = str((audio_format or {}).get("format_id") or "").strip()
+    if video_format_id and audio_format_id:
+        return f"{video_format_id}+{audio_format_id}"
+    return video_format_id or audio_format_id
+
+
+def _quality_id_or_default(max_height: int | None) -> str:
+    if max_height and max_height > 0:
+        return _quality_id_for_height(max_height)
+    return "ytdlp_auto"
+
+
+def _is_youtube_url(url: str) -> bool:
+    hostname = (urlparse(url or "").hostname or "").lower()
+    return hostname in {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtu.be",
+    }
+
+
 def _pick_direct_url(info: dict, max_height: int | None) -> str:
     direct_url = info.get("url", "")
     requested_formats = info.get("requested_formats") or []
@@ -331,6 +356,7 @@ def _summarize_media_url(url: str) -> str:
 class YtdlpResolveResult:
     url: str
     audio_url: str
+    ytdl_format: str
     video_format_id: str
     audio_format_id: str
     title: str
@@ -411,6 +437,12 @@ class YtdlpPlaybackService:
             hostname = hostname[4:]
         return hostname in _KNOWN_YTDLP_DOMAINS
 
+    def playback_format_selector(self, max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT) -> str:
+        return _build_format_selector(max_height)
+
+    def playback_format_for_quality_id(self, quality_id: str) -> str:
+        return _build_format_selector(_quality_height_from_id(quality_id))
+
     def resolve(
         self,
         url: str,
@@ -463,24 +495,25 @@ class YtdlpPlaybackService:
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
 
-        requested_formats = info.get("requested_formats") or []
-        if requested_formats or not info.get("url"):
-            selected_video, selected_audio = _select_stream_pair(info, max_height)
-        else:
-            selected_video, selected_audio = None, None
+        selected_video, selected_audio = _select_stream_pair(info, max_height)
         direct_url = _pick_direct_url(info, max_height)
         if not direct_url:
             raise ValueError("未获取到播放地址")
         playback_url = direct_url
         requested_audio_url = ""
+        ytdl_format = _stream_pair_format_selector(selected_video, selected_audio)
+        if _is_youtube_url(url):
+            ytdl_format = _build_format_selector(max_height)
+            playback_url = url
         if selected_audio is not None and selected_audio.get("url"):
             if selected_video is None or not selected_video.get("url"):
                 raise ValueError("未获取到视频流")
-            playback_url = _build_dash_manifest_data_uri(
-                selected_video,
-                selected_audio,
-                duration_seconds=int(info.get("duration") or 0),
-            )
+            if not _is_youtube_url(url):
+                playback_url = _build_dash_manifest_data_uri(
+                    selected_video,
+                    selected_audio,
+                    duration_seconds=int(info.get("duration") or 0),
+                )
         elif selected_video is not None and _has_muxed_audio(selected_video):
             requested_audio_url = ""
 
@@ -503,6 +536,7 @@ class YtdlpPlaybackService:
         result = YtdlpResolveResult(
             url=playback_url,
             audio_url=requested_audio_url,
+            ytdl_format=ytdl_format,
             video_format_id=str((selected_video or {}).get("format_id") or ""),
             audio_format_id=str((selected_audio or {}).get("format_id") or ""),
             title=info.get("title", ""),
@@ -566,6 +600,7 @@ class YtdlpPlaybackService:
             vod_id=url,
             headers=dict(result.headers),
             audio_url=result.audio_url,
+            ytdl_format=result.ytdl_format,
             playback_qualities=list(result.qualities),
             external_subtitles=list(result.subtitles),
             media_title=title,
@@ -597,6 +632,10 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
     options: list[VideoQualityOption] = []
     for height in sorted(best_by_height.keys(), reverse=True):
         fmt = best_by_height[height]
+        paired_audio = None if _has_muxed_audio(fmt) else next(
+            iter(_preferred_audio_formats(info, preferred_ext=str(fmt.get("ext") or ""))),
+            None,
+        )
         tbr = fmt.get("tbr")
         label = f"{height}p"
         if tbr:
@@ -605,6 +644,7 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
             id=_quality_id_for_height(height),
             label=label,
             url="",
+            ytdl_format=_build_format_selector(height),
             width=fmt.get("width") or 0,
             height=height,
             bandwidth=int((tbr or 0) * 1000),

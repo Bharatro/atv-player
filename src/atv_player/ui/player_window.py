@@ -268,6 +268,7 @@ class _PendingPlaybackLoader:
     previous_index: int
     start_position_seconds: int
     pause: bool
+    hydrate_only: bool = False
 
 
 class PlayerWindow(QWidget, AsyncGuardMixin):
@@ -1284,6 +1285,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         headers: dict[str, str] | None = None,
         poster_image_path: str | None = None,
         audio_files: str = "",
+        ytdl_format: str = "",
     ) -> None:
         extra_kwargs: dict[str, object] = {}
         if headers:
@@ -1292,6 +1294,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             extra_kwargs["poster_image_path"] = poster_image_path
         if audio_files:
             extra_kwargs["audio_files"] = audio_files
+        if ytdl_format:
+            extra_kwargs["ytdl_format"] = ytdl_format
         while True:
             try:
                 self.video.load(url, pause=pause, start_seconds=start_seconds, **extra_kwargs)
@@ -1330,13 +1334,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         previous_index: int,
         start_position_seconds: int,
         pause: bool,
+        hydrate_only: bool = False,
     ) -> None:
         if self.session is None or self.session.playback_loader is None:
             return
-        self._set_startup_state(self._startup_coordinator.resolving())
+        if not hydrate_only:
+            self._set_startup_state(self._startup_coordinator.resolving())
         current_item = self.session.playlist[self.current_index]
         playback_loader = self.session.playback_loader
-        self._append_log(f"正在加载播放地址: {current_item.title}")
+        if not hydrate_only:
+            self._append_log(f"正在加载播放地址: {current_item.title}")
         self._playback_loader_request_id += 1
         request_id = self._playback_loader_request_id
         self._pending_playback_loader = _PendingPlaybackLoader(
@@ -1344,6 +1351,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             previous_index=previous_index,
             start_position_seconds=start_position_seconds,
             pause=pause,
+            hydrate_only=hydrate_only,
         )
 
         def run() -> None:
@@ -1371,17 +1379,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
-            if self.session.async_playback_loader and not current_item.url:
+            if self.session.async_playback_loader:
                 self._start_playback_loader(
                     previous_index=previous_index,
                     start_position_seconds=start_position_seconds,
                     pause=pause,
+                    hydrate_only=bool(current_item.url),
                 )
-                return False
-            load_result = self.session.playback_loader(current_item)
-            self._apply_playback_loader_result(load_result)
-            self._render_poster()
-            current_item = self.session.playlist[self.current_index]
+                if not current_item.url:
+                    return False
+            else:
+                load_result = self.session.playback_loader(current_item)
+                self._apply_playback_loader_result(load_result)
+                self._render_poster()
+                current_item = self.session.playlist[self.current_index]
         if current_item.url:
             if resolved_vod is None and current_item.vod_id and self.session.detail_resolver is not None:
                 self._start_play_item_resolution(
@@ -1420,9 +1431,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             effective_start_seconds = self.opening_spin.value()
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
         logger.info(
-            "PlayerWindow start playback index=%s quality=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
+            "PlayerWindow start playback index=%s quality=%s ytdl_format=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
             self.current_index,
             current_item.selected_playback_quality_id,
+            current_item.ytdl_format,
             _summarize_media_url(current_item.url),
             _summarize_media_url(current_item.audio_url),
             effective_start_seconds,
@@ -1436,6 +1448,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             headers=current_item.headers,
             poster_image_path=poster_image_path,
             audio_files=current_item.audio_url,
+            ytdl_format=current_item.ytdl_format,
         )
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()
@@ -2185,6 +2198,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._render_detail_fields()
         self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
+        if pending_loader.hydrate_only:
+            return
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
@@ -2211,6 +2226,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pending_loader = self._pending_playback_loader
         self._pending_playback_loader = None
         if pending_loader is None:
+            return
+        if pending_loader.hydrate_only:
+            self._append_log(f"详情加载失败: {message}")
             return
         self._show_failed_startup_state(f"播放失败: {message}")
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
@@ -3925,6 +3943,29 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                     or not current_item.original_url
                     or not target_quality_id.startswith("ytdlp_")
                 ):
+                    return
+                if selected_quality.ytdl_format:
+                    previous_url = current_item.url
+                    previous_audio_url = current_item.audio_url
+                    previous_ytdl_format = current_item.ytdl_format
+                    previous_selected_quality_id = current_item.selected_playback_quality_id
+                    current_item.url = current_item.original_url
+                    current_item.audio_url = ""
+                    current_item.ytdl_format = selected_quality.ytdl_format
+                    current_item.selected_playback_quality_id = target_quality_id
+                    self._refresh_video_quality_state()
+                    try:
+                        self._start_current_item_playback(
+                            start_position_seconds=start_position_seconds,
+                            pause=not self.is_playing,
+                        )
+                    except Exception as exc:
+                        current_item.url = previous_url
+                        current_item.audio_url = previous_audio_url
+                        current_item.ytdl_format = previous_ytdl_format
+                        current_item.selected_playback_quality_id = previous_selected_quality_id
+                        self._refresh_video_quality_state()
+                        self._append_log(f"清晰度切换失败: {exc}")
                     return
                 previous_url = current_item.url
                 previous_original_url = current_item.original_url

@@ -1465,14 +1465,14 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
     assert session.playlist[0].selected_playback_quality_id == "720p"
 
 
-def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and_pause_preserved(qtbot) -> None:
+def test_player_window_switches_ytdlp_quality_via_selected_ytdl_format_with_position_and_pause_preserved(qtbot) -> None:
     class PassThroughM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:
             return False
 
     class FakeVideo:
         def __init__(self) -> None:
-            self.load_calls: list[tuple[str, bool, int]] = []
+            self.load_calls: list[tuple[str, bool, int, str]] = []
 
         def load(
             self,
@@ -1481,9 +1481,10 @@ def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and
             start_seconds: int = 0,
             headers: dict[str, str] | None = None,
             poster_image_path: str | None = None,
+            ytdl_format: str = "",
         ) -> None:
             del headers, poster_image_path
-            self.load_calls.append((url, pause, start_seconds))
+            self.load_calls.append((url, pause, start_seconds, ytdl_format))
 
         def set_speed(self, speed: float) -> None:
             return None
@@ -1497,27 +1498,28 @@ def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and
         def position_seconds(self) -> int:
             return 93
 
+    loader_calls: list[str] = []
+
     def playback_loader(item: PlayItem) -> None:
-        quality_urls = {
-            "ytdlp_2160": "https://media.example/youtube-2160.mp4",
-            "ytdlp_1080": "https://media.example/youtube-1080.mp4",
-            "ytdlp_720": "https://media.example/youtube-720.mp4",
-        }
-        item.url = quality_urls[item.selected_playback_quality_id]
+        loader_calls.append(item.selected_playback_quality_id)
+        item.url = "https://www.youtube.com/watch?v=test123"
+        item.audio_url = ""
+        item.ytdl_format = "299+140"
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
         playlist=[
             PlayItem(
                 title="正片",
-                url="https://media.example/youtube-1080.mp4",
+                url="https://www.youtube.com/watch?v=test123",
                 original_url="https://www.youtube.com/watch?v=test123",
                 playback_qualities=[
-                    VideoQualityOption(id="ytdlp_2160", label="2160p"),
-                    VideoQualityOption(id="ytdlp_1080", label="1080p"),
-                    VideoQualityOption(id="ytdlp_720", label="720p"),
+                    VideoQualityOption(id="ytdlp_2160", label="2160p", ytdl_format="401+140"),
+                    VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140"),
+                    VideoQualityOption(id="ytdlp_720", label="720p", ytdl_format="298+140"),
                 ],
                 selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="299+140",
             )
         ],
         start_index=0,
@@ -1535,13 +1537,15 @@ def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and
     window.open_session(session)
 
     qtbot.waitUntil(lambda: len(video.load_calls) == 1)
-    assert video.load_calls == [("https://media.example/youtube-1080.mp4", False, 0)]
+    assert video.load_calls == [("https://www.youtube.com/watch?v=test123", False, 0, "299+140")]
+    assert loader_calls == ["ytdlp_1080"]
 
     window.is_playing = False
     window.video_quality_combo.setCurrentIndex(2)
 
     qtbot.waitUntil(lambda: len(video.load_calls) == 2)
-    assert video.load_calls[-1] == ("https://media.example/youtube-720.mp4", True, 93)
+    assert video.load_calls[-1] == ("https://www.youtube.com/watch?v=test123", True, 93, "298+140")
+    assert loader_calls == ["ytdlp_1080"]
     assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
 
 
@@ -1588,9 +1592,10 @@ def test_player_window_does_not_prepare_ytdlp_page_url_after_loader_resolves_dir
             return None
 
     def playback_loader(item: PlayItem) -> None:
-        item.url = "https://rr4---sn-oguelnzy.googlevideo.com/videoplayback?id=video"
-        item.audio_url = "https://rr4---sn-oguelnzy.googlevideo.com/videoplayback?id=audio"
-        item.playback_qualities = [VideoQualityOption(id="ytdlp_1080", label="1080P")]
+        item.url = "https://www.youtube.com/watch?v=test123"
+        item.audio_url = ""
+        item.ytdl_format = "299+140"
+        item.playback_qualities = [VideoQualityOption(id="ytdlp_1080", label="1080P", ytdl_format="299+140")]
         item.selected_playback_quality_id = "ytdlp_1080"
 
     session = PlayerSession(

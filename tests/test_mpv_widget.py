@@ -391,6 +391,43 @@ def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
     assert widget._player.options["demuxer-readahead-secs"] == 3
 
 
+def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    widget.load(
+        "https://www.youtube.com/watch?v=test123",
+        ytdl_format="299+140",
+    )
+
+    assert widget._player.calls == [
+        (
+            "https://www.youtube.com/watch?v=test123",
+            "replace",
+            None,
+            {"ytdl": "yes", "ytdl_format": "299+140"},
+        )
+    ]
+    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause-initial"] == "no"
+    assert widget._player.options["cache-pause-wait"] == 0
+    assert widget._player.options["demuxer-readahead-secs"] == 3
+
+
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

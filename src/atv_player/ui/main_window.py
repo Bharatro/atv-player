@@ -28,7 +28,15 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+from atv_player.models import (
+    HistoryRecord,
+    OpenPlayerRequest,
+    PlayItem,
+    PlaybackDetailFieldAction,
+    VideoQualityOption,
+    VodItem,
+)
+from atv_player.yt_dlp_service import _DEFAULT_STARTUP_MAX_HEIGHT
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
@@ -1390,6 +1398,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 current_item.original_url = source_url
                 current_item.headers = dict(yt_result.headers)
                 current_item.audio_url = getattr(yt_result, "audio_url", "")
+                current_item.ytdl_format = getattr(yt_result, "ytdl_format", "")
                 current_item.playback_qualities = list(yt_result.qualities)
                 current_item.external_subtitles = list(yt_result.subtitles)
                 if yt_result.title:
@@ -1436,6 +1445,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
+        startup_quality_id = f"ytdlp_{_DEFAULT_STARTUP_MAX_HEIGHT}"
+        startup_ytdl_format = self._yt_dlp_service.playback_format_selector(_DEFAULT_STARTUP_MAX_HEIGHT)
 
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
@@ -1448,6 +1459,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             current_item.original_url = source_url
             current_item.headers = dict(result.headers)
             current_item.audio_url = getattr(result, "audio_url", "")
+            current_item.ytdl_format = getattr(result, "ytdl_format", "")
             current_item.playback_qualities = list(result.qualities)
             current_item.external_subtitles = list(result.subtitles)
             current_item.duration_seconds = result.duration_seconds
@@ -1465,10 +1477,20 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         item = PlayItem(
             title=url,
-            url="",
+            url=url,
             original_url=url,
             vod_id=url,
             media_title=url,
+            selected_playback_quality_id=startup_quality_id,
+            ytdl_format=startup_ytdl_format,
+            playback_qualities=[
+                VideoQualityOption(
+                    id=startup_quality_id,
+                    label=f"{_DEFAULT_STARTUP_MAX_HEIGHT}p",
+                    ytdl_format=startup_ytdl_format,
+                    height=_DEFAULT_STARTUP_MAX_HEIGHT,
+                )
+            ],
         )
         return OpenPlayerRequest(
             vod=VodItem(vod_id=url, vod_name=url),

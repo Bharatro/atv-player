@@ -127,6 +127,7 @@ class PlayItem:
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
     selected_playback_quality_id: str = ""
+    ytdl_format: str = ""
     dash_video_id: str = ""
     play_source: str = ""
     media_title: str = ""
@@ -153,6 +154,7 @@ class VideoQualityOption:
     id: str
     label: str
     url: str = ""
+    ytdl_format: str = ""
     width: int = 0
     height: int = 0
     bandwidth: int = 0

@@ -56,6 +56,13 @@ _LOW_LATENCY_STREAM_PROFILE: dict[str, object] = {
     "demuxer-readahead-secs": 3,
 }
 
+_YTDL_STREAM_PROFILE: dict[str, object] = {
+    "cache-pause": "yes",
+    "cache-pause-initial": "no",
+    "cache-pause-wait": 1,
+    "demuxer-readahead-secs": 15,
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -274,13 +281,23 @@ class MpvWidget(QWidget):
         parsed = urlparse(url)
         return parsed.scheme in {"http", "https"} and parsed.path.startswith("/dash/")
 
-    def _apply_stream_profile(self, player: Any, url: str, *, audio_files: str = "") -> str:
+    def _apply_stream_profile(
+        self,
+        player: Any,
+        url: str,
+        *,
+        audio_files: str = "",
+        ytdl_format: str = "",
+    ) -> str:
         if self._is_local_iso_proxy_url(url):
             profile = _ISO_PROXY_STREAM_PROFILE
             profile_name = "iso-proxy"
         elif self._is_local_dash_proxy_url(url):
             profile = _LOW_LATENCY_STREAM_PROFILE
             profile_name = "dash-proxy"
+        elif ytdl_format:
+            profile = _YTDL_STREAM_PROFILE
+            profile_name = "hybrid-ytdl"
         elif audio_files:
             # Separate remote video/audio streams pay the startup cost twice if we keep
             # mpv's initial cache pause enabled.
@@ -408,6 +425,7 @@ class MpvWidget(QWidget):
             headers: dict[str, str] | None = None,
             poster_image_path: str | None = None,
             audio_files: str = "",
+            ytdl_format: str = "",
     ) -> None:
         self._set_video_picture_state("loading")
         self._audio_cover_active = False
@@ -421,14 +439,23 @@ class MpvWidget(QWidget):
         loadfile_options = self._loadfile_options(url)
         if audio_files:
             loadfile_options["audio_files"] = audio_files
+        if ytdl_format:
+            loadfile_options["ytdl"] = "yes"
+            loadfile_options["ytdl_format"] = ytdl_format
         can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
-            profile_name = self._apply_stream_profile(player, url, audio_files=audio_files)
+            profile_name = self._apply_stream_profile(
+                player,
+                url,
+                audio_files=audio_files,
+                ytdl_format=ytdl_format,
+            )
             logger.info(
-                "MPV load url=%s audio=%s start=%s pause=%s profile=%s headers=%s",
+                "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                 self._summarize_media_url(url),
                 self._summarize_media_url(audio_files),
+                ytdl_format,
                 start_seconds,
                 pause,
                 profile_name,
@@ -460,11 +487,17 @@ class MpvWidget(QWidget):
                 self._player = player
                 self._register_player_events()
                 self._apply_http_header_fields(player, header_fields)
-                profile_name = self._apply_stream_profile(player, url, audio_files=audio_files)
+                profile_name = self._apply_stream_profile(
+                    player,
+                    url,
+                    audio_files=audio_files,
+                    ytdl_format=ytdl_format,
+                )
                 logger.info(
-                    "MPV reload after player restart url=%s audio=%s start=%s pause=%s profile=%s headers=%s",
+                    "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),
                     self._summarize_media_url(audio_files),
+                    ytdl_format,
                     start_seconds,
                     pause,
                     profile_name,
