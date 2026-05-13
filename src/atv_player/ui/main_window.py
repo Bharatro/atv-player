@@ -1478,7 +1478,6 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=False,
             playback_loader=load_item,
             async_playback_loader=True,
-            playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )
 

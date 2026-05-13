@@ -1860,6 +1860,44 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
     assert item.selected_playback_quality_id == "ytdlp_720"
 
 
+def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> None:
+    history_calls: list[str] = []
+    saved_calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        yt_dlp_service=FakeYtdlpService(),
+        direct_parse_playback_history_loader=lambda vod_id: history_calls.append(vod_id),
+        direct_parse_playback_history_saver=lambda vod_id, payload: saved_calls.append((vod_id, payload)),
+    )
+    qtbot.addWidget(window)
+
+    request = window._build_ytdlp_parse_request("https://www.youtube.com/watch?v=test123")
+
+    assert request.playback_history_loader is None
+    assert request.playback_history_saver is not None
+    request.playback_history_saver({"position": 12})
+    assert history_calls == []
+    assert saved_calls == [("https://www.youtube.com/watch?v=test123", {"position": 12})]
+
+
 def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:
     telegram = SearchableController([])
     emby = SearchableController([])
