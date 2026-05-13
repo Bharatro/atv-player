@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 from atv_player.models import SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
 
 
@@ -57,6 +58,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         super().__init__(parent)
         self._init_async_guard()
         self.plugin_manager = plugin_manager
+        self.plugin_actions = PluginActions(plugin_manager)
         self.plugin_tabs_dirty = False
         self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
@@ -368,12 +370,10 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         return plugin_ids
 
     def _prompt_display_name(self, current: str) -> str:
-        value, accepted = QInputDialog.getText(self, "编辑名称", "显示名称", text=current)
-        return value.strip() if accepted else ""
+        return self.plugin_actions.prompt_display_name(self, current)
 
     def _prompt_config_text(self, current: str) -> str | None:
-        value, accepted = QInputDialog.getMultiLineText(self, "编辑配置", "配置文本", current)
-        return value if accepted else None
+        return self.plugin_actions.prompt_config_text(self, current)
 
     def _pick_local_plugin_path(self) -> str:
         path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Plugin Files (*.py *.txt)")
@@ -470,7 +470,13 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         display_name = self._prompt_display_name(current)
         if not display_name:
             return
-        self.plugin_manager.rename_plugin(plugin_id, display_name)
+        try:
+            result = self.plugin_actions.apply_rename(plugin_id, display_name)
+        except Exception as exc:
+            QMessageBox.warning(self, "编辑名称失败", str(exc))
+            return
+        if not result.changed:
+            return
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 
@@ -484,7 +490,13 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         config_text = self._prompt_config_text(plugin.config_text)
         if config_text is None:
             return
-        self.plugin_manager.set_plugin_config(plugin_id, config_text)
+        try:
+            result = self.plugin_actions.apply_config(plugin_id, config_text)
+        except Exception as exc:
+            QMessageBox.warning(self, "编辑配置失败", str(exc))
+            return
+        if not result.changed:
+            return
         self.reload_plugins()
 
     def _toggle_selected_enabled(self) -> None:
@@ -495,7 +507,13 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         if enabled_item is None:
             return
         enabled_text = enabled_item.text()
-        self.plugin_manager.set_plugin_enabled(plugin_id, enabled_text != "是")
+        try:
+            result = self.plugin_actions.apply_toggle_enabled(plugin_id, enabled_text != "是")
+        except Exception as exc:
+            QMessageBox.warning(self, "更新插件状态失败", str(exc))
+            return
+        if not result.changed:
+            return
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 
