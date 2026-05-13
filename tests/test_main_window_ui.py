@@ -1,5 +1,6 @@
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,6 +43,60 @@ class FakeSpiderController:
 class FakePluginManager:
     def __init__(self) -> None:
         self.dialog_opened = 0
+        self.plugins = [
+            SimpleNamespace(id=1, display_name="插件1", enabled=True, config_text="token=1\n", sort_order=0),
+            SimpleNamespace(id=2, display_name="插件2", enabled=True, config_text="token=2\n", sort_order=1),
+            SimpleNamespace(id=3, display_name="插件3", enabled=True, config_text="token=3\n", sort_order=2),
+        ]
+        self.rename_calls: list[tuple[int, str]] = []
+        self.config_calls: list[tuple[int, str]] = []
+        self.toggle_calls: list[tuple[int, bool]] = []
+        self.refresh_calls: list[int] = []
+        self.load_plugins_calls: list[list[str]] = []
+
+    def list_plugins(self):
+        return list(self.plugins)
+
+    def load_plugins(self, plugin_ids, drive_detail_loader=None, offline_download_detail_loader=None):
+        requested = {str(plugin_id) for plugin_id in plugin_ids}
+        self.load_plugins_calls.append(sorted(requested))
+        definitions = []
+        for plugin in self.plugins:
+            if not plugin.enabled or str(plugin.id) not in requested:
+                continue
+            definitions.append(
+                {
+                    "id": str(plugin.id),
+                    "title": plugin.display_name,
+                    "controller": FakeSpiderController(plugin.display_name),
+                    "search_enabled": True,
+                }
+            )
+        return definitions
+
+    def rename_plugin(self, plugin_id: int, display_name: str) -> None:
+        self.rename_calls.append((plugin_id, display_name))
+        for plugin in self.plugins:
+            if plugin.id == plugin_id:
+                plugin.display_name = display_name
+                return
+
+    def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
+        self.config_calls.append((plugin_id, config_text))
+        for plugin in self.plugins:
+            if plugin.id == plugin_id:
+                plugin.config_text = config_text
+                return
+
+    def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
+        self.toggle_calls.append((plugin_id, enabled))
+        for plugin in self.plugins:
+            if plugin.id == plugin_id:
+                plugin.enabled = enabled
+                return
+
+    def refresh_plugin(self, plugin_id: int) -> None:
+        self.refresh_calls.append(plugin_id)
 
 
 class WidthAwarePluginManager(FakePluginManager):
@@ -1162,6 +1217,98 @@ def test_main_window_resize_keeps_active_hidden_plugin_page_instance(qtbot, monk
     assert window.nav_tabs.currentWidget() is original_pages[2]
     assert window._plugin_pages[2][0] is original_pages[2]
     assert controllers[2].load_calls <= 1
+
+
+def test_main_window_plugin_tab_context_menu_reload_refreshes_changed_plugin(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    window.show()
+    window._refresh_navigation_tabs()
+
+    result = window._run_plugin_context_action("refresh", "1")
+
+    assert result is True
+    assert manager.refresh_calls == [1]
+    assert manager.load_plugins_calls[-1] == ["1"]
+    assert "插件1" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+
+def test_main_window_hidden_plugin_context_menu_rename_updates_drawer_items(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 100)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+    monkeypatch.setattr(window._plugin_actions, "prompt_display_name", lambda parent, current: "重命名插件")
+
+    result = window._run_plugin_context_action("rename", "2")
+
+    assert result is True
+    assert manager.rename_calls == [(2, "重命名插件")]
+    assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["重命名插件", "插件3"]
+
+
+def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    window.show()
+    window._refresh_navigation_tabs()
+    window.nav_tabs.setCurrentWidget(window._plugin_pages[1][0])
+
+    result = window._run_plugin_context_action("toggle_enabled", "2")
+
+    assert result is True
+    assert manager.toggle_calls == [(2, False)]
+    assert window.nav_tabs.currentWidget() is window.douban_page
 
 
 def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) -> None:
