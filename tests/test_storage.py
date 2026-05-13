@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from atv_player.models import AppConfig
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
@@ -877,6 +879,35 @@ def test_spider_plugin_repository_round_trip_and_logs(tmp_path: Path) -> None:
     repo.delete_plugin(remote_plugin.id)
 
     assert [item.display_name for item in repo.list_plugins()] == ["红果短剧本地"]
+
+
+def test_spider_plugin_repository_reorder_plugins_rewrites_final_order(tmp_path: Path) -> None:
+    repo = SpiderPluginRepository(tmp_path / "app.db")
+    plugin1 = repo.add_plugin("local", "/plugins/1.py", "插件1")
+    plugin2 = repo.add_plugin("local", "/plugins/2.py", "插件2")
+    plugin3 = repo.add_plugin("local", "/plugins/3.py", "插件3")
+
+    repo.reorder_plugins([plugin3.id, plugin1.id, plugin2.id])
+
+    plugins = repo.list_plugins()
+
+    assert [(plugin.id, plugin.sort_order) for plugin in plugins] == [
+        (plugin3.id, 0),
+        (plugin1.id, 1),
+        (plugin2.id, 2),
+    ]
+
+
+def test_spider_plugin_repository_reorder_plugins_rejects_stale_plugin_ids(tmp_path: Path) -> None:
+    repo = SpiderPluginRepository(tmp_path / "app.db")
+    plugin1 = repo.add_plugin("local", "/plugins/1.py", "插件1")
+    plugin2 = repo.add_plugin("local", "/plugins/2.py", "插件2")
+    plugin3 = repo.add_plugin("local", "/plugins/3.py", "插件3")
+
+    with pytest.raises(ValueError, match="插件列表已变化"):
+        repo.reorder_plugins([plugin3.id, plugin1.id])
+
+    assert [plugin.id for plugin in repo.list_plugins()] == [plugin1.id, plugin2.id, plugin3.id]
 
 
 def test_spider_plugin_repository_round_trip_playback_history(tmp_path: Path) -> None:

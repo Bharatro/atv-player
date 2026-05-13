@@ -211,6 +211,19 @@ class SpiderPluginRepository:
                     (order, item.id),
                 )
 
+    def reorder_plugins(self, plugin_ids_in_order: list[int]) -> None:
+        plugins = self.list_plugins()
+        current_ids = [item.id for item in plugins]
+        if sorted(plugin_ids_in_order) != sorted(current_ids):
+            raise ValueError("插件列表已变化，请重新打开排序窗口")
+        ordered_plugins = {item.id: item for item in plugins}
+        with self._connect() as conn:
+            for order, plugin_id in enumerate(plugin_ids_in_order):
+                conn.execute(
+                    "UPDATE spider_plugins SET sort_order = ? WHERE id = ?",
+                    (order, ordered_plugins[plugin_id].id),
+                )
+
     def delete_plugin(self, plugin_id: int) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM spider_plugin_playback_history WHERE plugin_id = ?", (plugin_id,))
