@@ -69,6 +69,7 @@ from atv_player.models import (
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
@@ -314,6 +315,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter or M3U8AdFilter()
         self._playback_parser_service = playback_parser_service
+        self._startup_coordinator = PlaybackStartupCoordinator()
+        self._startup_state = self._startup_coordinator.idle()
         self._default_video_cover_loader = default_video_cover_loader
         self._default_video_cover_source: str | None = None
         self.session = None
@@ -533,6 +536,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.playback_startup_widget = QWidget(self)
+        self.playback_startup_widget.setObjectName("playbackStartupWidget")
+        self.playback_startup_status_label = QLabel("")
+        self.playback_retry_button = QPushButton("重试", self.playback_startup_widget)
+        self.playback_switch_line_button = QPushButton("换线路", self.playback_startup_widget)
+        self.playback_switch_parser_button = QPushButton("换解析器", self.playback_startup_widget)
+        startup_layout = QHBoxLayout(self.playback_startup_widget)
+        startup_layout.setContentsMargins(0, 0, 0, 0)
+        startup_layout.setSpacing(6)
+        startup_layout.addWidget(self.playback_startup_status_label, 1)
+        startup_layout.addWidget(self.playback_retry_button)
+        startup_layout.addWidget(self.playback_switch_line_button)
+        startup_layout.addWidget(self.playback_switch_parser_button)
+        self.playback_startup_widget.hide()
         self.details = QWidget()
         details_layout = QVBoxLayout(self.details)
         self.details_layout = details_layout
@@ -565,6 +582,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         log_layout.setSpacing(6)
         log_layout.addWidget(QLabel("播放日志"))
         log_layout.addWidget(self.log_view, 1)
+        details_layout.addWidget(self.playback_startup_widget)
         details_layout.addWidget(self.log_section, 1)
         self.details.installEventFilter(self)
 
@@ -707,6 +725,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_log_button.clicked.connect(self._toggle_log_visibility)
+        self.playback_retry_button.clicked.connect(self._retry_failed_startup)
+        self.playback_switch_line_button.clicked.connect(self._switch_line_after_failure)
+        self.playback_switch_parser_button.clicked.connect(self._switch_parser_after_failure)
         self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
         self.danmaku_settings_button.clicked.connect(self._open_danmaku_settings_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
@@ -907,6 +928,56 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             button.setProperty("detail_action_base_enabled", action.enabled)
             button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
             self.detail_actions_layout.addWidget(button)
+
+    def _set_startup_state(self, state: PlaybackStartupState) -> None:
+        self._startup_state = state
+        self.playback_startup_status_label.setText(state.message)
+        action_keys = {action.key for action in state.actions}
+        self.playback_retry_button.setVisible("retry" in action_keys)
+        self.playback_switch_line_button.setVisible("switch_line" in action_keys)
+        self.playback_switch_parser_button.setVisible("switch_parser" in action_keys)
+        self.playback_startup_widget.setHidden(state.stage is PlaybackStartupStage.IDLE)
+
+    def _has_multiple_playback_sources(self) -> bool:
+        if self.session is None:
+            return False
+        return sum(len(group.sources) for group in self._session_source_groups()) > 1
+
+    def _show_failed_startup_state(self, message: str) -> None:
+        self._set_startup_state(
+            self._startup_coordinator.failed(
+                message=message,
+                parse_required=self._current_item_requires_parse(),
+                has_multiple_sources=self._has_multiple_playback_sources(),
+            )
+        )
+
+    def _retry_failed_startup(self) -> None:
+        self._replay_current_item()
+
+    def _switch_line_after_failure(self) -> None:
+        if self.session is None:
+            return
+        source_groups = self._session_source_groups()
+        active_group = source_groups[self.session.source_group_index]
+        if self.session.source_index + 1 < len(active_group.sources):
+            self._switch_active_source(self.session.source_group_index, self.session.source_index + 1)
+            return
+        if self.session.source_group_index + 1 < len(source_groups):
+            self._switch_active_source(self.session.source_group_index + 1, 0)
+
+    def _switch_parser_after_failure(self) -> None:
+        if not self._current_item_requires_parse():
+            return
+        if self.parse_combo.count() <= 2:
+            return
+        current_index = max(1, self.parse_combo.currentIndex())
+        next_index = current_index + 1
+        if next_index >= self.parse_combo.count():
+            next_index = 1
+        if next_index == current_index:
+            return
+        self.parse_combo.setCurrentIndex(next_index)
 
     def _run_detail_field_action(self, action: PlaybackDetailFieldAction) -> None:
         if self.session is None or self.session.detail_field_runner is None:
@@ -1245,6 +1316,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     ) -> None:
         if self.session is None or self.session.playback_loader is None:
             return
+        self._set_startup_state(self._startup_coordinator.resolving())
         current_item = self.session.playlist[self.current_index]
         playback_loader = self.session.playback_loader
         self._append_log(f"正在加载播放地址: {current_item.title}")
@@ -1321,6 +1393,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _start_current_item_playback(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
+        self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
@@ -1383,6 +1456,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        self._set_startup_state(self._startup_coordinator.preparing())
         self._invalidate_play_item_resolution()
         self._clear_manual_subtitle_switch_refresh()
         self._auto_spider_subtitle_suppressed = False
@@ -1757,6 +1831,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _handle_video_picture_state_changed(self, state: str) -> None:
         self._video_picture_state = state
+        if state == "loading":
+            self._set_startup_state(self._startup_coordinator.buffering())
+        elif state in {"visible", "audio-cover"}:
+            self._set_startup_state(self._startup_coordinator.playing())
         if state in {"visible", "audio-cover"}:
             self._video_surface_ready = True
             self.video_poster_overlay.hide()
@@ -1770,6 +1848,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._show_video_poster_overlay(pixmap)
 
     def _handle_playback_failed(self, message: str) -> None:
+        self._show_failed_startup_state(message)
         self._append_log(message)
         self._video_surface_ready = False
         pixmap = self.video_poster_overlay.pixmap()
@@ -1859,6 +1938,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        self._set_startup_state(self._startup_coordinator.resolving())
         session = self.session
         current_item = session.playlist[self.current_index]
         if wait_for_load:
@@ -2033,6 +2113,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pending_load = self._pending_play_item_load
         self._pending_play_item_load = None
         if pending_load is not None and pending_load.wait_for_load:
+            self._show_failed_startup_state(f"播放失败: {message}")
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: {message}")
             return
@@ -2079,6 +2160,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_loader = None
         if pending_loader is None:
             return
+        self._show_failed_startup_state(f"播放失败: {message}")
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
         self._append_log(f"播放失败: {message}")
 
@@ -2138,6 +2220,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._restore_failed_spider_quality_switch(current_item, pending_prepare):
             self._append_log(f"清晰度切换失败: {message}")
             return
+        self._show_failed_startup_state(f"播放失败: {message}")
         if self._requires_prepared_media_url(pending_prepare.source_url):
             self._append_log(f"播放失败: {message}")
             self._restore_current_index(pending_prepare.previous_index)

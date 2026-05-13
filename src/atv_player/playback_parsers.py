@@ -13,6 +13,8 @@ import httpx
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+from atv_player.player.resolve_cache import PlaybackResolveCache, ResolveCacheValue
+
 
 def _looks_like_media_url(value: str) -> bool:
     return bool(re.search(r"\.(m3u8|mp4|rmvb|avi|wmv|flv|mkv|webm|mov|m3u)(?!\w)", value.strip(), re.IGNORECASE))
@@ -72,9 +74,11 @@ class BuiltInPlaybackParserService:
         self,
         get: Callable[..., httpx.Response] = httpx.get,
         post: Callable[..., httpx.Response] = httpx.post,
+        resolve_cache: PlaybackResolveCache | None = None,
     ) -> None:
         self._get = get
         self._post = post
+        self._resolve_cache = resolve_cache or PlaybackResolveCache()
         self._parsers = [
             BuiltInPlaybackParser(
                 key="xm",
@@ -140,10 +144,26 @@ class BuiltInPlaybackParserService:
             raise ValueError("解析失败: 缺少待解析地址")
         errors: list[str] = []
         for parser in self._ordered_parsers(url, preferred_key):
+            cached = self._resolve_cache.get(flag=flag, url=url, parser_key=parser.key)
+            if cached is not None:
+                return BuiltInPlaybackParserResult(
+                    parser_key=parser.key,
+                    parser_label=parser.label,
+                    url=cached.url,
+                    headers=dict(cached.headers),
+                )
             try:
-                return self._resolve_with_parser(parser, flag, url)
+                result = self._resolve_with_parser(parser, flag, url)
             except Exception as exc:
                 errors.append(f"{parser.key}: {exc}")
+                continue
+            self._resolve_cache.put(
+                flag=flag,
+                url=url,
+                parser_key=parser.key,
+                value=ResolveCacheValue(url=result.url, headers=dict(result.headers)),
+            )
+            return result
         raise ValueError(f"解析失败: {'; '.join(errors)}")
 
     def _ordered_parsers(self, url: str, preferred_key: str) -> list[BuiltInPlaybackParser]:
