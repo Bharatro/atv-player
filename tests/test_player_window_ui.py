@@ -1411,7 +1411,15 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
         def __init__(self) -> None:
             self.load_calls: list[tuple[str, bool, int]] = []
 
-        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            del headers, poster_image_path
             self.load_calls.append((url, pause, start_seconds))
 
         def set_speed(self, speed: float) -> None:
@@ -1455,6 +1463,83 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
     qtbot.waitUntil(lambda: len(video.load_calls) == 2)
     assert video.load_calls[-1] == ("https://media.example/video-720.m3u8", True, 93)
     assert session.playlist[0].selected_playback_quality_id == "720p"
+
+
+def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and_pause_preserved(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+        ) -> None:
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    def playback_loader(item: PlayItem) -> None:
+        quality_urls = {
+            "ytdlp_2160": "https://media.example/youtube-2160.mp4",
+            "ytdlp_1080": "https://media.example/youtube-1080.mp4",
+            "ytdlp_720": "https://media.example/youtube-720.mp4",
+        }
+        item.url = quality_urls[item.selected_playback_quality_id]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/youtube-1080.mp4",
+                original_url="https://www.youtube.com/watch?v=test123",
+                playback_qualities=[
+                    VideoQualityOption(id="ytdlp_2160", label="2160p"),
+                    VideoQualityOption(id="ytdlp_1080", label="1080p"),
+                    VideoQualityOption(id="ytdlp_720", label="720p"),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 1)
+    assert video.load_calls == [("https://media.example/youtube-1080.mp4", False, 0)]
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(2)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 2)
+    assert video.load_calls[-1] == ("https://media.example/youtube-720.mp4", True, 93)
+    assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
 
 
 def test_player_window_switches_dash_video_quality_with_position_and_pause_preserved(qtbot) -> None:

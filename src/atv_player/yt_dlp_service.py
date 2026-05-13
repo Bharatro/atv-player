@@ -65,10 +65,35 @@ _LANG_CODE_NAMES: dict[str, str] = {
     "zh-TW": "中文",
 }
 
+_DEFAULT_STARTUP_MAX_HEIGHT = 1080
+
 
 def _has_muxed_audio(fmt: dict) -> bool:
     acodec = fmt.get("acodec", "") or ""
     return acodec != "none"
+
+
+def _quality_id_for_height(height: int) -> str:
+    return f"ytdlp_{height}"
+
+
+def _quality_height_from_id(quality_id: str) -> int | None:
+    if not quality_id.startswith("ytdlp_"):
+        return None
+    suffix = quality_id.removeprefix("ytdlp_")
+    if not suffix.isdigit():
+        return None
+    height = int(suffix)
+    return height if height > 0 else None
+
+
+def _build_format_selector(max_height: int | None) -> str:
+    if max_height and max_height > 0:
+        return (
+            f"bestvideo[height<={max_height}]+bestaudio/"
+            f"best[height<={max_height}]/bestvideo+bestaudio/best"
+        )
+    return "bestvideo+bestaudio/best"
 
 
 def _pick_direct_url(info: dict) -> str:
@@ -96,6 +121,7 @@ class YtdlpResolveResult:
     headers: dict[str, str]
     subtitles: list[ExternalSubtitleOption]
     qualities: list[VideoQualityOption]
+    selected_quality_id: str
     extractor: str
 
 
@@ -117,8 +143,14 @@ class YtdlpPlaybackService:
         self._now = now
         self._cache: dict[str, _YtdlpCacheEntry] = {}
 
-    def _get_cached_result(self, url: str) -> YtdlpResolveResult | None:
+    def _cache_key(self, url: str, max_height: int | None) -> str:
         key = url.strip()
+        if max_height and max_height > 0:
+            return f"{key}#h={max_height}"
+        return f"{key}#h=any"
+
+    def _get_cached_result(self, url: str, max_height: int | None) -> YtdlpResolveResult | None:
+        key = self._cache_key(url, max_height)
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -127,8 +159,8 @@ class YtdlpPlaybackService:
             return None
         return entry.result
 
-    def _store_cached_result(self, url: str, result: YtdlpResolveResult) -> None:
-        key = url.strip()
+    def _store_cached_result(self, url: str, max_height: int | None, result: YtdlpResolveResult) -> None:
+        key = self._cache_key(url, max_height)
         self._cache[key] = _YtdlpCacheEntry(
             result=result,
             expires_at=self._now() + self._ttl_seconds,
@@ -160,8 +192,14 @@ class YtdlpPlaybackService:
             hostname = hostname[4:]
         return hostname in _KNOWN_YTDLP_DOMAINS
 
-    def resolve(self, url: str, log: object = None) -> YtdlpResolveResult:
-        cached = self._get_cached_result(url)
+    def resolve(
+        self,
+        url: str,
+        log: object = None,
+        *,
+        max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT,
+    ) -> YtdlpResolveResult:
+        cached = self._get_cached_result(url, max_height)
         if cached is not None:
             if callable(log):
                 log(f"yt-dlp 命中缓存 [{cached.extractor}]")
@@ -171,7 +209,7 @@ class YtdlpPlaybackService:
         import yt_dlp
 
         ytdlp_opts: dict = {
-            "format": "bestvideo+bestaudio/best",
+            "format": _build_format_selector(max_height),
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 30,
@@ -208,6 +246,7 @@ class YtdlpPlaybackService:
 
         qualities = _build_quality_options(info)
         subtitles = _build_subtitle_options(info)
+        selected_quality_id = _resolve_selected_quality_id(info, qualities, max_height)
 
         if callable(log):
             ext = info.get("extractor", "")
@@ -224,13 +263,28 @@ class YtdlpPlaybackService:
             headers=headers,
             subtitles=subtitles,
             qualities=qualities,
+            selected_quality_id=selected_quality_id,
             extractor=info.get("extractor", ""),
         )
-        self._store_cached_result(url, result)
+        self._store_cached_result(url, max_height, result)
         return result
 
-    def resolve_to_play_item(self, url: str) -> tuple[VodItem, PlayItem]:
-        result = self.resolve(url)
+    def resolve_for_quality(
+        self,
+        url: str,
+        quality_id: str,
+        log: object = None,
+    ) -> YtdlpResolveResult:
+        max_height = _quality_height_from_id(quality_id)
+        return self.resolve(url, log=log, max_height=max_height)
+
+    def resolve_to_play_item(
+        self,
+        url: str,
+        *,
+        max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT,
+    ) -> tuple[VodItem, PlayItem]:
+        result = self.resolve(url, max_height=max_height)
         title = result.title or url
         vod = VodItem(
             vod_id=url,
@@ -249,51 +303,75 @@ class YtdlpPlaybackService:
             media_title=title,
             duration_seconds=result.duration_seconds,
         )
-        if item.playback_qualities and not item.selected_playback_quality_id:
+        if result.selected_quality_id:
+            item.selected_playback_quality_id = result.selected_quality_id
+        elif item.playback_qualities and not item.selected_playback_quality_id:
             item.selected_playback_quality_id = item.playback_qualities[0].id
         return vod, item
 
 
 def _build_quality_options(info: dict) -> list[VideoQualityOption]:
     formats = info.get("formats") or []
-    seen: set[str] = set()
-    options: list[VideoQualityOption] = []
+    best_by_height: dict[int, dict] = {}
     for fmt in formats:
         height = fmt.get("height")
         if not height or height < 360:
             continue
-        fmt_url = fmt.get("url")
-        if not fmt_url:
-            continue
         vcodec = fmt.get("vcodec", "") or ""
         if vcodec == "none":
             continue
-        format_id = fmt.get("format_id", "")
-        quality_id = f"ytdlp_{format_id}"
-        if quality_id in seen:
-            continue
-        seen.add(quality_id)
+        previous = best_by_height.get(height)
+        current_tbr = fmt.get("tbr") or 0
+        previous_tbr = (previous or {}).get("tbr") or 0
+        if previous is None or current_tbr > previous_tbr:
+            best_by_height[height] = fmt
 
-        acodec = fmt.get("acodec", "") or ""
-        if acodec == "none":
-            continue
-        label = f"{height}p ✓"
+    options: list[VideoQualityOption] = []
+    for height in sorted(best_by_height.keys(), reverse=True):
+        fmt = best_by_height[height]
         tbr = fmt.get("tbr")
+        label = f"{height}p"
         if tbr:
             label += f"  {tbr:.0f}kbps"
-
         options.append(VideoQualityOption(
-            id=quality_id,
+            id=_quality_id_for_height(height),
             label=label,
-            url=fmt_url,
+            url="",
             width=fmt.get("width") or 0,
             height=height,
             bandwidth=int((tbr or 0) * 1000),
-            codecs=vcodec,
+            codecs=fmt.get("vcodec", "") or "",
         ))
 
-    options.sort(key=lambda q: q.height, reverse=True)
     return options
+
+
+def _resolve_selected_quality_id(
+    info: dict,
+    qualities: list[VideoQualityOption],
+    max_height: int | None,
+) -> str:
+    selected_height = info.get("height") or 0
+    if not selected_height:
+        requested_formats = info.get("requested_formats") or []
+        requested_heights = [
+            int(fmt.get("height") or 0)
+            for fmt in requested_formats
+            if isinstance(fmt, dict) and fmt.get("height")
+        ]
+        if requested_heights:
+            selected_height = max(requested_heights)
+    if selected_height:
+        selected_id = _quality_id_for_height(int(selected_height))
+        if any(option.id == selected_id for option in qualities):
+            return selected_id
+    if max_height and max_height > 0:
+        for option in qualities:
+            if option.height <= max_height:
+                return option.id
+    if qualities:
+        return qualities[0].id
+    return ""
 
 
 _ZH_EN_LANG_PREFIXES = ("en", "zh", "zh-", "zh_Hans", "zh_Hant", "zh-CN", "zh-TW")

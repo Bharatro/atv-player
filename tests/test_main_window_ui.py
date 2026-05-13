@@ -1779,6 +1779,87 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert request.playlist[0].headers == {"Referer": "https://www.youtube.com/"}
 
 
+def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+            self.resolve_for_quality_calls: list[tuple[str, str]] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str):
+            self.resolve_calls.append(url)
+            return type(
+                "Result",
+                (),
+                {
+                    "url": "https://media.example/youtube-1080.mp4",
+                    "title": "Async Test Video",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 321,
+                    "headers": {},
+                    "subtitles": [],
+                    "qualities": [],
+                    "extractor": "youtube",
+                    "selected_quality_id": "ytdlp_1080",
+                },
+            )()
+
+        def resolve_for_quality(self, url: str, quality_id: str):
+            self.resolve_for_quality_calls.append((url, quality_id))
+            return type(
+                "Result",
+                (),
+                {
+                    "url": "https://media.example/youtube-720.mp4",
+                    "title": "Async Test Video",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 321,
+                    "headers": {},
+                    "subtitles": [],
+                    "qualities": [],
+                    "extractor": "youtube",
+                    "selected_quality_id": quality_id,
+                },
+            )()
+
+    service = FakeYtdlpService()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        yt_dlp_service=service,
+    )
+
+    qtbot.addWidget(window)
+
+    request = window._build_ytdlp_parse_request("https://www.youtube.com/watch?v=test123")
+    session = type("Session", (), {"vod": request.vod})()
+    item = request.playlist[0]
+    item.selected_playback_quality_id = "ytdlp_720"
+
+    request.playback_loader(session, item)
+
+    assert service.resolve_calls == []
+    assert service.resolve_for_quality_calls == [("https://www.youtube.com/watch?v=test123", "ytdlp_720")]
+    assert item.url == "https://media.example/youtube-720.mp4"
+    assert item.selected_playback_quality_id == "ytdlp_720"
+
+
 def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:
     telegram = SearchableController([])
     emby = SearchableController([])

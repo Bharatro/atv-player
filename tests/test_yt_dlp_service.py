@@ -114,6 +114,18 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
+        info = _sample_info()
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=info))
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        service.resolve("https://www.youtube.com/watch?v=test123")
+
+        options = mock_ytdlp_module.YoutubeDL.call_args.args[0]
+        assert options["format"] == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+
     def test_prefers_muxed_fallback_url_when_info_url_missing(self, service, mock_ytdlp_module):
         info = _sample_info(
             url="",
@@ -285,6 +297,53 @@ class TestResolve:
 
 
 class TestResolveToPlayItem:
+    def test_prefers_current_resolved_height_over_highest_available_quality(self, service, mock_ytdlp_module):
+        info = _sample_info(
+            height=1080,
+            formats=[
+                {
+                    "format_id": "2160-video",
+                    "url": "https://stream.test/2160-video.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 12000,
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                },
+                {
+                    "format_id": "1080-video",
+                    "url": "https://stream.test/1080-video.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                },
+                {
+                    "format_id": "720-muxed",
+                    "url": "https://stream.test/720-muxed.mp4",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2500,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                },
+            ],
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=info))
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        _, item = service.resolve_to_play_item("https://www.youtube.com/watch?v=test123")
+
+        assert [quality.id for quality in item.playback_qualities] == [
+            "ytdlp_2160",
+            "ytdlp_1080",
+            "ytdlp_720",
+        ]
+        assert item.selected_playback_quality_id == "ytdlp_1080"
+
     def test_success(self, service, mock_ytdlp_module):
         info = _sample_info()
         mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
@@ -307,7 +366,7 @@ class TestResolveToPlayItem:
 
 
 class TestBuildQualityOptions:
-    def test_filters_video_only_formats(self):
+    def test_keeps_video_only_formats_for_quality_ladder(self):
         from atv_player.yt_dlp_service import _build_quality_options
         info = {
             "formats": [
@@ -328,7 +387,7 @@ class TestBuildQualityOptions:
             ]
         }
         result = _build_quality_options(info)
-        assert [option.id for option in result] == ["ytdlp_720-muxed"]
+        assert [option.id for option in result] == ["ytdlp_1080", "ytdlp_720"]
 
     def test_filters_low_quality(self):
         from atv_player.yt_dlp_service import _build_quality_options
@@ -377,7 +436,7 @@ class TestBuildQualityOptions:
         heights = [q.height for q in result]
         assert heights == [1080, 720, 480]
 
-    def test_no_url_skipped(self):
+    def test_no_url_still_exposes_height_for_re_resolve(self):
         from atv_player.yt_dlp_service import _build_quality_options
         info = {
             "formats": [
@@ -385,7 +444,7 @@ class TestBuildQualityOptions:
             ]
         }
         result = _build_quality_options(info)
-        assert len(result) == 0
+        assert [option.id for option in result] == ["ytdlp_720"]
 
 
 class TestBuildSubtitleOptions:

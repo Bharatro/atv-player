@@ -3853,7 +3853,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if target_quality_id == current_item.selected_playback_quality_id:
                 return
             selected_quality = next(
-                (quality for quality in current_item.playback_qualities if quality.id == target_quality_id and quality.url),
+                (quality for quality in current_item.playback_qualities if quality.id == target_quality_id),
                 None,
             )
             if selected_quality is None:
@@ -3862,6 +3862,33 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 start_position_seconds = int(self.video.position_seconds() or 0)
             except Exception:
                 start_position_seconds = 0
+            if not selected_quality.url:
+                if (
+                    self.session.playback_loader is None
+                    or not current_item.original_url
+                    or not target_quality_id.startswith("ytdlp_")
+                ):
+                    return
+                previous_url = current_item.url
+                previous_original_url = current_item.original_url
+                previous_selected_quality_id = current_item.selected_playback_quality_id
+                current_item.url = ""
+                current_item.selected_playback_quality_id = target_quality_id
+                self._refresh_video_quality_state()
+                try:
+                    self._play_item_at_index(
+                        self.current_index,
+                        start_position_seconds=start_position_seconds,
+                        pause=not self.is_playing,
+                        preserve_primary_external_subtitle_selection=True,
+                    )
+                except Exception as exc:
+                    current_item.url = previous_url
+                    current_item.original_url = previous_original_url
+                    current_item.selected_playback_quality_id = previous_selected_quality_id
+                    self._refresh_video_quality_state()
+                    self._append_log(f"清晰度切换失败: {exc}")
+                return
             previous_url = current_item.url
             previous_original_url = current_item.original_url
             previous_selected_quality_id = current_item.selected_playback_quality_id

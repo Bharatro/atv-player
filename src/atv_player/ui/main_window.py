@@ -1364,6 +1364,15 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         history_loader, history_saver = self._direct_parse_history_hooks(url)
         danmaku_controller = self._build_direct_parse_danmaku_controller()
 
+        def resolve_with_ytdlp(current_item: PlayItem, source_url: str):
+            yt_dlp = self._yt_dlp_service
+            if yt_dlp is None or not yt_dlp.is_available():
+                raise ValueError("yt-dlp 不可用")
+            selected_quality_id = current_item.selected_playback_quality_id or ""
+            if selected_quality_id.startswith("ytdlp_"):
+                return yt_dlp.resolve_for_quality(source_url, selected_quality_id)
+            return yt_dlp.resolve(source_url)
+
         def load_item(current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             try:
@@ -1376,10 +1385,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 current_item.original_url = source_url
                 current_item.headers = dict(result.headers)
             except ValueError:
-                yt_dlp = self._yt_dlp_service
-                if yt_dlp is None or not yt_dlp.is_available():
-                    raise
-                yt_result = yt_dlp.resolve(source_url)
+                yt_result = resolve_with_ytdlp(current_item, source_url)
                 current_item.url = yt_result.url
                 current_item.original_url = source_url
                 current_item.headers = dict(yt_result.headers)
@@ -1388,7 +1394,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 if yt_result.title:
                     current_item.title = yt_result.title
                     current_item.media_title = yt_result.title
-                if yt_result.qualities and not current_item.selected_playback_quality_id:
+                selected_quality_id = getattr(yt_result, "selected_quality_id", "") or current_item.selected_playback_quality_id
+                if selected_quality_id:
+                    current_item.selected_playback_quality_id = selected_quality_id
+                elif yt_result.qualities and not current_item.selected_playback_quality_id:
                     current_item.selected_playback_quality_id = yt_result.qualities[0].id
             current_item.parse_required = True
             if danmaku_controller is not None:
@@ -1429,7 +1438,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
-            result = self._yt_dlp_service.resolve(source_url)
+            selected_quality_id = current_item.selected_playback_quality_id or ""
+            if selected_quality_id.startswith("ytdlp_"):
+                result = self._yt_dlp_service.resolve_for_quality(source_url, selected_quality_id)
+            else:
+                result = self._yt_dlp_service.resolve(source_url)
             current_item.url = result.url
             current_item.original_url = source_url
             current_item.headers = dict(result.headers)
@@ -1438,7 +1451,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             current_item.duration_seconds = result.duration_seconds
             current_item.media_title = result.title or current_item.media_title or source_url
             current_item.title = result.title or current_item.title or source_url
-            if current_item.playback_qualities and not current_item.selected_playback_quality_id:
+            selected_quality_id = getattr(result, "selected_quality_id", "") or current_item.selected_playback_quality_id
+            if selected_quality_id:
+                current_item.selected_playback_quality_id = selected_quality_id
+            elif current_item.playback_qualities and not current_item.selected_playback_quality_id:
                 current_item.selected_playback_quality_id = current_item.playback_qualities[0].id
             session.vod.vod_name = result.title or session.vod.vod_name or source_url
             session.vod.vod_pic = result.thumbnail
