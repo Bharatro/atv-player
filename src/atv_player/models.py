@@ -213,6 +213,18 @@ class VodItem:
 
 
 @dataclass(slots=True)
+class PlaybackSource:
+    label: str
+    playlist: list[PlayItem] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PlaybackSourceGroup:
+    label: str
+    sources: list[PlaybackSource] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class HistoryRecord:
     id: int
     key: str
@@ -227,6 +239,8 @@ class HistoryRecord:
     speed: float
     create_time: int
     playlist_index: int = 0
+    source_group_index: int = 0
+    source_index: int = 0
     source_kind: str = "remote"
     source_plugin_id: int = 0
     source_plugin_name: str = ""
@@ -351,6 +365,9 @@ class OpenPlayerRequest:
     clicked_index: int
     playlists: list[list[PlayItem]] = field(default_factory=list)
     playlist_index: int = 0
+    source_groups: list[PlaybackSourceGroup] = field(default_factory=list)
+    source_group_index: int = 0
+    source_index: int = 0
     source_kind: str = "browse"
     source_key: str = ""
     source_mode: str = ""
