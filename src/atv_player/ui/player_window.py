@@ -533,19 +533,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(6)
         details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        details_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.metadata_section = QWidget()
+        metadata_layout = QVBoxLayout(self.metadata_section)
+        metadata_layout.setContentsMargins(0, 0, 0, 0)
+        metadata_layout.setSpacing(6)
+        metadata_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        metadata_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_actions_layout.setSpacing(6)
-        details_layout.addWidget(self.detail_actions_widget)
+        metadata_layout.addWidget(self.detail_actions_widget)
         self.detail_fields_widget = QWidget()
         self.detail_fields_layout = QVBoxLayout(self.detail_fields_widget)
         self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_fields_layout.setSpacing(4)
-        details_layout.addWidget(self.detail_fields_widget)
-        details_layout.addWidget(QLabel("影片详情"))
-        details_layout.addWidget(self.metadata_view, 3)
+        metadata_layout.addWidget(self.detail_fields_widget)
+        self.metadata_heading = QLabel("影片详情")
+        metadata_layout.addWidget(self.metadata_heading)
+        metadata_layout.addWidget(self.metadata_view, 3)
+        details_layout.addWidget(self.metadata_section, 3)
         self.log_section = QWidget()
         log_layout = QVBoxLayout(self.log_section)
         log_layout.setContentsMargins(0, 0, 0, 0)
@@ -2365,7 +2372,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _preferred_danmaku_line_count(self) -> int:
         if self.config is None:
             return 1
-        return max(1, min(int(getattr(self.config, "preferred_danmaku_line_count", 1)), 10))
+        try:
+            value = int(getattr(self.config, "preferred_danmaku_line_count", 1))
+        except (TypeError, ValueError):
+            return 1
+        return max(1, min(value, 10))
 
     def _preferred_danmaku_render_mode(self) -> str:
         if self.config is None:
@@ -4860,16 +4871,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _apply_visibility_state(self) -> None:
         is_fullscreen = self.isFullScreen()
         sidebar_hidden = is_fullscreen or self.wide_button.isChecked()
+        metadata_visible = self.toggle_details_button.isChecked()
+        log_visible = self.toggle_log_button.isChecked()
         self.bottom_area.setHidden(is_fullscreen)
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
         self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
-        self.details.setHidden(is_fullscreen or not self.toggle_details_button.isChecked())
-        self.log_section.setHidden(
-            is_fullscreen
-            or not self.toggle_details_button.isChecked()
-            or not self.toggle_log_button.isChecked()
-        )
+        self.details.setHidden(is_fullscreen or (not metadata_visible and not log_visible))
+        self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
+        self.log_section.setHidden(is_fullscreen or not log_visible)
 
     def _format_time(self, seconds: int) -> str:
         total_seconds = max(int(seconds), 0)

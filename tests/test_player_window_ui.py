@@ -1579,11 +1579,13 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     qtbot.addWidget(window)
 
     assert window.details is not None
+    assert window.metadata_section is not None
     assert window.log_section is not None
     assert window.metadata_view.isReadOnly() is True
     assert window.log_view.isReadOnly() is True
-    assert window.details.layout().indexOf(window.metadata_view) != -1
+    assert window.details.layout().indexOf(window.metadata_section) != -1
     assert window.details.layout().indexOf(window.log_section) != -1
+    assert window.metadata_section.layout().indexOf(window.metadata_view) != -1
     assert window.log_section.layout().indexOf(window.log_view) != -1
 
 
@@ -1690,11 +1692,12 @@ def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) 
     qtbot.addWidget(window)
 
     details_layout = window.details.layout()
+    metadata_layout = window.metadata_section.layout()
 
     assert window.poster_label is not None
-    assert details_layout.indexOf(window.poster_label) != -1
-    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.metadata_view)
-    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.log_section)
+    assert details_layout.indexOf(window.metadata_section) < details_layout.indexOf(window.log_section)
+    assert metadata_layout.indexOf(window.poster_label) != -1
+    assert metadata_layout.indexOf(window.poster_label) < metadata_layout.indexOf(window.metadata_view)
     assert window.poster_label.alignment() == Qt.AlignmentFlag.AlignCenter
     assert window.poster_label.minimumHeight() > 0
 
@@ -3800,7 +3803,7 @@ def test_player_window_opening_new_session_refreshes_metadata_and_clears_old_log
     assert "播放失败: boom" not in window.log_view.toPlainText()
 
 
-def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
+def test_player_window_can_hide_playlist_and_keep_log_visible(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.show()
@@ -3809,13 +3812,16 @@ def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
     window.toggle_details_button.click()
 
     assert window.playlist.isHidden() is True
-    assert window.details.isHidden() is True
+    assert window.details.isHidden() is False
+    assert window.metadata_section.isHidden() is True
+    assert window.log_section.isHidden() is False
 
     window.toggle_playlist_button.click()
     window.toggle_details_button.click()
 
     assert window.playlist.isHidden() is False
     assert window.details.isHidden() is False
+    assert window.metadata_section.isHidden() is False
 
 
 def test_player_window_can_hide_only_playback_log_section(qtbot) -> None:
@@ -3854,7 +3860,9 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     assert window.bottom_area.isHidden() is False
     assert window.sidebar_actions_widget.isHidden() is False
     assert window.playlist.isHidden() is False
-    assert window.details.isHidden() is True
+    assert window.details.isHidden() is False
+    assert window.metadata_section.isHidden() is True
+    assert window.log_section.isHidden() is False
 
 
 def test_player_window_hides_details_in_fullscreen_even_when_log_toggle_is_on(qtbot) -> None:
@@ -8839,6 +8847,68 @@ def test_player_window_uses_saved_danmaku_line_count_on_open_session(qtbot) -> N
 
     assert len(window.video.loaded_danmaku_paths) == 1
     assert window.danmaku_combo.currentText() == "8行"
+
+
+def test_player_window_defaults_invalid_saved_danmaku_line_count_on_open_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    config = AppConfig(preferred_danmaku_enabled=True)
+    config.preferred_danmaku_line_count = "static"  # type: ignore[assignment]
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert len(window.video.loaded_danmaku_paths) == 1
+    assert window._danmaku_line_count == 1
+    assert window.danmaku_combo.currentText() == "弹幕"
 
 
 def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) -> None:
