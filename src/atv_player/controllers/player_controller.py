@@ -156,7 +156,17 @@ class PlayerController:
     ) -> tuple[int, int, int, list[PlayItem]]:
         _, pair_to_flat, flat_to_pair = self._flatten_source_groups(source_groups)
         if history is not None:
-            if 0 <= history.source_group_index < len(source_groups):
+            history_pair = (history.source_group_index, history.source_index)
+            pair_flat_index = pair_to_flat.get(history_pair, -1)
+            should_use_explicit_pair = (
+                history_pair in pair_to_flat
+                and (
+                    history.source_group_index != 0
+                    or history.source_index != 0
+                    or pair_flat_index == history.playlist_index
+                )
+            )
+            if should_use_explicit_pair:
                 source_group_index = history.source_group_index
                 active_group = source_groups[source_group_index]
                 if 0 <= history.source_index < len(active_group.sources):
@@ -320,6 +330,8 @@ class PlayerController:
             "ending": ending_seconds * 1000,
             "speed": speed,
             "playlistIndex": session.playlist_index,
+            "sourceGroupIndex": session.source_group_index,
+            "sourceIndex": session.source_index,
             "createTime": int(time() * 1000),
         }
         if session.playback_history_saver is not None:

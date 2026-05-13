@@ -1086,7 +1086,8 @@ def test_player_window_shows_route_selector_for_single_group(qtbot) -> None:
     window.open_session(session)
 
     assert isinstance(window.playlist_group_combo, QComboBox)
-    assert window.playlist_group_combo.isHidden() is False
+    assert window.playlist_group_combo.isHidden() is True
+    assert window.playlist_source_combo.isHidden() is True
     assert window.playlist_group_combo.count() == 1
     assert window.playlist_group_combo.itemText(0) == "网盘线(夸克)"
     assert window.video.load_calls == []
@@ -11867,6 +11868,43 @@ def test_player_window_route_replacement_keeps_other_route_groups_unchanged(qtbo
     assert window.session is not None
     assert [item.title for item in window.session.playlists[0]] == ["第1集"]
     assert [item.title for item in window.session.playlists[1]] == ["S1 - 1"]
+
+
+def test_player_window_replacement_updates_only_active_leaf_source(qtbot) -> None:
+    active = [PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="夸克2")]
+    sibling = [PlayItem(title="第1集", url="http://q1/1.mp4", play_source="夸克1")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=active,
+        playlists=[sibling, active],
+        playlist_index=1,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="夸克",
+                sources=[
+                    PlaybackSource(label="夸克1", playlist=sibling),
+                    PlaybackSource(label="夸克2", playlist=active),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=1,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=lambda item: PlaybackLoadResult(
+            replacement_playlist=[PlayItem(title="S1 - 1", url="http://m/1.mp4", play_source="夸克2")],
+            replacement_start_index=0,
+        ),
+    )
+    window = PlayerWindow(FakePlayerController(), config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert [item.title for item in window.session.source_groups[0].sources[0].playlist] == ["第1集"]
+    assert [item.title for item in window.session.source_groups[0].sources[1].playlist] == ["S1 - 1"]
 
 
 def test_player_window_route_selector_uses_formatted_spider_play_source_label(qtbot) -> None:
