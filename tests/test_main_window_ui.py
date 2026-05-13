@@ -287,6 +287,38 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     assert window.plugin_manager_button.text() == "插件管理"
 
 
+def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        feiniu_controller=FakeStaticController(),
+        pansou_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+        "豆瓣电影",
+        "电报影视",
+        "网络直播",
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+        "文件浏览",
+        "播放记录",
+    ]
+
+
 def test_main_window_shows_startup_plugin_loading_placeholder_tab(qtbot) -> None:
     load_started = threading.Event()
     release_load = threading.Event()

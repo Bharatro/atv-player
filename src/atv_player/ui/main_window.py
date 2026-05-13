@@ -830,7 +830,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self.nav_tabs.width() - self._plugin_overflow_button_width() - 8,
                 0,
             )
-        static_width = sum(self._plugin_tab_title_width(definition.title) for definition in self._static_tab_definitions)
+        static_width = sum(
+            self._plugin_tab_title_width(definition.title)
+            for definition in self._static_tab_definitions
+            if not definition.global_search_only
+        )
         trailing_width = sum(
             self._plugin_tab_title_width(definition.title)
             for definition in self._trailing_tab_definitions
@@ -866,20 +870,23 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.plugin_overflow_button.hide()
             self._close_plugin_overflow_drawer()
         else:
+            visible_static_definitions = [
+                definition for definition in self._static_tab_definitions if not definition.global_search_only
+            ]
             visible_plugins, hidden_plugins = self._split_visible_and_hidden_plugin_tabs()
             placeholder_definition = self._startup_plugin_placeholder_definition()
             if placeholder_definition is not None:
                 self._hidden_plugin_tab_definitions = []
                 self.plugin_overflow_button.hide()
                 self._close_plugin_overflow_drawer()
-                definitions = [*self._static_tab_definitions, placeholder_definition, *self._trailing_tab_definitions]
+                definitions = [*visible_static_definitions, placeholder_definition, *self._trailing_tab_definitions]
             else:
                 self._hidden_plugin_tab_definitions = hidden_plugins
                 self.plugin_overflow_button.setVisible(bool(hidden_plugins))
                 self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
                 if not hidden_plugins:
                     self._close_plugin_overflow_drawer()
-                definitions = [*self._static_tab_definitions, *visible_plugins, *self._trailing_tab_definitions]
+                definitions = [*visible_static_definitions, *visible_plugins, *self._trailing_tab_definitions]
 
         self.nav_tabs.blockSignals(True)
         self.nav_tabs.clear()
