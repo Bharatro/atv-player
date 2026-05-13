@@ -4330,6 +4330,78 @@ def test_player_window_replays_parse_required_item_when_user_switches_parser(qtb
     assert replayed == [True]
 
 
+def test_player_window_renders_failed_startup_actions_for_parse_item_with_multiple_lines(qtbot) -> None:
+    class FakeParserService:
+        def parsers(self):
+            return [type("Parser", (), {"key": "jx1", "label": "jx1"})()]
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-1", vod_name="测试剧"),
+        playlist=[PlayItem(title="第1集", url="https://stream.example/1.m3u8", parse_required=True)],
+        playlists=[
+            [PlayItem(title="第1集", url="https://stream.example/1.m3u8", parse_required=True)],
+            [PlayItem(title="第1集", url="https://backup.example/1.m3u8", parse_required=True)],
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="默认",
+                sources=[
+                    PlaybackSource(
+                        label="线路1",
+                        playlist=[PlayItem(title="第1集", url="https://stream.example/1.m3u8", parse_required=True)],
+                    ),
+                    PlaybackSource(
+                        label="线路2",
+                        playlist=[PlayItem(title="第1集", url="https://backup.example/1.m3u8", parse_required=True)],
+                    ),
+                ],
+            )
+        ],
+    )
+
+    window.open_session(session)
+    window._show_failed_startup_state("当前线路响应超时")
+
+    assert window.playback_startup_status_label.text() == "当前线路响应超时"
+    assert window.playback_retry_button.isHidden() is False
+    assert window.playback_switch_line_button.isHidden() is False
+    assert window.playback_switch_parser_button.isHidden() is False
+
+
+def test_player_window_retry_action_replays_current_item(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+
+    replay_calls: list[str] = []
+    monkeypatch.setattr(window, "_replay_current_item", lambda: replay_calls.append("replayed"))
+
+    window._show_failed_startup_state("解析器未返回可播放地址")
+    window.playback_retry_button.click()
+
+    assert replay_calls == ["replayed"]
+
+
+def test_player_window_hides_failure_actions_when_video_becomes_visible(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+
+    window._show_failed_startup_state("播放失败")
+    assert window.playback_retry_button.isHidden() is False
+
+    window._handle_video_picture_state_changed("visible")
+
+    assert window.playback_startup_status_label.text() == "播放中"
+    assert window.playback_retry_button.isHidden() is True
+    assert window.playback_switch_line_button.isHidden() is True
+    assert window.playback_switch_parser_button.isHidden() is True
+
+
 def test_player_window_populates_embedded_audio_options_after_open_session(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
