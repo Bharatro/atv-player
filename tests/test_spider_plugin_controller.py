@@ -1545,6 +1545,48 @@ def test_controller_refresh_danmaku_sources_uses_saved_search_title_for_same_ser
     assert item.danmaku_search_query == "玄界之门 特别版 2集"
 
 
+def test_controller_refresh_danmaku_sources_strips_trailing_year_from_default_media_title() -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="黑夜告白",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(title="正片", url="https://stream.example/movie.m3u8", media_title="黑夜告白 (2026)", vod_id="movie-1")
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == ["黑夜告白 1集"]
+    assert item.danmaku_search_title == "黑夜告白"
+    assert item.danmaku_search_query == "黑夜告白 1集"
+
+
 def test_controller_refresh_danmaku_sources_persists_search_title_only_after_successful_search(tmp_path) -> None:
     class SuccessfulDanmakuService:
         def search_danmu_sources(

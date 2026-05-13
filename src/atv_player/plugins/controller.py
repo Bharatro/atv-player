@@ -50,6 +50,15 @@ from atv_player.player.resume import resolve_resume_index
 logger = logging.getLogger(__name__)
 
 
+def _strip_trailing_title_year_suffix(value: str) -> str:
+    title = str(value or "").strip()
+    if not title:
+        return ""
+    stripped = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", title)
+    stripped = stripped.strip()
+    return stripped or title
+
+
 def _looks_like_offline_download_link(value: str) -> bool:
     candidate = value.strip().lower()
     return candidate.startswith("magnet:?") or candidate.startswith("ed2k://")
@@ -840,11 +849,13 @@ class SpiderPluginController:
         item: PlayItem,
         preference: DanmakuSeriesPreference | None = None,
     ) -> str:
+        if item.danmaku_search_title.strip():
+            return item.danmaku_search_title.strip()
+        if preference is not None and preference.search_title.strip():
+            return preference.search_title.strip()
         return (
-            item.danmaku_search_title.strip()
-            or (preference.search_title.strip() if preference is not None else "")
-            or item.media_title.strip()
-            or item.title.strip()
+            _strip_trailing_title_year_suffix(item.media_title)
+            or _strip_trailing_title_year_suffix(item.title)
         )
 
     def _resolve_danmaku_search_episode(
