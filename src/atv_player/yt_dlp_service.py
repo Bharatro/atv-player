@@ -66,6 +66,26 @@ _LANG_CODE_NAMES: dict[str, str] = {
 }
 
 
+def _has_muxed_audio(fmt: dict) -> bool:
+    acodec = fmt.get("acodec", "") or ""
+    return acodec != "none"
+
+
+def _pick_direct_url(info: dict) -> str:
+    direct_url = info.get("url", "")
+    if direct_url:
+        return direct_url
+    formats = info.get("formats") or []
+    muxed_formats = [fmt for fmt in formats if fmt.get("url") and _has_muxed_audio(fmt)]
+    if muxed_formats:
+        muxed_formats.sort(key=lambda fmt: (fmt.get("height") or 0, fmt.get("tbr") or 0), reverse=True)
+        return str(muxed_formats[0]["url"])
+    for fmt in formats:
+        if fmt.get("url"):
+            return str(fmt["url"])
+    return ""
+
+
 @dataclass(frozen=True, slots=True)
 class YtdlpResolveResult:
     url: str
@@ -176,13 +196,7 @@ class YtdlpPlaybackService:
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
 
-        direct_url = info.get("url", "")
-        if not direct_url:
-            formats = info.get("formats") or []
-            for fmt in formats:
-                if fmt.get("url"):
-                    direct_url = fmt["url"]
-                    break
+        direct_url = _pick_direct_url(info)
         if not direct_url:
             raise ValueError("未获取到播放地址")
 
@@ -261,9 +275,9 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
         seen.add(quality_id)
 
         acodec = fmt.get("acodec", "") or ""
-        label = f"{height}p"
-        if acodec and acodec != "none":
-            label += " ✓"
+        if acodec == "none":
+            continue
+        label = f"{height}p ✓"
         tbr = fmt.get("tbr")
         if tbr:
             label += f"  {tbr:.0f}kbps"

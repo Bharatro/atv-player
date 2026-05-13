@@ -114,6 +114,39 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_prefers_muxed_fallback_url_when_info_url_missing(self, service, mock_ytdlp_module):
+        info = _sample_info(
+            url="",
+            formats=[
+                {
+                    "format_id": "1080-video",
+                    "url": "https://stream.test/1080-video.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                },
+                {
+                    "format_id": "720-muxed",
+                    "url": "https://stream.test/720-muxed.mp4",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2500,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                },
+            ],
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=info))
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.url == "https://stream.test/720-muxed.mp4"
+
     def test_uses_cached_result_before_ttl_expires(self, mock_ytdlp_module):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
@@ -274,6 +307,29 @@ class TestResolveToPlayItem:
 
 
 class TestBuildQualityOptions:
+    def test_filters_video_only_formats(self):
+        from atv_player.yt_dlp_service import _build_quality_options
+        info = {
+            "formats": [
+                {
+                    "format_id": "1080-video",
+                    "url": "https://test/1080-video.mp4",
+                    "height": 1080,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                },
+                {
+                    "format_id": "720-muxed",
+                    "url": "https://test/720-muxed.mp4",
+                    "height": 720,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                },
+            ]
+        }
+        result = _build_quality_options(info)
+        assert [option.id for option in result] == ["ytdlp_720-muxed"]
+
     def test_filters_low_quality(self):
         from atv_player.yt_dlp_service import _build_quality_options
         info = {
