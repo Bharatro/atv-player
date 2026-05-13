@@ -3450,3 +3450,106 @@ def test_spider_controller_keeps_spaced_numbered_routes_as_single_source_groups(
     assert [group.label for group in request.source_groups] == ["播放源 1", "播放源 2"]
     assert [source.label for source in request.source_groups[0].sources] == ["播放源 1"]
     assert [source.label for source in request.source_groups[1].sources] == ["播放源 2"]
+
+
+def test_spider_controller_uses_detail_group_payload_when_present() -> None:
+    class GroupPayloadSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "红果短剧",
+                        "vod_play_from": "旧线路",
+                        "vod_play_url": "第1集$http://legacy/1.m3u8",
+                        "group": [
+                            {
+                                "name": "百度",
+                                "media": [
+                                    {"name": "影视标题1", "url": "https://pan.baidu.com/s/xxx"},
+                                ],
+                            },
+                            {
+                                "name": "夸克",
+                                "media": [
+                                    {"name": "影视标题10", "url": "https://pan.quark.cn/s/yyy"},
+                                ],
+                            },
+                        ],
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": id}
+
+    controller = SpiderPluginController(GroupPayloadSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert [group.label for group in request.source_groups] == ["百度", "夸克"]
+    assert [source.label for source in request.source_groups[0].sources] == ["影视标题1"]
+    assert [source.label for source in request.source_groups[1].sources] == ["影视标题10"]
+    assert len(request.playlists) == 2
+    assert request.playlists[0][0].title == "影视标题1"
+    assert request.playlists[0][0].url == ""
+    assert request.playlists[0][0].vod_id == "https://pan.baidu.com/s/xxx"
+
+
+def test_spider_controller_falls_back_to_legacy_routes_when_group_payload_is_invalid() -> None:
+    class InvalidGroupSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "电影",
+                        "vod_play_from": "备用线$$$极速线",
+                        "vod_play_url": "正片$http://a/1.m3u8$$$正片$http://b/1.m3u8",
+                        "group": [
+                            {"name": "百度", "media": []},
+                            {"name": "", "media": [{"name": "坏数据", "url": "https://pan.baidu.com/s/bad"}]},
+                        ],
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": id}
+
+    controller = SpiderPluginController(InvalidGroupSpider(), plugin_name="电影", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert [group.label for group in request.source_groups] == ["备用线", "极速线"]
+    assert request.playlists[0][0].url == "http://a/1.m3u8"
+    assert request.playlists[1][0].url == "http://b/1.m3u8"
+
+
+def test_spider_controller_maps_direct_media_urls_from_group_payload() -> None:
+    class DirectMediaGroupSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "纪录片",
+                        "group": [
+                            {
+                                "name": "直链",
+                                "media": [
+                                    {"name": "正片", "url": "https://media.example/movie.m3u8"},
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": id}
+
+    controller = SpiderPluginController(DirectMediaGroupSpider(), plugin_name="纪录片", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert request.playlists[0][0].url == "https://media.example/movie.m3u8"
+    assert request.playlists[0][0].vod_id == ""
+    assert request.playlists[0][0].title == "正片"

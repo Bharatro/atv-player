@@ -700,6 +700,54 @@ class SpiderPluginController:
                 playlists.append(_mark_short_bare_numeric_playlist(playlist))
         return playlists
 
+    def _build_grouped_play_item(self, detail: VodItem, raw_media: Mapping[object, object]) -> PlayItem | None:
+        display_name = str(raw_media.get("name") or "").strip()
+        raw_url = str(raw_media.get("url") or "").strip()
+        if not raw_url:
+            return None
+        title = display_name or raw_url
+        is_drive_link = _looks_like_drive_share_link(raw_url)
+        is_media_url = _looks_like_media_url(raw_url) and not is_drive_link
+        return PlayItem(
+            title=title,
+            url=raw_url if is_media_url else "",
+            media_title=detail.vod_name,
+            path=detail.vod_id if is_drive_link else "",
+            vod_id="" if is_media_url else raw_url,
+            index=0,
+            play_source=title,
+        )
+
+    def _build_grouped_sources_from_payload(
+        self,
+        detail: VodItem,
+        payload: object,
+    ) -> tuple[list[PlaybackSourceGroup], list[list[PlayItem]]]:
+        if not isinstance(payload, list):
+            return [], []
+        source_groups: list[PlaybackSourceGroup] = []
+        playlists: list[list[PlayItem]] = []
+        for raw_group in payload:
+            if not isinstance(raw_group, Mapping):
+                continue
+            group_name = str(raw_group.get("name") or "").strip()
+            raw_media_list = raw_group.get("media")
+            if not group_name or not isinstance(raw_media_list, list):
+                continue
+            sources: list[PlaybackSource] = []
+            for raw_media in raw_media_list:
+                if not isinstance(raw_media, Mapping):
+                    continue
+                item = self._build_grouped_play_item(detail, raw_media)
+                if item is None:
+                    continue
+                playlist = [item]
+                playlists.append(playlist)
+                sources.append(PlaybackSource(label=item.title, playlist=playlist))
+            if sources:
+                source_groups.append(PlaybackSourceGroup(label=group_name, sources=sources))
+        return source_groups, playlists
+
     def _build_source_groups_from_playlists(self, playlists: list[list[PlayItem]]) -> list[PlaybackSourceGroup]:
         source_groups: list[PlaybackSourceGroup] = []
         group_index_by_label: dict[str, int] = {}
@@ -1436,7 +1484,13 @@ class SpiderPluginController:
             detail.detail_fields = _map_playback_detail_fields(raw_detail.get("ext") if isinstance(raw_detail, Mapping) else None)
         except (KeyError, IndexError) as exc:
             raise ValueError(f"没有可播放的项目: {vod_id}") from exc
-        playlists = self._build_playlist(detail)
+        source_groups: list[PlaybackSourceGroup] = []
+        playlists: list[list[PlayItem]] = []
+        if isinstance(raw_detail, Mapping):
+            source_groups, playlists = self._build_grouped_sources_from_payload(detail, raw_detail.get("group"))
+        if not playlists:
+            playlists = self._build_playlist(detail)
+            source_groups = self._build_source_groups_from_playlists(playlists)
         collection_actions = _map_playback_detail_actions(raw_detail.get("actions") if isinstance(raw_detail, Mapping) else None)
         if collection_actions:
             for current_playlist in playlists:
@@ -1450,7 +1504,6 @@ class SpiderPluginController:
             detail.vod_id,
             len(playlists),
         )
-        source_groups = self._build_source_groups_from_playlists(playlists)
         playlist = playlists[0]
         source_vod_id = vod_id or detail.vod_id
         history_loader = None
