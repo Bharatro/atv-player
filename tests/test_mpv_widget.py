@@ -328,6 +328,32 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_disables_initial_cache_pause_for_local_dash_proxy(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/dash/test-token.mpd")
+
+    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause-initial"] == "no"
+    assert widget._player.options["cache-pause-wait"] == 0
+    assert widget._player.options["demuxer-readahead-secs"] == 3
+
+
 def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

@@ -156,7 +156,7 @@ class TestResolve:
         assert "<BaseURL>https://stream.test/video-1080.mp4</BaseURL>" in manifest
         assert "<BaseURL>https://stream.test/audio.webm</BaseURL>" in manifest
 
-    def test_prefers_stable_avc_stream_pair_over_requested_av1_pair_at_same_height(self, service, mock_ytdlp_module):
+    def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, service, mock_ytdlp_module):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
             requested_formats=[
@@ -239,9 +239,9 @@ class TestResolve:
         assert result.audio_url == ""
         manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
         assert "<Representation id=\"299\"" in manifest
-        assert "<Representation id=\"251\"" in manifest
+        assert "<Representation id=\"140\"" in manifest
         assert "<BaseURL>https://stream.test/video-1080-avc.mp4</BaseURL>" in manifest
-        assert "<BaseURL>https://stream.test/audio-251.webm</BaseURL>" in manifest
+        assert "<BaseURL>https://stream.test/audio-140.m4a</BaseURL>" in manifest
 
     def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
         info = _sample_info()

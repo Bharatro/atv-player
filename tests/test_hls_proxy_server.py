@@ -971,10 +971,12 @@ def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_fu
     calls: list[tuple[str, str, dict[str, str]]] = []
 
     class FakeStreamResponse:
-        status_code = 200
+        status_code = 206
         headers = {
             "Content-Type": "video/iso.segment",
             "Content-Length": "6",
+            "Content-Range": "bytes 0-5/6",
+            "Accept-Ranges": "bytes",
         }
 
         def raise_for_status(self) -> None:
@@ -1024,10 +1026,12 @@ def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_fu
     )
 
     assert handled is True
-    assert handler.status_code == 200
+    assert handler.status_code == 206
     assert handler.headers == [
         ("Content-Type", "video/iso.segment"),
         ("Content-Length", "6"),
+        ("Content-Range", "bytes 0-5/6"),
+        ("Accept-Ranges", "bytes"),
     ]
     assert handler.ended is True
     assert handler.wfile.getvalue() == b"abcdef"
@@ -1038,6 +1042,159 @@ def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_fu
             {
                 "Referer": "https://www.bilibili.com/",
                 "Range": "bytes=0-5",
+            },
+        )
+    ]
+
+
+def test_local_hls_proxy_server_streams_dash_asset_response_synthesizes_partial_content_when_origin_ignores_range() -> None:
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {
+            "Content-Type": "video/iso.segment",
+            "Content-Length": "10",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self) -> bytes:
+            yield b"0123"
+            yield b"4567"
+            yield b"89"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append((method, url, headers))
+        return FakeStreamResponse()
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(stream=fake_stream)
+    payload = "data:application/dash+xml;base64,PE1QRD48QmFzZVVSTD5odHRwczovL21lZGlhLmV4YW1wbGUvdmlkZW8ubTRzPC9CYXNlVVJMPjwvTVBEPg=="
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    handler = FakeHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=2-5"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert handler.headers == [
+        ("Content-Type", "video/iso.segment"),
+        ("Content-Length", "4"),
+        ("Content-Range", "bytes 2-5/10"),
+        ("Accept-Ranges", "bytes"),
+    ]
+    assert handler.ended is True
+    assert handler.wfile.getvalue() == b"2345"
+    assert calls == [
+        (
+            "GET",
+            "https://media.example/video.m4s",
+            {
+                "Referer": "https://www.bilibili.com/",
+                "Range": "bytes=2-5",
+            },
+        )
+    ]
+
+
+def test_local_hls_proxy_server_sends_dash_asset_head_response_without_buffering_body() -> None:
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class FakeStreamResponse:
+        status_code = 206
+        headers = {
+            "Content-Type": "video/iso.segment",
+            "Content-Length": "4",
+            "Content-Range": "bytes 2-5/10",
+            "Accept-Ranges": "bytes",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append((method, url, headers))
+        return FakeStreamResponse()
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    server = LocalHlsProxyServer(stream=fake_stream)
+    payload = "data:application/dash+xml;base64,PE1QRD48QmFzZVVSTD5odHRwczovL21lZGlhLmV4YW1wbGUvdmlkZW8ubTRzPC9CYXNlVVJMPjwvTVBEPg=="
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    handler = FakeHandler()
+
+    handled = server._send_dash_asset_head_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=2-5"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert handler.headers == [
+        ("Content-Type", "video/iso.segment"),
+        ("Content-Length", "4"),
+        ("Content-Range", "bytes 2-5/10"),
+        ("Accept-Ranges", "bytes"),
+    ]
+    assert handler.ended is True
+    assert calls == [
+        (
+            "HEAD",
+            "https://media.example/video.m4s",
+            {
+                "Referer": "https://www.bilibili.com/",
+                "Range": "bytes=2-5",
             },
         )
     ]

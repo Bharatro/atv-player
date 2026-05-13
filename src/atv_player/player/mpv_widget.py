@@ -270,10 +270,17 @@ class MpvWidget(QWidget):
         parsed = urlparse(url)
         return parsed.scheme in {"http", "https"} and parsed.path.startswith("/iso/")
 
+    def _is_local_dash_proxy_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.scheme in {"http", "https"} and parsed.path.startswith("/dash/")
+
     def _apply_stream_profile(self, player: Any, url: str, *, audio_files: str = "") -> str:
         if self._is_local_iso_proxy_url(url):
             profile = _ISO_PROXY_STREAM_PROFILE
             profile_name = "iso-proxy"
+        elif self._is_local_dash_proxy_url(url):
+            profile = _LOW_LATENCY_STREAM_PROFILE
+            profile_name = "dash-proxy"
         elif audio_files:
             # Separate remote video/audio streams pay the startup cost twice if we keep
             # mpv's initial cache pause enabled.

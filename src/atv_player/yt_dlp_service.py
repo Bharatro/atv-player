@@ -128,8 +128,14 @@ def _video_codec_rank(vcodec: object) -> int:
     return 4
 
 
-def _audio_codec_rank(acodec: object) -> int:
+def _audio_codec_rank(acodec: object, *, preferred_ext: str = "") -> int:
     normalized = str(acodec or "").lower()
+    normalized_ext = str(preferred_ext or "").lower()
+    if normalized_ext in {"mp4", "m4a"}:
+        if normalized.startswith(("mp4a", "aac")):
+            return 0
+        if normalized.startswith("opus"):
+            return 1
     if normalized.startswith("opus"):
         return 0
     if normalized.startswith(("mp4a", "aac")):
@@ -162,7 +168,7 @@ def _preferred_video_formats(info: dict, max_height: int | None) -> list[dict]:
     )
 
 
-def _preferred_audio_formats(info: dict) -> list[dict]:
+def _preferred_audio_formats(info: dict, *, preferred_ext: str = "") -> list[dict]:
     formats = info.get("formats") or []
     candidates = [
         fmt for fmt in formats
@@ -174,7 +180,7 @@ def _preferred_audio_formats(info: dict) -> list[dict]:
     return sorted(
         candidates,
         key=lambda fmt: (
-            _audio_codec_rank(fmt.get("acodec")),
+            _audio_codec_rank(fmt.get("acodec"), preferred_ext=preferred_ext),
             -int(fmt.get("tbr") or 0),
         ),
     )
@@ -186,7 +192,7 @@ def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None
         selected_video = preferred_video_formats[0]
         if _has_muxed_audio(selected_video):
             return selected_video, None
-        preferred_audio_formats = _preferred_audio_formats(info)
+        preferred_audio_formats = _preferred_audio_formats(info, preferred_ext=str(selected_video.get("ext") or ""))
         if preferred_audio_formats:
             return selected_video, preferred_audio_formats[0]
     requested_video_url, requested_audio_url = _pick_requested_stream_pair(info)

@@ -30,6 +30,7 @@ from atv_player.request_headers import normalize_media_request_headers
 logger = logging.getLogger(__name__)
 
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
+_DASH_STREAM_CHUNK_SIZE = 256 * 1024
 
 
 def _is_client_disconnect_error(exc: BaseException) -> bool:
@@ -219,6 +220,14 @@ def _parse_byte_range_header(range_header: str) -> tuple[int, int | None] | None
     end_text = match.group(2)
     end = int(end_text) if end_text else None
     return start, end
+
+
+def _iter_response_bytes(response: Any):
+    iter_bytes = getattr(response, "iter_bytes")
+    try:
+        yield from iter_bytes(chunk_size=_DASH_STREAM_CHUNK_SIZE)
+    except TypeError:
+        yield from iter_bytes()
 
 
 def _slice_payload_for_byte_range(payload: bytes, range_header: str) -> tuple[bytes, str] | None:
@@ -554,15 +563,94 @@ class LocalHlsProxyServer:
             follow_redirects=True,
         ) as response:
             response.raise_for_status()
+            status_code = int(getattr(response, "status_code", 200) or 200)
+            content_range = response.headers.get("Content-Range")
+            if range_header and status_code == 200 and not content_range:
+                parsed_range = _parse_byte_range_header(range_header)
+                total_size_text = response.headers.get("Content-Length") or ""
+                try:
+                    total_size = int(total_size_text)
+                except ValueError:
+                    total_size = 0
+                if parsed_range is not None and total_size > 0:
+                    start = parsed_range[0]
+                    bounded_end = total_size - 1 if parsed_range[1] is None else min(parsed_range[1], total_size - 1)
+                    if 0 <= start < total_size and bounded_end >= start:
+                        handler.send_response(206)
+                        content_type = response.headers.get("Content-Type")
+                        if content_type:
+                            handler.send_header("Content-Type", content_type)
+                        handler.send_header("Content-Length", str(bounded_end - start + 1))
+                        handler.send_header("Content-Range", f"bytes {start}-{bounded_end}/{total_size}")
+                        handler.send_header("Accept-Ranges", "bytes")
+                        handler.end_headers()
+                        cursor = 0
+                        for chunk in _iter_response_bytes(response):
+                            if not chunk:
+                                continue
+                            next_cursor = cursor + len(chunk)
+                            if next_cursor <= start:
+                                cursor = next_cursor
+                                continue
+                            chunk_start = max(start - cursor, 0)
+                            chunk_end = len(chunk) if next_cursor - 1 <= bounded_end else bounded_end - cursor + 1
+                            if chunk_start < chunk_end:
+                                handler.wfile.write(chunk[chunk_start:chunk_end])
+                            cursor = next_cursor
+                            if cursor > bounded_end:
+                                break
+                        return True
+            handler.send_response(status_code)
+            for header_name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                header_value = response.headers.get(header_name)
+                if header_value:
+                    handler.send_header(header_name, header_value)
+            handler.end_headers()
+            for chunk in _iter_response_bytes(response):
+                if chunk:
+                    handler.wfile.write(chunk)
+        return True
+
+    def _send_dash_asset_head_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        if not (path.startswith("/dash/asset/") and path.endswith(".m4s")):
+            return False
+        token, asset_index = self._dash_asset_path(urlparse(path).path)
+        session = self._registry.get(token)
+        if session is None:
+            payload = b"missing proxy session"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            return True
+        if asset_index < 0 or asset_index >= len(session.dash_assets):
+            payload = b"missing dash asset"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            return True
+        upstream_headers = dict(session.headers)
+        range_header = request_headers.get("Range") or request_headers.get("range")
+        if range_header:
+            upstream_headers["Range"] = range_header
+        with self._stream(
+            "HEAD",
+            session.dash_assets[asset_index],
+            headers=upstream_headers,
+            timeout=10.0,
+            follow_redirects=True,
+        ) as response:
+            response.raise_for_status()
             handler.send_response(int(getattr(response, "status_code", 200) or 200))
             for header_name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
                 header_value = response.headers.get(header_name)
                 if header_value:
                     handler.send_header(header_name, header_value)
             handler.end_headers()
-            for chunk in response.iter_bytes():
-                if chunk:
-                    handler.wfile.write(chunk)
         return True
 
     def _stream_iso_response(
@@ -838,6 +926,8 @@ class LocalHlsProxyServer:
 
             def do_HEAD(self) -> None:
                 try:
+                    if parent._send_dash_asset_head_response(self.path, dict(self.headers.items()), self):
+                        return
                     if parent._send_iso_head_response(self.path, dict(self.headers.items()), self):
                         return
                 except Exception as exc:
