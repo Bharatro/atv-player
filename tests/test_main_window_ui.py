@@ -1698,6 +1698,87 @@ def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, m
     assert opened[0].playlist[0].headers == {"Referer": "https://site.example"}
 
 
+def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtbot, monkeypatch) -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str):
+            self.resolve_calls.append(url)
+            return type(
+                "Result",
+                (),
+                {
+                    "url": "https://media.example/youtube.mp4",
+                    "title": "Async Test Video",
+                    "thumbnail": "https://img.example/poster.jpg",
+                    "description": "async description",
+                    "duration_seconds": 321,
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [],
+                    "extractor": "youtube",
+                },
+            )()
+
+        def resolve_to_play_item(self, url: str):
+            raise AssertionError("resolve_to_play_item should not be used")
+
+    opened: list[OpenPlayerRequest] = []
+    errors: list[str] = []
+    service = FakeYtdlpService()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        yt_dlp_service=service,
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", errors.append)
+
+    qtbot.addWidget(window)
+    window.show()
+
+    url = "https://www.youtube.com/watch?v=test123"
+    window.global_search_edit.setText(url)
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1 or len(errors) == 1)
+
+    assert errors == []
+    request = opened[0]
+    assert request.source_kind == "direct_parse"
+    assert request.source_mode == "ytdlp"
+    assert request.source_vod_id == url
+    assert request.async_playback_loader is True
+    assert request.playlist[0].url == ""
+    assert request.playlist[0].original_url == url
+
+    session = type("Session", (), {"vod": request.vod})()
+    request.playback_loader(session, request.playlist[0])
+
+    assert service.resolve_calls == [url]
+    assert session.vod.vod_name == "Async Test Video"
+    assert session.vod.vod_pic == "https://img.example/poster.jpg"
+    assert session.vod.vod_content == "async description"
+    assert request.playlist[0].url == "https://media.example/youtube.mp4"
+    assert request.playlist[0].headers == {"Referer": "https://www.youtube.com/"}
+
+
 def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:
     telegram = SearchableController([])
     emby = SearchableController([])

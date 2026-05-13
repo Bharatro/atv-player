@@ -1426,15 +1426,42 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
-        vod, item = self._yt_dlp_service.resolve_to_play_item(url)
+
+        def load_item(session, current_item: PlayItem):
+            source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
+            result = self._yt_dlp_service.resolve(source_url)
+            current_item.url = result.url
+            current_item.original_url = source_url
+            current_item.headers = dict(result.headers)
+            current_item.playback_qualities = list(result.qualities)
+            current_item.external_subtitles = list(result.subtitles)
+            current_item.duration_seconds = result.duration_seconds
+            current_item.media_title = result.title or current_item.media_title or source_url
+            current_item.title = result.title or current_item.title or source_url
+            if current_item.playback_qualities and not current_item.selected_playback_quality_id:
+                current_item.selected_playback_quality_id = current_item.playback_qualities[0].id
+            session.vod.vod_name = result.title or session.vod.vod_name or source_url
+            session.vod.vod_pic = result.thumbnail
+            session.vod.vod_content = result.description
+            return None
+
+        item = PlayItem(
+            title=url,
+            url="",
+            original_url=url,
+            vod_id=url,
+            media_title=url,
+        )
         return OpenPlayerRequest(
-            vod=vod,
+            vod=VodItem(vod_id=url, vod_name=url),
             playlist=[item],
             clicked_index=0,
             source_kind="direct_parse",
             source_mode="ytdlp",
             source_vod_id=url,
             use_local_history=False,
+            playback_loader=load_item,
+            async_playback_loader=True,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )
