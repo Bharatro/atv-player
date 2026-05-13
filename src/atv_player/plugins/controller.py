@@ -34,6 +34,8 @@ from atv_player.models import (
     DoubanCategory,
     ExternalSubtitleOption,
     OpenPlayerRequest,
+    PlaybackSource,
+    PlaybackSourceGroup,
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailFieldAction,
@@ -48,6 +50,7 @@ from atv_player.player.resume import resolve_resume_index
 
 
 logger = logging.getLogger(__name__)
+_GROUPED_ROUTE_RE = re.compile(r"^(?P<group>\S*?\D)(?P<number>\d+)$")
 
 
 def _strip_trailing_title_year_suffix(value: str) -> str:
@@ -450,6 +453,21 @@ def _format_drive_route_label(route: str, provider: str) -> str:
     return f"{normalized_route}({provider})"
 
 
+def _split_grouped_route_label(route_label: str) -> tuple[str, str]:
+    normalized = route_label.strip()
+    if not normalized:
+        return "", ""
+    if any(char.isspace() for char in normalized):
+        return normalized, normalized
+    match = _GROUPED_ROUTE_RE.match(normalized)
+    if match is None:
+        return normalized, normalized
+    group_label = match.group("group").strip()
+    if not group_label:
+        return normalized, normalized
+    return group_label, normalized
+
+
 class SpiderPluginController:
     def __init__(
         self,
@@ -681,6 +699,20 @@ class SpiderPluginController:
             if playlist:
                 playlists.append(_mark_short_bare_numeric_playlist(playlist))
         return playlists
+
+    def _build_source_groups_from_playlists(self, playlists: list[list[PlayItem]]) -> list[PlaybackSourceGroup]:
+        source_groups: list[PlaybackSourceGroup] = []
+        group_index_by_label: dict[str, int] = {}
+        for playlist_index, playlist in enumerate(playlists):
+            route_label = self._route_name([playlist[0].play_source if playlist else ""], 0)
+            group_label, source_label = _split_grouped_route_label(route_label)
+            if group_label not in group_index_by_label:
+                group_index_by_label[group_label] = len(source_groups)
+                source_groups.append(PlaybackSourceGroup(label=group_label, sources=[]))
+            source_groups[group_index_by_label[group_label]].sources.append(
+                PlaybackSource(label=source_label, playlist=playlist)
+            )
+        return source_groups
 
     def _build_drive_replacement_playlist(self, detail: VodItem, play_source: str, media_title: str = "") -> list[PlayItem]:
         resolved_media_title = media_title.strip() or detail.vod_name
@@ -1418,6 +1450,7 @@ class SpiderPluginController:
             detail.vod_id,
             len(playlists),
         )
+        source_groups = self._build_source_groups_from_playlists(playlists)
         playlist = playlists[0]
         source_vod_id = vod_id or detail.vod_id
         history_loader = None
@@ -1443,6 +1476,9 @@ class SpiderPluginController:
                     speed=1.0,
                     playlists=playlists,
                     playlist_index=0,
+                    source_groups=source_groups,
+                    source_group_index=0,
+                    source_index=0,
                 )
                 current_item = session_or_item
             else:
@@ -1463,6 +1499,9 @@ class SpiderPluginController:
             playlist=playlist,
             playlists=playlists,
             playlist_index=0,
+            source_groups=source_groups,
+            source_group_index=0,
+            source_index=0,
             clicked_index=0,
             source_kind="plugin",
             source_mode="detail",
