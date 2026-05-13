@@ -120,6 +120,12 @@ class FakePluginManager:
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self.move_calls.append((plugin_id, direction))
 
+    def reorder_plugins(self, plugin_ids_in_order: list[int]) -> None:
+        by_id = {plugin.id: plugin for plugin in self.plugins}
+        self.plugins = [by_id[plugin_id] for plugin_id in plugin_ids_in_order]
+        for sort_order, plugin in enumerate(self.plugins):
+            plugin.sort_order = sort_order
+
     def refresh_plugin(self, plugin_id: int) -> None:
         self.refresh_calls.append(plugin_id)
 
@@ -279,6 +285,65 @@ def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> No
     dialog._sync_action_state()
     assert dialog.up_button.isEnabled() is True
     assert dialog.down_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_exposes_reorder_button(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.reorder_button.text() == "调整顺序"
+
+
+def test_plugin_manager_dialog_opens_reorder_dialog_and_reloads_on_accept(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    reload_calls: list[str] = []
+    original_reload = dialog.reload_plugins
+
+    def tracked_reload() -> None:
+        reload_calls.append("reload")
+        original_reload()
+
+    class FakeReorderDialog:
+        def __init__(self, plugin_manager, parent=None) -> None:
+            assert plugin_manager is manager
+            assert parent is dialog
+
+        def exec(self) -> int:
+            manager.reorder_plugins([2, 1])
+            return PluginManagerDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
+    monkeypatch.setattr(plugin_manager_dialog_module, "PluginReorderDialog", FakeReorderDialog)
+
+    dialog._open_reorder_dialog()
+
+    assert reload_calls == ["reload"]
+    assert [plugin.id for plugin in manager.plugins] == [2, 1]
+
+
+def test_plugin_manager_dialog_does_not_reload_when_reorder_dialog_is_cancelled(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    reload_calls: list[str] = []
+
+    class FakeReorderDialog:
+        def __init__(self, plugin_manager, parent=None) -> None:
+            pass
+
+        def exec(self) -> int:
+            return PluginManagerDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "reload_plugins", lambda: reload_calls.append("reload"))
+    monkeypatch.setattr(plugin_manager_dialog_module, "PluginReorderDialog", FakeReorderDialog)
+
+    dialog._open_reorder_dialog()
+
+    assert reload_calls == []
 
 
 def test_plugin_manager_dialog_renders_dynamic_plugin_action_buttons(qtbot) -> None:

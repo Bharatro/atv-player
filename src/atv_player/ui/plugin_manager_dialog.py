@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 from atv_player.models import SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
 
 
 def _display_source_type(source_type: str) -> str:
@@ -93,6 +94,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self.toggle_button = QPushButton("启用/禁用")
         self.up_button = QPushButton("上移")
         self.down_button = QPushButton("下移")
+        self.reorder_button = QPushButton("调整顺序")
         self.refresh_button = QPushButton("刷新")
         self.logs_button = QPushButton("查看日志")
         self.delete_button = QPushButton("删除")
@@ -121,6 +123,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
             self.toggle_button,
             self.up_button,
             self.down_button,
+            self.reorder_button,
             self.refresh_button,
             self.logs_button,
             self.delete_button,
@@ -143,6 +146,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
+        self.reorder_button.clicked.connect(self._open_reorder_dialog)
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.logs_button.clicked.connect(self._show_logs)
         self.delete_button.clicked.connect(self._delete_selected)
@@ -229,6 +233,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
             self.toggle_button.setEnabled(False)
             self.up_button.setEnabled(False)
             self.down_button.setEnabled(False)
+            self.reorder_button.setEnabled(False)
             self.refresh_button.setEnabled(False)
             self.logs_button.setEnabled(False)
             self.delete_button.setEnabled(False)
@@ -245,6 +250,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self.toggle_button.setEnabled(has_single_selection)
         self.up_button.setEnabled(has_single_selection and row > 0)
         self.down_button.setEnabled(has_single_selection and row >= 0 and row < last_row)
+        self.reorder_button.setEnabled(True)
         self.refresh_button.setEnabled(has_single_selection)
         self.logs_button.setEnabled(has_single_selection)
         self.delete_button.setEnabled(has_selection)
@@ -498,6 +504,13 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         if plugin_id is None:
             return
         self.plugin_manager.move_plugin(plugin_id, direction)
+        self.plugin_tabs_dirty = True
+        self.reload_plugins()
+
+    def _open_reorder_dialog(self) -> None:
+        dialog = PluginReorderDialog(self.plugin_manager, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 
