@@ -12234,6 +12234,22 @@ def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
     assert restored.main_splitter.saveState() == QByteArray(config.player_main_splitter_state)
 
 
+def test_player_window_restores_geometry_after_building_main_layout(qtbot, monkeypatch) -> None:
+    calls: list[tuple[bool, bool, bytes]] = []
+
+    def fake_restore_geometry(self, geometry) -> bool:
+        calls.append((self.layout() is not None, hasattr(self, "main_splitter"), bytes(geometry.data())))
+        return True
+
+    monkeypatch.setattr(PlayerWindow, "restoreGeometry", fake_restore_geometry)
+    config = AppConfig(player_window_geometry=b"saved-player-geometry")
+
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    assert calls == [(True, True, b"saved-player-geometry")]
+
+
 def test_player_window_persists_playback_log_visibility(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()

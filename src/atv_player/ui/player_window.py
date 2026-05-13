@@ -415,8 +415,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.resize(1280, 800)
         self.setMinimumSize(1000, 700)
         self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
-        if self.config and self.config.player_window_geometry:
-            self.restoreGeometry(to_qbytearray(self.config.player_window_geometry))
 
         self.video_widget = MpvWidget(self)
         self._configure_video_surface_widgets()
@@ -665,6 +663,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.main_splitter, 1)
         layout.addWidget(self.bottom_area, 0)
+        if self.config and self.config.player_window_geometry:
+            self.restoreGeometry(to_qbytearray(self.config.player_window_geometry))
+            self._sidebar_sizes = self.main_splitter.sizes()
 
         self.play_button.clicked.connect(self.toggle_playback)
         self.prev_button.clicked.connect(self.play_previous)
