@@ -413,6 +413,30 @@ def test_manager_iter_enabled_plugins_prioritizes_requested_plugin_ids(tmp_path:
     assert [definition.id for definition in definitions] == [plugin2.id, plugin1.id, plugin3.id]
 
 
+def test_manager_reorder_plugins_persists_requested_final_order(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+    plugin1 = repository.add_plugin("local", "/tmp/1.py", "插件1")
+    plugin2 = repository.add_plugin("local", "/tmp/2.py", "插件2")
+    plugin3 = repository.add_plugin("local", "/tmp/3.py", "插件3")
+
+    manager.reorder_plugins([plugin3.id, plugin1.id, plugin2.id])
+
+    assert [plugin.id for plugin in repository.list_plugins()] == [plugin3.id, plugin1.id, plugin2.id]
+
+
+def test_manager_reorder_plugins_raises_when_plugin_snapshot_is_stale(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+    plugin1 = repository.add_plugin("local", "/tmp/1.py", "插件1")
+    plugin2 = repository.add_plugin("local", "/tmp/2.py", "插件2")
+
+    with pytest.raises(ValueError, match="插件列表已变化"):
+        manager.reorder_plugins([plugin1.id])
+
+    assert [plugin.id for plugin in repository.list_plugins()] == [plugin1.id, plugin2.id]
+
+
 def test_manager_list_plugin_actions_normalizes_visible_actions(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")

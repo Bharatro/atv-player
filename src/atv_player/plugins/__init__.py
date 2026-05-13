@@ -158,6 +158,9 @@ class SpiderPluginManager:
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self._repository.move_plugin(plugin_id, direction)
 
+    def reorder_plugins(self, plugin_ids_in_order: list[int]) -> None:
+        self._repository.reorder_plugins(plugin_ids_in_order)
+
     def refresh_plugin(self, plugin_id: int) -> None:
         plugin = self._repository.get_plugin(plugin_id)
         try:
