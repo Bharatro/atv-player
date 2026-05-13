@@ -2129,9 +2129,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_loader.index:
             return
         self._apply_playback_loader_result(load_result)
+        self._render_playlist_items()
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:

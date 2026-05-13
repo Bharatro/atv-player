@@ -11680,6 +11680,129 @@ def test_player_window_async_session_loader_preserves_resume_offset(qtbot) -> No
     )
 
 
+def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_hydration(qtbot, monkeypatch) -> None:
+    poster_sources: list[tuple[str, str]] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        poster_sources.append((target, source))
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="https://www.youtube.com/watch?v=test123",
+            vod_name="https://www.youtube.com/watch?v=test123",
+        ),
+        playlist=[
+            PlayItem(
+                title="https://www.youtube.com/watch?v=test123",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="https://www.youtube.com/watch?v=test123",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = lambda item: None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    monkeypatch.setattr(
+        window,
+        "_start_playback_loader",
+        lambda previous_index, start_position_seconds, pause: (
+            setattr(window, "_playback_loader_request_id", window._playback_loader_request_id + 1),
+            setattr(
+                window,
+                "_pending_playback_loader",
+                player_window_module._PendingPlaybackLoader(
+                    index=window.current_index,
+                    previous_index=previous_index,
+                    start_position_seconds=start_position_seconds,
+                    pause=pause,
+                ),
+            ),
+            window._append_log(f"正在加载播放地址: {window.session.playlist[window.current_index].title}"),
+        ),
+    )
+
+    window.open_session(session)
+
+    assert "正在加载播放地址" in window.log_view.toPlainText()
+    session.vod.vod_name = "Hydrated Video"
+    session.vod.vod_pic = "https://img.example/poster.jpg"
+    session.vod.vod_content = "hydrated description"
+    session.playlist[0].title = "Hydrated Video"
+    session.playlist[0].media_title = "Hydrated Video"
+    session.playlist[0].url = "https://media.example/youtube.mp4"
+    session.playlist[0].headers = {"Referer": "https://www.youtube.com/"}
+    session.playlist[0].external_subtitles = [
+        ExternalSubtitleOption(
+            name="English [yt-dlp]",
+            lang="en",
+            url="https://sub.example/en.vtt",
+            format="vtt",
+            source="ytdlp",
+        )
+    ]
+    session.playlist[0].playback_qualities = [
+        VideoQualityOption(
+            id="720p",
+            label="720P",
+            url="https://media.example/youtube.mp4",
+        )
+    ]
+    session.playlist[0].selected_playback_quality_id = "720p"
+
+    window._handle_playback_loader_succeeded(window._playback_loader_request_id, None)
+
+    assert "Hydrated Video" in window.windowTitle()
+    assert window.playlist.item(0).text() == "Hydrated Video"
+    assert "hydrated description" in window.metadata_view.toPlainText()
+    assert ("detail", "https://img.example/poster.jpg") in poster_sources
+
+
+def test_player_window_ignores_stale_async_loader_result_after_switching_items(qtbot) -> None:
+    ready = threading.Event()
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-1", vod_name="Placeholder"),
+        playlist=[
+            PlayItem(title="待解析", url="", vod_id="ep-1", original_url="https://www.youtube.com/watch?v=one"),
+            PlayItem(title="第二集", url="https://media.example/two.mp4", vod_id="ep-2"),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+
+    def playback_loader(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        session.vod.vod_name = "旧结果"
+        item.title = "旧结果"
+        item.url = "https://media.example/stale.mp4"
+
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window.current_index = 1
+    window.playlist.setCurrentRow(1)
+    window._refresh_window_title()
+    ready.set()
+
+    qtbot.wait(100)
+    assert window.current_index == 1
+    assert window.playlist.item(1).text() == "第二集"
+    assert "旧结果" not in window.windowTitle()
+
+
 def test_player_window_resume_from_main_preserves_resume_offset_with_async_loader(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
