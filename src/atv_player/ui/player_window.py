@@ -266,6 +266,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
     _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
     _POSTER_SIZE = QSize(180, 260)
+    _DETAIL_LOG_MAX_HEIGHT_DIVISOR = 4
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _AUDIO_ONLY_SUFFIXES = {
         ".aac",
@@ -564,6 +565,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         log_layout.addWidget(QLabel("播放日志"))
         log_layout.addWidget(self.log_view, 1)
         details_layout.addWidget(self.log_section, 1)
+        self.details.installEventFilter(self)
 
         self.report_timer = QTimer(self)
         self.report_timer.setInterval(5000)
@@ -730,6 +732,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_mute_button_icon()
         self._populate_parse_combo()
         self._apply_visibility_state()
+        self._update_log_section_max_height()
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
@@ -4966,6 +4969,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.details.setHidden(is_fullscreen or (not metadata_visible and not log_visible))
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)
+        self._update_log_section_max_height()
+
+    def _update_log_section_max_height(self) -> None:
+        details_height = max(self.details.height(), 1)
+        max_height = max(details_height // self._DETAIL_LOG_MAX_HEIGHT_DIVISOR, 1)
+        self.log_section.setMaximumHeight(max_height)
 
     def _format_time(self, seconds: int) -> str:
         total_seconds = max(int(seconds), 0)
@@ -5216,6 +5225,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         super().closeEvent(event)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
+        details = getattr(self, "details", None)
+        if watched is details and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self._update_log_section_max_height()
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
             global_pos = event.globalPosition().toPoint()
             if (
