@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QPoint
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 
 class PluginTabDrawer(QWidget):
     plugin_selected = Signal(str)
+    plugin_context_requested = Signal(str, QPoint)
     close_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -38,6 +39,8 @@ class PluginTabDrawer(QWidget):
         self.search_edit.textChanged.connect(self._apply_filter)
         self.list_widget.itemActivated.connect(self._handle_item_activated)
         self.list_widget.itemClicked.connect(self._handle_item_activated)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._handle_context_menu_requested)
         escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         escape_shortcut.activated.connect(self.close_requested.emit)
 
@@ -60,6 +63,14 @@ class PluginTabDrawer(QWidget):
         plugin_key = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(plugin_key, str) and plugin_key:
             self.plugin_selected.emit(plugin_key)
+
+    def _handle_context_menu_requested(self, pos: QPoint) -> None:
+        item = self.list_widget.itemAt(pos)
+        if item is None:
+            return
+        plugin_key = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(plugin_key, str) and plugin_key:
+            self.plugin_context_requested.emit(plugin_key, self.list_widget.viewport().mapToGlobal(pos))
 
     def _apply_filter(self) -> None:
         keyword = self.search_edit.text().strip().lower()

@@ -7,7 +7,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -31,6 +32,7 @@ from atv_player.models import HistoryRecord, OpenPlayerRequest, PlayItem, Playba
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
+from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
@@ -386,7 +388,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         )
         self._startup_plugin_pending_player_restore = False
         self._active_widget: QWidget | None = None
+        self._plugin_actions = PluginActions(plugin_manager) if plugin_manager is not None else None
         self.nav_tabs = _NavigationTabs()
+        self.nav_tabs.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.plugin_overflow_button = self.nav_tabs.plugin_overflow_button
         self._tab_width_measure_bar = QTabBar(self)
         self._tab_width_measure_bar.setDocumentMode(True)
@@ -611,7 +615,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
         self.plugin_overflow_button.clicked.connect(self._toggle_plugin_overflow_drawer)
+        self.nav_tabs.tab_bar.customContextMenuRequested.connect(self._handle_plugin_tab_context_menu_requested)
         self._plugin_overflow_drawer.plugin_selected.connect(self._handle_hidden_plugin_selected)
+        self._plugin_overflow_drawer.plugin_context_requested.connect(self._open_plugin_context_menu)
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
@@ -1034,6 +1040,35 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             for definition in self._hidden_plugin_tab_definitions
         ]
 
+    @staticmethod
+    def _normalize_plugin_id(plugin_key: str) -> str:
+        return plugin_key.removeprefix("plugin:")
+
+    def _plugin_row_by_id(self, plugin_id: str):
+        if self._plugin_manager is None:
+            return None
+        normalized_plugin_id = self._normalize_plugin_id(plugin_id)
+        list_plugins = getattr(self._plugin_manager, "list_plugins", None)
+        if not callable(list_plugins):
+            return None
+        for plugin in list_plugins():
+            if str(getattr(plugin, "id", "")) == normalized_plugin_id:
+                return plugin
+        return None
+
+    def _plugin_id_for_visible_tab_index(self, index: int) -> str | None:
+        widget = self.nav_tabs.widget(index)
+        tab_key = self._tab_key_for_widget(widget)
+        if tab_key is None or not tab_key.startswith("plugin:"):
+            return None
+        return tab_key.removeprefix("plugin:")
+
+    def _plugin_toggle_action_text(self, plugin_id: str) -> str:
+        plugin = self._plugin_row_by_id(plugin_id)
+        if plugin is None:
+            return "启用"
+        return "禁用" if bool(getattr(plugin, "enabled", False)) else "启用"
+
     def _position_plugin_overflow_drawer(self) -> None:
         content_geometry = self.nav_tabs.content_stack.geometry()
         if content_geometry.width() <= 0 or content_geometry.height() <= 0:
@@ -1080,6 +1115,53 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         self._close_plugin_overflow_drawer()
         self.nav_tabs.setCurrentWidget(definition.page)
+
+    def _handle_plugin_tab_context_menu_requested(self, pos: QPoint) -> None:
+        index = self.nav_tabs.tab_bar.tabAt(pos)
+        if index < 0:
+            return
+        plugin_id = self._plugin_id_for_visible_tab_index(index)
+        if not plugin_id:
+            return
+        self._open_plugin_context_menu(plugin_id, self.nav_tabs.tab_bar.mapToGlobal(pos))
+
+    def _open_plugin_context_menu(self, plugin_key: str, global_pos: QPoint) -> None:
+        plugin_id = self._normalize_plugin_id(plugin_key)
+        if self._plugin_actions is None:
+            return
+        menu = QMenu(self)
+        reload_action = menu.addAction("重新加载")
+        rename_action = menu.addAction("编辑名称")
+        config_action = menu.addAction("编辑配置")
+        toggle_action = menu.addAction(self._plugin_toggle_action_text(plugin_id))
+        chosen = menu.exec(global_pos)
+        if chosen is reload_action:
+            self._run_plugin_context_action("refresh", plugin_id)
+        elif chosen is rename_action:
+            self._run_plugin_context_action("rename", plugin_id)
+        elif chosen is config_action:
+            self._run_plugin_context_action("edit_config", plugin_id)
+        elif chosen is toggle_action:
+            self._run_plugin_context_action("toggle_enabled", plugin_id)
+
+    def _run_plugin_context_action(self, action_name: str, plugin_id: str) -> bool:
+        if self._plugin_actions is None:
+            return False
+        action_map = {
+            "refresh": self._plugin_actions.refresh_plugin,
+            "rename": self._plugin_actions.rename_plugin,
+            "edit_config": self._plugin_actions.edit_plugin_config,
+            "toggle_enabled": self._plugin_actions.toggle_plugin_enabled,
+        }
+        action = action_map.get(action_name)
+        if action is None:
+            return False
+        result = action(self, int(self._normalize_plugin_id(plugin_id)))
+        if not result.changed or result.plugin_id is None:
+            return False
+        self._reload_changed_plugin_tabs([str(result.plugin_id)])
+        self._sync_plugin_overflow_drawer(reset_search=False)
+        return True
 
     def _handle_douban_search_requested(self, keyword: str) -> None:
         self.global_search_edit.setText(keyword)
