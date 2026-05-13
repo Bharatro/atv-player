@@ -114,6 +114,45 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_uses_cached_result_before_ttl_expires(self, mock_ytdlp_module):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info()
+        extractor = MagicMock(return_value=info)
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=extractor)
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(ttl_seconds=300.0, now=lambda: clock["now"])
+
+        first = service.resolve("https://www.youtube.com/watch?v=test123")
+        second = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert first.url == "https://stream.test/direct.mp4"
+        assert second.url == "https://stream.test/direct.mp4"
+        assert extractor.call_count == 1
+
+    def test_re_extracts_after_cache_expiry(self, mock_ytdlp_module):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info()
+        extractor = MagicMock(return_value=info)
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=extractor)
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(ttl_seconds=5.0, now=lambda: clock["now"])
+
+        service.resolve("https://www.youtube.com/watch?v=test123")
+        clock["now"] = 110.0
+        service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert extractor.call_count == 2
+
     def test_success(self, service, mock_ytdlp_module):
         info = _sample_info()
         mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(

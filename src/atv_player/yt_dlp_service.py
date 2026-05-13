@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from time import monotonic
+from typing import Callable
 from urllib.parse import urlparse
 
 from atv_player.models import (
@@ -77,10 +79,40 @@ class YtdlpResolveResult:
     extractor: str
 
 
+@dataclass(slots=True)
+class _YtdlpCacheEntry:
+    result: YtdlpResolveResult
+    expires_at: float
+
+
 class YtdlpPlaybackService:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float = 300.0,
+        now: Callable[[], float] = monotonic,
+    ) -> None:
         self._ytdlp_module: object | None = ...  # sentinel: not yet checked
         self._supported_domains: frozenset[str] | None = None
+        self._ttl_seconds = float(ttl_seconds)
+        self._now = now
+        self._cache: dict[str, _YtdlpCacheEntry] = {}
+
+    def _get_cached_result(self, url: str) -> YtdlpResolveResult | None:
+        key = url.strip()
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        if entry.expires_at <= self._now():
+            self._cache.pop(key, None)
+            return None
+        return entry.result
+
+    def _store_cached_result(self, url: str, result: YtdlpResolveResult) -> None:
+        key = url.strip()
+        self._cache[key] = _YtdlpCacheEntry(
+            result=result,
+            expires_at=self._now() + self._ttl_seconds,
+        )
 
     def is_available(self) -> bool:
         module = self._ytdlp_module
@@ -109,6 +141,11 @@ class YtdlpPlaybackService:
         return hostname in _KNOWN_YTDLP_DOMAINS
 
     def resolve(self, url: str, log: object = None) -> YtdlpResolveResult:
+        cached = self._get_cached_result(url)
+        if cached is not None:
+            if callable(log):
+                log(f"yt-dlp 命中缓存 [{cached.extractor}]")
+            return cached
         if not self.is_available():
             raise ValueError("yt-dlp 未安装")
         import yt_dlp
@@ -164,7 +201,7 @@ class YtdlpPlaybackService:
             n_sub = len(subtitles)
             log(f"yt-dlp 提取完成 [{ext}] 清晰度={n_qual} 字幕={n_sub}")
 
-        return YtdlpResolveResult(
+        result = YtdlpResolveResult(
             url=direct_url,
             title=info.get("title", ""),
             thumbnail=info.get("thumbnail", ""),
@@ -175,6 +212,8 @@ class YtdlpPlaybackService:
             qualities=qualities,
             extractor=info.get("extractor", ""),
         )
+        self._store_cached_result(url, result)
+        return result
 
     def resolve_to_play_item(self, url: str) -> tuple[VodItem, PlayItem]:
         result = self.resolve(url)
