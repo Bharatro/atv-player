@@ -726,13 +726,19 @@ class SpiderPluginController:
         except (KeyError, IndexError):
             return None
 
-    def _build_offline_download_replacement_playlist(self, detail: VodItem, play_source: str) -> list[PlayItem]:
+    def _build_offline_download_replacement_playlist(
+        self,
+        detail: VodItem,
+        play_source: str,
+        media_title: str = "",
+    ) -> list[PlayItem]:
         playlist = build_detail_playlist(detail)
+        resolved_media_title = media_title.strip() or detail.vod_name
         return _mark_short_bare_numeric_playlist([
             PlayItem(
                 title=item.title,
                 url=item.url,
-                media_title=detail.vod_name,
+                media_title=resolved_media_title,
                 path=item.path,
                 index=index,
                 size=item.size,
@@ -1195,7 +1201,11 @@ class SpiderPluginController:
                     item.vod_id,
                 )
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
-            replacement = self._build_offline_download_replacement_playlist(detail, item.play_source)
+            replacement = self._build_offline_download_replacement_playlist(
+                detail,
+                item.play_source,
+                media_title=item.media_title,
+            )
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             session.detail_resolver = self._resolve_folder_like_detail
@@ -1271,7 +1281,11 @@ class SpiderPluginController:
                     url,
                 )
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
-            replacement = self._build_offline_download_replacement_playlist(detail, item.play_source)
+            replacement = self._build_offline_download_replacement_playlist(
+                detail,
+                item.play_source,
+                media_title=item.media_title,
+            )
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             session.detail_resolver = self._resolve_folder_like_detail

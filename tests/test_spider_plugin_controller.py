@@ -2485,6 +2485,77 @@ def test_controller_replaces_only_current_magnet_item_when_offline_download_retu
     assert resolved.items[0].url == "http://192.168.50.60:4567/p/web/1@107920?ac=web&ids=1$107920$1"
 
 
+def test_controller_preserves_original_media_title_for_offline_download_replacement_items() -> None:
+    class MagnetSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "喀什恋歌 (2026)",
+                        "vod_play_from": "磁力线",
+                        "vod_play_url": "第1集$magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33",
+                    }
+                ]
+            }
+
+    def load_offline_detail(link: str) -> dict:
+        assert link == "magnet:?xt=urn:btih:8a06396e03acb19d72eb2d779a22b2dc00f66a33"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$107919$1",
+                    "vod_name": "离线下载结果 A",
+                    "vod_play_from": "丫仙女",
+                    "vod_play_url": "Bloom.Life.2026.EP01-08.HD1080P.X264.AAC.Mandarin.CHS.XLYS.mkv$1@107920@0@0",
+                    "path": "/我的115云盘/alist-tvbox-offline/A/~playlist",
+                    "items": [],
+                }
+            ]
+        }
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        MagnetSpider(),
+        plugin_name="喀什恋歌",
+        search_enabled=True,
+        offline_download_detail_loader=load_offline_detail,
+        danmaku_service=service,
+    )
+
+    request = controller.build_request("/detail/magnet")
+
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlist[0])
+
+    assert result is not None
+    replacement = result.replacement_playlist[0]
+    assert replacement.title == "Bloom.Life.2026.EP01-08.HD1080P.X264.AAC.Mandarin.CHS.XLYS.mkv"
+    assert replacement.media_title == "喀什恋歌 (2026)"
+
+    controller.refresh_danmaku_sources(replacement)
+
+    assert service.calls == ["喀什恋歌 1集"]
+    assert replacement.danmaku_search_title == "喀什恋歌"
+    assert replacement.danmaku_search_query == "喀什恋歌 1集"
+
+
 def test_controller_resolves_player_content_magnet_url_via_offline_download_loader() -> None:
     class PlayerContentMagnetSpider(FakeSpider):
         def detailContent(self, ids):
