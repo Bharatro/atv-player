@@ -8,6 +8,8 @@ from typing import cast
 from atv_player.models import (
     HistoryRecord,
     PlayItem,
+    PlaybackSource,
+    PlaybackSourceGroup,
     PlaybackDetailAction,
     PlaybackDetailFieldAction,
     PlaybackLoadResult,
@@ -28,6 +30,9 @@ class PlayerSession:
     speed: float
     playlists: list[list[PlayItem]] = field(default_factory=list)
     playlist_index: int = 0
+    source_groups: list[PlaybackSourceGroup] = field(default_factory=list)
+    source_group_index: int = 0
+    source_index: int = 0
     opening_seconds: int = 0
     ending_seconds: int = 0
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
@@ -68,27 +73,115 @@ class PlayerController:
             return lambda item, playback_loader=playback_loader, session=session: playback_loader(session, item)
         return cast(Callable[[PlayItem], PlaybackLoadResult | None], playback_loader)
 
-    def _normalize_playlists(
+    def _build_legacy_source_groups(
+        self,
+        playlist: list[PlayItem],
+        playlists: list[list[PlayItem]] | None,
+    ) -> list[PlaybackSourceGroup]:
+        normalized = [group for group in (playlists or []) if group]
+        if not normalized:
+            normalized = [playlist]
+        source_groups: list[PlaybackSourceGroup] = []
+        for group_index, current_playlist in enumerate(normalized):
+            label = (
+                current_playlist[0].play_source
+                if current_playlist and current_playlist[0].play_source
+                else f"线路 {group_index + 1}"
+            )
+            source_groups.append(
+                PlaybackSourceGroup(
+                    label=label,
+                    sources=[PlaybackSource(label=label, playlist=current_playlist)],
+                )
+            )
+        return source_groups
+
+    def _flatten_source_groups(
+        self,
+        source_groups: list[PlaybackSourceGroup],
+    ) -> tuple[list[list[PlayItem]], dict[tuple[int, int], int], dict[int, tuple[int, int]]]:
+        playlists: list[list[PlayItem]] = []
+        pair_to_flat: dict[tuple[int, int], int] = {}
+        flat_to_pair: dict[int, tuple[int, int]] = {}
+        for group_index, group in enumerate(source_groups):
+            for source_index, source in enumerate(group.sources):
+                flat_index = len(playlists)
+                playlists.append(source.playlist)
+                pair_to_flat[(group_index, source_index)] = flat_index
+                flat_to_pair[flat_index] = (group_index, source_index)
+        return playlists, pair_to_flat, flat_to_pair
+
+    def _normalize_source_groups(
         self,
         playlist: list[PlayItem],
         playlists: list[list[PlayItem]] | None,
         playlist_index: int,
-    ) -> tuple[list[list[PlayItem]], int, list[PlayItem]]:
-        normalized = [group for group in (playlists or []) if group]
-        if not normalized:
-            normalized = [playlist]
-        playlist_index = max(0, min(playlist_index, len(normalized) - 1))
-        return normalized, playlist_index, normalized[playlist_index]
+        source_groups: list[PlaybackSourceGroup] | None,
+        source_group_index: int,
+        source_index: int,
+    ) -> tuple[list[PlaybackSourceGroup], list[list[PlayItem]], int, int, int, list[PlayItem]]:
+        normalized_groups = [group for group in (source_groups or []) if group.sources]
+        if not normalized_groups:
+            normalized_groups = self._build_legacy_source_groups(playlist, playlists)
+            source_group_index = max(0, min(playlist_index, len(normalized_groups) - 1))
+            source_index = 0
+        flat_playlists, pair_to_flat, _ = self._flatten_source_groups(normalized_groups)
+        if not flat_playlists:
+            flat_playlists = [playlist]
+            normalized_groups = [
+                PlaybackSourceGroup(label="线路 1", sources=[PlaybackSource(label="线路 1", playlist=playlist)])
+            ]
+            pair_to_flat = {(0, 0): 0}
+        source_group_index = max(0, min(source_group_index, len(normalized_groups) - 1))
+        active_group = normalized_groups[source_group_index]
+        source_index = max(0, min(source_index, len(active_group.sources) - 1))
+        playlist_index = pair_to_flat[(source_group_index, source_index)]
+        return (
+            normalized_groups,
+            flat_playlists,
+            playlist_index,
+            source_group_index,
+            source_index,
+            active_group.sources[source_index].playlist,
+        )
 
-    def _restore_playlist_group(
+    def _restore_selected_source(
         self,
-        normalized_playlists: list[list[PlayItem]],
+        source_groups: list[PlaybackSourceGroup],
+        playlists: list[list[PlayItem]],
         playlist_index: int,
+        source_group_index: int,
+        source_index: int,
         history: HistoryRecord | None,
-    ) -> tuple[int, list[PlayItem]]:
-        if history is not None and 0 <= history.playlist_index < len(normalized_playlists):
-            playlist_index = history.playlist_index
-        return playlist_index, normalized_playlists[playlist_index]
+    ) -> tuple[int, int, int, list[PlayItem]]:
+        _, pair_to_flat, flat_to_pair = self._flatten_source_groups(source_groups)
+        if history is not None:
+            history_pair = (history.source_group_index, history.source_index)
+            pair_flat_index = pair_to_flat.get(history_pair, -1)
+            should_use_explicit_pair = (
+                history_pair in pair_to_flat
+                and (
+                    history.source_group_index != 0
+                    or history.source_index != 0
+                    or pair_flat_index == history.playlist_index
+                )
+            )
+            if should_use_explicit_pair:
+                source_group_index = history.source_group_index
+                active_group = source_groups[source_group_index]
+                if 0 <= history.source_index < len(active_group.sources):
+                    source_index = history.source_index
+                else:
+                    source_index = 0
+            elif 0 <= history.playlist_index < len(playlists):
+                source_group_index, source_index = flat_to_pair[history.playlist_index]
+        playlist_index = pair_to_flat[(source_group_index, source_index)]
+        return (
+            source_group_index,
+            source_index,
+            playlist_index,
+            source_groups[source_group_index].sources[source_index].playlist,
+        )
 
     def create_session(
         self,
@@ -97,6 +190,9 @@ class PlayerController:
         clicked_index: int,
         playlists: list[list[PlayItem]] | None = None,
         playlist_index: int = 0,
+        source_groups: list[PlaybackSourceGroup] | None = None,
+        source_group_index: int = 0,
+        source_index: int = 0,
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
@@ -113,17 +209,23 @@ class PlayerController:
         initial_log_message: str = "",
         is_placeholder: bool = False,
     ) -> PlayerSession:
-        normalized_playlists, playlist_index, active_playlist = self._normalize_playlists(
+        normalized_source_groups, normalized_playlists, playlist_index, source_group_index, source_index, active_playlist = self._normalize_source_groups(
             playlist,
             playlists,
             playlist_index,
+            source_groups,
+            source_group_index,
+            source_index,
         )
         history = playback_history_loader() if playback_history_loader is not None else None
         if history is None and (use_local_history or restore_history):
             history = self._api_client.get_history(vod.vod_id)
-        playlist_index, active_playlist = self._restore_playlist_group(
+        source_group_index, source_index, playlist_index, active_playlist = self._restore_selected_source(
+            normalized_source_groups,
             normalized_playlists,
             playlist_index,
+            source_group_index,
+            source_index,
             history,
         )
         start_index = resolve_resume_index(history, active_playlist, clicked_index)
@@ -151,6 +253,9 @@ class PlayerController:
             speed=speed,
             playlists=normalized_playlists,
             playlist_index=playlist_index,
+            source_groups=normalized_source_groups,
+            source_group_index=source_group_index,
+            source_index=source_index,
             opening_seconds=int((history.opening if history else 0) / 1000),
             ending_seconds=int((history.ending if history else 0) / 1000),
             detail_resolver=detail_resolver,
@@ -225,6 +330,8 @@ class PlayerController:
             "ending": ending_seconds * 1000,
             "speed": speed,
             "playlistIndex": session.playlist_index,
+            "sourceGroupIndex": session.source_group_index,
+            "sourceIndex": session.source_index,
             "createTime": int(time() * 1000),
         }
         if session.playback_history_saver is not None:

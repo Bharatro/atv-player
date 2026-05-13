@@ -365,6 +365,8 @@ class ApiClient:
             speed=float(data.get("speed", 1.0)),
             create_time=int(data.get("createTime", 0)),
             playlist_index=int(data.get("playlistIndex", 0)),
+            source_group_index=int(data.get("sourceGroupIndex", 0)),
+            source_index=int(data.get("sourceIndex", 0)),
         )
 
     def list_history(self, page: int, size: int) -> dict[str, Any]:

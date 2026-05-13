@@ -73,6 +73,8 @@ class SpiderPluginRepository:
                     ending INTEGER NOT NULL DEFAULT 0,
                     speed REAL NOT NULL DEFAULT 1.0,
                     playlist_index INTEGER NOT NULL DEFAULT 0,
+                    source_group_index INTEGER NOT NULL DEFAULT 0,
+                    source_index INTEGER NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (plugin_id, vod_id)
                 )
@@ -85,6 +87,14 @@ class SpiderPluginRepository:
             if "playlist_index" not in columns:
                 conn.execute(
                     "ALTER TABLE spider_plugin_playback_history ADD COLUMN playlist_index INTEGER NOT NULL DEFAULT 0"
+                )
+            if "source_group_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE spider_plugin_playback_history ADD COLUMN source_group_index INTEGER NOT NULL DEFAULT 0"
+                )
+            if "source_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE spider_plugin_playback_history ADD COLUMN source_index INTEGER NOT NULL DEFAULT 0"
                 )
 
     def add_plugin(
@@ -235,7 +245,8 @@ class SpiderPluginRepository:
             row = conn.execute(
                 """
                 SELECT vod_id, vod_name, vod_pic, vod_remarks, episode, episode_url,
-                       position, opening, ending, speed, playlist_index, updated_at
+                       position, opening, ending, speed, playlist_index,
+                       source_group_index, source_index, updated_at
                 FROM spider_plugin_playback_history
                 WHERE plugin_id = ? AND vod_id = ?
                 """,
@@ -255,8 +266,10 @@ class SpiderPluginRepository:
             opening=int(row[7]),
             ending=int(row[8]),
             speed=float(row[9]),
-            create_time=int(row[11]),
             playlist_index=int(row[10]),
+            source_group_index=int(row[11]),
+            source_index=int(row[12]),
+            create_time=int(row[13]),
         )
 
     def list_playback_histories(self) -> list[HistoryRecord]:
@@ -265,7 +278,8 @@ class SpiderPluginRepository:
                 """
                 SELECT history.vod_id, history.vod_name, history.vod_pic, history.vod_remarks,
                        history.episode, history.episode_url, history.position, history.opening,
-                       history.ending, history.speed, history.playlist_index, history.updated_at,
+                       history.ending, history.speed, history.playlist_index,
+                       history.source_group_index, history.source_index, history.updated_at,
                        plugin.id, plugin.display_name
                 FROM spider_plugin_playback_history AS history
                 JOIN spider_plugins AS plugin ON plugin.id = history.plugin_id
@@ -284,11 +298,13 @@ class SpiderPluginRepository:
                 opening=int(row[7]),
                 ending=int(row[8]),
                 speed=float(row[9]),
-                create_time=int(row[11]),
                 playlist_index=int(row[10]),
+                source_group_index=int(row[11]),
+                source_index=int(row[12]),
+                create_time=int(row[13]),
                 source_kind="spider_plugin",
-                source_plugin_id=int(row[12]),
-                source_plugin_name=str(row[13] or ""),
+                source_plugin_id=int(row[14]),
+                source_plugin_name=str(row[15] or ""),
             )
             for row in rows
         ]
@@ -306,9 +322,10 @@ class SpiderPluginRepository:
                 """
                 INSERT INTO spider_plugin_playback_history (
                     plugin_id, vod_id, vod_name, vod_pic, vod_remarks,
-                    episode, episode_url, position, opening, ending, speed, playlist_index, updated_at
+                    episode, episode_url, position, opening, ending, speed, playlist_index,
+                    source_group_index, source_index, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(plugin_id, vod_id) DO UPDATE SET
                     vod_name = excluded.vod_name,
                     vod_pic = excluded.vod_pic,
@@ -320,6 +337,8 @@ class SpiderPluginRepository:
                     ending = excluded.ending,
                     speed = excluded.speed,
                     playlist_index = excluded.playlist_index,
+                    source_group_index = excluded.source_group_index,
+                    source_index = excluded.source_index,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -335,6 +354,8 @@ class SpiderPluginRepository:
                     int(payload.get("ending", 0)),
                     float(payload.get("speed", 1.0)),
                     int(payload.get("playlistIndex", 0)),
+                    int(payload.get("sourceGroupIndex", 0)),
+                    int(payload.get("sourceIndex", 0)),
                     int(payload.get("createTime", 0)),
                 ),
             )

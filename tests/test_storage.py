@@ -99,6 +99,40 @@ def test_local_playback_history_repository_round_trip_feiniu_source_metadata(tmp
     assert history.source_name == "飞牛影视"
 
 
+def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.save_history(
+        "spider_plugin",
+        "detail-1",
+        {
+            "vodName": "红果短剧",
+            "vodPic": "",
+            "vodRemarks": "第2集",
+            "episode": 1,
+            "episodeUrl": "https://b2/2.m3u8",
+            "position": 90000,
+            "opening": 5000,
+            "ending": 10000,
+            "speed": 1.25,
+            "playlistIndex": 3,
+            "sourceGroupIndex": 1,
+            "sourceIndex": 1,
+            "createTime": 42,
+        },
+        source_key="7",
+        source_name="红果短剧",
+    )
+
+    history = repo.get_history("spider_plugin", "detail-1", source_key="7")
+
+    assert history is not None
+    assert history.playlist_index == 3
+    assert history.source_group_index == 1
+    assert history.source_index == 1
+
+
 def test_local_playback_history_repository_migrates_spider_plugin_legacy_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
@@ -1130,6 +1164,48 @@ def test_spider_plugin_repository_migrates_missing_playlist_index_column(tmp_pat
 
     assert history is not None
     assert history.playlist_index == 0
+
+
+def test_spider_plugin_repository_migrates_missing_grouped_source_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugin_playback_history (
+                plugin_id INTEGER NOT NULL,
+                vod_id TEXT NOT NULL,
+                vod_name TEXT NOT NULL DEFAULT '',
+                vod_pic TEXT NOT NULL DEFAULT '',
+                vod_remarks TEXT NOT NULL DEFAULT '',
+                episode INTEGER NOT NULL DEFAULT 0,
+                episode_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                opening INTEGER NOT NULL DEFAULT 0,
+                ending INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                playlist_index INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (plugin_id, vod_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugin_playback_history (
+                plugin_id, vod_id, vod_name, vod_pic, vod_remarks,
+                episode, episode_url, position, opening, ending,
+                speed, playlist_index, updated_at
+            )
+            VALUES (7, 'detail-1', '红果短剧', '', '第1集', 0, 'https://a/1.m3u8', 0, 0, 0, 1.0, 0, 99)
+            """
+        )
+
+    repo = SpiderPluginRepository(db_path)
+    history = repo.get_playback_history(7, "detail-1")
+
+    assert history is not None
+    assert history.source_group_index == 0
+    assert history.source_index == 0
 
 
 def test_spider_plugin_repository_migrates_missing_config_text_column(tmp_path: Path) -> None:

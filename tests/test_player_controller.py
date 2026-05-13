@@ -1,7 +1,14 @@
 import logging
 
 from atv_player.controllers.player_controller import PlayerController
-from atv_player.models import HistoryRecord, PlayItem, PlaybackDetailAction, VodItem
+from atv_player.models import (
+    HistoryRecord,
+    PlaybackSource,
+    PlaybackSourceGroup,
+    PlayItem,
+    PlaybackDetailAction,
+    VodItem,
+)
 
 
 class FakeApiClient:
@@ -675,6 +682,48 @@ def test_player_controller_reports_selected_playlist_index_to_plugin_local_saver
     assert saved_payloads[0]["playlistIndex"] == 1
 
 
+def test_player_controller_reports_grouped_source_indexes_to_history_saver() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie")
+    first = [PlayItem(title="第1集", url="https://q1/1.m3u8", play_source="夸克1")]
+    second = [PlayItem(title="第1集", url="https://q2/1.m3u8", play_source="夸克2")]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist=second,
+        clicked_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="夸克",
+                sources=[
+                    PlaybackSource(label="夸克1", playlist=first),
+                    PlaybackSource(label="夸克2", playlist=second),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=1,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=30,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    assert saved_payloads[0]["playlistIndex"] == 1
+    assert saved_payloads[0]["sourceGroupIndex"] == 0
+    assert saved_payloads[0]["sourceIndex"] == 1
+
+
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
@@ -752,6 +801,28 @@ def test_player_controller_normalizes_single_playlist_into_one_group() -> None:
     assert session.start_index == 1
 
 
+def test_player_controller_normalizes_legacy_playlists_into_grouped_sources() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    first_group = [PlayItem(title="第1集", url="http://a/1.m3u8", play_source="备用线")]
+    second_group = [PlayItem(title="第1集", url="http://b/1.m3u8", play_source="极速线")]
+
+    session = controller.create_session(
+        vod,
+        playlist=second_group,
+        clicked_index=0,
+        playlists=[first_group, second_group],
+        playlist_index=1,
+    )
+
+    assert [group.label for group in session.source_groups] == ["备用线", "极速线"]
+    assert [source.label for source in session.source_groups[0].sources] == ["备用线"]
+    assert [source.label for source in session.source_groups[1].sources] == ["极速线"]
+    assert session.source_group_index == 1
+    assert session.source_index == 0
+    assert session.playlist is second_group
+
+
 def test_player_controller_uses_selected_group_as_active_playlist() -> None:
     controller = PlayerController(FakeApiClient())
     vod = VodItem(vod_id="plugin-1", vod_name="Plugin Movie")
@@ -773,4 +844,55 @@ def test_player_controller_uses_selected_group_as_active_playlist() -> None:
     assert session.playlist_index == 1
     assert session.playlist is second_group
     assert [item.title for item in session.playlist] == ["第1集", "第2集"]
+    assert session.start_index == 1
+
+
+def test_player_controller_restores_selected_grouped_source_from_history_loader() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie")
+    baidu1 = [PlayItem(title="第1集", url="https://b1/1.m3u8", play_source="百度1")]
+    baidu2 = [
+        PlayItem(title="第1集", url="https://b2/1.m3u8", play_source="百度2"),
+        PlayItem(title="第2集", url="https://b2/2.m3u8", play_source="百度2"),
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist=baidu1,
+        clicked_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="百度",
+                sources=[
+                    PlaybackSource(label="百度1", playlist=baidu1),
+                    PlaybackSource(label="百度2", playlist=baidu2),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=0,
+        use_local_history=False,
+        playback_history_loader=lambda: HistoryRecord(
+            id=0,
+            key="plugin:plugin-vod-1",
+            vod_name="Plugin Movie",
+            vod_pic="",
+            vod_remarks="第2集",
+            episode=1,
+            episode_url="https://b2/2.m3u8",
+            position=45000,
+            opening=5000,
+            ending=10000,
+            speed=1.25,
+            create_time=2,
+            playlist_index=1,
+            source_group_index=0,
+            source_index=1,
+        ),
+    )
+
+    assert session.source_group_index == 0
+    assert session.source_index == 1
+    assert session.playlist is baidu2
+    assert session.playlist_index == 1
     assert session.start_index == 1

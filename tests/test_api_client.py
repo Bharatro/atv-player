@@ -148,6 +148,37 @@ def test_api_client_maps_history_record_when_optional_fields_are_missing() -> No
     assert history.playlist_index == 0
 
 
+def test_api_client_get_history_reads_grouped_source_indexes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": 1,
+                "key": "movie-1",
+                "vodName": "Movie",
+                "episode": 2,
+                "episodeUrl": "https://b2/3.m3u8",
+                "playlistIndex": 4,
+                "sourceGroupIndex": 2,
+                "sourceIndex": 1,
+                "createTime": 123,
+            },
+        )
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    history = client.get_history("movie-1")
+
+    assert history is not None
+    assert history.playlist_index == 4
+    assert history.source_group_index == 2
+    assert history.source_index == 1
+
+
 def test_api_client_fetches_vod_token_from_api_token() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"token": "vod-123,backup"})
