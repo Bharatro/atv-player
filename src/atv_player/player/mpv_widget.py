@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -47,6 +48,15 @@ _ISO_PROXY_STREAM_PROFILE: dict[str, object] = {
     "cache-pause-wait": 0,
     "demuxer-readahead-secs": 3,
 }
+
+_LOW_LATENCY_STREAM_PROFILE: dict[str, object] = {
+    "cache-pause": "no",
+    "cache-pause-initial": "no",
+    "cache-pause-wait": 0,
+    "demuxer-readahead-secs": 3,
+}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,10 +270,21 @@ class MpvWidget(QWidget):
         parsed = urlparse(url)
         return parsed.scheme in {"http", "https"} and parsed.path.startswith("/iso/")
 
-    def _apply_stream_profile(self, player: Any, url: str) -> None:
-        profile = _ISO_PROXY_STREAM_PROFILE if self._is_local_iso_proxy_url(url) else _DEFAULT_STREAM_PROFILE
+    def _apply_stream_profile(self, player: Any, url: str, *, audio_files: str = "") -> str:
+        if self._is_local_iso_proxy_url(url):
+            profile = _ISO_PROXY_STREAM_PROFILE
+            profile_name = "iso-proxy"
+        elif audio_files:
+            # Separate remote video/audio streams pay the startup cost twice if we keep
+            # mpv's initial cache pause enabled.
+            profile = _LOW_LATENCY_STREAM_PROFILE
+            profile_name = "low-latency-external-audio"
+        else:
+            profile = _DEFAULT_STREAM_PROFILE
+            profile_name = "default"
         for key, value in profile.items():
             self._set_player_property(key, value)
+        return profile_name
 
     def _loadfile_options(self, url: str) -> dict[str, str]:
         lowered_path = urlparse(url).path.lower()
@@ -396,7 +417,16 @@ class MpvWidget(QWidget):
         can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
-            self._apply_stream_profile(player, url)
+            profile_name = self._apply_stream_profile(player, url, audio_files=audio_files)
+            logger.info(
+                "MPV load url=%s audio=%s start=%s pause=%s profile=%s headers=%s",
+                self._summarize_media_url(url),
+                self._summarize_media_url(audio_files),
+                start_seconds,
+                pause,
+                profile_name,
+                bool(header_fields),
+            )
             if poster_image_path and can_loadfile:
                 self._load_media(
                     player,
@@ -423,7 +453,16 @@ class MpvWidget(QWidget):
                 self._player = player
                 self._register_player_events()
                 self._apply_http_header_fields(player, header_fields)
-                self._apply_stream_profile(player, url)
+                profile_name = self._apply_stream_profile(player, url, audio_files=audio_files)
+                logger.info(
+                    "MPV reload after player restart url=%s audio=%s start=%s pause=%s profile=%s headers=%s",
+                    self._summarize_media_url(url),
+                    self._summarize_media_url(audio_files),
+                    start_seconds,
+                    pause,
+                    profile_name,
+                    bool(header_fields),
+                )
                 can_loadfile = hasattr(player, "loadfile")
                 if poster_image_path and can_loadfile:
                     self._load_media(
@@ -448,6 +487,15 @@ class MpvWidget(QWidget):
             else:
                 raise
         player.pause = pause
+
+    def _summarize_media_url(self, url: str) -> str:
+        parsed = urlparse(url or "")
+        if not parsed.scheme or not parsed.netloc:
+            return url
+        path = parsed.path or "/"
+        if len(path) > 96:
+            path = f"...{path[-96:]}"
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> None:
         if start_seconds > 0 and hasattr(player, "loadfile"):

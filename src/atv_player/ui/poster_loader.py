@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from PySide6.QtCore import QSize, Qt
@@ -30,10 +31,30 @@ POSTER_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 )
 DEFAULT_POSTER_REFERER = "https://movie.douban.com/"
+_YOUTUBE_PAGE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
+
+
+def _looks_like_unsupported_page_url(source: str) -> bool:
+    parsed = urlparse(source)
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in _YOUTUBE_PAGE_HOSTS:
+        return False
+    if hostname == "youtu.be":
+        return True
+    path = parsed.path.rstrip("/")
+    return path in {"", "/watch", "/playlist"} or path.startswith("/shorts") or path.startswith("/live")
 
 
 def normalize_poster_url(source: str) -> str:
-    normalized = source or ""
+    normalized = (source or "").strip()
+    if _looks_like_unsupported_page_url(normalized):
+        return ""
     if "doubanio.com" in normalized:
         normalized = normalized.replace("s_ratio_poster", "m")
     return normalized

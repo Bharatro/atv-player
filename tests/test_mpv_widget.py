@@ -336,9 +336,13 @@ def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
         def __init__(self) -> None:
             self.pause = False
             self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
             self.calls.append((url, mode, index, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
 
     widget._player = FakePlayer()
 
@@ -355,6 +359,10 @@ def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
             {"audio_files": "https://media.example/audio.webm"},
         )
     ]
+    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause-initial"] == "no"
+    assert widget._player.options["cache-pause-wait"] == 0
+    assert widget._player.options["demuxer-readahead-secs"] == 3
 
 
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:

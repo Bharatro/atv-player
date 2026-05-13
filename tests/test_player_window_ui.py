@@ -1492,6 +1492,9 @@ def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and
             return None
 
         def position_seconds(self) -> int:
+            return 0
+
+        def position_seconds(self) -> int:
             return 93
 
     def playback_loader(item: PlayItem) -> None:
@@ -1539,6 +1542,261 @@ def test_player_window_switches_ytdlp_quality_via_async_loader_with_position_and
 
     qtbot.waitUntil(lambda: len(video.load_calls) == 2)
     assert video.load_calls[-1] == ("https://media.example/youtube-720.mp4", True, 93)
+    assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
+
+
+def test_player_window_does_not_prepare_ytdlp_page_url_after_loader_resolves_direct_media(qtbot) -> None:
+    class RecordingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.should_prepare_calls: list[str] = []
+            self.prepare_calls: list[str] = []
+
+        def should_prepare(self, url: str) -> bool:
+            self.should_prepare_calls.append(url)
+            return True
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            del headers, dash_video_id
+            self.prepare_calls.append(url)
+            return url
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            audio_files: str = "",
+        ) -> None:
+            del headers, poster_image_path, audio_files
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    def playback_loader(item: PlayItem) -> None:
+        item.url = "https://rr4---sn-oguelnzy.googlevideo.com/videoplayback?id=video"
+        item.audio_url = "https://rr4---sn-oguelnzy.googlevideo.com/videoplayback?id=audio"
+        item.playback_qualities = [VideoQualityOption(id="ytdlp_1080", label="1080P")]
+        item.selected_playback_quality_id = "ytdlp_1080"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="https://www.youtube.com/watch?v=test123",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    ad_filter = RecordingM3U8AdFilter()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=ad_filter)
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert ad_filter.should_prepare_calls == []
+    assert ad_filter.prepare_calls == []
+
+
+def test_player_window_prepares_ytdlp_dash_data_uri_after_loader_resolves_separate_streams(qtbot) -> None:
+    class RecordingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.should_prepare_calls: list[str] = []
+            self.prepare_calls: list[str] = []
+
+        def should_prepare(self, url: str) -> bool:
+            self.should_prepare_calls.append(url)
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            del headers, dash_video_id
+            self.prepare_calls.append(url)
+            return "http://127.0.0.1:2323/dash/ytdlp-1080.mpd"
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            audio_files: str = "",
+        ) -> None:
+            del headers, poster_image_path, audio_files
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    def playback_loader(item: PlayItem) -> None:
+        item.url = "data:application/dash+xml;base64,PE1QRD48L01QRD4="
+        item.audio_url = ""
+        item.playback_qualities = [VideoQualityOption(id="ytdlp_1080", label="1080P")]
+        item.selected_playback_quality_id = "ytdlp_1080"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="https://www.youtube.com/watch?v=test123",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    ad_filter = RecordingM3U8AdFilter()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=ad_filter)
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)])
+    assert ad_filter.should_prepare_calls == ["data:application/dash+xml;base64,PE1QRD48L01QRD4="]
+    assert ad_filter.prepare_calls == ["data:application/dash+xml;base64,PE1QRD48L01QRD4="]
+
+
+def test_player_window_switches_ytdlp_dash_quality_using_original_page_url(qtbot) -> None:
+    class RecordingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str | None]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return url.startswith("data:application/dash+xml;base64,")
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            del headers
+            self.calls.append((url, dash_video_id))
+            suffix = (dash_video_id or "ytdlp_1080").removeprefix("ytdlp_")
+            return f"http://127.0.0.1:2323/dash/ytdlp-{suffix}.mpd"
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            audio_files: str = "",
+        ) -> None:
+            del headers, poster_image_path, audio_files
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    source_urls_seen: list[str] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        source_urls_seen.append(item.original_url)
+        item.url = "data:application/dash+xml;base64,PE1QRD48L01QRD4="
+        item.audio_url = ""
+        item.playback_qualities = [
+            VideoQualityOption(id="ytdlp_1080", label="1080P"),
+            VideoQualityOption(id="ytdlp_720", label="720P"),
+        ]
+        item.selected_playback_quality_id = item.selected_playback_quality_id or "ytdlp_1080"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="https://www.youtube.com/watch?v=test123",
+                playback_qualities=[
+                    VideoQualityOption(id="ytdlp_1080", label="1080P"),
+                    VideoQualityOption(id="ytdlp_720", label="720P"),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = playback_loader
+
+    ad_filter = RecordingM3U8AdFilter()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=ad_filter)
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)])
+    assert source_urls_seen == ["https://www.youtube.com/watch?v=test123"]
+    assert session.playlist[0].original_url == "https://www.youtube.com/watch?v=test123"
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 2)
+    assert source_urls_seen == [
+        "https://www.youtube.com/watch?v=test123",
+        "https://www.youtube.com/watch?v=test123",
+    ]
+    assert video.load_calls[-1] == ("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", True, 93)
     assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
 
 
@@ -1996,6 +2254,34 @@ def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtb
     )
 
     assert started == ["video:https://img.example/fallback.jpg"]
+
+
+def test_player_window_ignores_default_video_cover_when_value_is_youtube_watch_page(qtbot, monkeypatch) -> None:
+    started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        started.append(f"{target}:{source}")
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    window = PlayerWindow(
+        FakePlayerController(),
+        default_video_cover_loader=lambda: "https://www.youtube.com/watch?v=demo",
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic=""),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert started == []
 
 
 def test_player_window_prefers_video_cover_override_before_session_poster_and_default_video_cover(qtbot, monkeypatch) -> None:

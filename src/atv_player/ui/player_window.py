@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import queue
 import re
 import threading
@@ -86,6 +87,19 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*?)\[/a\]", re.DOTALL)
+logger = logging.getLogger(__name__)
+
+
+def _summarize_media_url(url: str) -> str:
+    if url.startswith("data:application/dash+xml;base64,"):
+        return "data:application/dash+xml;base64,..."
+    parsed = urlparse(url or "")
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    path = parsed.path or "/"
+    if len(path) > 96:
+        path = f"...{path[-96:]}"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
 class ClickableSlider(QSlider):
@@ -1405,6 +1419,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         else:
             effective_start_seconds = self.opening_spin.value()
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
+        logger.info(
+            "PlayerWindow start playback index=%s quality=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
+            self.current_index,
+            current_item.selected_playback_quality_id,
+            _summarize_media_url(current_item.url),
+            _summarize_media_url(current_item.audio_url),
+            effective_start_seconds,
+            pause,
+            len(current_item.external_subtitles),
+        )
         self._video_load(
             current_item.url,
             pause=pause,
@@ -1724,9 +1748,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._default_video_cover_source = ""
             return ""
         try:
-            self._default_video_cover_source = str(loader() or "")
+            source = str(loader() or "")
         except Exception:
             self._default_video_cover_source = ""
+        else:
+            normalized = normalize_poster_url(source)
+            if source and not normalized:
+                logger.info("Ignore unsupported default video cover source=%s", source)
+                self._default_video_cover_source = ""
+            else:
+                self._default_video_cover_source = source
         return self._default_video_cover_source
 
     def _preferred_detail_poster_source(self) -> str:
@@ -1984,6 +2015,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None:
             return False
         current_item = self.session.playlist[self.current_index]
+        if self._should_skip_playback_prepare(current_item):
+            return False
         source_url = self._playback_prepare_source_url(current_item)
         if source_url.startswith(self._DASH_DATA_URI_PREFIX) and not current_item.original_url:
             current_item.original_url = source_url
@@ -2035,9 +2068,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._enqueue_controller_task("播放地址预处理失败", prepare)
         return True
 
+    def _should_skip_playback_prepare(self, current_item: PlayItem) -> bool:
+        resolved_url = (current_item.url or "").strip()
+        if resolved_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return False
+        selected_quality_id = current_item.selected_playback_quality_id or ""
+        if current_item.audio_url:
+            return True
+        if selected_quality_id.startswith("ytdlp_"):
+            return True
+        return any((quality.id or "").startswith("ytdlp_") for quality in current_item.playback_qualities)
+
     def _playback_prepare_source_url(self, current_item: PlayItem) -> str:
         preferred_url = (current_item.original_url or current_item.url).strip()
         resolved_url = current_item.url.strip()
+        if resolved_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return resolved_url
         if not current_item.parse_required or not preferred_url or not resolved_url or preferred_url == resolved_url:
             return preferred_url
 
@@ -2199,7 +2245,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_prepare.index:
             return
         current_item = self.session.playlist[self.current_index]
-        current_item.original_url = pending_prepare.source_url
+        if not self._should_preserve_original_url_after_prepare(current_item, pending_prepare.source_url):
+            current_item.original_url = pending_prepare.source_url
         if pending_prepare.requested_dash_video_id:
             current_item.dash_video_id = pending_prepare.requested_dash_video_id
         current_item.url = prepared_url
@@ -2212,6 +2259,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         except Exception as exc:
             self._restore_current_index(pending_prepare.previous_index)
             self._append_log(f"播放失败: {exc}")
+
+    def _should_preserve_original_url_after_prepare(self, current_item: PlayItem, source_url: str) -> bool:
+        if not source_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return False
+        selected_quality_id = current_item.selected_playback_quality_id or ""
+        return bool(current_item.original_url) and selected_quality_id.startswith("ytdlp_")
 
     def _handle_playback_prepare_failed(self, request_id: int, message: str) -> None:
         if request_id != self._playback_prepare_request_id:
