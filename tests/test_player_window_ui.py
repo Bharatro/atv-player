@@ -1592,6 +1592,26 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     assert window.log_section.layout().indexOf(window.log_view) != -1
 
 
+def test_player_window_limits_playback_log_height_to_one_quarter_of_details(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.resize(1280, 800)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.details.resize(window.details.width(), 480)
+    QApplication.processEvents()
+    expected = max(window.details.height() // 4, 1)
+
+    assert window.log_section.maximumHeight() == expected
+
+    window.details.resize(window.details.width(), 640)
+    QApplication.processEvents()
+    expected = max(window.details.height() // 4, 1)
+
+    assert window.log_section.maximumHeight() == expected
+
+
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
     controller = FakePlayerController()
     window = PlayerWindow(controller)
