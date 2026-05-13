@@ -535,6 +535,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.log_view.setReadOnly(True)
         self.details = QWidget()
         details_layout = QVBoxLayout(self.details)
+        self.details_layout = details_layout
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(6)
         details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -652,6 +653,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.sidebar_splitter.setChildrenCollapsible(True)
 
         sidebar_layout = QVBoxLayout()
+        self.sidebar_layout = sidebar_layout
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.playlist_source_combo)
@@ -4962,14 +4964,41 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_hidden = is_fullscreen or self.wide_button.isChecked()
         metadata_visible = self.toggle_details_button.isChecked()
         log_visible = self.toggle_log_button.isChecked()
+        self._update_log_section_host_layout()
         self.bottom_area.setHidden(is_fullscreen)
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
         self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
-        self.details.setHidden(is_fullscreen or (not metadata_visible and not log_visible))
+        self.details.setHidden(is_fullscreen or not metadata_visible)
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)
         self._update_log_section_max_height()
+
+    def _should_dock_log_to_sidebar_bottom(self) -> bool:
+        return (
+            not self.isFullScreen()
+            and not self.wide_button.isChecked()
+            and not self.toggle_details_button.isChecked()
+            and self.toggle_log_button.isChecked()
+        )
+
+    def _move_log_section_to_layout(self, layout: QVBoxLayout) -> None:
+        current_parent = self.log_section.parentWidget()
+        current_layout = current_parent.layout() if current_parent is not None else None
+        if current_layout is layout:
+            return
+        if current_layout is not None:
+            current_layout.removeWidget(self.log_section)
+        if layout is self.details_layout:
+            layout.addWidget(self.log_section, 1)
+            return
+        layout.addWidget(self.log_section)
+
+    def _update_log_section_host_layout(self) -> None:
+        if self._should_dock_log_to_sidebar_bottom():
+            self._move_log_section_to_layout(self.sidebar_layout)
+            return
+        self._move_log_section_to_layout(self.details_layout)
 
     def _update_log_section_max_height(self) -> None:
         details_height = max(self.details.height(), 1)

@@ -3974,9 +3974,10 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     assert window.bottom_area.isHidden() is False
     assert window.sidebar_actions_widget.isHidden() is False
     assert window.playlist.isHidden() is False
-    assert window.details.isHidden() is False
-    assert window.metadata_section.isHidden() is True
+    assert window.details.isHidden() is True
     assert window.log_section.isHidden() is False
+    assert window.details.layout().indexOf(window.log_section) == -1
+    assert window.sidebar_layout.indexOf(window.log_section) == window.sidebar_layout.count() - 1
 
 
 def test_player_window_hides_details_in_fullscreen_even_when_log_toggle_is_on(qtbot) -> None:
