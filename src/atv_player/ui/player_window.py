@@ -57,6 +57,8 @@ from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
     PlayItem,
+    PlaybackSource,
+    PlaybackSourceGroup,
     PlaybackDetailAction,
     PlaybackDetailField,
     PlaybackDetailFieldAction,
@@ -427,6 +429,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video = self.video_widget
         self.playlist_group_combo = QComboBox()
         self.playlist_group_combo.setHidden(True)
+        self.playlist_source_combo = QComboBox()
+        self.playlist_source_combo.setHidden(True)
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
@@ -648,6 +652,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_layout = QVBoxLayout()
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
+        sidebar_layout.addWidget(self.playlist_source_combo)
         sidebar_layout.addWidget(self.sidebar_splitter)
         self.sidebar_container = QWidget()
         self.sidebar_container.setMinimumWidth(250)
@@ -693,6 +698,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
+        self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -782,25 +788,63 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return self.session.playlists
         return [self.session.playlist]
 
+    def _build_source_groups_from_playlists(self, playlists: list[list[PlayItem]]) -> list[PlaybackSourceGroup]:
+        source_groups: list[PlaybackSourceGroup] = []
+        for index, playlist in enumerate(playlists):
+            label = self._playlist_group_label(playlist, index)
+            source_groups.append(
+                PlaybackSourceGroup(
+                    label=label,
+                    sources=[PlaybackSource(label=label, playlist=playlist)],
+                )
+            )
+        return source_groups
+
+    def _flatten_source_groups(
+        self,
+        source_groups: list[PlaybackSourceGroup],
+    ) -> tuple[list[list[PlayItem]], dict[tuple[int, int], int]]:
+        playlists: list[list[PlayItem]] = []
+        mapping: dict[tuple[int, int], int] = {}
+        for group_index, group in enumerate(source_groups):
+            for source_index, source in enumerate(group.sources):
+                mapping[(group_index, source_index)] = len(playlists)
+                playlists.append(source.playlist)
+        return playlists, mapping
+
+    def _session_source_groups(self) -> list[PlaybackSourceGroup]:
+        if self.session is None:
+            return []
+        if self.session.source_groups:
+            return self.session.source_groups
+        return self._build_source_groups_from_playlists(self._session_playlists())
+
     def _playlist_group_label(self, playlist: list[PlayItem], playlist_index: int) -> str:
         if playlist and playlist[0].play_source:
             return playlist[0].play_source
         return f"线路 {playlist_index + 1}"
 
-    def _render_playlist_group_combo(self) -> None:
-        playlists = self._session_playlists()
+    def _render_playlist_source_combos(self) -> None:
+        source_groups = self._session_source_groups()
         self.playlist_group_combo.blockSignals(True)
+        self.playlist_source_combo.blockSignals(True)
         self.playlist_group_combo.clear()
-        for index, playlist in enumerate(playlists):
-            self.playlist_group_combo.addItem(self._playlist_group_label(playlist, index))
-        has_multiple_groups = len(playlists) > 1
-        should_show_single_group_label = (
-            len(playlists) == 1 and bool(playlists[0]) and bool(playlists[0][0].play_source)
-        )
-        self.playlist_group_combo.setHidden(not (has_multiple_groups or should_show_single_group_label))
-        if self.session is not None and playlists:
-            self.playlist_group_combo.setCurrentIndex(self.session.playlist_index)
+        self.playlist_source_combo.clear()
+        for group in source_groups:
+            self.playlist_group_combo.addItem(group.label)
+        active_group: PlaybackSourceGroup | None = None
+        if self.session is not None and source_groups:
+            self.session.source_group_index = max(0, min(self.session.source_group_index, len(source_groups) - 1))
+            active_group = source_groups[self.session.source_group_index]
+            self.session.source_index = max(0, min(self.session.source_index, len(active_group.sources) - 1))
+            for source in active_group.sources:
+                self.playlist_source_combo.addItem(source.label)
+            self.playlist_group_combo.setCurrentIndex(self.session.source_group_index)
+            self.playlist_source_combo.setCurrentIndex(self.session.source_index)
+        self.playlist_group_combo.setHidden(len(source_groups) <= 1)
+        self.playlist_source_combo.setHidden(active_group is None or len(active_group.sources) <= 1)
         self.playlist_group_combo.blockSignals(False)
+        self.playlist_source_combo.blockSignals(False)
 
     def _render_playlist_items(self) -> None:
         self.playlist.clear()
@@ -1077,9 +1121,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def open_session(self, session, start_paused: bool = False) -> None:
         self._invalidate_play_item_resolution()
-        if not session.playlists:
-            session.playlists = [session.playlist]
-            session.playlist_index = 0
+        if session.source_groups:
+            session.playlists, mapping = self._flatten_source_groups(session.source_groups)
+            if not session.playlists:
+                session.playlists = [session.playlist]
+                session.source_groups = self._build_source_groups_from_playlists(session.playlists)
+                mapping = {(0, 0): 0}
+            session.source_group_index = max(0, min(session.source_group_index, len(session.source_groups) - 1))
+            active_group = session.source_groups[session.source_group_index]
+            session.source_index = max(0, min(session.source_index, len(active_group.sources) - 1))
+            session.playlist_index = mapping[(session.source_group_index, session.source_index)]
+            session.playlist = session.playlists[session.playlist_index]
+        else:
+            if not session.playlists:
+                session.playlists = [session.playlist]
+                session.playlist_index = 0
+            session.source_groups = self._build_source_groups_from_playlists(session.playlists)
+            session.source_group_index = max(0, min(session.playlist_index, len(session.source_groups) - 1))
+            session.source_index = 0
+            session.playlist = session.playlists[session.playlist_index]
         self.session = session
         self.current_index = session.start_index
         self._render_poster()
@@ -1101,7 +1161,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._set_last_player_paused(start_paused)
         self._update_play_button_icon()
         self._refresh_window_title()
-        self._render_playlist_group_combo()
+        self._render_playlist_source_combos()
         self._render_playlist_items()
         self._render_detail_actions()
         self._refresh_danmaku_source_entry_points()
@@ -1158,13 +1218,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._render_detail_actions()
             return
         replacement = list(load_result.replacement_playlist)
+        active_group = self.session.source_groups[self.session.source_group_index]
+        active_source = active_group.sources[self.session.source_index]
+        active_source.playlist = replacement
         self.session.playlists[self.session.playlist_index] = replacement
         self.session.playlist = replacement
         self.current_index = max(
             0,
             min(load_result.replacement_start_index, len(replacement) - 1),
         )
-        self._render_playlist_group_combo()
+        self._render_playlist_source_combos()
         self._render_playlist_items()
         self._render_detail_actions()
 
@@ -2193,30 +2256,53 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._save_config()
         self._apply_visibility_state()
 
-    def _change_playlist_group(self, playlist_index: int) -> None:
+    def _switch_active_source(self, source_group_index: int, source_index: int) -> None:
         if self.session is None:
             return
-        playlists = self._session_playlists()
-        if not (0 <= playlist_index < len(playlists)):
+        source_groups = self._session_source_groups()
+        if not (0 <= source_group_index < len(source_groups)):
             return
-        if playlist_index == self.session.playlist_index:
+        active_group = source_groups[source_group_index]
+        if not (0 <= source_index < len(active_group.sources)):
             return
-        target_playlist = playlists[playlist_index]
+        if (
+            source_group_index == self.session.source_group_index
+            and source_index == self.session.source_index
+        ):
+            return
+        target_playlist = active_group.sources[source_index].playlist
         if not target_playlist:
+            self.session.source_group_index = source_group_index
+            self.session.source_index = source_index
+            self._render_playlist_source_combos()
+            self._render_playlist_items()
             return
+        previous_index = self.current_index
+        target_index = min(previous_index, len(target_playlist) - 1)
+        _, mapping = self._flatten_source_groups(source_groups)
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self._invalidate_play_item_resolution()
-        self.session.playlist_index = playlist_index
+        self.session.source_group_index = source_group_index
+        self.session.source_index = source_index
+        self.session.playlist_index = mapping[(source_group_index, source_index)]
         self.session.playlist = target_playlist
-        self.current_index = min(self.current_index, len(target_playlist) - 1)
-        self._render_playlist_group_combo()
+        self.current_index = target_index
+        self._render_playlist_source_combos()
         self._render_playlist_items()
         try:
-            self._load_current_item(previous_index=self.current_index)
+            self._load_current_item(previous_index=previous_index)
             self._refresh_window_title()
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
+
+    def _change_playlist_group(self, group_index: int) -> None:
+        self._switch_active_source(group_index, 0)
+
+    def _change_playlist_source(self, source_index: int) -> None:
+        if self.session is None:
+            return
+        self._switch_active_source(self.session.source_group_index, source_index)
 
     def _toggle_wide_mode(self) -> None:
         is_wide_mode = self.wide_button.isChecked()

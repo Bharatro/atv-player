@@ -13,6 +13,8 @@ from atv_player.models import (
     AppConfig,
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
+    PlaybackSource,
+    PlaybackSourceGroup,
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailFieldAction,
@@ -1631,6 +1633,98 @@ def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -
     assert [item.title for item in window.session.playlist] == ["第1集", "第2集"]
     assert window.playlist.currentRow() == 1
     assert video.load_calls[-1][0] == "http://b/2.m3u8"
+
+
+def test_player_window_renders_two_level_source_selectors_and_switches_group(qtbot) -> None:
+    parse1 = [PlayItem(title="第1集", url="http://parse/1.m3u8", play_source="解析1")]
+    baidu1 = [
+        PlayItem(title="第1集", url="http://baidu1/1.m3u8", play_source="百度1"),
+        PlayItem(title="第2集", url="http://baidu1/2.m3u8", play_source="百度1"),
+    ]
+    baidu2 = [
+        PlayItem(title="第1集", url="http://baidu2/1.m3u8", play_source="百度2"),
+        PlayItem(title="第2集", url="http://baidu2/2.m3u8", play_source="百度2"),
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="红果短剧"),
+        playlist=baidu2,
+        playlists=[parse1, baidu1, baidu2],
+        playlist_index=2,
+        source_groups=[
+            PlaybackSourceGroup(label="解析", sources=[PlaybackSource(label="解析1", playlist=parse1)]),
+            PlaybackSourceGroup(
+                label="百度",
+                sources=[
+                    PlaybackSource(label="百度1", playlist=baidu1),
+                    PlaybackSource(label="百度2", playlist=baidu2),
+                ],
+            ),
+        ],
+        source_group_index=1,
+        source_index=1,
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["解析", "百度"]
+    assert [window.playlist_source_combo.itemText(i) for i in range(window.playlist_source_combo.count())] == ["百度1", "百度2"]
+    assert window.playlist.currentRow() == 1
+
+    window.playlist_group_combo.setCurrentIndex(0)
+
+    assert window.session is not None
+    assert window.session.source_group_index == 0
+    assert window.session.source_index == 0
+    assert window.current_index == 0
+    assert window.video.load_calls[-1][0] == "http://parse/1.m3u8"
+
+
+def test_player_window_switches_leaf_source_and_keeps_episode_index_when_possible(qtbot) -> None:
+    first = [
+        PlayItem(title="第1集", url="http://q1/1.m3u8", play_source="夸克1"),
+        PlayItem(title="第2集", url="http://q1/2.m3u8", play_source="夸克1"),
+    ]
+    second = [
+        PlayItem(title="第1集", url="http://q2/1.m3u8", play_source="夸克2"),
+        PlayItem(title="第2集", url="http://q2/2.m3u8", play_source="夸克2"),
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=first,
+        playlists=[first, second],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="夸克",
+                sources=[
+                    PlaybackSource(label="夸克1", playlist=first),
+                    PlaybackSource(label="夸克2", playlist=second),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window.playlist_source_combo.setCurrentIndex(1)
+
+    assert window.session is not None
+    assert window.session.source_index == 1
+    assert window.current_index == 1
+    assert window.video.load_calls[-1][0] == "http://q2/2.m3u8"
 
 
 def test_player_window_next_and_previous_stay_within_active_group(qtbot) -> None:
