@@ -3918,25 +3918,24 @@ def test_player_window_opening_new_session_refreshes_metadata_and_clears_old_log
     assert "播放失败: boom" not in window.log_view.toPlainText()
 
 
-def test_player_window_can_hide_playlist_and_keep_log_visible(qtbot) -> None:
+def test_player_window_hides_details_and_docks_log_to_sidebar_bottom(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.show()
 
-    window.toggle_playlist_button.click()
-    window.toggle_details_button.click()
-
-    assert window.playlist.isHidden() is True
-    assert window.details.isHidden() is False
-    assert window.metadata_section.isHidden() is True
-    assert window.log_section.isHidden() is False
-
-    window.toggle_playlist_button.click()
     window.toggle_details_button.click()
 
     assert window.playlist.isHidden() is False
+    assert window.details.isHidden() is True
+    assert window.log_section.isHidden() is False
+    assert window.details.layout().indexOf(window.log_section) == -1
+    assert window.sidebar_layout.indexOf(window.log_section) == window.sidebar_layout.count() - 1
+
+    window.toggle_details_button.click()
+
     assert window.details.isHidden() is False
-    assert window.metadata_section.isHidden() is False
+    assert window.details.layout().indexOf(window.log_section) != -1
+    assert window.sidebar_layout.indexOf(window.log_section) == -1
 
 
 def test_player_window_can_hide_only_playback_log_section(qtbot) -> None:
