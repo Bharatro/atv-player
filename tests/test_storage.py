@@ -343,6 +343,29 @@ def test_settings_repository_round_trip_persists_player_wide_mode(tmp_path: Path
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_player_window_geometry_and_log_visibility(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        base_url="http://127.0.0.1:4567",
+        username="alice",
+        token="token-123",
+        vod_token="vod-123",
+        player_log_visible=False,
+        player_window_geometry=b"player-geometry",
+        player_main_splitter_state=b"split-main",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.player_log_visible is False
+    assert saved.player_window_geometry == b"player-geometry"
+    assert saved.player_main_splitter_state == b"split-main"
+    assert saved == config
+
+
 def test_settings_repository_migrates_missing_preferred_parse_key_column(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:

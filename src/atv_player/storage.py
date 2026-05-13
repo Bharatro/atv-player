@@ -1,4 +1,3 @@
-import sqlite3
 from pathlib import Path
 
 from atv_player.models import AppConfig
@@ -90,6 +89,7 @@ class SettingsRepository:
                     player_volume INTEGER NOT NULL DEFAULT 100,
                     player_muted INTEGER NOT NULL DEFAULT 0,
                     player_wide_mode INTEGER NOT NULL DEFAULT 0,
+                    player_log_visible INTEGER NOT NULL DEFAULT 1,
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
                     preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
@@ -160,6 +160,10 @@ class SettingsRepository:
             if "player_wide_mode" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_wide_mode INTEGER NOT NULL DEFAULT 0"
+                )
+            if "player_log_visible" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_log_visible INTEGER NOT NULL DEFAULT 1"
                 )
             if "preferred_parse_key" not in columns:
                 conn.execute(
@@ -237,6 +241,7 @@ class SettingsRepository:
                     player_volume,
                     player_muted,
                     player_wide_mode,
+                    player_log_visible,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -256,7 +261,7 @@ class SettingsRepository:
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
+                    0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', ''
                 )
                 ON CONFLICT(id) DO NOTHING
@@ -284,6 +289,7 @@ class SettingsRepository:
                     player_volume,
                     player_muted,
                     player_wide_mode,
+                    player_log_visible,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -305,19 +311,76 @@ class SettingsRepository:
                 """
             ).fetchone()
         assert row is not None
-        values = list(row)
-        values[12] = bool(values[12])
-        values[14] = bool(values[14])
-        values[15] = bool(values[15])
-        values[17] = bool(values[17])
-        values[18] = _normalize_danmaku_line_count(values[18])
-        values[19] = _normalize_danmaku_render_mode(values[19])
-        values[20] = _normalize_danmaku_color_mode(values[20])
-        values[21] = _normalize_danmaku_uniform_color(values[21])
-        values[22] = _normalize_danmaku_position_preset(values[22])
-        values[23] = _normalize_danmaku_scroll_speed(values[23])
-        values[24] = _normalize_danmaku_font_size(values[24])
-        return AppConfig(*values)
+        (
+            base_url,
+            username,
+            token,
+            vod_token,
+            last_path,
+            last_active_window,
+            last_playback_source,
+            last_playback_source_key,
+            last_playback_mode,
+            last_playback_path,
+            last_playback_vod_id,
+            last_playback_clicked_vod_id,
+            last_player_paused,
+            player_volume,
+            player_muted,
+            player_wide_mode,
+            player_log_visible,
+            preferred_parse_key,
+            preferred_danmaku_enabled,
+            preferred_danmaku_line_count,
+            preferred_danmaku_render_mode,
+            preferred_danmaku_color_mode,
+            preferred_danmaku_uniform_color,
+            preferred_danmaku_position_preset,
+            preferred_danmaku_scroll_speed,
+            preferred_danmaku_font_size,
+            main_window_geometry,
+            player_window_geometry,
+            player_main_splitter_state,
+            browse_content_splitter_state,
+            last_selected_tab,
+            last_selected_category_tab,
+            last_selected_category_id,
+        ) = row
+        return AppConfig(
+            base_url=base_url,
+            username=username,
+            token=token,
+            vod_token=vod_token,
+            last_path=last_path,
+            last_active_window=last_active_window,
+            last_playback_source=last_playback_source,
+            last_playback_source_key=last_playback_source_key,
+            last_playback_mode=last_playback_mode,
+            last_playback_path=last_playback_path,
+            last_playback_vod_id=last_playback_vod_id,
+            last_playback_clicked_vod_id=last_playback_clicked_vod_id,
+            last_player_paused=bool(last_player_paused),
+            player_volume=player_volume,
+            player_muted=bool(player_muted),
+            player_wide_mode=bool(player_wide_mode),
+            player_log_visible=bool(player_log_visible),
+            preferred_parse_key=preferred_parse_key,
+            preferred_danmaku_enabled=bool(preferred_danmaku_enabled),
+            preferred_danmaku_line_count=_normalize_danmaku_line_count(preferred_danmaku_line_count),
+            preferred_danmaku_render_mode=_normalize_danmaku_render_mode(preferred_danmaku_render_mode),
+            preferred_danmaku_color_mode=_normalize_danmaku_color_mode(preferred_danmaku_color_mode),
+            preferred_danmaku_uniform_color=_normalize_danmaku_uniform_color(preferred_danmaku_uniform_color),
+            preferred_danmaku_position_preset=_normalize_danmaku_position_preset(preferred_danmaku_position_preset),
+            preferred_danmaku_scroll_speed=_normalize_danmaku_scroll_speed(preferred_danmaku_scroll_speed),
+            preferred_danmaku_font_size=_normalize_danmaku_font_size(preferred_danmaku_font_size),
+            main_window_geometry=main_window_geometry,
+            player_window_geometry=player_window_geometry,
+            player_main_splitter_state=player_main_splitter_state,
+            browse_content_splitter_state=browse_content_splitter_state,
+            last_selected_tab=last_selected_tab,
+            last_selected_category_tab=last_selected_category_tab,
+            last_selected_category_id=last_selected_category_id,
+        )
 
     def save_config(self, config: AppConfig) -> None:
         with self._connect() as conn:
@@ -341,6 +404,7 @@ class SettingsRepository:
                     player_volume = ?,
                     player_muted = ?,
                     player_wide_mode = ?,
+                    player_log_visible = ?,
                     preferred_parse_key = ?,
                     preferred_danmaku_enabled = ?,
                     preferred_danmaku_line_count = ?,
@@ -376,6 +440,7 @@ class SettingsRepository:
                     config.player_volume,
                     int(config.player_muted),
                     int(config.player_wide_mode),
+                    int(config.player_log_visible),
                     config.preferred_parse_key,
                     int(config.preferred_danmaku_enabled),
                     _normalize_danmaku_line_count(config.preferred_danmaku_line_count),
