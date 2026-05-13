@@ -1269,12 +1269,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         start_seconds: int = 0,
         headers: dict[str, str] | None = None,
         poster_image_path: str | None = None,
+        audio_files: str = "",
     ) -> None:
         extra_kwargs: dict[str, object] = {}
         if headers:
             extra_kwargs["headers"] = headers
         if poster_image_path:
             extra_kwargs["poster_image_path"] = poster_image_path
+        if audio_files:
+            extra_kwargs["audio_files"] = audio_files
         while True:
             try:
                 self.video.load(url, pause=pause, start_seconds=start_seconds, **extra_kwargs)
@@ -1408,6 +1411,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             start_seconds=effective_start_seconds,
             headers=current_item.headers,
             poster_image_path=poster_image_path,
+            audio_files=current_item.audio_url,
         )
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()

@@ -1805,6 +1805,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "headers": {},
                     "subtitles": [],
                     "qualities": [],
+                    "audio_url": "https://media.example/youtube-audio.webm",
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -1824,6 +1825,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "headers": {},
                     "subtitles": [],
                     "qualities": [],
+                    "audio_url": "https://media.example/youtube-audio.webm",
                     "extractor": "youtube",
                     "selected_quality_id": quality_id,
                 },
@@ -1857,6 +1859,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
     assert service.resolve_calls == []
     assert service.resolve_for_quality_calls == [("https://www.youtube.com/watch?v=test123", "ytdlp_720")]
     assert item.url == "https://media.example/youtube-720.mp4"
+    assert item.audio_url == "https://media.example/youtube-audio.webm"
     assert item.selected_playback_quality_id == "ytdlp_720"
 
 

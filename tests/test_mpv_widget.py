@@ -328,6 +328,35 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
+def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+    widget._player = FakePlayer()
+
+    widget.load(
+        "https://media.example/video-1080.mp4",
+        audio_files="https://media.example/audio.webm",
+    )
+
+    assert widget._player.calls == [
+        (
+            "https://media.example/video-1080.mp4",
+            "replace",
+            None,
+            {"audio_files": "https://media.example/audio.webm"},
+        )
+    ]
+
+
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

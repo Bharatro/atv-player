@@ -114,7 +114,7 @@ class TestCanResolve:
 
 
 class TestResolve:
-    def test_prefers_requested_formats_dash_payload_over_master_url(self, service, mock_ytdlp_module):
+    def test_prefers_requested_formats_video_and_audio_pair_over_master_url(self, service, mock_ytdlp_module):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
             requested_formats=[
@@ -146,8 +146,8 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url.startswith("data:application/dash+xml;base64,")
-        assert "master.m3u8" not in result.url
+        assert result.url == "https://stream.test/video-1080.mp4"
+        assert result.audio_url == "https://stream.test/audio.webm"
 
     def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
         info = _sample_info()

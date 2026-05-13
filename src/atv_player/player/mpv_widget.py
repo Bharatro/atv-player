@@ -379,6 +379,7 @@ class MpvWidget(QWidget):
             start_seconds: int = 0,
             headers: dict[str, str] | None = None,
             poster_image_path: str | None = None,
+            audio_files: str = "",
     ) -> None:
         self._set_video_picture_state("loading")
         self._audio_cover_active = False
@@ -390,6 +391,8 @@ class MpvWidget(QWidget):
             return
         header_fields = self._build_http_header_fields(headers)
         loadfile_options = self._loadfile_options(url)
+        if audio_files:
+            loadfile_options["audio_files"] = audio_files
         can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)

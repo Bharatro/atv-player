@@ -1389,6 +1389,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 current_item.url = yt_result.url
                 current_item.original_url = source_url
                 current_item.headers = dict(yt_result.headers)
+                current_item.audio_url = getattr(yt_result, "audio_url", "")
                 current_item.playback_qualities = list(yt_result.qualities)
                 current_item.external_subtitles = list(yt_result.subtitles)
                 if yt_result.title:
@@ -1446,6 +1447,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             current_item.url = result.url
             current_item.original_url = source_url
             current_item.headers = dict(result.headers)
+            current_item.audio_url = getattr(result, "audio_url", "")
             current_item.playback_qualities = list(result.qualities)
             current_item.external_subtitles = list(result.subtitles)
             current_item.duration_seconds = result.duration_seconds

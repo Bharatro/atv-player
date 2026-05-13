@@ -123,6 +123,7 @@ class PlayItem:
     detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
+    audio_url: str = ""
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
     selected_playback_quality_id: str = ""
