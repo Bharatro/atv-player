@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
+from html import escape
 from time import monotonic
 from typing import Callable
 from urllib.parse import urlparse
@@ -66,6 +68,7 @@ _LANG_CODE_NAMES: dict[str, str] = {
 }
 
 _DEFAULT_STARTUP_MAX_HEIGHT = 1080
+_DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
 
 
 def _has_muxed_audio(fmt: dict) -> bool:
@@ -96,7 +99,80 @@ def _build_format_selector(max_height: int | None) -> str:
     return "bestvideo+bestaudio/best"
 
 
+def _media_mime_type(fmt: dict) -> str:
+    ext = str(fmt.get("ext") or "").strip().lower()
+    vcodec = str(fmt.get("vcodec") or "").strip().lower()
+    acodec = str(fmt.get("acodec") or "").strip().lower()
+    if vcodec and vcodec != "none":
+        if ext == "webm":
+            return "video/webm"
+        return "video/mp4"
+    if acodec and acodec != "none":
+        if ext == "webm":
+            return "audio/webm"
+        return "audio/mp4"
+    return "application/octet-stream"
+
+
+def _representation_id(fmt: dict, fallback: str) -> str:
+    format_id = str(fmt.get("format_id") or "").strip()
+    if format_id:
+        return f"{fallback}_{format_id}"
+    return fallback
+
+
+def _build_requested_formats_dash_data_uri(info: dict) -> str:
+    requested_formats = info.get("requested_formats") or []
+    if not isinstance(requested_formats, list):
+        return ""
+    video_formats = [
+        fmt for fmt in requested_formats
+        if isinstance(fmt, dict) and fmt.get("url") and (fmt.get("vcodec", "") or "") != "none"
+    ]
+    audio_formats = [
+        fmt for fmt in requested_formats
+        if isinstance(fmt, dict) and fmt.get("url") and (fmt.get("acodec", "") or "") != "none"
+    ]
+    if not video_formats or not audio_formats:
+        return ""
+    video_format = video_formats[0]
+    audio_format = audio_formats[0]
+    video_bandwidth = int(float(video_format.get("tbr") or 0) * 1000)
+    audio_bandwidth = int(float(audio_format.get("tbr") or 0) * 1000)
+    video_width = int(video_format.get("width") or 0)
+    video_height = int(video_format.get("height") or 0)
+    audio_rate = int(audio_format.get("asr") or 0)
+    video_codecs = escape(str(video_format.get("vcodec") or ""), quote=True)
+    audio_codecs = escape(str(audio_format.get("acodec") or ""), quote=True)
+    video_url = escape(str(video_format["url"]), quote=False)
+    audio_url = escape(str(audio_format["url"]), quote=False)
+    video_id = _representation_id(video_format, _quality_id_for_height(video_height or 0))
+    audio_id = _representation_id(audio_format, "ytdlp_audio")
+    raw_xml = f"""
+<MPD>
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="{video_id}" bandwidth="{video_bandwidth}" width="{video_width}" height="{video_height}" codecs="{video_codecs}" mimeType="{_media_mime_type(video_format)}">
+        <BaseURL>{video_url}</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="{audio_id}" bandwidth="{audio_bandwidth}" audioSamplingRate="{audio_rate}" codecs="{audio_codecs}" mimeType="{_media_mime_type(audio_format)}">
+        <BaseURL>{audio_url}</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    return _DASH_DATA_URI_PREFIX + base64.b64encode(raw_xml.encode("utf-8")).decode("ascii")
+
+
 def _pick_direct_url(info: dict) -> str:
+    requested_formats_dash = _build_requested_formats_dash_data_uri(info)
+    if requested_formats_dash:
+        return requested_formats_dash
     direct_url = info.get("url", "")
     if direct_url:
         return direct_url

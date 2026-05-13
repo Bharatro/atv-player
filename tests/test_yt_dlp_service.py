@@ -114,6 +114,41 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_prefers_requested_formats_dash_payload_over_master_url(self, service, mock_ytdlp_module):
+        info = _sample_info(
+            url="https://stream.test/master.m3u8",
+            requested_formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "av01.0.09M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 126,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "audio_channels": 2,
+                },
+            ],
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=info))
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.url.startswith("data:application/dash+xml;base64,")
+        assert "master.m3u8" not in result.url
+
     def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
         info = _sample_info()
         mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
