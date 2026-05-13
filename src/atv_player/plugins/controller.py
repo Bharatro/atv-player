@@ -513,7 +513,8 @@ class SpiderPluginController:
             return False
         try:
             params = inspect.signature(self._spider.searchContent).parameters
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError) as e:
+            print(e)
             return True
         return "category" in params
 
@@ -614,6 +615,7 @@ class SpiderPluginController:
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
+            print('categoryContent', category_id, page, filters)
             payload = self._spider.categoryContent(category_id, page, False, dict(filters or {})) or {}
         except Exception as exc:
             logger.exception(
@@ -640,8 +642,10 @@ class SpiderPluginController:
         category = "" if category_id == "home" else str(category_id or "")
         try:
             if self._search_supports_category:
+                print('searchContent', keyword, page, category)
                 payload = self._spider.searchContent(keyword, False, page, category)
             else:
+                print('searchContent', keyword, page)
                 payload = self._spider.searchContent(keyword, False, page)
             payload = payload or {}
         except Exception as exc:
@@ -1336,6 +1340,7 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         try:
+            print('playerContent', item.play_source, item.vod_id)
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
         except Exception as exc:
             logger.exception(
@@ -1474,6 +1479,7 @@ class SpiderPluginController:
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
+            print('detailContent', vod_id)
             payload = self._spider.detailContent([vod_id]) or {}
         except Exception as exc:
             logger.exception("Spider plugin detail load failed plugin=%s vod_id=%s", self._plugin_name, vod_id)
