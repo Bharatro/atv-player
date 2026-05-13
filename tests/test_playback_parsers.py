@@ -7,6 +7,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
 from atv_player.playback_parsers import BuiltInPlaybackParserService
+from atv_player.player.resolve_cache import PlaybackResolveCache
 
 
 def _encrypt_xm_payload(text: str, key: str, iv: str) -> str:
@@ -209,3 +210,58 @@ def test_parser_service_normalizes_duplicate_port_in_xm_media_url() -> None:
     result = service.resolve("qiyi", "http://www.iqiyi.com/v_mo3lbdn60s.html", preferred_key="xm")
 
     assert result.url == "https://api.hls.one:4433/Cache/qiyi/demo.m3u8?vkey=demo"
+
+
+def test_parser_service_reuses_cached_result_for_same_parser() -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        return httpx.Response(
+            200,
+            json={
+                "parse": 0,
+                "jx": 0,
+                "url": "https://media.example/real.m3u8",
+                "header": {"Referer": "https://site.example"},
+            },
+        )
+
+    cache = PlaybackResolveCache(ttl_seconds=300.0, now=lambda: 100.0)
+    service = BuiltInPlaybackParserService(get=fake_get, resolve_cache=cache)
+
+    first = service.resolve("qq", "https://site.example/play?id=2", preferred_key="fish")
+    second = service.resolve("qq", "https://site.example/play?id=2", preferred_key="fish")
+
+    assert first.url == "https://media.example/real.m3u8"
+    assert second.url == "https://media.example/real.m3u8"
+    assert second.headers == {"Referer": "https://site.example"}
+    assert calls == ["https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php"]
+
+
+def test_parser_service_re_resolves_after_cache_expiry() -> None:
+    calls: list[str] = []
+    clock = {"now": 100.0}
+
+    def fake_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        return httpx.Response(
+            200,
+            json={
+                "parse": 0,
+                "jx": 0,
+                "url": "https://media.example/real.m3u8",
+            },
+        )
+
+    cache = PlaybackResolveCache(ttl_seconds=5.0, now=lambda: clock["now"])
+    service = BuiltInPlaybackParserService(get=fake_get, resolve_cache=cache)
+
+    service.resolve("qq", "https://site.example/play?id=5", preferred_key="fish")
+    clock["now"] = 110.0
+    service.resolve("qq", "https://site.example/play?id=5", preferred_key="fish")
+
+    assert calls == [
+        "https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php",
+        "https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php",
+    ]
