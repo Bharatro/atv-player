@@ -109,7 +109,7 @@ def test_render_danmaku_keeps_count_intro_visible_for_longer() -> None:
 
     subtitle = render_danmaku_ass(xml_text, line_count=1, duration_seconds=4.0)
 
-    assert "Dialogue: 0,0:00:00.00,0:00:03.00,Danmaku,,0,0,0,,1条弹幕来袭！" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:06.00,Danmaku,,0,0,0,,1条弹幕来袭！" in subtitle
 
 
 def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:
@@ -169,7 +169,7 @@ def test_render_danmaku_ass_places_top_scroll_comments_closer_to_top_edge() -> N
         position_preset="top",
     )
 
-    assert "{\\an8\\move(2000,30,-400,30)\\1c&HFFFFFF&}更靠上" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&HFFFFFF&}更靠上" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
@@ -277,4 +277,4 @@ def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_l
     )
 
     assert "白色滚动" in subtitle
-    assert "{\\an8\\move(2000,30,-400,30)\\1c&H00FF00&}绿色滚动" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&H00FF00&}绿色滚动" in subtitle

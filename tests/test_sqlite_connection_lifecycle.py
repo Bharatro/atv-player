@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -39,11 +40,15 @@ def test_repository_connect_context_closes_sqlite_connection(monkeypatch, module
     connection = RecordingConnection()
     connect_calls: list[Path] = []
 
-    monkeypatch.setattr(
-        module.sqlite3,
-        "connect",
-        lambda db_path: connect_calls.append(Path(db_path)) or connection,
-    )
+    @contextmanager
+    def fake_managed_connection(db_path: Path | str):
+        connect_calls.append(Path(db_path))
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(module, "managed_connection", fake_managed_connection)
 
     repository_cls = getattr(module, repository_name)
     repository = repository_cls.__new__(repository_cls)
