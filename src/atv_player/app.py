@@ -36,6 +36,7 @@ from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.playback_parsers import BuiltInPlaybackParserService
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
+from atv_player.yt_dlp_service import YtdlpPlaybackService
 from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
 from atv_player.ui.login_window import LoginWindow
@@ -143,6 +144,7 @@ class AppCoordinator(QObject):
         self._api_client: ApiClient | None = None
         self._m3u8_ad_filter = M3U8AdFilter()
         self._playback_parser_service = BuiltInPlaybackParserService()
+        self._yt_dlp_service = YtdlpPlaybackService()
         self._danmaku_service = create_default_danmaku_service()
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
@@ -435,6 +437,7 @@ class AppCoordinator(QObject):
             show_feiniu_tab=bool(capabilities.get("feiniu")),
             m3u8_ad_filter=self._m3u8_ad_filter,
             playback_parser_service=self._playback_parser_service,
+            yt_dlp_service=self._yt_dlp_service,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

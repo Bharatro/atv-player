@@ -356,12 +356,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             show_feiniu_tab: bool = True,
             m3u8_ad_filter=None,
             playback_parser_service=None,
+            yt_dlp_service=None,
     ) -> None:
         super().__init__()
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
+        self._yt_dlp_service = yt_dlp_service
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
@@ -1364,14 +1366,30 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         def load_item(current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
-            result = self._playback_parser_service.resolve(
-                "",
-                source_url,
-                preferred_key=getattr(self.config, "preferred_parse_key", ""),
-            )
-            current_item.url = result.url
-            current_item.original_url = source_url
-            current_item.headers = dict(result.headers)
+            try:
+                result = self._playback_parser_service.resolve(
+                    "",
+                    source_url,
+                    preferred_key=getattr(self.config, "preferred_parse_key", ""),
+                )
+                current_item.url = result.url
+                current_item.original_url = source_url
+                current_item.headers = dict(result.headers)
+            except ValueError:
+                yt_dlp = self._yt_dlp_service
+                if yt_dlp is None or not yt_dlp.is_available():
+                    raise
+                yt_result = yt_dlp.resolve(source_url)
+                current_item.url = yt_result.url
+                current_item.original_url = source_url
+                current_item.headers = dict(yt_result.headers)
+                current_item.playback_qualities = list(yt_result.qualities)
+                current_item.external_subtitles = list(yt_result.subtitles)
+                if yt_result.title:
+                    current_item.title = yt_result.title
+                    current_item.media_title = yt_result.title
+                if yt_result.qualities and not current_item.selected_playback_quality_id:
+                    current_item.selected_playback_quality_id = yt_result.qualities[0].id
             current_item.parse_required = True
             if danmaku_controller is not None:
                 danmaku_controller.maybe_resolve(current_item)
@@ -1402,6 +1420,23 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
             danmaku_controller=danmaku_controller,
+        )
+
+    def _build_ytdlp_parse_request(self, url: str) -> OpenPlayerRequest:
+        if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
+            raise ValueError("yt-dlp 不可用")
+        history_loader, history_saver = self._direct_parse_history_hooks(url)
+        vod, item = self._yt_dlp_service.resolve_to_play_item(url)
+        return OpenPlayerRequest(
+            vod=vod,
+            playlist=[item],
+            clicked_index=0,
+            source_kind="direct_parse",
+            source_mode="ytdlp",
+            source_vod_id=url,
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )
 
     def _build_direct_parse_detail_request(self, url: str, load_item, danmaku_controller) -> OpenPlayerRequest | None:
@@ -1482,6 +1517,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return False
         if _looks_like_drive_share_link(keyword):
             self._start_open_request(lambda: self._build_drive_detail_request(keyword))
+            return True
+        yt_dlp = self._yt_dlp_service
+        if yt_dlp is not None and yt_dlp.is_available() and yt_dlp.can_resolve(keyword):
+            self._start_open_request(lambda: self._build_ytdlp_parse_request(keyword))
             return True
         if self._playback_parser_service is None:
             self.show_error("当前未配置内置解析")
