@@ -304,6 +304,7 @@ class PlayerController:
         ending_seconds: int,
         paused: bool,
         force_remote_report: bool = False,
+        duration_seconds: int = 0,
     ) -> None:
         if not (0 <= current_index < len(session.playlist)):
             return
@@ -337,6 +338,12 @@ class PlayerController:
         }
         if session.playback_history_saver is not None:
             session.playback_history_saver(payload)
+        if (
+            not paused
+            and duration_seconds > 15 * 60
+            and (duration_seconds - position_seconds) < 150
+        ):
+            self._schedule_next_episode_danmaku_prefetch(session, current_index)
         if not session.use_local_history:
             return
         self._api_client.save_history(payload)

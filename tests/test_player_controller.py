@@ -1005,3 +1005,118 @@ def test_on_item_started_advances_set_when_switching_episodes() -> None:
 
     assert len(danmaku_controller.calls) == 2
     assert {1, 2}.issubset(session.prefetched_next_danmaku_indices)
+
+
+def test_report_progress_tail_prefetch_triggers_when_remaining_under_150s() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 20,
+    )
+
+    assert len(danmaku_controller.calls) == 1
+    assert 1 in session.prefetched_next_danmaku_indices
+
+
+def test_report_progress_tail_prefetch_skipped_when_duration_too_short() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 13,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 14,
+    )
+
+    assert danmaku_controller.calls == []
+
+
+def test_report_progress_tail_prefetch_skipped_when_remaining_too_long() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 10,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 20,
+    )
+
+    assert danmaku_controller.calls == []
+
+
+def test_report_progress_tail_prefetch_skipped_when_paused() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=True,
+        duration_seconds=60 * 20,
+    )
+
+    assert danmaku_controller.calls == []
+
+
+def test_report_progress_tail_prefetch_skipped_when_duration_unknown() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    assert danmaku_controller.calls == []
+
+
+def test_report_progress_tail_prefetch_deduplicates_with_on_item_started() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 20,
+    )
+
+    assert len(danmaku_controller.calls) == 1
