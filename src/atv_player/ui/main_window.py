@@ -1,4 +1,5 @@
 from __future__ import annotations
+import inspect
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -114,8 +115,80 @@ _SUPPORTED_DRIVE_DOMAINS = (
 )
 _DIRECT_PARSE_DETAIL_API = "https://dmku.hls.one/"
 _HOTKEY_360_API = "http://api.xcvts.cn/api/hotlist/360so_juhe"
+_HOTKEY_TENCENT_API = "https://pbaccess.video.qq.com/trpc.videosearch.hot_rank.HotRankServantHttp/HotRankHttp"
+_HOTKEY_IQIYI_API = "https://mesh.if.iqiyi.com/portal/lw/search/keywords/hotList"
 _SUGGESTION_360_API = "https://sug.so.360.cn/suggest"
+_DEFAULT_GLOBAL_SEARCH_HOT_SOURCE = "360"
 _DEFAULT_GLOBAL_SEARCH_HOT_TYPE = "dsp"
+_GLOBAL_SEARCH_360_HOT_TABS: list[tuple[str, str]] = [
+    ("movie", "电视剧"),
+    ("tv", "电影"),
+    ("variety", "综艺"),
+    ("comic", "动漫"),
+    ("dsp", "综合视频"),
+]
+_GLOBAL_SEARCH_HOT_SOURCE_ORDER = ["360", "tencent", "iqiyi"]
+_GLOBAL_SEARCH_HOT_SOURCE_TITLES = {
+    "360": "360",
+    "tencent": "腾讯",
+    "iqiyi": "爱奇艺",
+}
+_GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES: dict[str, list[tuple[str, str]]] = {
+    "360": list(_GLOBAL_SEARCH_360_HOT_TABS),
+    "tencent": [("hot", "热搜")],
+    "iqiyi": [("hot", "热搜")],
+}
+
+
+def _coerce_hot_search_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_hot_search_items(items: object) -> list[dict[str, str]]:
+    if not isinstance(items, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = ""
+        query = ""
+        for key in ("title", "word", "query", "keyword", "name", "text", "hotWord", "searchWord"):
+            title = _coerce_hot_search_text(item.get(key))
+            if title:
+                break
+        for key in ("query", "word", "keyword", "title", "name", "text", "hotWord", "searchWord"):
+            query = _coerce_hot_search_text(item.get(key))
+            if query:
+                break
+        if not title:
+            continue
+        normalized.append({"title": title, "query": query or title})
+    return normalized
+
+
+def _iqiyi_hot_category_key(title: str, index: int) -> str:
+    normalized = _coerce_hot_search_text(title)
+    mapping = {
+        "热搜": "hot",
+        "电视剧": "movie",
+        "电影": "tv",
+        "综艺": "variety",
+        "动漫": "comic",
+        "综合视频": "dsp",
+    }
+    if normalized in mapping:
+        return mapping[normalized]
+    ascii_slug = "".join(ch if ch.isalnum() else "_" for ch in normalized.casefold()).strip("_")
+    return ascii_slug or f"iqiyi_{index}"
+
+
+@dataclass(slots=True)
+class _GlobalSearchHotkeyLoadResult:
+    source: str
+    category: str
+    items: list[dict[str, str]]
+    categories: list[tuple[str, str]] | None = None
 
 
 def _plugin_value(definition: Any, key: str):
@@ -182,6 +255,117 @@ def load_360_hot_searches(hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE) -> li
     return hotkeys
 
 
+def load_tencent_hot_searches(hot_type: str = "hot") -> list[dict[str, str]]:
+    if hot_type != "hot":
+        return []
+    response = httpx.post(
+        _HOTKEY_TENCENT_API,
+        headers={
+            "content-type": "application/json",
+            "referer": "https://v.qq.com/",
+            "user-agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+            ),
+        },
+        json={
+            "pageNum": 0,
+            "pageSize": 10,
+            "data_version": "25081802",
+            "client_type": 2,
+        },
+        timeout=5.0,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return []
+    nav_items = payload.get("data", {}).get("navItemList")
+    if not isinstance(nav_items, list):
+        return []
+    for item in nav_items:
+        if not isinstance(item, dict):
+            continue
+        if _coerce_hot_search_text(item.get("title")) != "热搜":
+            continue
+        hot_rank_result = item.get("hotRankResult")
+        if isinstance(hot_rank_result, dict):
+            for key in ("hotRankList", "itemList", "list", "items"):
+                normalized = _normalize_hot_search_items(hot_rank_result.get(key))
+                if normalized:
+                    return normalized
+        normalized = _normalize_hot_search_items(hot_rank_result)
+        if normalized:
+            return normalized
+    return []
+
+
+def load_iqiyi_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str, list[dict[str, str]]]]:
+    response = httpx.get(
+        _HOTKEY_IQIYI_API,
+        params={
+            "device_id": "7b16c55cfdf4edb1a33cd4fc07bc0f69",
+            "v": "17.052.25283",
+            "appMode": "",
+            "src": "",
+        },
+        timeout=5.0,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return [], {}
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        data = payload
+    sections = data.get("hotQuery")
+    if not isinstance(sections, list):
+        return [], {}
+    categories: list[tuple[str, str]] = []
+    items_by_category: dict[str, list[dict[str, str]]] = {}
+    for index, section in enumerate(sections):
+        if not isinstance(section, dict):
+            continue
+        title = _coerce_hot_search_text(section.get("title"))
+        if not title:
+            continue
+        key = _iqiyi_hot_category_key(title, index)
+        items = _normalize_hot_search_items(section.get("items"))
+        categories.append((key, title))
+        items_by_category[key] = items
+    return categories, items_by_category
+
+
+def load_global_search_hotkey_payload(
+    source: str = _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE,
+    hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE,
+) -> _GlobalSearchHotkeyLoadResult:
+    if source == "tencent":
+        return _GlobalSearchHotkeyLoadResult(
+            source=source,
+            category=hot_type,
+            items=load_tencent_hot_searches(hot_type),
+        )
+    if source == "iqiyi":
+        categories, items_by_category = load_iqiyi_hot_search_sections()
+        if not categories:
+            categories = list(_GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES["iqiyi"])
+        category_key = hot_type if hot_type in {key for key, _ in categories} else categories[0][0]
+        return _GlobalSearchHotkeyLoadResult(
+            source=source,
+            category=category_key,
+            items=items_by_category.get(category_key, []),
+            categories=categories,
+        )
+    return _GlobalSearchHotkeyLoadResult(
+        source=source,
+        category=hot_type,
+        items=load_360_hot_searches(hot_type),
+    )
+
+
 def load_360_search_suggestions(keyword: str) -> list[str]:
     response = httpx.get(
         _SUGGESTION_360_API,
@@ -244,7 +428,7 @@ class _StartupPluginLoadSignals(QObject):
 
 
 class _GlobalSearchPopupSignals(QObject):
-    hotkeys_loaded = Signal(int, str, object)
+    hotkeys_loaded = Signal(int, object)
 
 
 class SearchInputWithHotkey(QLineEdit):
@@ -277,6 +461,7 @@ class GlobalSearchPopup(QWidget):
     item_clicked = Signal(str)
     clear_history_requested = Signal()
     delete_history_requested = Signal(str)
+    hot_source_changed = Signal(str)
     hot_tab_changed = Signal(str)
     HISTORY_ITEM_HEIGHT = 40
     HOT_ITEM_HEIGHT = 48
@@ -367,19 +552,12 @@ class GlobalSearchPopup(QWidget):
     }
     """
 
-    HOT_TABS: list[tuple[str, str]] = [
-        ("movie", "电视剧"),
-        ("tv", "电影"),
-        ("variety", "综艺"),
-        ("comic", "动漫"),
-        ("dsp", "综合视频"),
-    ]
-
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.clear_history_button: QPushButton | None = None
+        self.hot_source_tab_bar = QTabBar(self)
         self.hot_tab_bar = QTabBar(self)
         self._history_title_label: QLabel | None = None
         self._hot_title_label: QLabel | None = None
@@ -387,6 +565,7 @@ class GlobalSearchPopup(QWidget):
         self._history_item_rows: dict[str, QWidget] = {}
         self._hot_item_buttons: dict[str, QPushButton] = {}
         self._history_delete_buttons: dict[str, QPushButton] = {}
+        self._hot_source_types: list[str] = []
         self._hot_tab_types: list[str] = []
         self._hot_item_texts: list[str] = []
         self._hot_rank_labels: list[QLabel] = []
@@ -427,8 +606,17 @@ class GlobalSearchPopup(QWidget):
     def hot_item_texts(self) -> list[str]:
         return list(self._hot_item_texts)
 
+    def hot_source_titles(self) -> list[str]:
+        return [self.hot_source_tab_bar.tabText(index) for index in range(self.hot_source_tab_bar.count())]
+
     def hot_tab_titles(self) -> list[str]:
         return [self.hot_tab_bar.tabText(index) for index in range(self.hot_tab_bar.count())]
+
+    def current_hot_source(self) -> str:
+        index = self.hot_source_tab_bar.currentIndex()
+        if index < 0 or index >= len(self._hot_source_types):
+            return ""
+        return self._hot_source_types[index]
 
     def current_hot_tab_type(self) -> str:
         index = self.hot_tab_bar.currentIndex()
@@ -451,9 +639,18 @@ class GlobalSearchPopup(QWidget):
     def hot_item_ranks(self) -> list[str]:
         return [label.text() for label in self._hot_rank_labels]
 
-    def set_sections(self, history: list[str], hot_type: str, hotkeys: list[dict[str, str]]) -> None:
+    def set_sections(
+        self,
+        history: list[str],
+        hot_source: str,
+        hot_sources: list[tuple[str, str]],
+        hot_type: str,
+        hot_categories: list[tuple[str, str]],
+        hotkeys: list[dict[str, str]],
+    ) -> None:
         self._set_history_items(history)
-        self._set_hot_type(hot_type)
+        self._set_hot_sources(hot_sources, hot_source)
+        self._set_hot_categories(hot_categories, hot_type)
         self._set_hot_items(hotkeys)
         self.adjustSize()
 
@@ -486,15 +683,20 @@ class GlobalSearchPopup(QWidget):
         title.setStyleSheet(self._SECTION_TITLE_QSS)
         self._hot_title_label = title
         self._hot_layout.addWidget(title)
+        self.hot_source_tab_bar.setDocumentMode(True)
+        self.hot_source_tab_bar.setExpanding(False)
+        self.hot_source_tab_bar.setUsesScrollButtons(False)
+        self.hot_source_tab_bar.setDrawBase(False)
+        self.hot_source_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hot_source_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
+        self.hot_source_tab_bar.currentChanged.connect(self._handle_hot_source_tab_changed)
+        self._hot_layout.addWidget(self.hot_source_tab_bar)
         self.hot_tab_bar.setDocumentMode(True)
         self.hot_tab_bar.setExpanding(False)
         self.hot_tab_bar.setUsesScrollButtons(False)
         self.hot_tab_bar.setDrawBase(False)
         self.hot_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hot_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
-        for hot_type, title_text in self.HOT_TABS:
-            self._hot_tab_types.append(hot_type)
-            self.hot_tab_bar.addTab(title_text)
         self.hot_tab_bar.currentChanged.connect(self._handle_hot_tab_changed)
         self._hot_layout.addWidget(self.hot_tab_bar)
         self._hot_items_widget = QWidget(self._hot_panel)
@@ -523,12 +725,31 @@ class GlobalSearchPopup(QWidget):
         if self.clear_history_button is not None:
             self.clear_history_button.setEnabled(history_exists)
 
-    def _set_hot_type(self, hot_type: str) -> None:
+    def _set_hot_sources(self, hot_sources: list[tuple[str, str]], hot_source: str) -> None:
+        self._hot_source_types = [source for source, _ in hot_sources]
+        self.hot_source_tab_bar.blockSignals(True)
+        while self.hot_source_tab_bar.count() > 0:
+            self.hot_source_tab_bar.removeTab(self.hot_source_tab_bar.count() - 1)
+        for _, title_text in hot_sources:
+            self.hot_source_tab_bar.addTab(title_text)
+        try:
+            index = self._hot_source_types.index(hot_source)
+        except ValueError:
+            index = 0 if self._hot_source_types else -1
+        self.hot_source_tab_bar.setCurrentIndex(index)
+        self.hot_source_tab_bar.blockSignals(False)
+
+    def _set_hot_categories(self, hot_categories: list[tuple[str, str]], hot_type: str) -> None:
+        self._hot_tab_types = [category for category, _ in hot_categories]
+        self.hot_tab_bar.blockSignals(True)
+        while self.hot_tab_bar.count() > 0:
+            self.hot_tab_bar.removeTab(self.hot_tab_bar.count() - 1)
+        for _, title_text in hot_categories:
+            self.hot_tab_bar.addTab(title_text)
         try:
             index = self._hot_tab_types.index(hot_type)
         except ValueError:
-            index = self._hot_tab_types.index(_DEFAULT_GLOBAL_SEARCH_HOT_TYPE)
-        self.hot_tab_bar.blockSignals(True)
+            index = 0 if self._hot_tab_types else -1
         self.hot_tab_bar.setCurrentIndex(index)
         self.hot_tab_bar.blockSignals(False)
 
@@ -612,6 +833,10 @@ class GlobalSearchPopup(QWidget):
     def _handle_hot_tab_changed(self, index: int) -> None:
         if 0 <= index < len(self._hot_tab_types):
             self.hot_tab_changed.emit(self._hot_tab_types[index])
+
+    def _handle_hot_source_tab_changed(self, index: int) -> None:
+        if 0 <= index < len(self._hot_source_types):
+            self.hot_source_changed.emit(self._hot_source_types[index])
 
     def _on_item_clicked(self, query: str) -> None:
         self.hide()
@@ -831,7 +1056,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
         self._direct_parse_playback_history_saver = direct_parse_playback_history_saver
         self._default_video_cover_loader = default_video_cover_loader
-        self._global_search_hotkey_loader = global_search_hotkey_loader or load_360_hot_searches
+        self._global_search_hotkey_loader = global_search_hotkey_loader or load_global_search_hotkey_payload
         self._global_search_suggestion_loader = global_search_suggestion_loader or load_360_search_suggestions
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
@@ -1007,8 +1232,19 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_popup_signals = _GlobalSearchPopupSignals()
         self._connect_async_signal(self._global_search_popup_signals.hotkeys_loaded, self._handle_global_search_hotkeys_loaded)
         self._global_search_hotkey_request_id = 0
-        self._global_search_hotkey_cache: dict[str, list[dict[str, str]]] = {}
-        self._global_search_hotkey_active_type = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE
+        self._global_search_hotkey_cache: dict[tuple[str, str], list[dict[str, str]]] = {}
+        self._global_search_hot_categories_by_source = {
+            source: list(categories)
+            for source, categories in _GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES.items()
+        }
+        self._global_search_hotkey_active_source = self._normalize_global_search_hot_source(
+            getattr(config, "global_search_hot_source", _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE)
+        )
+        self._global_search_hotkey_preferred_type = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE
+        self._global_search_hotkey_active_type = self._fallback_global_search_hot_category(
+            self._global_search_hotkey_active_source,
+            self._global_search_hotkey_preferred_type,
+        )
         self._app_event_filter_installed = False
         self._app_state_signal_connected = False
 
@@ -1116,6 +1352,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_popup.item_clicked.connect(self._handle_global_search_popup_item_clicked)
         self._global_search_popup.clear_history_requested.connect(self._clear_global_search_history)
         self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
+        self._global_search_popup.hot_source_changed.connect(self._handle_global_search_hot_source_changed)
         self._global_search_popup.hot_tab_changed.connect(self._handle_global_search_hot_tab_changed)
         search_layout = QHBoxLayout(self.global_search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
@@ -1477,6 +1714,105 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         lowered_keyword = normalized_keyword.casefold()
         return [item for item in history if lowered_keyword in item.casefold()]
 
+    def _normalize_global_search_hot_source(self, source: str) -> str:
+        normalized = str(source or "").strip()
+        return normalized if normalized in _GLOBAL_SEARCH_HOT_SOURCE_TITLES else _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE
+
+    def _global_search_hot_sources(self) -> list[tuple[str, str]]:
+        return [
+            (source, _GLOBAL_SEARCH_HOT_SOURCE_TITLES[source])
+            for source in _GLOBAL_SEARCH_HOT_SOURCE_ORDER
+        ]
+
+    def _global_search_hot_categories(self, source: str) -> list[tuple[str, str]]:
+        normalized_source = self._normalize_global_search_hot_source(source)
+        return list(self._global_search_hot_categories_by_source.get(normalized_source, []))
+
+    def _fallback_global_search_hot_category(self, source: str, preferred: str) -> str:
+        categories = self._global_search_hot_categories(source)
+        if not categories:
+            return _DEFAULT_GLOBAL_SEARCH_HOT_TYPE
+        normalized_preferred = str(preferred or "").strip()
+        if normalized_preferred and any(category == normalized_preferred for category, _ in categories):
+            return normalized_preferred
+        return categories[0][0]
+
+    def _set_global_search_hot_source(self, source: str) -> None:
+        normalized_source = self._normalize_global_search_hot_source(source)
+        self._global_search_hotkey_active_source = normalized_source
+        self.config.global_search_hot_source = normalized_source
+
+    def _hotkey_cache_key(self, source: str, hot_type: str) -> tuple[str, str]:
+        return (self._normalize_global_search_hot_source(source), str(hot_type or "").strip())
+
+    def _call_global_search_hotkey_loader(self, source: str, hot_type: str) -> object:
+        loader = self._global_search_hotkey_loader
+        try:
+            signature = inspect.signature(loader)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is None:
+            return loader(source, hot_type)
+        positional = [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        has_varargs = any(
+            parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            for parameter in signature.parameters.values()
+        )
+        if has_varargs or len(positional) >= 2:
+            return loader(source, hot_type)
+        return loader(hot_type)
+
+    def _normalize_global_search_hotkey_load_result(
+        self,
+        source: str,
+        hot_type: str,
+        payload: object,
+    ) -> _GlobalSearchHotkeyLoadResult:
+        if isinstance(payload, _GlobalSearchHotkeyLoadResult):
+            categories = (
+                list(payload.categories)
+                if payload.categories is not None
+                else None
+            )
+            return _GlobalSearchHotkeyLoadResult(
+                source=self._normalize_global_search_hot_source(payload.source or source),
+                category=str(payload.category or hot_type).strip() or hot_type,
+                items=_normalize_hot_search_items(payload.items),
+                categories=categories,
+            )
+        if isinstance(payload, dict):
+            items = _normalize_hot_search_items(payload.get("items"))
+            categories_value = payload.get("categories")
+            categories = None
+            if isinstance(categories_value, list):
+                normalized_categories: list[tuple[str, str]] = []
+                for item in categories_value:
+                    if not isinstance(item, (list, tuple)) or len(item) < 2:
+                        continue
+                    category_key = str(item[0] or "").strip()
+                    category_title = str(item[1] or "").strip()
+                    if category_key and category_title:
+                        normalized_categories.append((category_key, category_title))
+                categories = normalized_categories or None
+            return _GlobalSearchHotkeyLoadResult(
+                source=self._normalize_global_search_hot_source(str(payload.get("source") or source)),
+                category=str(payload.get("category") or hot_type).strip() or hot_type,
+                items=items,
+                categories=categories,
+            )
+        return _GlobalSearchHotkeyLoadResult(
+            source=self._normalize_global_search_hot_source(source),
+            category=hot_type,
+            items=_normalize_hot_search_items(payload),
+        )
+
     def _position_global_search_popup(self) -> None:
         if not self._global_search_popup.isVisible():
             return
@@ -1557,47 +1893,115 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._hide_global_search_popup()
             return
         self._show_global_search_popup()
-        hot_type = self._global_search_hotkey_active_type
-        if hot_type not in self._global_search_hotkey_cache:
-            self._request_global_search_hotkeys(hot_type)
+        cache_key = self._hotkey_cache_key(
+            self._global_search_hotkey_active_source,
+            self._global_search_hotkey_active_type,
+        )
+        if cache_key not in self._global_search_hotkey_cache:
+            self._request_global_search_hotkeys(
+                self._global_search_hotkey_active_source,
+                self._global_search_hotkey_active_type,
+            )
 
     def _handle_global_search_hot_tab_changed(self, hot_type: str) -> None:
+        self._global_search_hotkey_preferred_type = hot_type
         self._global_search_hotkey_active_type = hot_type
         self._render_global_search_popup()
-        if hot_type not in self._global_search_hotkey_cache:
-            self._request_global_search_hotkeys(hot_type)
+        cache_key = self._hotkey_cache_key(self._global_search_hotkey_active_source, hot_type)
+        if cache_key not in self._global_search_hotkey_cache:
+            self._request_global_search_hotkeys(self._global_search_hotkey_active_source, hot_type)
+
+    def _handle_global_search_hot_source_changed(self, source: str) -> None:
+        normalized_source = self._normalize_global_search_hot_source(source)
+        if normalized_source == self._global_search_hotkey_active_source:
+            return
+        self._set_global_search_hot_source(normalized_source)
+        self._global_search_hotkey_active_type = self._fallback_global_search_hot_category(
+            normalized_source,
+            self._global_search_hotkey_preferred_type,
+        )
+        self._save_config()
+        self._render_global_search_popup()
+        cache_key = self._hotkey_cache_key(
+            self._global_search_hotkey_active_source,
+            self._global_search_hotkey_active_type,
+        )
+        if cache_key not in self._global_search_hotkey_cache:
+            self._request_global_search_hotkeys(
+                self._global_search_hotkey_active_source,
+                self._global_search_hotkey_active_type,
+            )
 
     def _render_global_search_popup(self) -> None:
-        hotkeys = self._global_search_hotkey_cache.get(self._global_search_hotkey_active_type, [])
+        hot_categories = self._global_search_hot_categories(self._global_search_hotkey_active_source)
+        self._global_search_hotkey_active_type = self._fallback_global_search_hot_category(
+            self._global_search_hotkey_active_source,
+            self._global_search_hotkey_preferred_type,
+        )
+        hotkeys = self._global_search_hotkey_cache.get(
+            self._hotkey_cache_key(
+                self._global_search_hotkey_active_source,
+                self._global_search_hotkey_active_type,
+            ),
+            [],
+        )
         self._global_search_popup.set_sections(
             self._global_search_history(),
+            self._global_search_hotkey_active_source,
+            self._global_search_hot_sources(),
             self._global_search_hotkey_active_type,
+            hot_categories,
             hotkeys,
         )
 
-    def _request_global_search_hotkeys(self, hot_type: str) -> None:
+    def _request_global_search_hotkeys(self, source: str, hot_type: str) -> None:
         self._global_search_hotkey_request_id += 1
         request_id = self._global_search_hotkey_request_id
 
         def run() -> None:
             try:
-                items = self._global_search_hotkey_loader(hot_type)
+                payload = self._call_global_search_hotkey_loader(source, hot_type)
             except Exception:
-                items = []
+                payload = []
             if self._is_window_alive():
-                self._global_search_popup_signals.hotkeys_loaded.emit(request_id, hot_type, list(items))
+                result = self._normalize_global_search_hotkey_load_result(source, hot_type, payload)
+                self._global_search_popup_signals.hotkeys_loaded.emit(request_id, result)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _handle_global_search_hotkeys_loaded(self, request_id: int, hot_type: str, items: list[dict[str, str]]) -> None:
+    def _handle_global_search_hotkeys_loaded(self, request_id: int, result: _GlobalSearchHotkeyLoadResult) -> None:
         if request_id != self._global_search_hotkey_request_id:
             return
-        self._global_search_hotkey_cache[hot_type] = [
-            {"title": str(item.get("title") or "").strip(), "query": str(item.get("query") or item.get("title") or "").strip()}
-            for item in items
+        normalized_source = self._normalize_global_search_hot_source(result.source)
+        if result.categories is not None:
+            self._global_search_hot_categories_by_source[normalized_source] = [
+                (str(category or "").strip(), str(title or "").strip())
+                for category, title in result.categories
+                if str(category or "").strip() and str(title or "").strip()
+            ] or list(_GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES.get(normalized_source, []))
+        active_category = str(result.category or "").strip() or self._fallback_global_search_hot_category(
+            normalized_source,
+            self._global_search_hotkey_preferred_type,
+        )
+        self._global_search_hotkey_cache[self._hotkey_cache_key(normalized_source, active_category)] = [
+            {
+                "title": str(item.get("title") or "").strip(),
+                "query": str(item.get("query") or item.get("title") or "").strip(),
+            }
+            for item in result.items
             if str(item.get("title") or "").strip()
         ]
-        if self._global_search_hotkey_active_type == hot_type:
+        if normalized_source == self._global_search_hotkey_active_source:
+            next_active_type = self._fallback_global_search_hot_category(
+                normalized_source,
+                self._global_search_hotkey_preferred_type,
+            )
+            category_changed = next_active_type != self._global_search_hotkey_active_type
+            self._global_search_hotkey_active_type = next_active_type
+            if category_changed:
+                cache_key = self._hotkey_cache_key(normalized_source, next_active_type)
+                if cache_key not in self._global_search_hotkey_cache:
+                    self._request_global_search_hotkeys(normalized_source, next_active_type)
             self._render_global_search_popup()
 
     def _handle_global_search_text_changed(self) -> None:

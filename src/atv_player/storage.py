@@ -126,7 +126,8 @@ class SettingsRepository:
                     last_selected_tab TEXT NOT NULL DEFAULT 'douban',
                     last_selected_category_tab TEXT NOT NULL DEFAULT '',
                     last_selected_category_id TEXT NOT NULL DEFAULT '',
-                    global_search_history TEXT NOT NULL DEFAULT '[]'
+                    global_search_history TEXT NOT NULL DEFAULT '[]',
+                    global_search_hot_source TEXT NOT NULL DEFAULT '360'
                 )
                 """
             )
@@ -246,6 +247,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN global_search_history TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "global_search_hot_source" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN global_search_hot_source TEXT NOT NULL DEFAULT '360'"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -283,12 +288,13 @@ class SettingsRepository:
                     last_selected_tab,
                     last_selected_category_tab,
                     last_selected_category_id,
-                    global_search_history
+                    global_search_history,
+                    global_search_hot_source
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]'
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -332,7 +338,8 @@ class SettingsRepository:
                     last_selected_tab,
                     last_selected_category_tab,
                     last_selected_category_id,
-                    global_search_history
+                    global_search_history,
+                    global_search_hot_source
                 FROM app_config
                 WHERE id = 1
                 """
@@ -373,6 +380,7 @@ class SettingsRepository:
             last_selected_category_tab,
             last_selected_category_id,
             global_search_history,
+            global_search_hot_source,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -409,6 +417,7 @@ class SettingsRepository:
             last_selected_category_tab=last_selected_category_tab,
             last_selected_category_id=last_selected_category_id,
             global_search_history=_normalize_global_search_history(global_search_history),
+            global_search_hot_source=str(global_search_hot_source or "360").strip() or "360",
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -450,7 +459,8 @@ class SettingsRepository:
                     last_selected_tab = ?,
                     last_selected_category_tab = ?,
                     last_selected_category_id = ?,
-                    global_search_history = ?
+                    global_search_history = ?,
+                    global_search_hot_source = ?
                 WHERE id = 1
                 """,
                 (
@@ -488,6 +498,7 @@ class SettingsRepository:
                     config.last_selected_category_tab,
                     config.last_selected_category_id,
                     json.dumps(_normalize_global_search_history(config.global_search_history), ensure_ascii=False),
+                    str(config.global_search_hot_source or "360").strip() or "360",
                 ),
             )
 

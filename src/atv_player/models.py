@@ -44,6 +44,7 @@ class AppConfig:
     last_selected_category_tab: str = ""
     last_selected_category_id: str = ""
     global_search_history: list[str] = field(default_factory=list)
+    global_search_hot_source: str = "360"
 
 
 @dataclass(slots=True)
