@@ -6,7 +6,7 @@
 
 ## 范围
 
-- 仅 `PluginPlaybackController` (剧集/动漫主战场)。
+- 仅 `SpiderPluginController` (剧集/动漫主战场)。
 - B 站 (随 `playerContent` 一次返回所有 episode 的 danmaku) 和 direct_parse (单源即时拉取) 不在范围内。
 - 默认开启,无设置项。
 
@@ -15,11 +15,11 @@
 1. **切集时**: `_play_item_at_index` 成功后立即调度一次。
 2. **接近片尾时**: `report_progress` 中,满足 `duration_seconds > 15*60` 且 `duration_seconds - position_seconds < 150`。
 
-两点均经同一调度入口,通过 session 上的去重集合避免重复入队;实际下载由 `PluginPlaybackController._maybe_resolve_danmaku` 已有的 `_pending_danmaku_item_ids` / `danmaku_pending` 双重短路保证幂等。
+两点均经同一调度入口,通过 session 上的去重集合避免重复入队;实际下载由 `SpiderPluginController._maybe_resolve_danmaku` 已有的 `_pending_danmaku_item_ids` / `danmaku_pending` 双重短路保证幂等。
 
 ## 接口
 
-### `PluginPlaybackController.prefetch_next_episode_danmaku`
+### `SpiderPluginController.prefetch_next_episode_danmaku`
 
 ```python
 def prefetch_next_episode_danmaku(
@@ -126,7 +126,7 @@ prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
    │              │
    │              └─► _schedule_next_episode_danmaku_prefetch(session, N)
    │                     │
-   │                     └─► PluginController.prefetch_next_episode_danmaku(playlist[N+1])
+   │                     └─► SpiderPluginController.prefetch_next_episode_danmaku(playlist[N+1])
    │                            │
    │                            └─► _maybe_resolve_danmaku → 后台线程
    │                                   │
@@ -166,7 +166,7 @@ prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
 - 切到 N+1 后,`on_item_started` 调度 N+2 (`prefetched_next_danmaku_indices` 中只剩 N+1 之后写入的索引;N+2 是首次)。
 - `session.danmaku_controller` 缺少 `prefetch_next_episode_danmaku` 方法时不抛错。
 
-### `tests/test_plugin_playback_controller.py` (已存在则追加)
+### `tests/test_spider_plugin_controller.py` (追加)
 
 - `prefetch_next_episode_danmaku`: `_should_prefetch_danmaku` 返回 False 时不调用 `_maybe_resolve_danmaku`。
 - 目标 item 没有 url 与 vod_id 时不调用。
