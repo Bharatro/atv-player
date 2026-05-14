@@ -8,7 +8,11 @@ from PySide6.QtCore import Qt
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.ui.main_window as main_window_module
-from atv_player.ui.main_window import MainWindow
+from atv_player.ui.main_window import (
+    MainWindow,
+    load_tencent_hot_search_sections,
+    load_tencent_hot_searches,
+)
 
 
 class FakeStaticController:
@@ -1630,9 +1634,81 @@ def test_main_window_global_search_popup_button_opens_history_and_default_hot_ta
     qtbot.waitUntil(lambda: hotkey_calls == ["dsp"])
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一", "综合-dsp"])
     assert _popup_history_texts(window) == ["庆余年", "琅琊榜"]
-    assert _popup_hot_tab_titles(window) == ["电视剧", "电影", "综艺", "动漫", "综合视频"]
+    assert _popup_hot_tab_titles(window) == ["综合", "电视剧", "电影", "综艺", "动漫"]
     assert window._global_search_popup.current_hot_tab_type() == "dsp"
     assert window._global_search_popup.hot_tab_bar.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert window._global_search_popup.width() >= 720
+
+
+def test_load_tencent_hot_searches_reads_rank_item_list(monkeypatch) -> None:
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "navItemList": [
+                        {"title": "电影", "hotRankResult": None},
+                        {
+                            "title": "热搜",
+                            "hotRankResult": {
+                                "rankItemList": [
+                                    {"title": "主角"},
+                                    {"title": "奔跑吧 第10季"},
+                                ]
+                            },
+                        },
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(main_window_module.httpx, "post", lambda *args, **kwargs: _FakeResponse())
+
+    assert load_tencent_hot_searches("hot") == [
+        {"title": "主角", "query": "主角"},
+        {"title": "奔跑吧 第10季", "query": "奔跑吧 第10季"},
+    ]
+
+
+def test_load_tencent_hot_search_sections_filters_to_tabs_with_results(monkeypatch) -> None:
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "navItemList": [
+                        {
+                            "tabName": "热搜",
+                            "hotRankResult": {
+                                "rankItemList": [{"title": "主角"}],
+                            },
+                        },
+                        {
+                            "tabName": "电视剧",
+                            "hotRankResult": {
+                                "rankItemList": [{"title": "爱情没有神话"}],
+                            },
+                        },
+                        {
+                            "tabName": "电影",
+                            "hotRankResult": None,
+                        },
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(main_window_module.httpx, "post", lambda *args, **kwargs: _FakeResponse())
+
+    categories, items_by_category = load_tencent_hot_search_sections()
+
+    assert categories == [("hot", "热搜"), ("movie", "电视剧")]
+    assert items_by_category == {
+        "hot": [{"title": "主角", "query": "主角"}],
+        "movie": [{"title": "爱情没有神话", "query": "爱情没有神话"}],
+    }
 
 
 def test_main_window_global_search_popup_switches_hot_tabs_and_caches_results(qtbot) -> None:
@@ -1664,12 +1740,12 @@ def test_main_window_global_search_popup_switches_hot_tabs_and_caches_results(qt
     qtbot.waitUntil(lambda: hotkey_calls == ["dsp"])
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["dsp-热搜"])
 
-    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(1)
 
     qtbot.waitUntil(lambda: hotkey_calls == ["dsp", "movie"])
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["movie-热搜"])
 
-    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(1)
     qtbot.wait(50)
 
     assert hotkey_calls == ["dsp", "movie"]
@@ -1698,7 +1774,7 @@ def test_main_window_global_search_popup_shows_source_tabs_and_restores_saved_so
     qtbot.waitUntil(lambda: window._global_search_popup.isVisible() is True)
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["爱奇艺热搜"])
 
-    assert _popup_hot_source_titles(window) == ["360", "腾讯", "爱奇艺"]
+    assert _popup_hot_source_titles(window) == ["全网", "腾讯", "爱奇艺"]
     assert window._global_search_popup.current_hot_source() == "iqiyi"
 
 
@@ -1733,7 +1809,7 @@ def test_main_window_global_search_popup_rebuilds_categories_per_source(qtbot) -
     window.show()
     qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
 
-    qtbot.waitUntil(lambda: _popup_hot_tab_titles(window) == ["电视剧", "电影", "综艺", "动漫", "综合视频"])
+    qtbot.waitUntil(lambda: _popup_hot_tab_titles(window) == ["综合", "电视剧", "电影", "综艺", "动漫"])
     window._global_search_popup.hot_source_tab_bar.setCurrentIndex(1)
 
     qtbot.waitUntil(lambda: window._global_search_popup.current_hot_source() == "tencent")
@@ -1778,7 +1854,7 @@ def test_main_window_global_search_popup_switching_source_updates_config_and_use
     qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
 
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-dsp"])
-    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(1)
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-movie"])
     window._global_search_popup.hot_source_tab_bar.setCurrentIndex(1)
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["tencent-hot"])
@@ -1829,7 +1905,7 @@ def test_main_window_global_search_popup_iqiyi_dynamic_categories_restore_prefer
     qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
 
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-dsp"])
-    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(1)
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-movie"])
     window._global_search_popup.hot_source_tab_bar.setCurrentIndex(2)
 
@@ -1838,6 +1914,106 @@ def test_main_window_global_search_popup_iqiyi_dynamic_categories_restore_prefer
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["iqiyi-movie"])
 
     assert hotkey_calls == [("360", "dsp"), ("360", "movie"), ("iqiyi", "hot"), ("iqiyi", "movie")]
+
+
+def test_main_window_global_search_popup_iqiyi_many_tabs_use_wider_hot_panel(qtbot) -> None:
+    def hotkey_loader(*args):
+        if len(args) == 1:
+            source = "360"
+            hot_type = args[0]
+        else:
+            source, hot_type = args
+        if source == "iqiyi" and hot_type == "hot":
+            return {
+                "source": "iqiyi",
+                "category": "hot",
+                "categories": [
+                    ("hot", "热搜"),
+                    ("movie", "电视剧"),
+                    ("tv", "电影"),
+                    ("variety", "综艺"),
+                    ("comic", "动漫"),
+                    ("doc", "纪录片"),
+                    ("knowledge", "知识"),
+                ],
+                "items": [{"title": "爱奇艺热搜", "query": "爱奇艺热搜"}],
+            }
+        return [{"title": f"{source}-{hot_type}", "query": f"{source}-{hot_type}"}]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"], global_search_hot_source="iqiyi"),
+        global_search_hotkey_loader=hotkey_loader,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_hot_tab_titles(window) == ["热搜", "电视剧", "电影", "综艺", "动漫", "纪录片", "知识"])
+
+    assert window._global_search_popup.width() >= 720
+    assert window._global_search_popup.hot_tab_bar.elideMode() == Qt.TextElideMode.ElideNone
+    assert window._global_search_popup.hot_tab_bar.usesScrollButtons() is True
+
+
+def test_main_window_global_search_popup_tencent_dynamic_categories_restore_preferred_tab(qtbot) -> None:
+    hotkey_calls: list[tuple[str, str]] = []
+
+    def hotkey_loader(*args):
+        if len(args) == 1:
+            source = "360"
+            hot_type = args[0]
+        else:
+            source, hot_type = args
+        hotkey_calls.append((source, hot_type))
+        if source == "tencent" and hot_type == "hot":
+            return {
+                "source": "tencent",
+                "category": "hot",
+                "categories": [("hot", "热搜"), ("movie", "电视剧")],
+                "items": [{"title": "腾讯热搜", "query": "腾讯热搜"}],
+            }
+        return [{"title": f"{source}-{hot_type}", "query": f"{source}-{hot_type}"}]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=hotkey_loader,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-dsp"])
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["360-movie"])
+    window._global_search_popup.hot_source_tab_bar.setCurrentIndex(1)
+
+    qtbot.waitUntil(lambda: _popup_hot_tab_titles(window) == ["热搜", "电视剧"])
+    qtbot.waitUntil(lambda: window._global_search_popup.current_hot_tab_type() == "movie")
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["tencent-movie"])
+
+    assert hotkey_calls == [("360", "dsp"), ("360", "movie"), ("tencent", "hot"), ("tencent", "movie")]
 
 
 def test_main_window_global_search_popup_clicking_history_starts_search(qtbot, monkeypatch) -> None:

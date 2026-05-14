@@ -121,15 +121,15 @@ _SUGGESTION_360_API = "https://sug.so.360.cn/suggest"
 _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE = "360"
 _DEFAULT_GLOBAL_SEARCH_HOT_TYPE = "dsp"
 _GLOBAL_SEARCH_360_HOT_TABS: list[tuple[str, str]] = [
+    ("dsp", "综合"),
     ("movie", "电视剧"),
     ("tv", "电影"),
     ("variety", "综艺"),
     ("comic", "动漫"),
-    ("dsp", "综合视频"),
 ]
 _GLOBAL_SEARCH_HOT_SOURCE_ORDER = ["360", "tencent", "iqiyi"]
 _GLOBAL_SEARCH_HOT_SOURCE_TITLES = {
-    "360": "360",
+    "360": "全网",
     "tencent": "腾讯",
     "iqiyi": "爱奇艺",
 }
@@ -169,6 +169,11 @@ def _normalize_hot_search_items(items: object) -> list[dict[str, str]]:
 
 def _iqiyi_hot_category_key(title: str, index: int) -> str:
     normalized = _coerce_hot_search_text(title)
+    return _global_search_hot_category_key(normalized, index, "iqiyi")
+
+
+def _global_search_hot_category_key(title: str, index: int, source: str) -> str:
+    normalized = _coerce_hot_search_text(title)
     mapping = {
         "热搜": "hot",
         "电视剧": "movie",
@@ -180,7 +185,7 @@ def _iqiyi_hot_category_key(title: str, index: int) -> str:
     if normalized in mapping:
         return mapping[normalized]
     ascii_slug = "".join(ch if ch.isalnum() else "_" for ch in normalized.casefold()).strip("_")
-    return ascii_slug or f"iqiyi_{index}"
+    return ascii_slug or f"{source}_{index}"
 
 
 @dataclass(slots=True)
@@ -256,8 +261,14 @@ def load_360_hot_searches(hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE) -> li
 
 
 def load_tencent_hot_searches(hot_type: str = "hot") -> list[dict[str, str]]:
-    if hot_type != "hot":
+    categories, items_by_category = load_tencent_hot_search_sections()
+    if not categories:
         return []
+    category_key = hot_type if hot_type in {key for key, _ in categories} else categories[0][0]
+    return items_by_category.get(category_key, [])
+
+
+def load_tencent_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str, list[dict[str, str]]]]:
     response = httpx.post(
         _HOTKEY_TENCENT_API,
         headers={
@@ -280,25 +291,32 @@ def load_tencent_hot_searches(hot_type: str = "hot") -> list[dict[str, str]]:
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
-        return []
+        return [], {}
     nav_items = payload.get("data", {}).get("navItemList")
     if not isinstance(nav_items, list):
-        return []
+        return [], {}
+    categories: list[tuple[str, str]] = []
+    items_by_category: dict[str, list[dict[str, str]]] = {}
     for item in nav_items:
         if not isinstance(item, dict):
             continue
-        if _coerce_hot_search_text(item.get("title")) != "热搜":
+        title = _coerce_hot_search_text(item.get("tabName") or item.get("title"))
+        if not title:
             continue
         hot_rank_result = item.get("hotRankResult")
+        normalized: list[dict[str, str]] = []
         if isinstance(hot_rank_result, dict):
-            for key in ("hotRankList", "itemList", "list", "items"):
+            for key in ("rankItemList", "hotRankList", "itemList", "list", "items"):
                 normalized = _normalize_hot_search_items(hot_rank_result.get(key))
                 if normalized:
-                    return normalized
-        normalized = _normalize_hot_search_items(hot_rank_result)
+                    break
+        if not normalized:
+            normalized = _normalize_hot_search_items(hot_rank_result)
         if normalized:
-            return normalized
-    return []
+            category_key = _global_search_hot_category_key(title, len(categories), "tencent")
+            categories.append((category_key, title))
+            items_by_category[category_key] = normalized
+    return categories, items_by_category
 
 
 def load_iqiyi_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str, list[dict[str, str]]]]:
@@ -343,10 +361,15 @@ def load_global_search_hotkey_payload(
     hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE,
 ) -> _GlobalSearchHotkeyLoadResult:
     if source == "tencent":
+        categories, items_by_category = load_tencent_hot_search_sections()
+        if not categories:
+            categories = list(_GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES["tencent"])
+        category_key = hot_type if hot_type in {key for key, _ in categories} else categories[0][0]
         return _GlobalSearchHotkeyLoadResult(
             source=source,
-            category=hot_type,
-            items=load_tencent_hot_searches(hot_type),
+            category=category_key,
+            items=items_by_category.get(category_key, []),
+            categories=categories,
         )
     if source == "iqiyi":
         categories, items_by_category = load_iqiyi_hot_search_sections()
@@ -685,16 +708,18 @@ class GlobalSearchPopup(QWidget):
         self._hot_layout.addWidget(title)
         self.hot_source_tab_bar.setDocumentMode(True)
         self.hot_source_tab_bar.setExpanding(False)
-        self.hot_source_tab_bar.setUsesScrollButtons(False)
+        self.hot_source_tab_bar.setUsesScrollButtons(True)
         self.hot_source_tab_bar.setDrawBase(False)
+        self.hot_source_tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.hot_source_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hot_source_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
         self.hot_source_tab_bar.currentChanged.connect(self._handle_hot_source_tab_changed)
         self._hot_layout.addWidget(self.hot_source_tab_bar)
         self.hot_tab_bar.setDocumentMode(True)
         self.hot_tab_bar.setExpanding(False)
-        self.hot_tab_bar.setUsesScrollButtons(False)
+        self.hot_tab_bar.setUsesScrollButtons(True)
         self.hot_tab_bar.setDrawBase(False)
+        self.hot_tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.hot_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hot_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
         self.hot_tab_bar.currentChanged.connect(self._handle_hot_tab_changed)
@@ -850,7 +875,7 @@ class GlobalSearchPopup(QWidget):
         self.delete_history_requested.emit(keyword)
 
     def show_at(self, global_pos: QPoint, width: int) -> None:
-        popup_width = max(width + 180, 520)
+        popup_width = max(width + 320, 720)
         self.setMinimumWidth(popup_width)
         self.setMaximumWidth(popup_width)
         self.move(global_pos)

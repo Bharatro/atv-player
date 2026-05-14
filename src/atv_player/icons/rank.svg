@@ -1,1 +1,5 @@
-<svg width="36px" height="36px" viewBox="0 0 36 36" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><title>热搜榜</title><defs><rect id="path-1" x="0" y="0" width="36" height="36"></rect></defs><g id="精选页适配尺寸" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><g id="1600（桌面端默认尺寸）" transform="translate(-839.000000, -42.000000)"><g id="编组-4备份-13" transform="translate(541.000000, 30.000000)"><g id="编组-39" transform="translate(298.000000, 12.000000)"><mask id="mask-2" fill="white"><use xlink:href="#path-1"></use></mask><g id="蒙版"></g><g mask="url(#mask-2)" fill="currentColor"><g transform="translate(8.000000, 9.000000)"><rect id="矩形" x="0" y="7" width="3" height="11" rx="1.5"></rect><rect id="矩形备份-22" x="16" y="5" width="3" height="13" rx="1.5"></rect><rect id="矩形备份-21" x="8" y="0" width="3" height="18" rx="1.5"></rect></g></g></g></g></g></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#1f2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 19V11"/>
+  <path d="M12 19V5"/>
+  <path d="M19 19V8"/>
+</svg>
