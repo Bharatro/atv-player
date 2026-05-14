@@ -14,7 +14,7 @@ from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, Dan
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
 from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction, PlaybackDetailField
-from atv_player.plugins.controller import SpiderPluginController
+from atv_player.plugins.controller import SpiderPluginController, _count_danmaku_entries
 
 
 class JsonResponse:
@@ -3668,13 +3668,13 @@ def test_prefetch_next_episode_danmaku_emits_prefetch_start_log() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
     logs: list[str] = []
     controller.set_danmaku_log_handler(logs.append)
-    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
-    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4")
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4", media_title="凡人修仙传")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4", media_title="凡人修仙传")
     controller._maybe_resolve_danmaku = lambda *args, **kwargs: None
 
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
-    assert logs == ["弹幕预下载中: 第2集"]
+    assert logs == ["弹幕预下载中: 凡人修仙传 2集"]
 
 
 def test_prefetch_next_episode_danmaku_skips_log_when_already_resolved() -> None:
@@ -3700,3 +3700,20 @@ def test_prefetch_next_episode_danmaku_passes_is_prefetch_to_maybe_resolve() -> 
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
     assert captured == [{"is_prefetch": True}]
+
+
+def test_count_danmaku_entries_counts_d_elements() -> None:
+    xml = '<?xml version="1.0"?><i><d p="0,1,25,16777215,0,0,0,0">a</d><d p="1,1,25,16777215,0,0,0,0">b</d></i>'
+
+    assert _count_danmaku_entries(xml) == 2
+
+
+def test_count_danmaku_entries_handles_empty_or_missing_d() -> None:
+    assert _count_danmaku_entries("") == 0
+    assert _count_danmaku_entries("<i></i>") == 0
+
+
+def test_count_danmaku_entries_ignores_similar_tags() -> None:
+    xml = "<i><dialog>x</dialog><d p='1'>y</d></i>"
+
+    assert _count_danmaku_entries(xml) == 1
