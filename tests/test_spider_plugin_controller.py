@@ -3553,3 +3553,64 @@ def test_spider_controller_maps_direct_media_urls_from_group_payload() -> None:
     assert request.playlists[0][0].url == "https://media.example/movie.m3u8"
     assert request.playlists[0][0].vod_id == ""
     assert request.playlists[0][0].title == "正片"
+
+
+def test_prefetch_next_episode_danmaku_skips_when_should_not_prefetch() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    e1 = PlayItem(title="1", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="2", url="https://example.com/e2.mp4")
+    captured: list[tuple] = []
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: captured.append((args, kwargs))
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert captured == []
+
+
+def test_prefetch_next_episode_danmaku_skips_when_url_and_vod_id_blank() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="", vod_id="")
+    captured: list[tuple] = []
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: captured.append((args, kwargs))
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert captured == []
+
+
+def test_prefetch_next_episode_danmaku_invokes_resolver_when_eligible() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4")
+    playlist = [e1, e2]
+    captured: list[tuple] = []
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+
+    controller.prefetch_next_episode_danmaku(e2, playlist)
+
+    assert captured == [(e2, "https://example.com/e2.mp4", playlist)]
+
+
+def test_prefetch_next_episode_danmaku_prefers_url_over_vod_id() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4", vod_id="vod-2")
+    captured: list[tuple] = []
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert captured[0][1] == "https://example.com/e2.mp4"
+
+
+def test_prefetch_next_episode_danmaku_falls_back_to_vod_id() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="", vod_id="vod-2")
+    captured: list[tuple] = []
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert captured[0][1] == "vod-2"

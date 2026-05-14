@@ -1200,6 +1200,18 @@ class SpiderPluginController:
             )
         return xml_text
 
+    def prefetch_next_episode_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem],
+    ) -> None:
+        if not _should_prefetch_danmaku(item, playlist):
+            return
+        url = (item.url or item.vod_id or "").strip()
+        if not url:
+            return
+        self._maybe_resolve_danmaku(item, url, playlist)
+
     def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
