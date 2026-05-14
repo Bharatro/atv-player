@@ -322,6 +322,14 @@ def _popup_hot_tab_titles(window: MainWindow) -> list[str]:
     return window._global_search_popup.hot_tab_titles()
 
 
+def _popup_history_row(window: MainWindow, keyword: str):
+    return window._global_search_popup.history_item_row(keyword)
+
+
+def _popup_hot_ranks(window: MainWindow) -> list[str]:
+    return window._global_search_popup.hot_item_ranks()
+
+
 def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
@@ -1754,6 +1762,57 @@ def test_main_window_global_search_popup_history_actions_update_config(qtbot) ->
 
     assert saved["count"] == 2
     assert _popup_history_texts(window) == []
+
+
+def test_main_window_global_search_popup_history_rows_use_fixed_height(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["庆余年"])
+    assert _popup_history_row(window, "庆余年").height() == window._global_search_popup.HISTORY_ITEM_HEIGHT
+
+
+def test_main_window_global_search_popup_hot_items_show_rank_numbers(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=[]),
+        global_search_hotkey_loader=lambda hot_type: [
+            {"title": "热搜一", "query": "热搜一"},
+            {"title": "热搜二", "query": "热搜二"},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一", "热搜二"])
+    assert _popup_hot_ranks(window) == ["01", "02"]
 
 
 def test_main_window_global_search_popup_hides_on_outside_click(qtbot) -> None:
