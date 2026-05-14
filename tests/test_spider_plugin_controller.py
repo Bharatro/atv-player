@@ -2581,6 +2581,527 @@ def test_controller_rebuild_request_auto_loads_danmaku_xml_after_manual_override
     assert second_calls == []
 
 
+def test_controller_rebuild_request_reuses_prefetched_next_episode_danmaku_after_restart(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-next</d></i>'
+    first_calls: list[tuple[str, str]] = []
+    second_calls: list[tuple[str, str]] = []
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            first_calls.append(("search", f"{name}|{reg_src}"))
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第2集", url="https://v.qq.com/ep2")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/ep2",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            first_calls.append(("resolve", page_url))
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            second_calls.append(("search", f"{name}|{reg_src}"))
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            second_calls.append(("search-legacy", f"{name}|{reg_src}"))
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            second_calls.append(("resolve", page_url))
+            raise AssertionError("restart should reuse prefetched next-episode danmaku")
+
+    first_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    second_item = first_request.playlist[1]
+
+    first_controller.prefetch_next_episode_danmaku(second_item, first_request.playlist)
+    _wait_until(lambda: second_item.danmaku_pending is False and second_item.danmaku_xml == xml_text)
+
+    assert first_request.playback_loader is not None
+    first_request.playback_loader(second_item)
+    assert second_item.url == "https://media.example/2.m3u8"
+    assert second_item.danmaku_xml == xml_text
+
+    second_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+    )
+    second_request = second_controller.build_request("/detail/1")
+    restarted_second = second_request.playlist[1]
+
+    assert second_request.playback_loader is not None
+    second_request.playback_loader(restarted_second)
+    _wait_until(lambda: restarted_second.danmaku_pending is False and restarted_second.url != "")
+
+    assert restarted_second.danmaku_xml == xml_text
+    assert second_calls == []
+
+
+def test_controller_rebuild_request_reuses_prefetched_next_episode_danmaku_after_restart_for_playercontent_routes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TwoEpisodeDanmakuSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"https://stream.example{id}.m3u8"}
+
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-playercontent-next</d></i>'
+    first_calls: list[tuple[str, str]] = []
+    second_calls: list[tuple[str, str]] = []
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            first_calls.append(("search", f"{name}|{reg_src}"))
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第2集", url="https://v.qq.com/ep2")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/ep2",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            first_calls.append(("resolve", page_url))
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            second_calls.append(("search", f"{name}|{reg_src}"))
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            second_calls.append(("search-legacy", f"{name}|{reg_src}"))
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            second_calls.append(("resolve", page_url))
+            raise AssertionError("restart should reuse prefetched playerContent next-episode danmaku")
+
+    first_controller = SpiderPluginController(
+        TwoEpisodeDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    prefetched_second = first_request.playlist[1]
+
+    first_controller.prefetch_next_episode_danmaku(prefetched_second, first_request.playlist)
+    _wait_until(lambda: prefetched_second.danmaku_pending is False and prefetched_second.danmaku_xml == xml_text)
+
+    assert first_request.playback_loader is not None
+    first_request.playback_loader(prefetched_second)
+    assert prefetched_second.url == "https://stream.example/play/2.m3u8"
+    assert prefetched_second.danmaku_xml == xml_text
+
+    second_controller = SpiderPluginController(
+        TwoEpisodeDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+    )
+    second_request = second_controller.build_request("/detail/1")
+    restarted_second = second_request.playlist[1]
+
+    assert second_request.playback_loader is not None
+    second_request.playback_loader(restarted_second)
+    _wait_until(lambda: restarted_second.danmaku_pending is False and restarted_second.url != "")
+
+    assert restarted_second.danmaku_xml == xml_text
+    assert second_calls == []
+
+
+def test_controller_rebuild_request_reuses_prefetched_next_episode_danmaku_after_restart_for_drive_replacement_playlist(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-drive-next</d></i>'
+    second_calls: list[tuple[str, str]] = []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {"title": "25集", "url": "http://m/1.mp4", "path": "/S1/1.mp4", "size": 11},
+                        {"title": "26集", "url": "http://m/2.mp4", "path": "/S1/2.mp4", "size": 12},
+                    ],
+                }
+            ]
+        }
+
+    class FirstDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            return [DanmakuSearchItem(provider="tencent", name=name, url="https://v.qq.com/x/cover/demo.html")]
+
+        def resolve_danmu(self, page_url: str) -> str:
+            assert page_url == "https://v.qq.com/x/cover/demo.html"
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            second_calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            second_calls.append(("resolve", page_url))
+            raise AssertionError("restart should reuse prefetched drive next-episode danmaku")
+
+    first_controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/drive")
+    assert first_request.playback_loader is not None
+    first_result = first_request.playback_loader(first_request.playlists[0][0])
+
+    assert first_result is not None
+    first, second = first_result.replacement_playlist
+    _wait_until(lambda: first.danmaku_pending is False and first.danmaku_xml == xml_text)
+
+    first_controller.prefetch_next_episode_danmaku(second, first_result.replacement_playlist)
+    _wait_until(lambda: second.danmaku_pending is False and second.danmaku_xml == xml_text)
+
+    first_request.playback_loader(second)
+    assert second.danmaku_xml == xml_text
+
+    second_controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=SecondDanmakuService(),
+    )
+    second_request = second_controller.build_request("/detail/drive")
+    assert second_request.playback_loader is not None
+    second_result = second_request.playback_loader(second_request.playlists[0][0])
+
+    assert second_result is not None
+    restarted_second = second_result.replacement_playlist[1]
+    second_request.playback_loader(restarted_second)
+    _wait_until(lambda: restarted_second.danmaku_pending is False)
+
+    assert restarted_second.danmaku_xml == xml_text
+    assert second_calls == []
+
+
+def test_controller_rebuild_request_reuses_prefetched_next_episode_danmaku_via_saved_page_url_when_search_cache_misses(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TwoEpisodeDanmakuSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "盗妖行",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第7集$/play/7#第8集$/play/8",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"http://192.168.50.60:4567/p/web{id}"}
+
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-by-page-url</d></i>'
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[DanmakuSourceOption(provider="bilibili", name="《盗妖行》第8话", url="https://www.bilibili.com/video/BVprefetch8")],
+                    )
+                ],
+                default_option_url="https://www.bilibili.com/video/BVprefetch8",
+                default_provider="bilibili",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            assert page_url == "https://www.bilibili.com/video/BVprefetch8"
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            raise AssertionError("restart should use saved page_url xml cache before searching")
+
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            raise AssertionError("restart should use saved page_url xml cache before legacy searching")
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("restart should use cached xml by saved page_url")
+
+    first_controller = SpiderPluginController(
+        TwoEpisodeDanmakuSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    first_request = first_controller.build_request("/detail/1")
+    prefetched_second = first_request.playlist[1]
+
+    first_controller.prefetch_next_episode_danmaku(prefetched_second, first_request.playlist)
+    _wait_until(lambda: prefetched_second.danmaku_pending is False and prefetched_second.danmaku_xml == xml_text)
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: None)
+
+    second_controller = SpiderPluginController(
+        TwoEpisodeDanmakuSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    second_request = second_controller.build_request("/detail/1")
+    restarted_second = second_request.playlist[1]
+
+    assert second_request.playback_loader is not None
+    second_request.playback_loader(restarted_second)
+    _wait_until(lambda: restarted_second.danmaku_pending is False and restarted_second.url != "")
+
+    assert restarted_second.danmaku_xml == xml_text
+
+
+def test_controller_resolve_danmaku_sync_reuses_prefetched_xml_when_reg_src_changes_and_search_cache_misses(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class DanmakuEnabledFakeSpider(FakeSpider):
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: None)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_source_search_result", danmaku_cache_module.save_cached_danmaku_source_search_result)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-by-prefetch-page-url</d></i>'
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[DanmakuSourceOption(provider="bilibili", name="《盗妖行》第8话", url="https://www.bilibili.com/video/BVprefetch8")],
+                    )
+                ],
+                default_option_url="https://www.bilibili.com/video/BVprefetch8",
+                default_provider="bilibili",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            assert page_url == "https://www.bilibili.com/video/BVprefetch8"
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            raise AssertionError("should reuse prefetched xml via saved page_url before searching")
+
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            raise AssertionError("should reuse prefetched xml via saved page_url before legacy searching")
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("should reuse prefetched xml via saved page_url before resolving")
+
+    first_controller = SpiderPluginController(
+        DanmakuEnabledFakeSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    prefetched = PlayItem(title="第8集", url="", vod_id="/prefetch/8", media_title="盗妖行")
+
+    first_controller.prefetch_next_episode_danmaku(prefetched, [PlayItem(title="第7集", url=""), prefetched])
+    _wait_until(lambda: prefetched.danmaku_pending is False and prefetched.danmaku_xml == xml_text)
+
+    second_controller = SpiderPluginController(
+        DanmakuEnabledFakeSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    restarted = PlayItem(
+        title="08-第8话 不止杀人，还会玩人！",
+        url="http://192.168.50.60:4567/p/web/1@111724",
+        media_title="盗妖行",
+    )
+
+    second_controller._resolve_danmaku_sync(restarted, restarted.url, [PlayItem(title="第7集", url="x"), restarted])
+
+    assert restarted.danmaku_xml == xml_text
+
+
 def test_controller_resolves_supported_drive_links_via_backend_detail_loader() -> None:
     spider = DriveLinkSpider()
     drive_calls: list[str] = []
@@ -3966,6 +4487,40 @@ def test_prefetch_next_episode_danmaku_skips_log_when_already_resolved() -> None
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
     assert logs == []
+
+
+def test_prefetch_next_episode_danmaku_skips_when_cached_xml_already_exists(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class DanmakuEnabledFakeSpider(FakeSpider):
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached</d></i>'
+    danmaku_cache_module.save_cached_danmaku_xml("凡人修仙传 5集", "https://example.com/e5.mp4", xml_text)
+
+    controller = SpiderPluginController(
+        DanmakuEnabledFakeSpider(),
+        plugin_name="测试",
+        search_enabled=True,
+        danmaku_service=object(),
+    )
+    logs: list[str] = []
+    captured: list[tuple] = []
+    controller.set_danmaku_log_handler(logs.append)
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: captured.append((args, kwargs))
+    e1 = PlayItem(title="第4集", url="https://example.com/e4.mp4", media_title="凡人修仙传")
+    e2 = PlayItem(title="第5集", url="https://example.com/e5.mp4", media_title="凡人修仙传")
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert e2.danmaku_xml == xml_text
+    assert logs == []
+    assert captured == []
 
 
 def test_prefetch_next_episode_danmaku_passes_is_prefetch_to_maybe_resolve() -> None:
