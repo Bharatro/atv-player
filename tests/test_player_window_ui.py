@@ -45,6 +45,7 @@ class FakePlayerController:
         ending_seconds: int,
         paused: bool,
         force_remote_report: bool = False,
+        duration_seconds: int = 0,
     ) -> None:
         return None
 
@@ -52,6 +53,9 @@ class FakePlayerController:
         return None
 
     def stop_playback(self, session, current_index: int) -> None:
+        return None
+
+    def on_item_started(self, session, current_index: int) -> None:
         return None
 
 
@@ -71,6 +75,7 @@ class RecordingPlayerController(FakePlayerController):
         ending_seconds: int,
         paused: bool,
         force_remote_report: bool = False,
+        duration_seconds: int = 0,
     ) -> None:
         self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds, paused))
         self.force_remote_report_calls.append(force_remote_report)
@@ -12635,6 +12640,7 @@ def test_player_window_play_next_reports_progress_and_stops_without_blocking_ui(
             ending_seconds: int,
             paused: bool,
             force_remote_report: bool = False,
+            duration_seconds: int = 0,
         ) -> None:
             time.sleep(0.15)
             super().report_progress(
@@ -12646,6 +12652,7 @@ def test_player_window_play_next_reports_progress_and_stops_without_blocking_ui(
                 ending_seconds,
                 paused,
                 force_remote_report,
+                duration_seconds=duration_seconds,
             )
 
         def stop_playback(self, session, current_index: int) -> None:
@@ -13217,6 +13224,7 @@ def test_player_window_quit_application_reports_progress_and_stop_without_blocki
             ending_seconds: int,
             paused: bool,
             force_remote_report: bool = False,
+            duration_seconds: int = 0,
         ) -> None:
             time.sleep(0.15)
             super().report_progress(
@@ -13228,6 +13236,7 @@ def test_player_window_quit_application_reports_progress_and_stop_without_blocki
                 ending_seconds,
                 paused,
                 force_remote_report,
+                duration_seconds=duration_seconds,
             )
 
         def stop_playback(self, session, current_index: int) -> None:

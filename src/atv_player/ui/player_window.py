@@ -1657,6 +1657,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 preserve_primary_external_subtitle_selection=preserve_primary_external_subtitle_selection,
             )
             self._refresh_window_title()
+            if self.session is not None:
+                self.controller.on_item_started(self.session, self.current_index)
         except Exception:
             self._restore_or_keep_current_index_after_failure(previous_index)
             raise
@@ -2365,6 +2367,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             paused = not self.is_playing
             session.opening_seconds = opening_seconds
             session.ending_seconds = ending_seconds
+            duration_seconds = self._current_media_duration_seconds()
 
             def report() -> None:
                 self.controller.report_progress(
@@ -2376,6 +2379,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                     ending_seconds=ending_seconds,
                     paused=paused,
                     force_remote_report=force_remote_report,
+                    duration_seconds=duration_seconds,
                 )
 
             self._enqueue_controller_task("进度上报失败", report)
