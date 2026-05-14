@@ -150,7 +150,7 @@ class TestResolve:
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "399+251"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
     def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, service, mock_ytdlp_module):
         info = _sample_info(
@@ -233,7 +233,7 @@ class TestResolve:
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "299+140"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
     def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
         info = _sample_info()
@@ -278,7 +278,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/720-muxed.mp4"
+        assert result.url == "https://www.youtube.com/watch?v=test123"
 
     def test_uses_cached_result_before_ttl_expires(self, mock_ytdlp_module):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
@@ -335,7 +335,7 @@ class TestResolve:
         assert result.duration_seconds == 300
         assert result.extractor == "youtube"
         assert result.headers == {"Referer": "https://www.youtube.com/", "User-Agent": "test"}
-        assert result.ytdl_format == "1080"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
     def test_qualities(self, service, mock_ytdlp_module):
         info = _sample_info()
@@ -465,9 +465,9 @@ class TestResolveToPlayItem:
             "ytdlp_720",
         ]
         assert [quality.ytdl_format for quality in item.playback_qualities] == [
-            "2160-video",
-            "1080-video",
-            "720-muxed",
+            "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best",
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+            "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
         ]
         assert item.selected_playback_quality_id == "ytdlp_1080"
 
@@ -490,7 +490,7 @@ class TestResolveToPlayItem:
         assert len(item.external_subtitles) == 2
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
-        assert item.ytdl_format == "1080"
+        assert item.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
 
 class TestBuildQualityOptions:

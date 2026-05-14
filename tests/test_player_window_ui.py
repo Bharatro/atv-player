@@ -12056,6 +12056,82 @@ def test_player_window_async_session_loader_preserves_resume_offset(qtbot) -> No
     )
 
 
+def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_does_not_restart_on_hydration(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str], str]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}, ytdl_format))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.title = "Hydrated Video"
+        item.media_title = "Hydrated Video"
+        item.headers = {"Referer": "https://www.youtube.com/"}
+        item.playback_qualities = [
+            VideoQualityOption(
+                id="ytdlp_1080",
+                label="1080P",
+                ytdl_format="bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+            )
+        ]
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(
+            title="https://www.youtube.com/watch?v=test123",
+            url="https://www.youtube.com/watch?v=test123",
+            original_url="https://www.youtube.com/watch?v=test123",
+            vod_id="https://www.youtube.com/watch?v=test123",
+            ytdl_format="bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+            selected_playback_quality_id="ytdlp_1080",
+        )
+    ]
+    session.use_local_history = False
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+
+    assert window.video.load_calls == [
+        (
+            "https://www.youtube.com/watch?v=test123",
+            False,
+            0,
+            {},
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+        )
+    ]
+
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
+    assert len(window.video.load_calls) == 1
+
+
 def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_hydration(qtbot, monkeypatch) -> None:
     poster_sources: list[tuple[str, str]] = []
 

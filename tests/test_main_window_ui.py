@@ -1709,13 +1709,19 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
+        def playback_format_selector(self, max_height: int | None = 1080) -> str:
+            return (
+                f"bestvideo[height<={max_height}]+bestaudio/"
+                f"best[height<={max_height}]/bestvideo+bestaudio/best"
+            )
+
         def resolve(self, url: str):
             self.resolve_calls.append(url)
             return type(
                 "Result",
                 (),
                 {
-                    "url": "https://media.example/youtube.mp4",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "https://img.example/poster.jpg",
                     "description": "async description",
@@ -1723,9 +1729,16 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                     "headers": {"Referer": "https://www.youtube.com/"},
                     "subtitles": [],
                     "qualities": [],
+                    "audio_url": "",
+                    "ytdl_format": self.playback_format_selector(1080),
                     "extractor": "youtube",
+                    "selected_quality_id": "ytdlp_1080",
                 },
             )()
+
+        def resolve_for_quality(self, url: str, quality_id: str):
+            assert quality_id == "ytdlp_1080"
+            return self.resolve(url)
 
         def resolve_to_play_item(self, url: str):
             raise AssertionError("resolve_to_play_item should not be used")
@@ -1765,8 +1778,9 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert request.source_mode == "ytdlp"
     assert request.source_vod_id == url
     assert request.async_playback_loader is True
-    assert request.playlist[0].url == ""
+    assert request.playlist[0].url == url
     assert request.playlist[0].original_url == url
+    assert request.playlist[0].selected_playback_quality_id == "ytdlp_1080"
 
     session = type("Session", (), {"vod": request.vod})()
     request.playback_loader(session, request.playlist[0])
@@ -1775,7 +1789,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert session.vod.vod_name == "Async Test Video"
     assert session.vod.vod_pic == "https://img.example/poster.jpg"
     assert session.vod.vod_content == "async description"
-    assert request.playlist[0].url == "https://media.example/youtube.mp4"
+    assert request.playlist[0].url == url
     assert request.playlist[0].headers == {"Referer": "https://www.youtube.com/"}
 
 
@@ -1791,13 +1805,19 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
+        def playback_format_selector(self, max_height: int | None = 1080) -> str:
+            return (
+                f"bestvideo[height<={max_height}]+bestaudio/"
+                f"best[height<={max_height}]/bestvideo+bestaudio/best"
+            )
+
         def resolve(self, url: str):
             self.resolve_calls.append(url)
             return type(
                 "Result",
                 (),
                 {
-                    "url": "https://media.example/youtube-1080.mp4",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -1805,7 +1825,8 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "headers": {},
                     "subtitles": [],
                     "qualities": [],
-                    "audio_url": "https://media.example/youtube-audio.webm",
+                    "audio_url": "",
+                    "ytdl_format": self.playback_format_selector(1080),
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -1817,7 +1838,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 "Result",
                 (),
                 {
-                    "url": "https://media.example/youtube-720.mp4",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -1825,7 +1846,8 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "headers": {},
                     "subtitles": [],
                     "qualities": [],
-                    "audio_url": "https://media.example/youtube-audio.webm",
+                    "audio_url": "",
+                    "ytdl_format": self.playback_format_selector(720),
                     "extractor": "youtube",
                     "selected_quality_id": quality_id,
                 },
@@ -1858,8 +1880,8 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
 
     assert service.resolve_calls == []
     assert service.resolve_for_quality_calls == [("https://www.youtube.com/watch?v=test123", "ytdlp_720")]
-    assert item.url == "https://media.example/youtube-720.mp4"
-    assert item.audio_url == "https://media.example/youtube-audio.webm"
+    assert item.url == "https://www.youtube.com/watch?v=test123"
+    assert item.audio_url == ""
     assert item.selected_playback_quality_id == "ytdlp_720"
 
 
