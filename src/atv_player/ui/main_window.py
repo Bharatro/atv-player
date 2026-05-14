@@ -279,6 +279,93 @@ class GlobalSearchPopup(QWidget):
     delete_history_requested = Signal(str)
     hot_tab_changed = Signal(str)
     HISTORY_ITEM_HEIGHT = 40
+    HOT_ITEM_HEIGHT = 48
+
+    _CONTAINER_QSS = """
+    QWidget#globalSearchPopupContainer {
+        background: #f7f1e8;
+        border: 1px solid #dccfbe;
+        border-radius: 0;
+        color: #2f241c;
+    }
+    """
+    _DIVIDER_QSS = "QFrame { color: #e7d8c8; background: #e7d8c8; min-width: 1px; }"
+    _SECTION_TITLE_QSS = """
+    QLabel {
+        color: #7a5c47;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 1px;
+    }
+    """
+    _ACTION_BUTTON_QSS = """
+    QPushButton {
+        color: #a98268;
+        font-size: 12px;
+        border: none;
+        background: transparent;
+        padding: 0 4px;
+    }
+    QPushButton:hover {
+        color: #8e5f40;
+    }
+    QPushButton:disabled {
+        color: #c7b09c;
+    }
+    """
+    _EMPTY_LABEL_QSS = "QLabel { color: #9a7b63; font-size: 12px; }"
+    _HISTORY_ROW_QSS = """
+    QWidget {
+        background: transparent;
+    }
+    QWidget:hover {
+        background: #efe2d3;
+    }
+    """
+    _HISTORY_BUTTON_QSS = """
+    QPushButton {
+        text-align: left;
+        color: #2f241c;
+        font-size: 13px;
+        border: none;
+        background: transparent;
+        padding: 0;
+    }
+    """
+    _HOT_TAB_QSS = """
+    QTabBar::tab {
+        background: transparent;
+        color: #866652;
+        padding: 8px 12px;
+        margin-right: 6px;
+        border: none;
+    }
+    QTabBar::tab:selected {
+        background: #ead2bb;
+        color: #7f4d2a;
+        font-weight: 600;
+    }
+    """
+    _HOT_ROW_QSS = """
+    QWidget {
+        background: transparent;
+    }
+    QWidget:hover {
+        background: #f2dfcc;
+    }
+    """
+    _HOT_RANK_QSS = "QLabel { color: #b06b3c; font-weight: 700; font-size: 12px; }"
+    _HOT_BUTTON_QSS = """
+    QPushButton {
+        text-align: left;
+        color: #2d2017;
+        font-size: 14px;
+        font-weight: 600;
+        border: none;
+        background: transparent;
+        padding: 0;
+    }
+    """
 
     HOT_TABS: list[tuple[str, str]] = [
         ("movie", "电视剧"),
@@ -294,24 +381,21 @@ class GlobalSearchPopup(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.clear_history_button: QPushButton | None = None
         self.hot_tab_bar = QTabBar(self)
+        self._history_title_label: QLabel | None = None
+        self._hot_title_label: QLabel | None = None
         self._history_item_buttons: dict[str, QPushButton] = {}
+        self._history_item_rows: dict[str, QWidget] = {}
         self._hot_item_buttons: dict[str, QPushButton] = {}
         self._history_delete_buttons: dict[str, QPushButton] = {}
         self._hot_tab_types: list[str] = []
         self._hot_item_texts: list[str] = []
+        self._hot_rank_labels: list[QLabel] = []
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._container = QWidget(self)
-        self._container.setStyleSheet(
-            """
-            QWidget {
-                background: #ffffff;
-                border: 1px solid #d0d7de;
-                border-radius: 0;
-            }
-            """
-        )
+        self._container.setObjectName("globalSearchPopupContainer")
+        self._container.setStyleSheet(self._CONTAINER_QSS)
         self._container_layout = QHBoxLayout(self._container)
         self._container_layout.setContentsMargins(0, 0, 0, 0)
         self._container_layout.setSpacing(0)
@@ -325,7 +409,7 @@ class GlobalSearchPopup(QWidget):
 
         separator = QFrame(self._container)
         separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setStyleSheet("QFrame { color: #e5e7eb; }")
+        separator.setStyleSheet(self._DIVIDER_QSS)
         self._container_layout.addWidget(separator)
 
         self._hot_panel = QWidget(self._container)
@@ -361,6 +445,12 @@ class GlobalSearchPopup(QWidget):
     def history_delete_button(self, keyword: str) -> QPushButton:
         return self._history_delete_buttons[keyword]
 
+    def history_item_row(self, text: str) -> QWidget:
+        return self._history_item_rows[text]
+
+    def hot_item_ranks(self) -> list[str]:
+        return [label.text() for label in self._hot_rank_labels]
+
     def set_sections(self, history: list[str], hot_type: str, hotkeys: list[dict[str, str]]) -> None:
         self._set_history_items(history)
         self._set_hot_type(hot_type)
@@ -370,29 +460,37 @@ class GlobalSearchPopup(QWidget):
     def _build_history_panel(self) -> None:
         title_widget = QWidget(self._history_panel)
         title_layout = QHBoxLayout(title_widget)
-        title_layout.setContentsMargins(12, 10, 12, 8)
-        title_layout.addWidget(QLabel("搜索历史", title_widget))
+        title_layout.setContentsMargins(16, 14, 16, 10)
+        title = QLabel("搜索历史", title_widget)
+        title.setStyleSheet(self._SECTION_TITLE_QSS)
+        self._history_title_label = title
+        title_layout.addWidget(title)
         title_layout.addStretch(1)
         clear_button = QPushButton("清空", title_widget)
         clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_button.setFlat(True)
+        clear_button.setStyleSheet(self._ACTION_BUTTON_QSS)
         clear_button.clicked.connect(self._on_clear_clicked)
         title_layout.addWidget(clear_button)
         self.clear_history_button = clear_button
         self._history_layout.addWidget(title_widget)
         self._history_items_widget = QWidget(self._history_panel)
         self._history_items_layout = QVBoxLayout(self._history_items_widget)
-        self._history_items_layout.setContentsMargins(0, 0, 0, 8)
+        self._history_items_layout.setContentsMargins(8, 0, 8, 12)
         self._history_items_layout.setSpacing(0)
         self._history_layout.addWidget(self._history_items_widget, 1)
 
     def _build_hot_panel(self) -> None:
         title = QLabel("热搜", self._hot_panel)
-        title.setContentsMargins(12, 10, 12, 8)
+        title.setContentsMargins(16, 14, 16, 10)
+        title.setStyleSheet(self._SECTION_TITLE_QSS)
+        self._hot_title_label = title
         self._hot_layout.addWidget(title)
         self.hot_tab_bar.setDocumentMode(True)
         self.hot_tab_bar.setExpanding(False)
         self.hot_tab_bar.setUsesScrollButtons(False)
+        self.hot_tab_bar.setDrawBase(False)
+        self.hot_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
         for hot_type, title_text in self.HOT_TABS:
             self._hot_tab_types.append(hot_type)
             self.hot_tab_bar.addTab(title_text)
@@ -400,13 +498,14 @@ class GlobalSearchPopup(QWidget):
         self._hot_layout.addWidget(self.hot_tab_bar)
         self._hot_items_widget = QWidget(self._hot_panel)
         self._hot_items_layout = QVBoxLayout(self._hot_items_widget)
-        self._hot_items_layout.setContentsMargins(0, 8, 0, 8)
+        self._hot_items_layout.setContentsMargins(8, 10, 8, 12)
         self._hot_items_layout.setSpacing(0)
         self._hot_layout.addWidget(self._hot_items_widget, 1)
 
     def _set_history_items(self, history: list[str]) -> None:
         self._clear_layout(self._history_items_layout)
         self._history_item_buttons = {}
+        self._history_item_rows = {}
         self._history_delete_buttons = {}
         history_exists = False
         for keyword in history:
@@ -417,8 +516,8 @@ class GlobalSearchPopup(QWidget):
             self._add_history_item(normalized)
         if not history_exists:
             empty_label = QLabel("暂无搜索历史", self._history_items_widget)
-            empty_label.setContentsMargins(12, 10, 12, 10)
-            empty_label.setStyleSheet("color: #6b7280;")
+            empty_label.setContentsMargins(8, 12, 8, 10)
+            empty_label.setStyleSheet(self._EMPTY_LABEL_QSS)
             self._history_items_layout.addWidget(empty_label)
         if self.clear_history_button is not None:
             self.clear_history_button.setEnabled(history_exists)
@@ -436,52 +535,71 @@ class GlobalSearchPopup(QWidget):
         self._clear_layout(self._hot_items_layout)
         self._hot_item_buttons = {}
         self._hot_item_texts = []
+        self._hot_rank_labels = []
         hotkey_exists = False
-        for item in hotkeys[:10]:
+        for index, item in enumerate(hotkeys[:10], start=1):
             title = str(item.get("title") or "").strip()
             query = str(item.get("query") or item.get("title") or "").strip()
             if not title or not query:
                 continue
             hotkey_exists = True
-            self._add_hot_item(title, query)
+            self._add_hot_item(index, title, query)
         if not hotkey_exists:
             empty_label = QLabel("暂无热搜词", self._hot_items_widget)
-            empty_label.setContentsMargins(12, 10, 12, 10)
-            empty_label.setStyleSheet("color: #6b7280;")
+            empty_label.setContentsMargins(8, 12, 8, 10)
+            empty_label.setStyleSheet(self._EMPTY_LABEL_QSS)
             self._hot_items_layout.addWidget(empty_label)
 
     def _add_history_item(self, keyword: str) -> None:
         row = QWidget(self._history_items_widget)
         row.setFixedHeight(self.HISTORY_ITEM_HEIGHT)
+        row.setStyleSheet(self._HISTORY_ROW_QSS)
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(8, 2, 8, 2)
-        row_layout.setSpacing(4)
+        row_layout.setContentsMargins(12, 4, 10, 4)
+        row_layout.setSpacing(8)
         item_button = QPushButton(keyword, row)
         item_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
         item_button.setCursor(Qt.CursorShape.PointingHandCursor)
         item_button.setFlat(True)
-        item_button.setStyleSheet("QPushButton { text-align: left; padding: 8px 4px; border: none; } QPushButton:hover { background: #f3f4f6; }")
+        item_button.setStyleSheet(self._HISTORY_BUTTON_QSS)
         item_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_item_clicked(current_keyword))
         delete_button = QPushButton("删除", row)
         delete_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
         delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_button.setFlat(True)
+        delete_button.setStyleSheet(self._ACTION_BUTTON_QSS)
         delete_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_delete_clicked(current_keyword))
         row_layout.addWidget(item_button, 1)
         row_layout.addWidget(delete_button)
         self._history_item_buttons[keyword] = item_button
+        self._history_item_rows[keyword] = row
         self._history_delete_buttons[keyword] = delete_button
         self._history_items_layout.addWidget(row)
 
-    def _add_hot_item(self, text: str, query: str) -> None:
-        button = QPushButton(text, self._hot_items_widget)
+    def _add_hot_item(self, index: int, text: str, query: str) -> None:
+        row = QWidget(self._hot_items_widget)
+        row.setFixedHeight(self.HOT_ITEM_HEIGHT)
+        row.setStyleSheet(self._HOT_ROW_QSS)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 6, 12, 6)
+        row_layout.setSpacing(10)
+
+        rank_label = QLabel(f"{index:02d}", row)
+        rank_label.setStyleSheet(self._HOT_RANK_QSS)
+
+        button = QPushButton(text, row)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFlat(True)
-        button.setStyleSheet("QPushButton { text-align: left; padding: 8px 12px; border: none; } QPushButton:hover { background: #f3f4f6; }")
+        button.setStyleSheet(self._HOT_BUTTON_QSS)
         button.clicked.connect(lambda checked=False, current_query=query: self._on_item_clicked(current_query))
+
+        row_layout.addWidget(rank_label)
+        row_layout.addWidget(button, 1)
+
+        self._hot_rank_labels.append(rank_label)
         self._hot_item_buttons[text] = button
         self._hot_item_texts.append(text)
-        self._hot_items_layout.addWidget(button)
+        self._hot_items_layout.addWidget(row)
 
     @staticmethod
     def _clear_layout(layout) -> None:
