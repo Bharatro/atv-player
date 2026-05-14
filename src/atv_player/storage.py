@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from atv_player.models import AppConfig
@@ -54,6 +55,25 @@ def _normalize_danmaku_font_size(value: object) -> int:
     return max(16, min(normalized, 72))
 
 
+def _normalize_global_search_history(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    history: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        history.append(text)
+        seen.add(text)
+    return history[:10]
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -105,7 +125,8 @@ class SettingsRepository:
                     browse_content_splitter_state BLOB,
                     last_selected_tab TEXT NOT NULL DEFAULT 'douban',
                     last_selected_category_tab TEXT NOT NULL DEFAULT '',
-                    last_selected_category_id TEXT NOT NULL DEFAULT ''
+                    last_selected_category_id TEXT NOT NULL DEFAULT '',
+                    global_search_history TEXT NOT NULL DEFAULT '[]'
                 )
                 """
             )
@@ -221,6 +242,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_selected_category_id TEXT NOT NULL DEFAULT ''"
                 )
+            if "global_search_history" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN global_search_history TEXT NOT NULL DEFAULT '[]'"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -257,12 +282,13 @@ class SettingsRepository:
                     browse_content_splitter_state,
                     last_selected_tab,
                     last_selected_category_tab,
-                    last_selected_category_id
+                    last_selected_category_id,
+                    global_search_history
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
-                    NULL, NULL, NULL, NULL, 'douban', '', ''
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -305,7 +331,8 @@ class SettingsRepository:
                     browse_content_splitter_state,
                     last_selected_tab,
                     last_selected_category_tab,
-                    last_selected_category_id
+                    last_selected_category_id,
+                    global_search_history
                 FROM app_config
                 WHERE id = 1
                 """
@@ -345,6 +372,7 @@ class SettingsRepository:
             last_selected_tab,
             last_selected_category_tab,
             last_selected_category_id,
+            global_search_history,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -380,6 +408,7 @@ class SettingsRepository:
             last_selected_tab=last_selected_tab,
             last_selected_category_tab=last_selected_category_tab,
             last_selected_category_id=last_selected_category_id,
+            global_search_history=_normalize_global_search_history(global_search_history),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -420,7 +449,8 @@ class SettingsRepository:
                     browse_content_splitter_state = ?,
                     last_selected_tab = ?,
                     last_selected_category_tab = ?,
-                    last_selected_category_id = ?
+                    last_selected_category_id = ?,
+                    global_search_history = ?
                 WHERE id = 1
                 """,
                 (
@@ -457,6 +487,7 @@ class SettingsRepository:
                     config.last_selected_tab,
                     config.last_selected_category_tab,
                     config.last_selected_category_id,
+                    json.dumps(_normalize_global_search_history(config.global_search_history), ensure_ascii=False),
                 ),
             )
 

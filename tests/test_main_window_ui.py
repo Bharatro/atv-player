@@ -3,6 +3,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
 
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
@@ -303,6 +304,22 @@ class SearchableResolveController(SearchableController):
 
 def _vod(name: str, vod_id: str | None = None, remarks: str = "") -> VodItem:
     return VodItem(vod_id=vod_id or name, vod_name=name, vod_pic="", vod_remarks=remarks)
+
+
+def _popup_history_texts(window: MainWindow) -> list[str]:
+    return window._global_search_popup.history_item_texts()
+
+
+def _popup_delete_button(window: MainWindow, keyword: str):
+    return window._global_search_popup.history_delete_button(keyword)
+
+
+def _popup_hot_texts(window: MainWindow) -> list[str]:
+    return window._global_search_popup.hot_item_texts()
+
+
+def _popup_hot_tab_titles(window: MainWindow) -> list[str]:
+    return window._global_search_popup.hot_tab_titles()
 
 
 def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
@@ -1547,6 +1564,318 @@ def test_main_window_global_search_prefers_inferred_page_size(qtbot) -> None:
 
     qtbot.waitUntil(lambda: [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 2-last"])
     assert window.telegram_page.page_label.text() == "第 2 / 3 页"
+
+
+def test_main_window_global_search_popup_does_not_open_on_focus(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年", "琅琊榜"]),
+        global_search_hotkey_loader=lambda hot_type: [{"title": "热搜一", "query": "热搜一"}],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window.global_search_edit.setFocus()
+    qtbot.wait(50)
+
+    assert window._global_search_popup.isVisible() is False
+
+
+def test_main_window_global_search_popup_button_opens_history_and_default_hot_tab(qtbot) -> None:
+    hotkey_calls: list[str] = []
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年", "琅琊榜"]),
+        global_search_hotkey_loader=lambda hot_type: hotkey_calls.append(hot_type) or [
+            {"title": "热搜一", "query": "热搜一"},
+            {"title": f"综合-{hot_type}", "query": "综合视频"},
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window._global_search_popup.isVisible() is True)
+    qtbot.waitUntil(lambda: hotkey_calls == ["dsp"])
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一", "综合-dsp"])
+    assert _popup_history_texts(window) == ["庆余年", "琅琊榜"]
+    assert _popup_hot_tab_titles(window) == ["电视剧", "电影", "综艺", "动漫", "综合视频"]
+    assert window._global_search_popup.current_hot_tab_type() == "dsp"
+
+
+def test_main_window_global_search_popup_switches_hot_tabs_and_caches_results(qtbot) -> None:
+    hotkey_calls: list[str] = []
+
+    def hotkey_loader(hot_type: str) -> list[dict[str, str]]:
+        hotkey_calls.append(hot_type)
+        return [{"title": f"{hot_type}-热搜", "query": f"{hot_type}-查询"}]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=hotkey_loader,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: hotkey_calls == ["dsp"])
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["dsp-热搜"])
+
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+
+    qtbot.waitUntil(lambda: hotkey_calls == ["dsp", "movie"])
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["movie-热搜"])
+
+    window._global_search_popup.hot_tab_bar.setCurrentIndex(0)
+    qtbot.wait(50)
+
+    assert hotkey_calls == ["dsp", "movie"]
+
+
+def test_main_window_global_search_popup_clicking_history_starts_search(qtbot, monkeypatch) -> None:
+    started_keywords: list[str] = []
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["庆余年"])
+    qtbot.mouseClick(window._global_search_popup.history_item_button("庆余年"), Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: started_keywords == ["庆余年"])
+    assert window.global_search_edit.text() == "庆余年"
+    assert window._global_search_popup.isVisible() is False
+
+
+def test_main_window_global_search_popup_clicking_hot_item_starts_search(qtbot, monkeypatch) -> None:
+    started_keywords: list[str] = []
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=[]),
+        global_search_hotkey_loader=lambda hot_type: [{"title": "热搜一", "query": "热搜一"}],
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一"])
+    qtbot.mouseClick(window._global_search_popup.hot_item_button("热搜一"), Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: started_keywords == ["热搜一"])
+    assert window.global_search_edit.text() == "热搜一"
+    assert window._global_search_popup.isVisible() is False
+
+
+def test_main_window_global_search_popup_history_actions_update_config(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig(global_search_history=["庆余年", "琅琊榜"])
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["庆余年", "琅琊榜"])
+    qtbot.mouseClick(_popup_delete_button(window, "庆余年"), Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: config.global_search_history == ["琅琊榜"])
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["琅琊榜"])
+    qtbot.mouseClick(window._global_search_popup.clear_history_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: config.global_search_history == [])
+
+    assert saved["count"] == 2
+    assert _popup_history_texts(window) == []
+
+
+def test_main_window_global_search_popup_hides_on_outside_click(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["庆余年"])
+    window._handle_global_search_global_mouse_press(window.mapToGlobal(window.rect().bottomRight()) + main_window_module.QPoint(20, 20))
+
+    assert window._global_search_popup.isVisible() is False
+
+
+def test_main_window_global_search_popup_hides_when_toggling_button(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=["庆余年"]),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: _popup_history_texts(window) == ["庆余年"])
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    assert window._global_search_popup.isVisible() is False
+
+
+def test_main_window_global_search_records_history_and_deduplicates(qtbot) -> None:
+    telegram = SearchableController([])
+    config = AppConfig(global_search_history=["庆余年", "琅琊榜"])
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("繁花")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: telegram.search_calls == [("繁花", 1)])
+
+    window._clear_global_search()
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+    qtbot.waitUntil(lambda: telegram.search_calls == [("繁花", 1), ("庆余年", 1)])
+
+    assert config.global_search_history == ["庆余年", "繁花", "琅琊榜"]
+
+
+def test_main_window_global_search_does_not_record_direct_open_url_history(qtbot, monkeypatch) -> None:
+    opened: list[OpenPlayerRequest] = []
+    config = AppConfig(global_search_history=["庆余年"])
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        drive_detail_loader=lambda link: {
+            "list": [
+                {
+                    "vod_id": "1$91792$1",
+                    "vod_name": "夸克资源",
+                    "vod_play_url": "第1集$https://media.example/quark-1.m3u8",
+                }
+            ]
+        },
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("https://pan.quark.cn/s/demo")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+    assert config.global_search_history == ["庆余年"]
 
 
 def test_main_window_global_search_includes_pansou_when_enabled(qtbot) -> None:

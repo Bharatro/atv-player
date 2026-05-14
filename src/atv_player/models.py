@@ -43,6 +43,7 @@ class AppConfig:
     last_selected_tab: str = "douban"
     last_selected_category_tab: str = ""
     last_selected_category_id: str = ""
+    global_search_history: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

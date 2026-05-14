@@ -7,10 +7,11 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -112,6 +113,9 @@ _SUPPORTED_DRIVE_DOMAINS = (
     "baidu.com",
 )
 _DIRECT_PARSE_DETAIL_API = "https://dmku.hls.one/"
+_HOTKEY_360_API = "http://api.xcvts.cn/api/hotlist/360so_juhe"
+_SUGGESTION_360_API = "https://sug.so.360.cn/suggest"
+_DEFAULT_GLOBAL_SEARCH_HOT_TYPE = "dsp"
 
 
 def _plugin_value(definition: Any, key: str):
@@ -153,6 +157,58 @@ def load_direct_parse_detail(url: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def load_360_hot_searches(hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE) -> list[dict[str, str]]:
+    response = httpx.get(
+        _HOTKEY_360_API,
+        params={"type": hot_type},
+        timeout=5.0,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("data")
+    if not isinstance(items, list):
+        return []
+    hotkeys: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        hotkeys.append({"title": title, "query": title})
+    return hotkeys
+
+
+def load_360_search_suggestions(keyword: str) -> list[str]:
+    response = httpx.get(
+        _SUGGESTION_360_API,
+        params={"word": keyword, "encodein": "utf-8", "encodeout": "utf-8"},
+        timeout=5.0,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("result")
+    if not isinstance(items, list):
+        return []
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("word") or "").strip()
+        if not text or text in seen:
+            continue
+        suggestions.append(text)
+        seen.add(text)
+    return suggestions
+
+
 class _PluginController(Protocol):
     def load_categories(self): ...
 
@@ -185,6 +241,277 @@ class _StartupPluginLoadSignals(QObject):
     loaded = Signal(int, object)
     finished = Signal(int)
     failed = Signal(int, str)
+
+
+class _GlobalSearchPopupSignals(QObject):
+    hotkeys_loaded = Signal(int, str, object)
+
+
+class SearchInputWithHotkey(QLineEdit):
+    focus_gained = Signal()
+    focus_lost = Signal()
+    escape_pressed = Signal()
+    pressed = Signal()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.focus_gained.emit()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.focus_lost.emit()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.pressed.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.escape_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class GlobalSearchPopup(QWidget):
+    item_clicked = Signal(str)
+    clear_history_requested = Signal()
+    delete_history_requested = Signal(str)
+    hot_tab_changed = Signal(str)
+    HISTORY_ITEM_HEIGHT = 40
+
+    HOT_TABS: list[tuple[str, str]] = [
+        ("movie", "电视剧"),
+        ("tv", "电影"),
+        ("variety", "综艺"),
+        ("comic", "动漫"),
+        ("dsp", "综合视频"),
+    ]
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.clear_history_button: QPushButton | None = None
+        self.hot_tab_bar = QTabBar(self)
+        self._history_item_buttons: dict[str, QPushButton] = {}
+        self._hot_item_buttons: dict[str, QPushButton] = {}
+        self._history_delete_buttons: dict[str, QPushButton] = {}
+        self._hot_tab_types: list[str] = []
+        self._hot_item_texts: list[str] = []
+
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._container = QWidget(self)
+        self._container.setStyleSheet(
+            """
+            QWidget {
+                background: #ffffff;
+                border: 1px solid #d0d7de;
+                border-radius: 0;
+            }
+            """
+        )
+        self._container_layout = QHBoxLayout(self._container)
+        self._container_layout.setContentsMargins(0, 0, 0, 0)
+        self._container_layout.setSpacing(0)
+        self._main_layout.addWidget(self._container)
+
+        self._history_panel = QWidget(self._container)
+        self._history_layout = QVBoxLayout(self._history_panel)
+        self._history_layout.setContentsMargins(0, 0, 0, 0)
+        self._history_layout.setSpacing(0)
+        self._container_layout.addWidget(self._history_panel, 1)
+
+        separator = QFrame(self._container)
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setStyleSheet("QFrame { color: #e5e7eb; }")
+        self._container_layout.addWidget(separator)
+
+        self._hot_panel = QWidget(self._container)
+        self._hot_layout = QVBoxLayout(self._hot_panel)
+        self._hot_layout.setContentsMargins(0, 0, 0, 0)
+        self._hot_layout.setSpacing(0)
+        self._container_layout.addWidget(self._hot_panel, 1)
+
+        self._build_history_panel()
+        self._build_hot_panel()
+
+    def history_item_texts(self) -> list[str]:
+        return [button.text() for button in self._history_item_buttons.values()]
+
+    def hot_item_texts(self) -> list[str]:
+        return list(self._hot_item_texts)
+
+    def hot_tab_titles(self) -> list[str]:
+        return [self.hot_tab_bar.tabText(index) for index in range(self.hot_tab_bar.count())]
+
+    def current_hot_tab_type(self) -> str:
+        index = self.hot_tab_bar.currentIndex()
+        if index < 0 or index >= len(self._hot_tab_types):
+            return ""
+        return self._hot_tab_types[index]
+
+    def history_item_button(self, text: str) -> QPushButton:
+        return self._history_item_buttons[text]
+
+    def hot_item_button(self, text: str) -> QPushButton:
+        return self._hot_item_buttons[text]
+
+    def history_delete_button(self, keyword: str) -> QPushButton:
+        return self._history_delete_buttons[keyword]
+
+    def set_sections(self, history: list[str], hot_type: str, hotkeys: list[dict[str, str]]) -> None:
+        self._set_history_items(history)
+        self._set_hot_type(hot_type)
+        self._set_hot_items(hotkeys)
+        self.adjustSize()
+
+    def _build_history_panel(self) -> None:
+        title_widget = QWidget(self._history_panel)
+        title_layout = QHBoxLayout(title_widget)
+        title_layout.setContentsMargins(12, 10, 12, 8)
+        title_layout.addWidget(QLabel("搜索历史", title_widget))
+        title_layout.addStretch(1)
+        clear_button = QPushButton("清空", title_widget)
+        clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_button.setFlat(True)
+        clear_button.clicked.connect(self._on_clear_clicked)
+        title_layout.addWidget(clear_button)
+        self.clear_history_button = clear_button
+        self._history_layout.addWidget(title_widget)
+        self._history_items_widget = QWidget(self._history_panel)
+        self._history_items_layout = QVBoxLayout(self._history_items_widget)
+        self._history_items_layout.setContentsMargins(0, 0, 0, 8)
+        self._history_items_layout.setSpacing(0)
+        self._history_layout.addWidget(self._history_items_widget, 1)
+
+    def _build_hot_panel(self) -> None:
+        title = QLabel("热搜", self._hot_panel)
+        title.setContentsMargins(12, 10, 12, 8)
+        self._hot_layout.addWidget(title)
+        self.hot_tab_bar.setDocumentMode(True)
+        self.hot_tab_bar.setExpanding(False)
+        self.hot_tab_bar.setUsesScrollButtons(False)
+        for hot_type, title_text in self.HOT_TABS:
+            self._hot_tab_types.append(hot_type)
+            self.hot_tab_bar.addTab(title_text)
+        self.hot_tab_bar.currentChanged.connect(self._handle_hot_tab_changed)
+        self._hot_layout.addWidget(self.hot_tab_bar)
+        self._hot_items_widget = QWidget(self._hot_panel)
+        self._hot_items_layout = QVBoxLayout(self._hot_items_widget)
+        self._hot_items_layout.setContentsMargins(0, 8, 0, 8)
+        self._hot_items_layout.setSpacing(0)
+        self._hot_layout.addWidget(self._hot_items_widget, 1)
+
+    def _set_history_items(self, history: list[str]) -> None:
+        self._clear_layout(self._history_items_layout)
+        self._history_item_buttons = {}
+        self._history_delete_buttons = {}
+        history_exists = False
+        for keyword in history:
+            normalized = keyword.strip()
+            if not normalized:
+                continue
+            history_exists = True
+            self._add_history_item(normalized)
+        if not history_exists:
+            empty_label = QLabel("暂无搜索历史", self._history_items_widget)
+            empty_label.setContentsMargins(12, 10, 12, 10)
+            empty_label.setStyleSheet("color: #6b7280;")
+            self._history_items_layout.addWidget(empty_label)
+        if self.clear_history_button is not None:
+            self.clear_history_button.setEnabled(history_exists)
+
+    def _set_hot_type(self, hot_type: str) -> None:
+        try:
+            index = self._hot_tab_types.index(hot_type)
+        except ValueError:
+            index = self._hot_tab_types.index(_DEFAULT_GLOBAL_SEARCH_HOT_TYPE)
+        self.hot_tab_bar.blockSignals(True)
+        self.hot_tab_bar.setCurrentIndex(index)
+        self.hot_tab_bar.blockSignals(False)
+
+    def _set_hot_items(self, hotkeys: list[dict[str, str]]) -> None:
+        self._clear_layout(self._hot_items_layout)
+        self._hot_item_buttons = {}
+        self._hot_item_texts = []
+        hotkey_exists = False
+        for item in hotkeys[:10]:
+            title = str(item.get("title") or "").strip()
+            query = str(item.get("query") or item.get("title") or "").strip()
+            if not title or not query:
+                continue
+            hotkey_exists = True
+            self._add_hot_item(title, query)
+        if not hotkey_exists:
+            empty_label = QLabel("暂无热搜词", self._hot_items_widget)
+            empty_label.setContentsMargins(12, 10, 12, 10)
+            empty_label.setStyleSheet("color: #6b7280;")
+            self._hot_items_layout.addWidget(empty_label)
+
+    def _add_history_item(self, keyword: str) -> None:
+        row = QWidget(self._history_items_widget)
+        row.setFixedHeight(self.HISTORY_ITEM_HEIGHT)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(8, 2, 8, 2)
+        row_layout.setSpacing(4)
+        item_button = QPushButton(keyword, row)
+        item_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
+        item_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        item_button.setFlat(True)
+        item_button.setStyleSheet("QPushButton { text-align: left; padding: 8px 4px; border: none; } QPushButton:hover { background: #f3f4f6; }")
+        item_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_item_clicked(current_keyword))
+        delete_button = QPushButton("删除", row)
+        delete_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
+        delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_button.setFlat(True)
+        delete_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_delete_clicked(current_keyword))
+        row_layout.addWidget(item_button, 1)
+        row_layout.addWidget(delete_button)
+        self._history_item_buttons[keyword] = item_button
+        self._history_delete_buttons[keyword] = delete_button
+        self._history_items_layout.addWidget(row)
+
+    def _add_hot_item(self, text: str, query: str) -> None:
+        button = QPushButton(text, self._hot_items_widget)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFlat(True)
+        button.setStyleSheet("QPushButton { text-align: left; padding: 8px 12px; border: none; } QPushButton:hover { background: #f3f4f6; }")
+        button.clicked.connect(lambda checked=False, current_query=query: self._on_item_clicked(current_query))
+        self._hot_item_buttons[text] = button
+        self._hot_item_texts.append(text)
+        self._hot_items_layout.addWidget(button)
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def _handle_hot_tab_changed(self, index: int) -> None:
+        if 0 <= index < len(self._hot_tab_types):
+            self.hot_tab_changed.emit(self._hot_tab_types[index])
+
+    def _on_item_clicked(self, query: str) -> None:
+        self.hide()
+        self.item_clicked.emit(query)
+
+    def _on_clear_clicked(self) -> None:
+        self.hide()
+        self.clear_history_requested.emit()
+
+    def _on_delete_clicked(self, keyword: str) -> None:
+        self.delete_history_requested.emit(keyword)
+
+    def show_at(self, global_pos: QPoint, width: int) -> None:
+        popup_width = max(width + 180, 520)
+        self.setMinimumWidth(popup_width)
+        self.setMaximumWidth(popup_width)
+        self.move(global_pos)
+        self.show()
+        self.raise_()
 
 
 @dataclass(slots=True)
@@ -331,6 +658,7 @@ class _NavigationTabs(QWidget):
 class MainWindow(QMainWindow, AsyncGuardMixin):
     logout_requested = Signal()
     _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
+    _SEARCH_POPUP_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "queue.svg"
 
     def __init__(
             self,
@@ -358,6 +686,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             direct_parse_playback_history_loader=None,
             direct_parse_playback_history_saver=None,
             default_video_cover_loader=None,
+            global_search_hotkey_loader=None,
+            global_search_suggestion_loader=None,
             show_bilibili_tab: bool = False,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
@@ -382,6 +712,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._direct_parse_playback_history_loader = direct_parse_playback_history_loader
         self._direct_parse_playback_history_saver = direct_parse_playback_history_saver
         self._default_video_cover_loader = default_video_cover_loader
+        self._global_search_hotkey_loader = global_search_hotkey_loader or load_360_hot_searches
+        self._global_search_suggestion_loader = global_search_suggestion_loader or load_360_search_suggestions
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self._static_tab_definitions: list[_TabDefinition] = []
@@ -409,10 +741,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._plugin_overflow_drawer.hide()
         self._startup_plugin_placeholder_page = QWidget(self)
         self.global_search_container = QWidget()
-        self.global_search_edit = QLineEdit()
+        self.global_search_edit = SearchInputWithHotkey()
         self.global_search_button = QPushButton("搜索")
+        self.global_search_popup_button = QPushButton("")
         self.global_search_clear_button = QPushButton("清空")
         self.global_search_status_label = QLabel("")
+        self._global_search_popup = GlobalSearchPopup()
         self.startup_plugin_status_label = QLabel("")
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
@@ -551,6 +885,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._global_search_active = False
         self._global_search_in_progress = False
         self._global_search_keyword = ""
+        self._global_search_popup_signals = _GlobalSearchPopupSignals()
+        self._connect_async_signal(self._global_search_popup_signals.hotkeys_loaded, self._handle_global_search_hotkeys_loaded)
+        self._global_search_hotkey_request_id = 0
+        self._global_search_hotkey_cache: dict[str, list[dict[str, str]]] = {}
+        self._global_search_hotkey_active_type = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE
+        self._app_event_filter_installed = False
+        self._app_state_signal_connected = False
 
         self.global_search_container.setFixedWidth(400)
         self.global_search_edit.setPlaceholderText("搜索")
@@ -573,6 +914,21 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.global_search_button.setIcon(load_icon(self._SEARCH_ICON_PATH))
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_button.setStyleSheet(
+            """
+            QPushButton {
+                border: 1px solid #d0d7de;
+                border-radius: 18px;
+                background: #ffffff;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: #f3f4f6;
+            }
+            """
+        )
+        self.global_search_popup_button.setIcon(load_icon(self._SEARCH_POPUP_ICON_PATH))
+        self.global_search_popup_button.setFixedSize(36, 36)
+        self.global_search_popup_button.setStyleSheet(
             """
             QPushButton {
                 border: 1px solid #d0d7de;
@@ -633,14 +989,21 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         self.global_search_button.clicked.connect(self._start_global_search)
+        self.global_search_popup_button.clicked.connect(self._toggle_global_search_popup)
         self.global_search_clear_button.clicked.connect(self._clear_global_search)
         self.global_search_edit.returnPressed.connect(self._start_global_search)
         self.global_search_edit.textChanged.connect(self._handle_global_search_text_changed)
+        self.global_search_edit.escape_pressed.connect(self._hide_global_search_popup)
+        self._global_search_popup.item_clicked.connect(self._handle_global_search_popup_item_clicked)
+        self._global_search_popup.clear_history_requested.connect(self._clear_global_search_history)
+        self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
+        self._global_search_popup.hot_tab_changed.connect(self._handle_global_search_hot_tab_changed)
         search_layout = QHBoxLayout(self.global_search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(8)
         search_layout.addWidget(self.global_search_edit, 1)
         search_layout.addWidget(self.global_search_button)
+        search_layout.addWidget(self.global_search_popup_button)
         self.header_layout = QHBoxLayout()
         self.header_layout.addStretch(1)
         self.header_layout.addWidget(self.global_search_container)
@@ -984,13 +1347,147 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.global_search_button.setEnabled(has_keyword)
         self.global_search_clear_button.setEnabled(self._global_search_active or has_keyword)
 
+    def _global_search_history(self) -> list[str]:
+        return [str(item or "").strip() for item in getattr(self.config, "global_search_history", []) if str(item or "").strip()]
+
+    def _filtered_global_search_history(self, keyword: str) -> list[str]:
+        history = self._global_search_history()
+        normalized_keyword = keyword.strip()
+        if not normalized_keyword:
+            return history
+        lowered_keyword = normalized_keyword.casefold()
+        return [item for item in history if lowered_keyword in item.casefold()]
+
+    def _position_global_search_popup(self) -> None:
+        if not self._global_search_popup.isVisible():
+            return
+        pos = self.global_search_container.mapToGlobal(QPoint(0, self.global_search_container.height() + 4))
+        self._global_search_popup.show_at(pos, self.global_search_container.width())
+
+    def _show_global_search_popup(self) -> None:
+        self._render_global_search_popup()
+        pos = self.global_search_container.mapToGlobal(QPoint(0, self.global_search_container.height() + 4))
+        self._global_search_popup.show_at(pos, self.global_search_container.width())
+
+    def _hide_global_search_popup(self) -> None:
+        self._global_search_popup.hide()
+
+    def _dismiss_global_search_popup(self) -> None:
+        self._hide_global_search_popup()
+
+    def _dismiss_visible_global_search_popup(self) -> None:
+        if self._global_search_popup.isVisible():
+            self._dismiss_global_search_popup()
+
+    @staticmethod
+    def _widget_contains_global_pos(widget: QWidget, global_pos: QPoint) -> bool:
+        if widget is None or not widget.isVisible():
+            return False
+        local_pos = widget.mapFromGlobal(global_pos)
+        return widget.rect().contains(local_pos)
+
+    def _handle_global_search_global_mouse_press(self, global_pos: QPoint) -> None:
+        if not self._global_search_popup.isVisible():
+            return
+        if (
+            self._widget_contains_global_pos(self.global_search_edit, global_pos)
+            or self._widget_contains_global_pos(self.global_search_popup_button, global_pos)
+            or self._widget_contains_global_pos(self._global_search_popup, global_pos)
+        ):
+            return
+        self._dismiss_global_search_popup()
+
+    def _handle_application_state_changed(self, state) -> None:
+        if state == Qt.ApplicationState.ApplicationInactive:
+            self._dismiss_global_search_popup()
+
+    def _record_global_search_history(self, keyword: str) -> None:
+        normalized_keyword = keyword.strip()
+        if not normalized_keyword:
+            return
+        previous = self._global_search_history()
+        updated = [normalized_keyword, *[item for item in previous if item != normalized_keyword]][:10]
+        if updated == previous:
+            return
+        self.config.global_search_history = updated
+        self._save_config()
+
+    def _clear_global_search_history(self) -> None:
+        if not self._global_search_history():
+            return
+        self.config.global_search_history = []
+        self._save_config()
+        self._render_global_search_popup()
+
+    def _delete_global_search_history(self, keyword: str) -> None:
+        previous = self._global_search_history()
+        updated = [item for item in previous if item != keyword]
+        if updated == previous:
+            return
+        self.config.global_search_history = updated
+        self._save_config()
+        self._render_global_search_popup()
+
+    def _handle_global_search_popup_item_clicked(self, keyword: str) -> None:
+        self.global_search_edit.setText(keyword)
+        self._hide_global_search_popup()
+        self._start_global_search()
+
+    def _toggle_global_search_popup(self) -> None:
+        if self._global_search_popup.isVisible():
+            self._hide_global_search_popup()
+            return
+        self._show_global_search_popup()
+        hot_type = self._global_search_hotkey_active_type
+        if hot_type not in self._global_search_hotkey_cache:
+            self._request_global_search_hotkeys(hot_type)
+
+    def _handle_global_search_hot_tab_changed(self, hot_type: str) -> None:
+        self._global_search_hotkey_active_type = hot_type
+        self._render_global_search_popup()
+        if hot_type not in self._global_search_hotkey_cache:
+            self._request_global_search_hotkeys(hot_type)
+
+    def _render_global_search_popup(self) -> None:
+        hotkeys = self._global_search_hotkey_cache.get(self._global_search_hotkey_active_type, [])
+        self._global_search_popup.set_sections(
+            self._global_search_history(),
+            self._global_search_hotkey_active_type,
+            hotkeys,
+        )
+
+    def _request_global_search_hotkeys(self, hot_type: str) -> None:
+        self._global_search_hotkey_request_id += 1
+        request_id = self._global_search_hotkey_request_id
+
+        def run() -> None:
+            try:
+                items = self._global_search_hotkey_loader(hot_type)
+            except Exception:
+                items = []
+            if self._is_window_alive():
+                self._global_search_popup_signals.hotkeys_loaded.emit(request_id, hot_type, list(items))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_global_search_hotkeys_loaded(self, request_id: int, hot_type: str, items: list[dict[str, str]]) -> None:
+        if request_id != self._global_search_hotkey_request_id:
+            return
+        self._global_search_hotkey_cache[hot_type] = [
+            {"title": str(item.get("title") or "").strip(), "query": str(item.get("query") or item.get("title") or "").strip()}
+            for item in items
+            if str(item.get("title") or "").strip()
+        ]
+        if self._global_search_hotkey_active_type == hot_type:
+            self._render_global_search_popup()
+
     def _handle_global_search_text_changed(self) -> None:
         if not self.global_search_edit.text().strip() and self._global_search_active:
             self._clear_global_search()
-            return
         self._sync_global_search_action_state()
 
     def _handle_tab_changed(self, index: int) -> None:
+        self._dismiss_visible_global_search_popup()
         widget = self.nav_tabs.widget(index) if index >= 0 else self.nav_tabs.currentWidget()
         if widget is None:
             return
@@ -1102,6 +1599,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._position_plugin_overflow_drawer()
 
     def _toggle_plugin_overflow_drawer(self) -> None:
+        self._dismiss_visible_global_search_popup()
         if self._plugin_overflow_drawer.isVisible():
             self._close_plugin_overflow_drawer()
             return
@@ -1136,6 +1634,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._open_plugin_context_menu(plugin_id, self.nav_tabs.tab_bar.mapToGlobal(pos))
 
     def _open_plugin_context_menu(self, plugin_key: str, global_pos: QPoint) -> None:
+        self._dismiss_visible_global_search_popup()
         plugin_id = self._normalize_plugin_id(plugin_key)
         if self._plugin_actions is None:
             return
@@ -1598,8 +2097,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         keyword = self.global_search_edit.text().strip()
         if not keyword:
             return
+        self._hide_global_search_popup()
         if self._start_direct_open_from_global_search(keyword):
             return
+        self._record_global_search_history(keyword)
         searchable = self._searchable_tab_definitions()
         if not searchable:
             self.global_search_status_label.setText("无可搜索来源")
@@ -1708,6 +2209,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 definition.page.clear_external_results()
         self._refresh_visible_tabs()
         self._sync_global_search_action_state()
+        self._hide_global_search_popup()
 
     def _show_global_search_result(self, result: _GlobalSearchResult) -> None:
         result.page.show_external_results(
@@ -1976,6 +2478,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
             return
+        self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
         dialog = PluginManagerDialog(self._plugin_manager, self)
@@ -1991,6 +2494,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:
             return
+        self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
         dialog = LiveSourceManagerDialog(self._live_source_manager, self)
@@ -2601,8 +3105,26 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         super().keyPressEvent(event)
 
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and isinstance(event, QMouseEvent)
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._handle_global_search_global_mouse_press(event.globalPosition().toPoint())
+        if not isinstance(watched, QObject):
+            return False
+        return super().eventFilter(cast(QObject, watched), event)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        app = QApplication.instance()
+        if app is not None and not self._app_event_filter_installed:
+            app.installEventFilter(self)
+            self._app_event_filter_installed = True
+        if app is not None and not self._app_state_signal_connected:
+            app.applicationStateChanged.connect(self._handle_application_state_changed)
+            self._app_state_signal_connected = True
         self._refresh_navigation_tabs()
         self._start_startup_plugin_load()
 
@@ -2611,11 +3133,24 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._refresh_navigation_tabs()
         if self._plugin_overflow_drawer.isVisible():
             self._position_plugin_overflow_drawer()
+        self._position_global_search_popup()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        self._position_global_search_popup()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._deactivate_async_guard()
         self._startup_plugin_load_request_id += 1
         self._close_plugin_overflow_drawer()
+        self._hide_global_search_popup()
+        app = QApplication.instance()
+        if app is not None and self._app_event_filter_installed:
+            app.removeEventFilter(self)
+            self._app_event_filter_installed = False
+        if app is not None and self._app_state_signal_connected:
+            app.applicationStateChanged.disconnect(self._handle_application_state_changed)
+            self._app_state_signal_connected = False
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         if self.isVisible():
             self.config.last_active_window = "main"
