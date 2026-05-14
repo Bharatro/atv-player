@@ -909,17 +909,21 @@ class SpiderPluginController:
         candidates = self._iter_danmaku_candidate_options(item.danmaku_candidates, default_url)
         if not candidates:
             return
+        provider_label_by_key = {group.provider: group.provider_label for group in item.danmaku_candidates}
         for candidate in candidates:
             try:
                 item.selected_danmaku_provider = candidate.provider
                 item.selected_danmaku_url = candidate.url
                 item.selected_danmaku_title = candidate.name
+                platform_label = provider_label_by_key.get(candidate.provider) or candidate.provider
+                candidate_label = (candidate.name or candidate.url or "").strip()
+                download_detail = f"{platform_label} - {candidate_label}" if platform_label else candidate_label
                 if not is_prefetch:
-                    self._log_danmaku_event("弹幕下载中", item, detail=candidate.name or candidate.url)
+                    self._log_danmaku_event("弹幕下载中", detail=download_detail)
                 item.danmaku_xml = self._resolve_danmaku_xml(candidate.url, candidate)
                 self._save_danmaku_xml_cache(item, search_name, reg_src, item.danmaku_xml, playlist)
                 if not is_prefetch and item.danmaku_xml:
-                    self._log_danmaku_event("弹幕下载成功", item, detail=candidate.name or candidate.url)
+                    self._log_danmaku_event("弹幕下载成功", detail=download_detail)
                 logger.info(
                     "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
                     self._plugin_name,
