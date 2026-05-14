@@ -3585,7 +3585,7 @@ def test_prefetch_next_episode_danmaku_invokes_resolver_when_eligible() -> None:
     e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4")
     playlist = [e1, e2]
     captured: list[tuple] = []
-    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None, **kwargs: captured.append((item, url, playlist))
 
     controller.prefetch_next_episode_danmaku(e2, playlist)
 
@@ -3597,7 +3597,7 @@ def test_prefetch_next_episode_danmaku_prefers_url_over_vod_id() -> None:
     e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
     e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4", vod_id="vod-2")
     captured: list[tuple] = []
-    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None, **kwargs: captured.append((item, url, playlist))
 
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
@@ -3609,8 +3609,94 @@ def test_prefetch_next_episode_danmaku_falls_back_to_vod_id() -> None:
     e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
     e2 = PlayItem(title="第2集", url="", vod_id="vod-2")
     captured: list[tuple] = []
-    controller._maybe_resolve_danmaku = lambda item, url, playlist=None: captured.append((item, url, playlist))
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None, **kwargs: captured.append((item, url, playlist))
 
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
     assert captured[0][1] == "vod-2"
+
+
+def test_set_danmaku_log_handler_stores_callable() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+
+    controller._log_danmaku_event("测试事件")
+
+    assert logs == ["测试事件"]
+
+
+def test_log_danmaku_event_includes_item_title_and_detail() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(title="第3集", url="https://example.com/e3.mp4")
+
+    controller._log_danmaku_event("弹幕下载中", item, detail="腾讯视频")
+
+    assert logs == ["弹幕下载中: 第3集: 腾讯视频"]
+
+
+def test_log_danmaku_event_falls_back_to_media_title() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(title="", url="x", media_title="剧名")
+
+    controller._log_danmaku_event("弹幕预下载中", item)
+
+    assert logs == ["弹幕预下载中: 剧名"]
+
+
+def test_log_danmaku_event_noop_when_handler_is_none() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+
+    controller._log_danmaku_event("测试")  # should not raise
+
+
+def test_log_danmaku_event_swallows_handler_exceptions() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+
+    def raise_handler(message: str) -> None:
+        raise RuntimeError("boom")
+
+    controller.set_danmaku_log_handler(raise_handler)
+    controller._log_danmaku_event("测试")  # should not raise
+
+
+def test_prefetch_next_episode_danmaku_emits_prefetch_start_log() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4")
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: None
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert logs == ["弹幕预下载中: 第2集"]
+
+
+def test_prefetch_next_episode_danmaku_skips_log_when_already_resolved() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4", danmaku_xml="<i></i>")
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: None
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert logs == []
+
+
+def test_prefetch_next_episode_danmaku_passes_is_prefetch_to_maybe_resolve() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True)
+    captured: list[dict] = []
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None, **kwargs: captured.append(kwargs)
+    e1 = PlayItem(title="第1集", url="https://example.com/e1.mp4")
+    e2 = PlayItem(title="第2集", url="https://example.com/e2.mp4")
+
+    controller.prefetch_next_episode_danmaku(e2, [e1, e2])
+
+    assert captured == [{"is_prefetch": True}]

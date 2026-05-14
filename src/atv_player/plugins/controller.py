@@ -500,6 +500,7 @@ class SpiderPluginController:
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
+        self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
@@ -865,7 +866,7 @@ class SpiderPluginController:
             item.index = index
         return updated, current_index
 
-    def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
+    def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None, *, is_prefetch: bool = False) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
         series_key = build_danmaku_series_key(item.media_title or item.title)
@@ -890,6 +891,8 @@ class SpiderPluginController:
                 item.vod_id,
             )
             return
+        if not is_prefetch:
+            self._log_danmaku_event("弹幕搜索中", item, detail=search_name)
         try:
             default_url = self._populate_danmaku_candidates(item, search_name, reg_src, playlist=playlist)
         except Exception as exc:
@@ -900,6 +903,9 @@ class SpiderPluginController:
                 exc,
             )
             return
+        if not is_prefetch:
+            candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
+            self._log_danmaku_event("弹幕搜索成功", item, detail=f"找到 {candidate_count} 个候选")
         candidates = self._iter_danmaku_candidate_options(item.danmaku_candidates, default_url)
         if not candidates:
             return
@@ -908,8 +914,12 @@ class SpiderPluginController:
                 item.selected_danmaku_provider = candidate.provider
                 item.selected_danmaku_url = candidate.url
                 item.selected_danmaku_title = candidate.name
+                if not is_prefetch:
+                    self._log_danmaku_event("弹幕下载中", item, detail=candidate.name or candidate.url)
                 item.danmaku_xml = self._resolve_danmaku_xml(candidate.url, candidate)
                 self._save_danmaku_xml_cache(item, search_name, reg_src, item.danmaku_xml, playlist)
+                if not is_prefetch and item.danmaku_xml:
+                    self._log_danmaku_event("弹幕下载成功", item, detail=candidate.name or candidate.url)
                 logger.info(
                     "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
                     self._plugin_name,
@@ -1210,9 +1220,33 @@ class SpiderPluginController:
         url = (item.url or item.vod_id or "").strip()
         if not url:
             return
-        self._maybe_resolve_danmaku(item, url, playlist)
+        if item.danmaku_xml or item.danmaku_pending:
+            return
+        self._log_danmaku_event("弹幕预下载中", item)
+        self._maybe_resolve_danmaku(item, url, playlist, is_prefetch=True)
 
-    def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
+    def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
+        self._danmaku_log_handler = handler
+
+    def _log_danmaku_event(self, event: str, item: PlayItem | None = None, detail: str = "") -> None:
+        handler = self._danmaku_log_handler
+        if handler is None:
+            return
+        label = ""
+        if item is not None:
+            label = (item.title or item.media_title or "").strip()
+        parts = [event]
+        if label:
+            parts.append(label)
+        if detail:
+            parts.append(detail)
+        message = ": ".join(parts) if len(parts) > 1 else parts[0]
+        try:
+            handler(message)
+        except Exception:
+            logger.exception("Danmaku log handler failed event=%s", event)
+
+    def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None, *, is_prefetch: bool = False) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
         if item.danmaku_xml or item.danmaku_pending:
@@ -1226,7 +1260,9 @@ class SpiderPluginController:
 
         def run() -> None:
             try:
-                self._resolve_danmaku_sync(item, url, playlist)
+                self._resolve_danmaku_sync(item, url, playlist, is_prefetch=is_prefetch)
+                if is_prefetch and item.danmaku_xml:
+                    self._log_danmaku_event("弹幕预下载成功", item)
             finally:
                 item.danmaku_pending = False
                 with self._danmaku_lock:

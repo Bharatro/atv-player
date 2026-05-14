@@ -189,6 +189,10 @@ class _DanmakuSourceTaskSignals(QObject):
     finished = Signal(object, bool)
 
 
+class _DanmakuPlaybackLogSignals(QObject):
+    log = Signal(str)
+
+
 class _PlaybackPrepareSignals(QObject):
     succeeded = Signal(int, str)
     failed = Signal(int, str)
@@ -415,6 +419,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._background_task_signals.failed, self._append_log)
         self._danmaku_source_task_signals = _DanmakuSourceTaskSignals()
         self._connect_async_signal(self._danmaku_source_task_signals.finished, self._handle_danmaku_source_task_finished)
+        self._danmaku_playback_log_signals = _DanmakuPlaybackLogSignals()
+        self._connect_async_signal(self._danmaku_playback_log_signals.log, self._append_log)
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
@@ -1233,6 +1239,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
         self.current_index = session.start_index
+        self._install_danmaku_log_handler(session)
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -3598,6 +3605,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_uses_secondary_slot = False
         return track_id
 
+    def _install_danmaku_log_handler(self, session) -> None:
+        controller = getattr(session, "danmaku_controller", None)
+        if controller is None:
+            return
+        setter = getattr(controller, "set_danmaku_log_handler", None)
+        if not callable(setter):
+            return
+        setter(self._danmaku_playback_log_signals.log.emit)
+
+    def _uninstall_danmaku_log_handler(self) -> None:
+        if self.session is None:
+            return
+        controller = getattr(self.session, "danmaku_controller", None)
+        if controller is None:
+            return
+        setter = getattr(controller, "set_danmaku_log_handler", None)
+        if not callable(setter):
+            return
+        setter(None)
+
     def _configure_danmaku_for_current_item(self) -> None:
         self._danmaku_retry_timer.stop()
         xml_text = self._current_play_item_danmaku_xml()
@@ -5449,6 +5476,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._clear_active_danmaku()
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
+            self._uninstall_danmaku_log_handler()
             self.session = None
         finally:
             self._shutdown_controller_task_queue()
