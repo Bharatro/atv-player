@@ -4344,6 +4344,35 @@ def test_spider_controller_keeps_spaced_numbered_routes_as_single_source_groups(
     assert [source.label for source in request.source_groups[1].sources] == ["播放源 2"]
 
 
+def test_spider_controller_does_not_infer_secondary_groups_from_legacy_routes() -> None:
+    class GroupedRouteSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "红果短剧",
+                        "vod_play_from": "解析1$$$百度1$$$百度2",
+                        "vod_play_url": (
+                            "第1集$http://parse/1.m3u8"
+                            "$$$第1集$http://baidu1/1.m3u8"
+                            "$$$第1集$http://baidu2/1.m3u8"
+                        ),
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": id}
+
+    controller = SpiderPluginController(GroupedRouteSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("detail-1")
+
+    assert request.source_groups == []
+    assert len(request.playlists) == 3
+    assert [playlist[0].play_source for playlist in request.playlists] == ["解析1", "百度1", "百度2"]
+
+
 def test_spider_controller_uses_detail_group_payload_when_present() -> None:
     class GroupPayloadSpider:
         def detailContent(self, ids):
@@ -4411,7 +4440,7 @@ def test_spider_controller_falls_back_to_legacy_routes_when_group_payload_is_inv
     controller = SpiderPluginController(InvalidGroupSpider(), plugin_name="电影", search_enabled=True)
     request = controller.build_request("detail-1")
 
-    assert [group.label for group in request.source_groups] == ["备用线", "极速线"]
+    assert request.source_groups == []
     assert request.playlists[0][0].url == "http://a/1.m3u8"
     assert request.playlists[1][0].url == "http://b/1.m3u8"
 
