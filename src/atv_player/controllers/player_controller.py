@@ -49,6 +49,7 @@ class PlayerSession:
     initial_log_message: str = ""
     is_placeholder: bool = False
     video_cover_override: str = ""
+    prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
 
 
 class PlayerController:
