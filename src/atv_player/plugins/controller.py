@@ -892,7 +892,7 @@ class SpiderPluginController:
             )
             return
         if not is_prefetch:
-            self._log_danmaku_event("弹幕搜索中", item, detail=search_name)
+            self._log_danmaku_event("弹幕搜索中", detail=search_name)
         try:
             default_url = self._populate_danmaku_candidates(item, search_name, reg_src, playlist=playlist)
         except Exception as exc:
@@ -905,7 +905,7 @@ class SpiderPluginController:
             return
         if not is_prefetch:
             candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
-            self._log_danmaku_event("弹幕搜索成功", item, detail=f"找到 {candidate_count} 个候选")
+            self._log_danmaku_event("弹幕搜索成功", detail=f"{search_name} (找到 {candidate_count} 个候选)")
         candidates = self._iter_danmaku_candidate_options(item.danmaku_candidates, default_url)
         if not candidates:
             return
