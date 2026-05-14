@@ -348,3 +348,33 @@ class PlayerController:
             return
         logger.info("Stop playback vod_id=%s index=%s", session.vod.vod_id, current_index)
         session.playback_stopper(session.playlist[current_index])
+
+    def on_item_started(self, session: PlayerSession, current_index: int) -> None:
+        self._schedule_next_episode_danmaku_prefetch(session, current_index)
+
+    def _schedule_next_episode_danmaku_prefetch(
+        self,
+        session: PlayerSession,
+        current_index: int,
+    ) -> None:
+        next_index = current_index + 1
+        if not (0 <= next_index < len(session.playlist)):
+            return
+        if next_index in session.prefetched_next_danmaku_indices:
+            return
+        controller = session.danmaku_controller
+        if controller is None:
+            return
+        prefetcher = getattr(controller, "prefetch_next_episode_danmaku", None)
+        if not callable(prefetcher):
+            return
+        session.prefetched_next_danmaku_indices.add(next_index)
+        try:
+            prefetcher(session.playlist[next_index], session.playlist)
+        except Exception:
+            session.prefetched_next_danmaku_indices.discard(next_index)
+            logger.exception(
+                "Prefetch next episode danmaku failed vod_id=%s next_index=%s",
+                session.vod.vod_id,
+                next_index,
+            )

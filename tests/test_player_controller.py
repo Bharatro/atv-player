@@ -896,3 +896,112 @@ def test_player_controller_restores_selected_grouped_source_from_history_loader(
     assert session.playlist is baidu2
     assert session.playlist_index == 1
     assert session.start_index == 1
+
+
+class FakeDanmakuController:
+    def __init__(self) -> None:
+        self.calls: list[tuple[PlayItem, list[PlayItem]]] = []
+        self.raise_on_call: Exception | None = None
+
+    def prefetch_next_episode_danmaku(self, item: PlayItem, playlist: list[PlayItem]) -> None:
+        self.calls.append((item, playlist))
+        if self.raise_on_call is not None:
+            raise self.raise_on_call
+
+
+def _make_session_for_prefetch(
+    controller: PlayerController,
+    danmaku_controller: object | None,
+):
+    vod = VodItem(vod_id="series-1", vod_name="Series", vod_pic="pic")
+    playlist = [
+        PlayItem(title="第1集", url="1.mp4"),
+        PlayItem(title="第2集", url="2.mp4"),
+        PlayItem(title="第3集", url="3.mp4"),
+    ]
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        danmaku_controller=danmaku_controller,
+    )
+    return session, playlist
+
+
+def test_on_item_started_schedules_prefetch_for_next_index() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+
+    assert len(danmaku_controller.calls) == 1
+    assert danmaku_controller.calls[0][0] is session.playlist[1]
+    assert danmaku_controller.calls[0][1] is session.playlist
+    assert 1 in session.prefetched_next_danmaku_indices
+
+
+def test_on_item_started_noop_when_next_index_out_of_range() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=len(session.playlist) - 1)
+
+    assert danmaku_controller.calls == []
+    assert session.prefetched_next_danmaku_indices == set()
+
+
+def test_on_item_started_does_not_reschedule_same_next_index() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    controller.on_item_started(session, current_index=0)
+
+    assert len(danmaku_controller.calls) == 1
+
+
+def test_on_item_started_discards_index_when_prefetcher_raises() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    danmaku_controller.raise_on_call = RuntimeError("boom")
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+
+    assert session.prefetched_next_danmaku_indices == set()
+    assert len(danmaku_controller.calls) == 1
+
+
+def test_on_item_started_skips_when_controller_lacks_prefetch() -> None:
+    controller = PlayerController(FakeApiClient())
+
+    class NoPrefetchController:
+        pass
+
+    session, _ = _make_session_for_prefetch(controller, NoPrefetchController())
+    controller.on_item_started(session, current_index=0)
+    assert session.prefetched_next_danmaku_indices == set()
+
+
+def test_on_item_started_skips_when_danmaku_controller_is_none() -> None:
+    controller = PlayerController(FakeApiClient())
+    session, _ = _make_session_for_prefetch(controller, None)
+
+    controller.on_item_started(session, current_index=0)
+
+    assert session.prefetched_next_danmaku_indices == set()
+
+
+def test_on_item_started_advances_set_when_switching_episodes() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    controller.on_item_started(session, current_index=1)
+
+    assert len(danmaku_controller.calls) == 2
+    assert {1, 2}.issubset(session.prefetched_next_danmaku_indices)
