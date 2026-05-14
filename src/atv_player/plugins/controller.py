@@ -916,7 +916,7 @@ class SpiderPluginController:
         if lookup is None:
             return
         preference, search_name, reg_src = lookup
-        if self._apply_cached_danmaku(item, search_name, reg_src, preference):
+        if self._apply_cached_danmaku(item, search_name, reg_src, preference, playlist=playlist):
             logger.info(
                 "Spider plugin loaded cached danmaku plugin=%s source=%s",
                 self._plugin_name,
@@ -1056,6 +1056,7 @@ class SpiderPluginController:
         query_name: str,
         reg_src: str,
         preference: DanmakuSeriesPreference | None,
+        playlist: list[PlayItem] | None = None,
     ) -> bool:
         cached_xml = load_cached_danmaku_xml(query_name, reg_src)
         if cached_xml:
@@ -1068,6 +1069,34 @@ class SpiderPluginController:
                 item.vod_id,
                 item.selected_danmaku_url,
             )
+            return True
+        if self._apply_cached_danmaku_candidate_xml(item, query_name, playlist):
+            logger.info(
+                "Spider plugin loaded cached danmaku via cached candidate plugin=%s source=%s page_url=%s",
+                self._plugin_name,
+                item.vod_id,
+                item.selected_danmaku_url,
+            )
+            return True
+        return False
+
+    def _apply_cached_danmaku_candidate_xml(
+        self,
+        item: PlayItem,
+        query_name: str,
+        playlist: list[PlayItem] | None = None,
+    ) -> bool:
+        if not self.load_cached_danmaku_sources(item, playlist=playlist):
+            return False
+        for candidate in self._iter_danmaku_candidate_options(item.danmaku_candidates, item.selected_danmaku_url):
+            cached_xml = load_cached_danmaku_xml(query_name, candidate.url)
+            if not cached_xml:
+                continue
+            item.danmaku_xml = cached_xml
+            item.selected_danmaku_provider = candidate.provider
+            item.selected_danmaku_url = candidate.url
+            item.selected_danmaku_title = candidate.name
+            item.danmaku_error = ""
             return True
         return False
 
@@ -1358,7 +1387,7 @@ class SpiderPluginController:
             lookup = self._prepare_danmaku_lookup(item, url, playlist)
             if lookup is not None:
                 preference, search_name, reg_src = lookup
-                if self._apply_cached_danmaku(item, search_name, reg_src, preference):
+                if self._apply_cached_danmaku(item, search_name, reg_src, preference, playlist=playlist):
                     return
         prefetch_label = _build_danmaku_search_name(item, playlist) or (item.media_title or item.title)
         self._log_danmaku_event("弹幕预下载中", detail=prefetch_label)

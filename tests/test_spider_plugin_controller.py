@@ -3102,6 +3102,99 @@ def test_controller_resolve_danmaku_sync_reuses_prefetched_xml_when_reg_src_chan
     assert restarted.danmaku_xml == xml_text
 
 
+def test_controller_resolve_danmaku_sync_reuses_cached_candidate_xml_across_plugins_without_duplicate_logs(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class DanmakuEnabledFakeSpider(FakeSpider):
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-by-candidate-page-url</d></i>'
+    query_name = "盗妖行 4集"
+    page_url = "https://www.bilibili.com/video/BVprefetch4"
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        controller_module.DanmakuSeriesPreference(
+            series_key=build_danmaku_series_key("盗妖行"),
+            provider="bilibili",
+            page_url="https://www.bilibili.com/video/BVprefetch5",
+            title="《盗妖行》第5话 回娘家",
+            search_title="盗妖行",
+        )
+    )
+    danmaku_cache_module.save_cached_danmaku_source_search_result(
+        query_name,
+        "",
+        DanmakuSourceSearchResult(
+            groups=[
+                DanmakuSourceGroup(
+                    provider="bilibili",
+                    provider_label="B站",
+                    options=[
+                        DanmakuSourceOption(
+                            provider="bilibili",
+                            name="《盗妖行》第4话 啥！啥！这是啥啊！",
+                            url=page_url,
+                        )
+                    ],
+                )
+            ],
+            default_option_url=page_url,
+            default_provider="bilibili",
+        ),
+    )
+    danmaku_cache_module.save_cached_danmaku_xml(query_name, page_url, xml_text)
+
+    class NoNetworkDanmakuService:
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return result
+
+        def search_danmu_sources(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before searching")
+
+        def search_danmu(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before legacy searching")
+
+        def resolve_danmu(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before resolving")
+
+    controller = SpiderPluginController(
+        DanmakuEnabledFakeSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=NoNetworkDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    restarted = PlayItem(
+        title="04-第4话 啥！啥！这是啥啊！-1080P 高码率-HEVC-2026-03-03",
+        url="http://192.168.50.60:4567/p/web/1@111720",
+        media_title="盗妖行",
+    )
+
+    controller._resolve_danmaku_sync(restarted, restarted.url, [PlayItem(title="第3集", url="x"), restarted])
+
+    assert restarted.danmaku_xml == xml_text
+    assert restarted.selected_danmaku_provider == "bilibili"
+    assert restarted.selected_danmaku_url == page_url
+    assert logs == []
+
+
 def test_controller_resolves_supported_drive_links_via_backend_detail_loader() -> None:
     spider = DriveLinkSpider()
     drive_calls: list[str] = []
@@ -4519,6 +4612,99 @@ def test_prefetch_next_episode_danmaku_skips_when_cached_xml_already_exists(
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
     assert e2.danmaku_xml == xml_text
+    assert logs == []
+    assert captured == []
+
+
+def test_prefetch_next_episode_danmaku_reuses_cached_candidate_xml_across_plugins_without_duplicate_logs(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class DanmakuEnabledFakeSpider(FakeSpider):
+        def danmaku(self):
+            return True
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">cached-prefetch-by-candidate-page-url</d></i>'
+    query_name = "盗妖行 5集"
+    page_url = "https://www.bilibili.com/video/BVprefetch5"
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        controller_module.DanmakuSeriesPreference(
+            series_key=build_danmaku_series_key("盗妖行"),
+            provider="bilibili",
+            page_url="https://www.bilibili.com/video/BVprefetch4",
+            title="《盗妖行》第4话 啥！啥！这是啥啊！",
+            search_title="盗妖行",
+        )
+    )
+    danmaku_cache_module.save_cached_danmaku_source_search_result(
+        query_name,
+        "",
+        DanmakuSourceSearchResult(
+            groups=[
+                DanmakuSourceGroup(
+                    provider="bilibili",
+                    provider_label="B站",
+                    options=[
+                        DanmakuSourceOption(
+                            provider="bilibili",
+                            name="《盗妖行》第5话 回娘家",
+                            url=page_url,
+                        )
+                    ],
+                )
+            ],
+            default_option_url=page_url,
+            default_provider="bilibili",
+        ),
+    )
+    danmaku_cache_module.save_cached_danmaku_xml(query_name, page_url, xml_text)
+
+    class NoNetworkDanmakuService:
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return result
+
+        def search_danmu_sources(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before prefetch search")
+
+        def search_danmu(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before prefetch legacy search")
+
+        def resolve_danmu(self, *args, **kwargs):
+            raise AssertionError("should reuse cached candidate xml before prefetch resolve")
+
+    controller = SpiderPluginController(
+        DanmakuEnabledFakeSpider(),
+        plugin_name="盗妖行",
+        search_enabled=True,
+        danmaku_service=NoNetworkDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    logs: list[str] = []
+    captured: list[tuple] = []
+    controller.set_danmaku_log_handler(logs.append)
+    controller._maybe_resolve_danmaku = lambda *args, **kwargs: captured.append((args, kwargs))
+    e4 = PlayItem(title="第4集", url="https://example.com/e4.mp4", media_title="盗妖行")
+    e5 = PlayItem(title="第5集", url="http://192.168.50.60:4567/p/web/1@111721", media_title="盗妖行")
+
+    controller.prefetch_next_episode_danmaku(e5, [e4, e5])
+
+    assert e5.danmaku_xml == xml_text
+    assert e5.selected_danmaku_provider == "bilibili"
+    assert e5.selected_danmaku_url == page_url
     assert logs == []
     assert captured == []
 
