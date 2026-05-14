@@ -1715,7 +1715,6 @@ class SpiderPluginController:
             source_groups, playlists = self._build_grouped_sources_from_payload(detail, raw_detail.get("group"))
         if not playlists:
             playlists = self._build_playlist(detail)
-            source_groups = self._build_source_groups_from_playlists(playlists)
         collection_actions = _map_playback_detail_actions(raw_detail.get("actions") if isinstance(raw_detail, Mapping) else None)
         if collection_actions:
             for current_playlist in playlists:

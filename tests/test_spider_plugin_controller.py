@@ -4283,7 +4283,7 @@ def test_controller_logs_search_failure(caplog) -> None:
     assert "失败插件" in caplog.text
 
 
-def test_spider_controller_groups_numbered_routes_into_two_level_sources() -> None:
+def test_spider_controller_keeps_numbered_legacy_routes_as_flat_playlists() -> None:
     class GroupedRouteSpider:
         def detailContent(self, ids):
             return {
@@ -4311,15 +4311,13 @@ def test_spider_controller_groups_numbered_routes_into_two_level_sources() -> No
     controller = SpiderPluginController(GroupedRouteSpider(), plugin_name="红果短剧", search_enabled=True)
     request = controller.build_request("detail-1")
 
-    assert [group.label for group in request.source_groups] == ["解析", "百度", "夸克", "磁力"]
-    assert [source.label for source in request.source_groups[1].sources] == ["百度1", "百度2"]
-    assert [source.label for source in request.source_groups[2].sources] == ["夸克1", "夸克2", "夸克3"]
+    assert request.source_groups == []
     assert request.source_group_index == 0
     assert request.source_index == 0
     assert len(request.playlists) == 7
 
 
-def test_spider_controller_keeps_spaced_numbered_routes_as_single_source_groups() -> None:
+def test_spider_controller_keeps_spaced_legacy_routes_as_flat_playlists() -> None:
     class LegacyRouteSpider:
         def detailContent(self, ids):
             return {
@@ -4339,9 +4337,9 @@ def test_spider_controller_keeps_spaced_numbered_routes_as_single_source_groups(
     controller = SpiderPluginController(LegacyRouteSpider(), plugin_name="电影", search_enabled=True)
     request = controller.build_request("detail-1")
 
-    assert [group.label for group in request.source_groups] == ["播放源 1", "播放源 2"]
-    assert [source.label for source in request.source_groups[0].sources] == ["播放源 1"]
-    assert [source.label for source in request.source_groups[1].sources] == ["播放源 2"]
+    assert request.source_groups == []
+    assert len(request.playlists) == 2
+    assert [playlist[0].play_source for playlist in request.playlists] == ["播放源 1", "播放源 2"]
 
 
 def test_spider_controller_does_not_infer_secondary_groups_from_legacy_routes() -> None:
