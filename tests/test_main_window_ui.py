@@ -1628,6 +1628,7 @@ def test_main_window_global_search_popup_button_opens_history_and_default_hot_ta
     assert _popup_history_texts(window) == ["庆余年", "琅琊榜"]
     assert _popup_hot_tab_titles(window) == ["电视剧", "电影", "综艺", "动漫", "综合视频"]
     assert window._global_search_popup.current_hot_tab_type() == "dsp"
+    assert window._global_search_popup.hot_tab_bar.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
 
 def test_main_window_global_search_popup_switches_hot_tabs_and_caches_results(qtbot) -> None:

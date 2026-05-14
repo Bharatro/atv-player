@@ -490,6 +490,7 @@ class GlobalSearchPopup(QWidget):
         self.hot_tab_bar.setExpanding(False)
         self.hot_tab_bar.setUsesScrollButtons(False)
         self.hot_tab_bar.setDrawBase(False)
+        self.hot_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hot_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
         for hot_type, title_text in self.HOT_TABS:
             self._hot_tab_types.append(hot_type)
@@ -776,7 +777,7 @@ class _NavigationTabs(QWidget):
 class MainWindow(QMainWindow, AsyncGuardMixin):
     logout_requested = Signal()
     _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
-    _SEARCH_POPUP_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "queue.svg"
+    _SEARCH_POPUP_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "rank.svg"
 
     def __init__(
             self,
