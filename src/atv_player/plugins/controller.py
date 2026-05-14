@@ -24,7 +24,7 @@ from atv_player.danmaku.cache import (
 )
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.danmaku.utils import infer_playlist_episode_number, normalize_name
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -51,6 +51,8 @@ from atv_player.player.resume import resolve_resume_index
 
 logger = logging.getLogger(__name__)
 _GROUPED_ROUTE_RE = re.compile(r"^(?P<group>\S*?\D)(?P<number>\d+)$")
+_MOVIE_LIKE_TITLE_MARKERS = ("剧场版",)
+_SINGLE_VIDEO_GENERIC_TITLES = {"正片", "完整版", "全片"}
 
 
 def _strip_trailing_title_year_suffix(value: str) -> str:
@@ -133,9 +135,30 @@ def _is_short_bare_numeric_playlist(item: PlayItem, playlist: list[PlayItem] | N
     return all(_has_implicit_numeric_title(candidate.title) for candidate in playlist)
 
 
+def _looks_like_movie_title(item: PlayItem) -> bool:
+    return any(
+        marker in normalize_name(value)
+        for value in (item.title, item.media_title)
+        for marker in _MOVIE_LIKE_TITLE_MARKERS
+        if value
+    )
+
+
+def _should_omit_default_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+    del playlist
+    normalized_title = normalize_name(item.title)
+    if normalized_title in _SINGLE_VIDEO_GENERIC_TITLES:
+        return True
+    if _looks_like_movie_title(item):
+        return True
+    return False
+
+
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     if _looks_like_calendar_episode_title(item.title):
         return item.title.strip()
+    if _should_omit_default_episode_label(item, playlist):
+        return ""
     episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
@@ -166,6 +189,23 @@ def _build_danmaku_search_name(item: PlayItem, playlist: list[PlayItem] | None =
 
 def _compose_danmaku_search_query(title: str, episode: str) -> str:
     return " ".join(part for part in (title.strip(), episode.strip()) if part).strip()
+
+
+def _save_cached_danmaku_source_search_result_variants(
+    name: str,
+    reg_src: str,
+    result,
+) -> None:
+    save_cached_danmaku_source_search_result(name, reg_src, result)
+    if reg_src:
+        save_cached_danmaku_source_search_result(name, "", result)
+
+
+def _load_cached_danmaku_source_search_result_variants(name: str, reg_src: str):
+    cached = load_cached_danmaku_source_search_result(name, reg_src)
+    if cached is not None or not reg_src:
+        return cached
+    return load_cached_danmaku_source_search_result(name, "")
 
 
 def _danmaku_cache_query_names(
@@ -521,7 +561,7 @@ class SpiderPluginController:
         try:
             params = inspect.signature(self._spider.searchContent).parameters
         except (AttributeError, TypeError, ValueError) as e:
-            print(e)
+            logger.debug("Spider plugin search signature introspection failed plugin=%s error=%s", self._plugin_name, e)
             return True
         return "category" in params
 
@@ -622,7 +662,6 @@ class SpiderPluginController:
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
-            print('categoryContent', category_id, page, filters)
             payload = self._spider.categoryContent(category_id, page, False, dict(filters or {})) or {}
         except Exception as exc:
             logger.exception(
@@ -649,10 +688,8 @@ class SpiderPluginController:
         category = "" if category_id == "home" else str(category_id or "")
         try:
             if self._search_supports_category:
-                print('searchContent', keyword, page, category)
                 payload = self._spider.searchContent(keyword, False, page, category)
             else:
-                print('searchContent', keyword, page)
                 payload = self._spider.searchContent(keyword, False, page)
             payload = payload or {}
         except Exception as exc:
@@ -926,8 +963,16 @@ class SpiderPluginController:
                 download_detail = f"{platform_label} - {candidate_label}" if platform_label else candidate_label
                 if not is_prefetch:
                     self._log_danmaku_event("弹幕下载中", detail=download_detail)
-                item.danmaku_xml = self._resolve_danmaku_xml(candidate.url, candidate)
-                self._save_danmaku_xml_cache(item, search_name, reg_src, item.danmaku_xml, playlist)
+                cached_candidate_xml = load_cached_danmaku_xml(search_name, candidate.url)
+                item.danmaku_xml = cached_candidate_xml or self._resolve_danmaku_xml(candidate.url, candidate)
+                self._save_danmaku_xml_cache(
+                    item,
+                    search_name,
+                    reg_src,
+                    item.danmaku_xml,
+                    playlist,
+                    page_url=candidate.url,
+                )
                 if not is_prefetch and item.danmaku_xml:
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
                     self._log_danmaku_event(
@@ -1054,7 +1099,7 @@ class SpiderPluginController:
             result = self._legacy_source_search_result(candidates)
         if not provider_filter:
             for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
-                save_cached_danmaku_source_search_result(cache_query_name, reg_src, result)
+                _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)
         self._apply_danmaku_source_search_result(item, result)
         if result.groups and item.danmaku_search_title:
             self._save_danmaku_search_title_preference(item)
@@ -1067,9 +1112,12 @@ class SpiderPluginController:
         reg_src: str,
         xml_text: str,
         playlist: list[PlayItem] | None = None,
+        page_url: str = "",
     ) -> None:
         for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
             save_cached_danmaku_xml(cache_query_name, reg_src, xml_text)
+            if page_url:
+                save_cached_danmaku_xml(cache_query_name, page_url, xml_text)
 
     def _resolve_danmaku_xml(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         resolve_method = self._danmaku_service.resolve_danmu
@@ -1100,7 +1148,7 @@ class SpiderPluginController:
         item.danmaku_series_key = series_key
         item.danmaku_search_query = query_name
         reg_src = str(item.vod_id or item.url or "").strip()
-        cached_result = load_cached_danmaku_source_search_result(query_name, reg_src)
+        cached_result = _load_cached_danmaku_source_search_result_variants(query_name, reg_src)
         if cached_result is None:
             return False
         target_duration = media_duration_seconds if media_duration_seconds > 0 else int(item.duration_seconds or 0)
@@ -1180,6 +1228,7 @@ class SpiderPluginController:
         if not query_name:
             return
         reg_src = str(item.vod_id or item.url or "").strip()
+        self._log_danmaku_event("弹幕搜索中", detail=query_name)
         self._populate_danmaku_candidates(
             item,
             query_name,
@@ -1189,17 +1238,30 @@ class SpiderPluginController:
             playlist=playlist,
             provider_filter=provider_filter,
         )
+        candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
+        self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = None
+        selected_provider_label = ""
         for group in item.danmaku_candidates:
             for option in group.options:
                 if option.url == page_url:
                     selected_option = option
+                    selected_provider_label = group.provider_label
                     break
             if selected_option is not None:
                 break
-        xml_text = self._resolve_danmaku_xml(page_url, selected_option)
+        option_label = (selected_option.name if selected_option is not None else "").strip()
+        download_detail = option_label
+        if selected_provider_label and option_label:
+            download_detail = f"{selected_provider_label} - {option_label}"
+        elif selected_provider_label:
+            download_detail = selected_provider_label
+        self._log_danmaku_event("弹幕下载中", detail=download_detail)
+        query_name = (item.danmaku_search_query or _build_danmaku_search_name(item)).strip()
+        cached_xml = load_cached_danmaku_xml(query_name, page_url)
+        xml_text = cached_xml or self._resolve_danmaku_xml(page_url, selected_option)
         item.danmaku_xml = xml_text
         item.selected_danmaku_url = page_url
         item.selected_danmaku_title = self._lookup_selected_danmaku_title(item.danmaku_candidates, page_url)
@@ -1210,7 +1272,7 @@ class SpiderPluginController:
                     break
         query_name = (item.danmaku_search_query or _build_danmaku_search_name(item)).strip()
         reg_src = str(item.vod_id or item.url or "").strip()
-        self._save_danmaku_xml_cache(item, query_name, reg_src, xml_text)
+        self._save_danmaku_xml_cache(item, query_name, reg_src, xml_text, page_url=page_url)
         if self._danmaku_preference_store is not None and item.danmaku_series_key:
             self._danmaku_preference_store.save(
                 DanmakuSeriesPreference(
@@ -1222,6 +1284,8 @@ class SpiderPluginController:
                     updated_at=int(time.time()),
                 )
             )
+        danmaku_count = _count_danmaku_entries(xml_text)
+        self._log_danmaku_event("弹幕下载成功", detail=f"{danmaku_count} 条弹幕")
         return xml_text
 
     def prefetch_next_episode_danmaku(
@@ -1408,7 +1472,6 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         try:
-            print('playerContent', item.play_source, item.vod_id)
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
         except Exception as exc:
             logger.exception(
@@ -1547,7 +1610,6 @@ class SpiderPluginController:
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
-            print('detailContent', vod_id)
             payload = self._spider.detailContent([vod_id]) or {}
         except Exception as exc:
             logger.exception("Spider plugin detail load failed plugin=%s vod_id=%s", self._plugin_name, vod_id)
