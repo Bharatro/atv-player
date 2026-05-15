@@ -143,7 +143,6 @@ class MpvWidget(QWidget):
             cache=True,
             cache_pause_initial=True,
             cache_pause_wait=3,
-            cache_secs=30,
             demuxer_max_bytes="512M",
             demuxer_max_back_bytes="128M",
             demuxer_readahead_secs=20,
