@@ -19,7 +19,7 @@
 - 安装 Python `3.12+`
 - 安装 `uv`
 - 系统中存在可用的 `libmpv`
-- 如果要播放 `YouTube` 等页面链接，系统中还需要可用的 `yt-dlp`
+- 如果要播放 `YouTube` 等视频网站页面链接，系统中还需要可用的 `yt-dlp`
 - 有一个可访问的 `alist-tvbox` 后端
 
 Linux 上推荐先验证以下两步：
@@ -35,7 +35,7 @@ uv sync --group dev
 uv run src/atv_player/main.py
 ```
 
-如果你希望在应用里直接打开 `YouTube` 等页面链接，建议先确认系统里已经安装 `yt-dlp`。
+如果你希望在应用里直接打开 `YouTube` 等视频网站页面链接，建议先确认系统里已经安装 `yt-dlp`。
 
 常见安装方式：
 
