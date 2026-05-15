@@ -265,6 +265,7 @@ class DanmakuService:
         ]
         return self.rerank_danmaku_source_search_result(
             DanmakuSourceSearchResult(groups=groups),
+            query_name=name,
             reg_src=reg_src,
             preferred_provider=preferred_provider,
             preferred_page_url=preferred_page_url,
@@ -275,15 +276,32 @@ class DanmakuService:
         self,
         result: DanmakuSourceSearchResult,
         *,
+        query_name: str = "",
         reg_src: str = "",
         preferred_provider: str = "",
         preferred_page_url: str = "",
         media_duration_seconds: int = 0,
     ) -> DanmakuSourceSearchResult:
+        normalized_query = normalize_name(query_name)
+        requested_episode = extract_episode_number(normalized_query) if normalized_query else None
+        explicit_episode_request = has_explicit_episode_marker(normalized_query) if normalized_query else False
         ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]] = []
         stable_index = 0
         for group in result.groups:
             options = _filter_source_options_by_media_duration_gap(group.options, media_duration_seconds)
+            if explicit_episode_request and requested_episode is not None:
+                has_matching_episode = any(
+                    extract_episode_number(option.name) == requested_episode
+                    and episode_title_matches(normalized_query, option.name)
+                    for option in options
+                )
+                if has_matching_episode:
+                    options = [
+                        option
+                        for option in options
+                        if extract_episode_number(option.name) is not None
+                        or episode_title_matches(normalized_query, option.name)
+                    ]
             for option in options:
                 ranked_rows.append((group, option, stable_index))
                 stable_index += 1
@@ -334,7 +352,15 @@ class DanmakuService:
                         if extract_episode_number(item.name) == requested_episode
                         and episode_title_matches(normalized, item.name)
                     ]
-            no_episode = [item for item in results if extract_episode_number(item.name) is None]
+            no_episode = [
+                item
+                for item in results
+                if extract_episode_number(item.name) is None
+                and (
+                    not explicit_episode_request
+                    or episode_title_matches(normalized, item.name)
+                )
+            ]
             if matching:
                 results = [*matching, *no_episode]
             elif not explicit_episode_request and no_episode:
@@ -445,15 +471,26 @@ class DanmakuService:
         reg_src: str,
     ) -> DanmakuSourceSearchResult:
         grouped_options: dict[str, list[DanmakuSourceOption]] = {}
+        grouped_option_indexes: dict[str, dict[str, int]] = {}
         group_meta: dict[str, DanmakuSourceGroup] = {}
         ordered_providers: list[str] = []
         for source_group, option, _ in ranked_rows:
             provider = source_group.provider
             if provider not in grouped_options:
                 grouped_options[provider] = []
+                grouped_option_indexes[provider] = {}
                 group_meta[provider] = source_group
                 ordered_providers.append(provider)
-            grouped_options[provider].append(option)
+            option_key = self._dedupe_source_option_key(option)
+            existing_index = grouped_option_indexes[provider].get(option_key)
+            if existing_index is None:
+                grouped_option_indexes[provider][option_key] = len(grouped_options[provider])
+                grouped_options[provider].append(option)
+            else:
+                grouped_options[provider][existing_index] = self._merge_source_options(
+                    grouped_options[provider][existing_index],
+                    option,
+                )
         groups = [
             DanmakuSourceGroup(
                 provider=provider,
@@ -494,6 +531,34 @@ class DanmakuService:
             if group.options:
                 return group.options[0]
         return None
+
+    def _dedupe_source_option_key(self, option: DanmakuSourceOption) -> str:
+        url = option.url.strip()
+        if url:
+            return url
+        return f"name:{option.name.strip()}"
+
+    def _merge_source_options(
+        self,
+        existing: DanmakuSourceOption,
+        incoming: DanmakuSourceOption,
+    ) -> DanmakuSourceOption:
+        merged_context = dict(existing.resolve_context)
+        for key, value in incoming.resolve_context.items():
+            if value in ("", None, 0):
+                continue
+            merged_context[key] = value
+        return replace(
+            existing,
+            name=existing.name or incoming.name,
+            ratio=max(existing.ratio, incoming.ratio),
+            simi=max(existing.simi, incoming.simi),
+            duration_seconds=existing.duration_seconds or incoming.duration_seconds,
+            episode_match=existing.episode_match or incoming.episode_match,
+            preferred_by_history=existing.preferred_by_history or incoming.preferred_by_history,
+            resolve_ready=existing.resolve_ready or incoming.resolve_ready,
+            resolve_context=merged_context,
+        )
 
     def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         for key in self._provider_order:

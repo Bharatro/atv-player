@@ -269,6 +269,96 @@ def test_rerank_danmaku_source_search_result_filters_cached_candidates_with_dura
     assert reranked.default_option_url == "https://v.qq.com/x/cover/ep88-keep.html"
 
 
+def test_rerank_danmaku_source_search_result_dedupes_cached_duplicate_options_by_provider_and_url() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="灵武大陆 第104集 五脉之魂",
+                        url="https://www.iqiyi.com/v_104.html",
+                        duration_seconds=625,
+                        resolve_context={"tv_id": 8142858142151200},
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="灵武大陆 第104集 五脉之魂",
+                        url="https://www.iqiyi.com/v_104.html",
+                        duration_seconds=0,
+                        resolve_context={"album_id": 4812694274119401, "category_id": 4},
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="贺新春 灵武大陆+凌天独尊联动",
+                        url="https://www.iqiyi.com/v_promo.html",
+                        duration_seconds=180,
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="贺新春 灵武大陆+凌天独尊联动",
+                        url="https://www.iqiyi.com/v_promo.html",
+                        duration_seconds=180,
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(result)
+
+    assert [option.url for option in reranked.groups[0].options] == [
+        "https://www.iqiyi.com/v_104.html",
+        "https://www.iqiyi.com/v_promo.html",
+    ]
+    assert reranked.groups[0].options[0].duration_seconds == 625
+    assert reranked.groups[0].options[0].resolve_context == {
+        "tv_id": 8142858142151200,
+        "album_id": 4812694274119401,
+        "category_id": 4,
+    }
+
+
+def test_rerank_danmaku_source_search_result_drops_promotional_no_episode_items_for_explicit_episode_query() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="灵武大陆 第104集 五脉之魂",
+                        url="https://www.iqiyi.com/v_fiiwpasp3c.html",
+                        episode_match=True,
+                        duration_seconds=625,
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="贺新春 灵武大陆+凌天独尊联动",
+                        url="https://www.iqiyi.com/v_24bi1r7wnms.html",
+                        duration_seconds=0,
+                    ),
+                ],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_fiiwpasp3c.html",
+        default_provider="iqiyi",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(result, query_name="灵武大陆 104集")
+
+    assert [option.url for option in reranked.groups[0].options] == [
+        "https://www.iqiyi.com/v_fiiwpasp3c.html",
+    ]
+
+
 def test_search_danmu_sources_preserves_existing_order_when_media_duration_unknown() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -548,6 +638,36 @@ def test_search_danmu_prefers_exact_episode_over_title_only_candidate_for_explic
         "https://v.qq.com/x/cover/ep88.html",
         "https://v.qq.com/x/cover/series.html",
     ]
+
+
+def test_search_danmu_drops_no_episode_promotional_items_for_explicit_episode_request() -> None:
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="灵武大陆 第104集 五脉之魂",
+                url="https://www.iqiyi.com/v_fiiwpasp3c.html",
+                ratio=0.98,
+                simi=0.98,
+                duration_seconds=625,
+            ),
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="贺新春 灵武大陆+凌天独尊联动",
+                url="https://www.iqiyi.com/v_24bi1r7wnms.html",
+                ratio=0.80,
+                simi=0.80,
+                duration_seconds=0,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"iqiyi": iqiyi}, provider_order=["iqiyi"])
+
+    results = service.search_danmu("灵武大陆 104集")
+
+    assert [item.url for item in results] == ["https://www.iqiyi.com/v_fiiwpasp3c.html"]
 
 
 def test_search_danmu_matches_youku_titles_with_trailing_numeric_episode_suffix() -> None:

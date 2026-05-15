@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import html
 import json
 import math
@@ -125,12 +126,13 @@ class IqiyiDanmakuProvider:
             return []
         if not isinstance(data, dict) or not isinstance(data.get("docinfos"), list):
             raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败")
-        results: list[DanmakuSearchItem] = []
+        results_by_url: dict[str, DanmakuSearchItem] = {}
+        mesh_videos_cache: dict[tuple[str, int | None, str], list[dict]] = {}
         for item in data["docinfos"]:
             if self._should_drop_search_item(item):
                 continue
             album_info = item.get("albumDocInfo") or {}
-            videos = self._collect_search_videos(item, album_info, query_name)
+            videos = self._collect_search_videos(item, album_info, query_name, mesh_videos_cache)
             for video in videos:
                 title = str(video.get("itemTitle") or "").strip()
                 url = self._normalize_iqiyi_url(str(video.get("itemLink") or "").strip())
@@ -138,19 +140,34 @@ class IqiyiDanmakuProvider:
                     continue
                 ratio = similarity_score(query_name, title)
                 metadata = self._video_metadata(video, album_info)
-                self._remember_metadata(url, metadata)
-                results.append(
-                    DanmakuSearchItem(
-                        provider=self.key,
-                        name=title,
-                        url=url,
-                        ratio=ratio,
-                        simi=ratio,
-                        duration_seconds=self._to_int(metadata.get("duration_seconds")) or 0,
-                        resolve_context=dict(metadata),
-                    )
+                existing = results_by_url.get(url)
+                merged_metadata = self._merge_search_metadata(
+                    existing.resolve_context if existing is not None else None,
+                    metadata,
                 )
-        return results
+                candidate = DanmakuSearchItem(
+                    provider=self.key,
+                    name=title,
+                    url=url,
+                    ratio=ratio,
+                    simi=ratio,
+                    duration_seconds=self._to_int(merged_metadata.get("duration_seconds")) or 0,
+                    resolve_context=dict(merged_metadata),
+                )
+                if existing is not None:
+                    existing = replace(
+                        existing,
+                        duration_seconds=self._to_int(merged_metadata.get("duration_seconds")) or existing.duration_seconds,
+                        resolve_context=dict(merged_metadata),
+                    )
+                    if self._search_item_rank(candidate) > self._search_item_rank(existing):
+                        results_by_url[url] = candidate
+                    else:
+                        results_by_url[url] = existing
+                else:
+                    results_by_url[url] = candidate
+                self._remember_metadata(url, merged_metadata)
+        return list(results_by_url.values())
 
     def prime_resolve_context(self, page_url: str, resolve_context: dict[str, str | int | None] | None) -> None:
         if not isinstance(resolve_context, dict):
@@ -165,13 +182,24 @@ class IqiyiDanmakuProvider:
             return
         self._remember_metadata(self._normalize_iqiyi_url(page_url), metadata)
 
-    def _collect_search_videos(self, item: dict, album_info: dict, query_name: str) -> list[dict]:
+    def _collect_search_videos(
+        self,
+        item: dict,
+        album_info: dict,
+        query_name: str,
+        mesh_videos_cache: dict[tuple[str, int | None, str], list[dict]],
+    ) -> list[dict]:
         videos = list(item.get("videoinfos") or album_info.get("videoinfos") or [])
         if self._should_use_mesh_search_videos(videos, album_info):
+            mesh_cache_key = self._mesh_cache_key(query_name, album_info)
+            cached_mesh_videos = mesh_videos_cache.get(mesh_cache_key)
+            if cached_mesh_videos is not None:
+                return list(cached_mesh_videos)
             try:
                 expanded = self._expand_mesh_videos(query_name, album_info)
             except httpx.HTTPError:
                 expanded = []
+            mesh_videos_cache[mesh_cache_key] = list(expanded)
             if expanded:
                 return expanded
         if not self._should_expand_album_videos(videos, album_info):
@@ -342,6 +370,35 @@ class IqiyiDanmakuProvider:
             "category_id": self._extract_category_id(album_info),
             "duration_seconds": self._to_int(video.get("timeLength")),
         }
+
+    def _mesh_cache_key(self, query_name: str, album_info: dict) -> tuple[str, int | None, str]:
+        return (
+            normalize_name(query_name),
+            self._to_int(album_info.get("albumId")),
+            normalize_name(str(album_info.get("albumTitle") or "")),
+        )
+
+    def _merge_search_metadata(
+        self,
+        base: dict[str, str | int | None] | None,
+        incoming: dict[str, str | int | None],
+    ) -> dict[str, str | int | None]:
+        merged = dict(base or {})
+        for key, value in incoming.items():
+            if value in ("", None, 0):
+                continue
+            merged[key] = value
+        return merged
+
+    def _search_item_rank(self, item: DanmakuSearchItem) -> tuple[float, float, int, int, int]:
+        context_score = sum(1 for value in item.resolve_context.values() if value not in ("", None, 0))
+        return (
+            item.ratio,
+            item.simi,
+            int(item.duration_seconds > 0),
+            context_score,
+            len(item.name),
+        )
 
     def _should_drop_search_item(self, item: dict) -> bool:
         album_info = item.get("albumDocInfo") or {}

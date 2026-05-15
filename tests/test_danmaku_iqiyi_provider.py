@@ -146,6 +146,171 @@ def test_iqiyi_search_falls_back_to_mesh_results_when_legacy_album_count_is_zero
     ]
 
 
+def test_iqiyi_search_dedupes_repeated_mesh_expansion_results_from_duplicate_albums() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "灵武大陆",
+                                    "videoinfos": [
+                                        {"itemTitle": "灵武大陆 第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_1.html"},
+                                    ],
+                                }
+                            },
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "灵武大陆",
+                                    "videoinfos": [
+                                        {"itemTitle": "灵武大陆 第178集", "itemNumber": 178, "itemLink": "http://www.iqiyi.com/v_178.html"},
+                                    ],
+                                }
+                            },
+                        ]
+                    }
+                }
+            )
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "灵武大陆",
+                                    "channel": "动漫,4",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 4812694274119401,
+                                    "videos": [
+                                        {
+                                            "title": "灵武大陆 第104集 五脉之魂",
+                                            "number": "104",
+                                            "qipuId": 8142858142151200,
+                                            "pageUrl": "https://www.iqiyi.com/v_104.html",
+                                            "duration": 625000,
+                                        },
+                                        {
+                                            "title": "贺新春 灵武大陆+凌天独尊联动",
+                                            "qipuId": 8142858142151299,
+                                            "pageUrl": "https://www.iqiyi.com/v_promo.html",
+                                            "duration": 180000,
+                                        },
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("灵武大陆")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("灵武大陆 第104集 五脉之魂", "https://www.iqiyi.com/v_104.html", 625),
+        ("贺新春 灵武大陆+凌天独尊联动", "https://www.iqiyi.com/v_promo.html", 180),
+    ]
+
+
+def test_iqiyi_search_reuses_mesh_expansion_for_duplicate_album_hits() -> None:
+    mesh_calls = 0
+
+    def fake_get(url: str, **kwargs):
+        nonlocal mesh_calls
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "一人之下第六季",
+                                    "videoinfos": [
+                                        {"itemTitle": "一人之下第六季 第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_1.html"},
+                                    ],
+                                }
+                            },
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "一人之下第六季",
+                                    "videoinfos": [
+                                        {"itemTitle": "一人之下第六季 第2集", "itemNumber": 2, "itemLink": "http://www.iqiyi.com/v_2.html"},
+                                    ],
+                                }
+                            },
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "一人之下第六季",
+                                    "videoinfos": [
+                                        {"itemTitle": "一人之下第六季 第3集", "itemNumber": 3, "itemLink": "http://www.iqiyi.com/v_3.html"},
+                                    ],
+                                }
+                            },
+                        ]
+                    }
+                }
+            )
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            mesh_calls += 1
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "一人之下第六季",
+                                    "channel": "动漫,4",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 4812694274119401,
+                                    "videos": [
+                                        {
+                                            "title": "一人之下第六季 第6集",
+                                            "number": "6",
+                                            "qipuId": 1234567890123400,
+                                            "pageUrl": "https://www.iqiyi.com/v_target6.html",
+                                            "duration": 1440000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("一人之下第六季")
+
+    assert mesh_calls == 1
+    assert [(item.name, item.url) for item in items] == [
+        ("一人之下第六季 第6集", "https://www.iqiyi.com/v_target6.html")
+    ]
+
+
 def test_iqiyi_search_keeps_episode_items_when_album_score_is_missing() -> None:
     def fake_get(url: str, **kwargs):
         return JsonResponse(

@@ -1308,6 +1308,7 @@ class SpiderPluginController:
         if hasattr(self._danmaku_service, "rerank_danmaku_source_search_result"):
             cached_result = self._danmaku_service.rerank_danmaku_source_search_result(
                 cached_result,
+                query_name=query_name,
                 reg_src=reg_src,
                 preferred_provider=preference.provider if preference is not None else "",
                 preferred_page_url=preference.page_url if preference is not None else "",
