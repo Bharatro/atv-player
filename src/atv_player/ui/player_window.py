@@ -1322,6 +1322,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._render_detail_actions()
             return
         replacement = list(load_result.replacement_playlist)
+        reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
+        if callable(reset_prefetch):
+            reset_prefetch(self.session)
         active_group = self.session.source_groups[self.session.source_group_index]
         active_source = active_group.sources[self.session.source_index]
         active_source.playlist = replacement
@@ -2463,6 +2466,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.session.source_index = source_index
         self.session.playlist_index = mapping[(source_group_index, source_index)]
         self.session.playlist = target_playlist
+        reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
+        if callable(reset_prefetch):
+            reset_prefetch(self.session)
         self.current_index = target_index
         self._render_playlist_source_combos()
         self._render_playlist_items()

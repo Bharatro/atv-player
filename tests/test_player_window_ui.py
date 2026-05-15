@@ -95,6 +95,15 @@ class RecordingPlayerController(FakePlayerController):
         self.stop_calls.append(current_index)
 
 
+class PrefetchResetRecordingPlayerController(RecordingPlayerController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset_calls: list[PlayerSession] = []
+
+    def reset_next_episode_danmaku_prefetch_state(self, session: PlayerSession) -> None:
+        self.reset_calls.append(session)
+
+
 class RecordingVideo:
     def __init__(self) -> None:
         self.load_calls: list[tuple[str, int]] = []
@@ -2106,6 +2115,46 @@ def test_player_window_switches_leaf_source_and_keeps_episode_index_when_possibl
     assert window.session.source_index == 1
     assert window.current_index == 1
     assert window.video.load_calls[-1][0] == "http://q2/2.m3u8"
+
+
+def test_player_window_switching_leaf_source_resets_danmaku_prefetch_state(qtbot) -> None:
+    first = [
+        PlayItem(title="第1集", url="http://q1/1.m3u8", play_source="夸克1"),
+        PlayItem(title="第2集", url="http://q1/2.m3u8", play_source="夸克1"),
+    ]
+    second = [
+        PlayItem(title="第1集", url="http://q2/1.m3u8", play_source="夸克2"),
+        PlayItem(title="第2集", url="http://q2/2.m3u8", play_source="夸克2"),
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=first,
+        playlists=[first, second],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="夸克",
+                sources=[
+                    PlaybackSource(label="夸克1", playlist=first),
+                    PlaybackSource(label="夸克2", playlist=second),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    controller = PrefetchResetRecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window.playlist_source_combo.setCurrentIndex(1)
+
+    assert controller.reset_calls == [session]
 
 
 def test_player_window_next_and_previous_stay_within_active_group(qtbot) -> None:
@@ -12472,6 +12521,36 @@ def test_player_window_replaces_active_route_playlist_when_playback_loader_retur
     assert window.current_index == 0
     assert window.playlist.count() == 2
     assert window.playlist.item(0).text() == "S1 - 1"
+
+
+def test_player_window_route_replacement_resets_danmaku_prefetch_state(qtbot) -> None:
+    controller = PrefetchResetRecordingPlayerController()
+    replacement = [
+        PlayItem(title="S1 - 1", url="http://m/1.mp4", play_source="quark"),
+        PlayItem(title="S1 - 2", url="http://m/2.mp4", play_source="quark"),
+    ]
+
+    def load_item(item: PlayItem):
+        assert item.title == "查看"
+        return PlaybackLoadResult(replacement_playlist=replacement, replacement_start_index=0)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=[PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="quark")],
+        playlists=[[PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="quark")]],
+        playlist_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=load_item,
+    )
+
+    window = PlayerWindow(controller, config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert controller.reset_calls == [session]
 
 
 def test_player_window_async_loader_plays_replacement_item_after_route_replacement(qtbot) -> None:

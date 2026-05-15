@@ -362,6 +362,10 @@ class PlayerController:
         logger.info("Stop playback vod_id=%s index=%s", session.vod.vod_id, current_index)
         session.playback_stopper(session.playlist[current_index])
 
+    def reset_next_episode_danmaku_prefetch_state(self, session: PlayerSession) -> None:
+        session.prefetched_next_danmaku_indices.clear()
+        self._invalidate_pending_next_episode_danmaku_prefetch(session)
+
     def _invalidate_pending_next_episode_danmaku_prefetch(self, session: PlayerSession) -> None:
         session.pending_next_danmaku_prefetch_token += 1
 

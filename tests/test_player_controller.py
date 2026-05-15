@@ -1071,6 +1071,19 @@ def test_stop_playback_invalidates_pending_delayed_prefetch() -> None:
     assert session.prefetched_next_danmaku_indices == set()
 
 
+def test_reset_next_episode_danmaku_prefetch_state_clears_indices_and_invalidates_token() -> None:
+    controller = PlayerController(FakeApiClient())
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+    session.prefetched_next_danmaku_indices.add(1)
+    session.pending_next_danmaku_prefetch_token = 7
+
+    controller.reset_next_episode_danmaku_prefetch_state(session)
+
+    assert session.prefetched_next_danmaku_indices == set()
+    assert session.pending_next_danmaku_prefetch_token == 8
+
+
 def test_report_progress_tail_prefetch_triggers_when_remaining_under_150s() -> None:
     controller = PlayerController(FakeApiClient())
     danmaku_controller = FakeDanmakuController()
