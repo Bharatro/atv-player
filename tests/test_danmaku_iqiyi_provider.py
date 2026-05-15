@@ -400,6 +400,47 @@ def test_iqiyi_search_mesh_variety_videos_use_album_title_and_preserve_year_meta
     assert items[0].resolve_context["variety_year"] == 20260404
 
 
+def test_iqiyi_search_mesh_variety_alias_title_without_subtitle_keeps_album_title() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "哈哈哈哈哈第6季",
+                                    "channel": "综艺,6",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 5811390754506701,
+                                    "videos": [
+                                        {
+                                            "title": "五哈6第6期上 邓超表情包大师课2.0",
+                                            "number": "6",
+                                            "qipuId": 6761155121012866,
+                                            "pageUrl": "https://www.iqiyi.com/v_target6a.html",
+                                            "year": 20260509,
+                                            "duration": 5418000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("哈哈哈哈哈第六季")
+
+    assert len(items) == 1
+    assert items[0].name == "哈哈哈哈哈第6季 五哈6第6期上 邓超表情包大师课2.0"
+    assert items[0].resolve_context["variety_year"] == 20260509
+
+
 def test_iqiyi_search_reuses_mesh_expansion_for_duplicate_album_hits() -> None:
     mesh_calls = 0
 

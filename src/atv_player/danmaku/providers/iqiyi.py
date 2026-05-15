@@ -185,8 +185,9 @@ class IqiyiDanmakuProvider:
                 subtitle = str(video.get("subtitle") or "").strip()
                 raw_title = str(video.get("title") or "").strip()
                 title = raw_title
-                if subtitle and album_title and album_title not in normalize_name(raw_title):
-                    title = f"{album_title} {subtitle}".strip()
+                if album_title and album_title not in normalize_name(raw_title):
+                    title_tail = subtitle or raw_title
+                    title = f"{album_title} {title_tail}".strip()
                 url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
                 if not title or not url:
                     continue
