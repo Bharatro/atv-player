@@ -216,29 +216,10 @@ def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None
     return None, None
 
 
-def _stream_pair_format_selector(video_format: dict | None, audio_format: dict | None) -> str:
-    video_format_id = str((video_format or {}).get("format_id") or "").strip()
-    audio_format_id = str((audio_format or {}).get("format_id") or "").strip()
-    if video_format_id and audio_format_id:
-        return f"{video_format_id}+{audio_format_id}"
-    return video_format_id or audio_format_id
-
-
 def _quality_id_or_default(max_height: int | None) -> str:
     if max_height and max_height > 0:
         return _quality_id_for_height(max_height)
     return "ytdlp_auto"
-
-
-def _is_youtube_url(url: str) -> bool:
-    hostname = (urlparse(url or "").hostname or "").lower()
-    return hostname in {
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "music.youtube.com",
-        "youtu.be",
-    }
 
 
 def _pick_direct_url(info: dict, max_height: int | None) -> str:
@@ -288,6 +269,16 @@ def _format_codecs(fmt: dict, *, content_type: str) -> str:
     return str(fmt.get("acodec") or "").strip()
 
 
+def _format_dash_byte_range(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    start = str(value.get("start") or "").strip()
+    end = str(value.get("end") or "").strip()
+    if not start.isdigit() or not end.isdigit():
+        return ""
+    return f"{start}-{end}"
+
+
 def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
     attrs: list[tuple[str, str]] = [
         ("id", str(fmt.get("format_id") or "").strip() or content_type),
@@ -307,9 +298,17 @@ def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
         if height > 0:
             attrs.append(("height", str(height)))
     attributes = " ".join(f'{key}="{value}"' for key, value in attrs)
+    index_range = _format_dash_byte_range(fmt.get("index_range"))
+    init_range = _format_dash_byte_range(fmt.get("init_range"))
+    segment_base_xml = ""
+    if index_range or init_range:
+        segment_base_attrs = f' indexRange="{index_range}"' if index_range else ""
+        initialization_xml = f'<Initialization range="{init_range}"/>' if init_range else ""
+        segment_base_xml = f"<SegmentBase{segment_base_attrs}>{initialization_xml}</SegmentBase>"
     return (
         f"<Representation {attributes}>"
         f"<BaseURL>{str(fmt.get('url') or '')}</BaseURL>"
+        f"{segment_base_xml}"
         "</Representation>"
     )
 
@@ -501,21 +500,15 @@ class YtdlpPlaybackService:
             raise ValueError("未获取到播放地址")
         playback_url = direct_url
         requested_audio_url = ""
-        ytdl_format = _stream_pair_format_selector(selected_video, selected_audio)
-        if _is_youtube_url(url):
-            ytdl_format = _build_format_selector(max_height)
-            playback_url = url
+        ytdl_format = ""
         if selected_audio is not None and selected_audio.get("url"):
             if selected_video is None or not selected_video.get("url"):
                 raise ValueError("未获取到视频流")
-            if not _is_youtube_url(url):
-                playback_url = _build_dash_manifest_data_uri(
-                    selected_video,
-                    selected_audio,
-                    duration_seconds=int(info.get("duration") or 0),
-                )
-        elif selected_video is not None and _has_muxed_audio(selected_video):
-            requested_audio_url = ""
+            playback_url = _build_dash_manifest_data_uri(
+                selected_video,
+                selected_audio,
+                duration_seconds=int(info.get("duration") or 0),
+            )
 
         http_headers = info.get("http_headers") or {}
         headers = {
@@ -644,7 +637,7 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
             id=_quality_id_for_height(height),
             label=label,
             url="",
-            ytdl_format=_build_format_selector(height),
+            ytdl_format="",
             width=fmt.get("width") or 0,
             height=height,
             bandwidth=int((tbr or 0) * 1000),

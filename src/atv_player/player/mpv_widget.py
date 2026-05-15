@@ -293,7 +293,9 @@ class MpvWidget(QWidget):
             profile = _ISO_PROXY_STREAM_PROFILE
             profile_name = "iso-proxy"
         elif self._is_local_dash_proxy_url(url):
-            profile = _LOW_LATENCY_STREAM_PROFILE
+            # DASH proxy needs some buffering for remote media, but a full initial cache pause
+            # makes first-frame startup feel much slower than direct playback.
+            profile = _YTDL_STREAM_PROFILE
             profile_name = "dash-proxy"
         elif ytdl_format:
             profile = _YTDL_STREAM_PROFILE

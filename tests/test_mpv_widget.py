@@ -328,7 +328,7 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
-def test_mpv_widget_disables_initial_cache_pause_for_local_dash_proxy(qtbot) -> None:
+def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
 
@@ -348,10 +348,10 @@ def test_mpv_widget_disables_initial_cache_pause_for_local_dash_proxy(qtbot) -> 
 
     widget.load("http://127.0.0.1:2323/dash/test-token.mpd")
 
-    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause"] == "yes"
     assert widget._player.options["cache-pause-initial"] == "no"
-    assert widget._player.options["cache-pause-wait"] == 0
-    assert widget._player.options["demuxer-readahead-secs"] == 3
+    assert widget._player.options["cache-pause-wait"] == 1
+    assert widget._player.options["demuxer-readahead-secs"] == 15
 
 
 def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
@@ -422,10 +422,10 @@ def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
             {"ytdl": "yes", "ytdl_format": "299+140"},
         )
     ]
-    assert widget._player.options["cache-pause"] == "no"
+    assert widget._player.options["cache-pause"] == "yes"
     assert widget._player.options["cache-pause-initial"] == "no"
-    assert widget._player.options["cache-pause-wait"] == 0
-    assert widget._player.options["demuxer-readahead-secs"] == 3
+    assert widget._player.options["cache-pause-wait"] == 1
+    assert widget._player.options["demuxer-readahead-secs"] == 15
 
 
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:

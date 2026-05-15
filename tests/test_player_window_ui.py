@@ -1719,7 +1719,8 @@ def test_player_window_prepares_ytdlp_dash_data_uri_after_loader_resolves_separa
 
     window.open_session(session)
 
-    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)])
+    qtbot.waitUntil(lambda: len(video.load_calls) == 1)
+    assert video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)]
     assert ad_filter.should_prepare_calls == ["data:application/dash+xml;base64,PE1QRD48L01QRD4="]
     assert ad_filter.prepare_calls == ["data:application/dash+xml;base64,PE1QRD48L01QRD4="]
 
@@ -1798,7 +1799,6 @@ def test_player_window_switches_ytdlp_dash_quality_using_original_page_url(qtbot
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
-        async_playback_loader=True,
     )
     session.playback_loader = playback_loader
 
@@ -1810,7 +1810,9 @@ def test_player_window_switches_ytdlp_dash_quality_using_original_page_url(qtbot
 
     window.open_session(session)
 
-    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)])
+    qtbot.waitUntil(lambda: len(video.load_calls) == 1)
+    assert video.load_calls == [("http://127.0.0.1:2323/dash/ytdlp-1080.mpd", False, 0)]
+    qtbot.waitUntil(lambda: window.video_quality_combo.count() == 2)
     assert source_urls_seen == ["https://www.youtube.com/watch?v=test123"]
     assert session.playlist[0].original_url == "https://www.youtube.com/watch?v=test123"
 

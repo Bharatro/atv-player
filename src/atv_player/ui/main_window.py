@@ -2493,8 +2493,6 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
         startup_quality_id = f"ytdlp_{_DEFAULT_STARTUP_MAX_HEIGHT}"
-        startup_ytdl_format = self._yt_dlp_service.playback_format_selector(_DEFAULT_STARTUP_MAX_HEIGHT)
-
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             selected_quality_id = current_item.selected_playback_quality_id or ""
@@ -2524,17 +2522,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         item = PlayItem(
             title=url,
-            url=url,
+            url="",
             original_url=url,
             vod_id=url,
             media_title=url,
             selected_playback_quality_id=startup_quality_id,
-            ytdl_format=startup_ytdl_format,
+            ytdl_format="",
             playback_qualities=[
                 VideoQualityOption(
                     id=startup_quality_id,
                     label=f"{_DEFAULT_STARTUP_MAX_HEIGHT}p",
-                    ytdl_format=startup_ytdl_format,
                     height=_DEFAULT_STARTUP_MAX_HEIGHT,
                 )
             ],
@@ -2551,6 +2548,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             async_playback_loader=True,
             playback_history_saver=history_saver,
         )
+
+    def _build_parse_request(self, url: str) -> OpenPlayerRequest:
+        yt_dlp = self._yt_dlp_service
+        if yt_dlp is not None and yt_dlp.is_available() and yt_dlp.can_resolve(url):
+            return self._build_ytdlp_parse_request(url)
+        return self._build_direct_parse_request(url)
 
     def _build_direct_parse_detail_request(self, url: str, load_item, danmaku_controller) -> OpenPlayerRequest | None:
         history_loader, history_saver = self._direct_parse_history_hooks(url)
@@ -2633,12 +2636,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return True
         yt_dlp = self._yt_dlp_service
         if yt_dlp is not None and yt_dlp.is_available() and yt_dlp.can_resolve(keyword):
-            self._start_open_request(lambda: self._build_ytdlp_parse_request(keyword))
+            self._start_open_request(lambda: self._build_parse_request(keyword))
             return True
         if self._playback_parser_service is None:
             self.show_error("当前未配置内置解析")
             return True
-        self._start_open_request(lambda: self._build_direct_parse_request(keyword))
+        self._start_open_request(lambda: self._build_parse_request(keyword))
         return True
 
     def _start_global_search(self) -> None:
@@ -3117,7 +3120,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def open_history_detail(self, record: HistoryRecord) -> None:
         if record.source_kind == "direct_parse":
-            self._start_open_request(lambda: self._build_direct_parse_request(record.key))
+            self._start_open_request(lambda: self._build_parse_request(record.key))
             return
         if record.source_kind == "spider_plugin":
             plugin_id = record.source_key or str(record.source_plugin_id or "")
@@ -3540,7 +3543,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         mode = self.config.last_playback_mode
         source = self.config.last_playback_source or "browse"
         if mode == "parse" and source in {"direct", "direct_parse"} and self.config.last_playback_vod_id:
-            return self._build_direct_parse_request(self.config.last_playback_vod_id)
+            return self._build_parse_request(self.config.last_playback_vod_id)
         if mode in {"detail", "custom"} and self.config.last_playback_vod_id:
             return self._build_detail_restore_request(source, self.config.last_playback_vod_id)
         if mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:

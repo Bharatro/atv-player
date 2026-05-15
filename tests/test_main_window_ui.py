@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import Qt
 
-from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.ui.main_window import (
@@ -2455,7 +2455,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                 "Result",
                 (),
                 {
-                    "url": "https://www.youtube.com/watch?v=test123",
+                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
                     "title": "Async Test Video",
                     "thumbnail": "https://img.example/poster.jpg",
                     "description": "async description",
@@ -2464,7 +2464,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": self.playback_format_selector(1080),
+                    "ytdl_format": "",
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -2512,7 +2512,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert request.source_mode == "ytdlp"
     assert request.source_vod_id == url
     assert request.async_playback_loader is True
-    assert request.playlist[0].url == url
+    assert request.playlist[0].url == ""
     assert request.playlist[0].original_url == url
     assert request.playlist[0].selected_playback_quality_id == "ytdlp_1080"
 
@@ -2523,7 +2523,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert session.vod.vod_name == "Async Test Video"
     assert session.vod.vod_pic == "https://img.example/poster.jpg"
     assert session.vod.vod_content == "async description"
-    assert request.playlist[0].url == url
+    assert request.playlist[0].url == "data:application/dash+xml;base64,PE1QRD48L01QRD4="
     assert request.playlist[0].headers == {"Referer": "https://www.youtube.com/"}
 
 
@@ -2551,7 +2551,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 "Result",
                 (),
                 {
-                    "url": "https://www.youtube.com/watch?v=test123",
+                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -2560,7 +2560,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": self.playback_format_selector(1080),
+                    "ytdl_format": "",
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -2572,7 +2572,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 "Result",
                 (),
                 {
-                    "url": "https://www.youtube.com/watch?v=test123",
+                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -2581,7 +2581,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": self.playback_format_selector(720),
+                    "ytdl_format": "",
                     "extractor": "youtube",
                     "selected_quality_id": quality_id,
                 },
@@ -2614,7 +2614,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
 
     assert service.resolve_calls == []
     assert service.resolve_for_quality_calls == [("https://www.youtube.com/watch?v=test123", "ytdlp_720")]
-    assert item.url == "https://www.youtube.com/watch?v=test123"
+    assert item.url == "data:application/dash+xml;base64,PE1QRD48L01QRD4="
     assert item.audio_url == ""
     assert item.selected_playback_quality_id == "ytdlp_720"
 
@@ -2655,6 +2655,124 @@ def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> No
     request.playback_history_saver({"position": 12})
     assert history_calls == []
     assert saved_calls == [("https://www.youtube.com/watch?v=test123", {"position": 12})]
+
+
+def test_main_window_restore_request_routes_youtube_parse_urls_to_ytdlp(qtbot) -> None:
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+    parser_service = object()
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(
+            last_playback_source="direct_parse",
+            last_playback_mode="parse",
+            last_playback_vod_id="https://www.youtube.com/watch?v=test123",
+        ),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=parser_service,
+        yt_dlp_service=FakeYtdlpService(),
+        direct_parse_playback_history_loader=lambda vod_id: HistoryRecord(
+            id=1,
+            key=vod_id,
+            vod_name="saved",
+            vod_pic="",
+            vod_remarks="",
+            episode=0,
+            episode_url=vod_id,
+            position=156000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+    qtbot.addWidget(window)
+
+    request = window._build_restore_request()
+
+    assert request is not None
+    assert request.source_mode == "ytdlp"
+    assert request.playback_history_loader is None
+
+
+def test_main_window_history_detail_routes_youtube_parse_urls_to_ytdlp(qtbot, monkeypatch) -> None:
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+    opened: list[OpenPlayerRequest] = []
+    parser_service = object()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=parser_service,
+        yt_dlp_service=FakeYtdlpService(),
+        direct_parse_playback_history_loader=lambda vod_id: HistoryRecord(
+            id=1,
+            key=vod_id,
+            vod_name="saved",
+            vod_pic="",
+            vod_remarks="",
+            episode=0,
+            episode_url=vod_id,
+            position=156000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    qtbot.addWidget(window)
+    window.show()
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=1,
+            key="https://www.youtube.com/watch?v=test123",
+            vod_name="saved",
+            vod_pic="",
+            vod_remarks="",
+            source_kind="direct_parse",
+            episode=0,
+            episode_url="https://www.youtube.com/watch?v=test123",
+            position=156000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        )
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1)
+    assert opened[0].source_mode == "ytdlp"
+    assert opened[0].playback_history_loader is None
 
 
 def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:

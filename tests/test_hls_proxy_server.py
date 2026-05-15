@@ -860,6 +860,49 @@ def test_local_hls_proxy_server_rewrites_requested_dash_video_selection() -> Non
     ]
 
 
+def test_local_hls_proxy_server_preserves_segment_base_when_rewriting_dash_manifest() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v1080" bandwidth="2800000" width="1920" height="1080" mimeType="video/mp4">
+        <BaseURL>https://media.example/video-1080.mp4</BaseURL>
+        <SegmentBase indexRange="738-1425">
+          <Initialization range="0-737"/>
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000" mimeType="audio/mp4">
+        <BaseURL>https://media.example/audio-1.m4a</BaseURL>
+        <SegmentBase indexRange="702-1189">
+          <Initialization range="0-701"/>
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    status, headers, body = server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    body_text = body.decode("utf-8")
+    assert status == 200
+    assert headers == [("Content-Type", "application/dash+xml")]
+    assert f"/dash/asset/{token}/0.m4s" in body_text
+    assert f"/dash/asset/{token}/1.m4s" in body_text
+    assert 'SegmentBase indexRange="738-1425"' in body_text
+    assert 'Initialization range="0-737"' in body_text
+    assert 'SegmentBase indexRange="702-1189"' in body_text
+    assert 'Initialization range="0-701"' in body_text
+
+
 def test_local_hls_proxy_server_proxies_dash_asset_with_range_headers() -> None:
     requests: list[tuple[str, dict[str, str]]] = []
 
