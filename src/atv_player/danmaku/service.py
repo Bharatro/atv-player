@@ -41,6 +41,13 @@ _PREFERRED_MOVIE_VARIANT_TOKENS = (
     "臻彩",
 )
 
+_FULL_MOVIE_TOKENS = (
+    "全片",
+    "正片",
+    "完整版",
+    "完结",
+)
+
 _SUPPLEMENTAL_MOVIE_TOKENS = (
     "独家采访",
     "采访",
@@ -57,6 +64,7 @@ _SUPPLEMENTAL_MOVIE_TOKENS = (
     "片段",
     "幕后",
     "专访",
+    "首映礼",
 )
 
 _MIN_DANMAKU_CANDIDATE_DURATION_SECONDS = 300
@@ -87,10 +95,58 @@ def _movie_candidate_priority(query_name: str, candidate_name: str) -> tuple[int
     query_base = strip_episode_suffix(normalize_name(query_name))
     candidate_base = strip_episode_suffix(normalize_name(candidate_name))
     candidate_text = normalize_name(candidate_name)
+    candidate_compact = _compact_title(candidate_text)
+    full_movie = int(any(token in candidate_compact for token in _FULL_MOVIE_TOKENS))
     exact_title = int(_compact_title(candidate_base) == _compact_title(query_base))
-    preferred_variant = int(any(token in candidate_text for token in _PREFERRED_MOVIE_VARIANT_TOKENS))
+    preferred_variant = int(
+        full_movie or any(token in candidate_text for token in _PREFERRED_MOVIE_VARIANT_TOKENS)
+    )
     supplemental = int(any(token in candidate_text for token in _SUPPLEMENTAL_MOVIE_TOKENS))
     return exact_title, preferred_variant, supplemental
+
+
+def _is_clean_title_only_movie_candidate(query_name: str, candidate_name: str) -> bool:
+    query_compact = _compact_title(strip_episode_suffix(normalize_name(query_name)))
+    candidate_compact = _compact_title(normalize_name(candidate_name))
+    if not query_compact or query_compact not in candidate_compact:
+        return False
+    remainder = candidate_compact.replace(query_compact, "", 1)
+    remainder = re.sub(r"(?:19|20)\d{2}", "", remainder)
+    for token in (
+        *_PREFERRED_MOVIE_VARIANT_TOKENS,
+        *_FULL_MOVIE_TOKENS,
+        "电影",
+        "影片",
+        "版",
+        "高清",
+        "超清",
+        "蓝光",
+        "4k",
+        "hd",
+    ):
+        remainder = remainder.replace(_compact_title(token), "")
+    return not remainder
+
+
+def _filter_title_only_movie_noise(
+    query_name: str,
+    items: list[DanmakuSearchItem],
+) -> list[DanmakuSearchItem]:
+    strong_candidates = [
+        item
+        for item in items
+        if extract_episode_number(item.name) is None
+        and _is_clean_title_only_movie_candidate(query_name, item.name)
+    ]
+    if not strong_candidates:
+        return items
+    filtered = [
+        item
+        for item in items
+        if extract_episode_number(item.name) is not None
+        or _is_clean_title_only_movie_candidate(query_name, item.name)
+    ]
+    return filtered or items
 
 
 def _filter_short_duration_candidates_for_implicit_request(
@@ -287,6 +343,8 @@ class DanmakuService:
                 results = []
         if requested_episode is not None and not explicit_episode_request:
             results = _filter_short_duration_candidates_for_implicit_request(results)
+        if requested_episode is None:
+            results = _filter_title_only_movie_noise(primary_query, results)
 
         def sort_key(item: DanmakuSearchItem) -> tuple[int, int, int, int, int, float, float, int]:
             item_episode = extract_episode_number(item.name)
@@ -307,6 +365,10 @@ class DanmakuService:
                     movie_exact_priority, movie_variant_priority, supplemental_penalty = _movie_candidate_priority(
                         primary_query, item.name
                     )
+            elif item_episode is None:
+                movie_exact_priority, movie_variant_priority, supplemental_penalty = _movie_candidate_priority(
+                    primary_query, item.name
+                )
             return (
                 -no_episode_priority,
                 -movie_exact_priority,

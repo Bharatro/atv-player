@@ -149,6 +149,8 @@ class PlayItem:
     selected_danmaku_provider: str = ""
     selected_danmaku_title: str = ""
     danmaku_error: str = ""
+    type_name: str = ""
+    category_name: str = ""
 
 
 @dataclass(slots=True)
@@ -203,6 +205,7 @@ class VodItem:
     vod_play_from: str = ""
     vod_play_url: str = ""
     type_name: str = ""
+    category_name: str = ""
     vod_content: str = ""
     vod_year: str = ""
     vod_area: str = ""

@@ -844,6 +844,57 @@ def test_search_danmu_filters_out_original_title_when_query_targets_sequel() -> 
     assert [item.url for item in results] == ["https://www.iqiyi.com/v_1vf32rlbi7w.html"]
 
 
+def test_search_danmu_prefers_movie_candidates_over_commentary_for_title_only_queries() -> None:
+    bilibili = FakeProvider(
+        "bilibili",
+        [
+            DanmakuSearchItem(
+                provider="bilibili",
+                name="《蜂蜜的针》：只有针，没有蜜！邀请《三炮台》激情开炮",
+                url="https://www.bilibili.com/video/BV-commentary",
+                ratio=0.99,
+                simi=0.99,
+            ),
+            DanmakuSearchItem(
+                provider="bilibili",
+                name="《蜂蜜的针》首映礼小燕子导演观影支持",
+                url="https://www.bilibili.com/video/BV-premiere",
+                ratio=0.98,
+                simi=0.98,
+            ),
+            DanmakuSearchItem(
+                provider="bilibili",
+                name="全!片·《蜂蜜的针》完结",
+                url="https://www.bilibili.com/video/BV-full",
+                ratio=0.90,
+                simi=0.90,
+            ),
+        ],
+        [],
+    )
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="蜂蜜的针",
+                url="https://v.qq.com/x/cover/movie.html",
+                ratio=0.92,
+                simi=0.92,
+            )
+        ],
+        [],
+    )
+    service = DanmakuService({"bilibili": bilibili, "tencent": tencent}, provider_order=["bilibili", "tencent"])
+
+    results = service.search_danmu("蜂蜜的针")
+
+    assert [item.url for item in results] == [
+        "https://v.qq.com/x/cover/movie.html",
+        "https://www.bilibili.com/video/BV-full",
+    ]
+
+
 def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:
     class RetryAwareProvider(FakeProvider):
         def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:

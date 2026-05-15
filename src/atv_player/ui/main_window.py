@@ -2933,6 +2933,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             vod_pic=getattr(item, "vod_pic", ""),
             vod_remarks=getattr(item, "vod_remarks", ""),
             type_name=getattr(item, "type_name", ""),
+            category_name=getattr(item, "category_name", ""),
             vod_content=getattr(item, "vod_content", ""),
             vod_year=getattr(item, "vod_year", ""),
             vod_area=getattr(item, "vod_area", ""),
@@ -2952,6 +2953,31 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             initial_log_message="正在加载详情...",
             is_placeholder=True,
         )
+
+    @staticmethod
+    def _apply_request_fallback_metadata(request: OpenPlayerRequest, item: Any) -> OpenPlayerRequest:
+        fallback_type_name = str(getattr(item, "type_name", "") or "").strip()
+        fallback_category_name = str(getattr(item, "category_name", "") or "").strip()
+        fallback_vod_name = str(getattr(item, "vod_name", "") or "").strip()
+        if fallback_type_name and not request.vod.type_name:
+            request.vod.type_name = fallback_type_name
+        if fallback_category_name and not request.vod.category_name:
+            request.vod.category_name = fallback_category_name
+        if fallback_vod_name and not request.vod.vod_name:
+            request.vod.vod_name = fallback_vod_name
+        resolved_media_title = (request.vod.vod_name or fallback_vod_name).strip()
+        playlists = list(request.playlists or [])
+        if not playlists and request.playlist:
+            playlists = [request.playlist]
+        for playlist in playlists:
+            for play_item in playlist:
+                if fallback_type_name and not play_item.type_name:
+                    play_item.type_name = fallback_type_name
+                if fallback_category_name and not play_item.category_name:
+                    play_item.category_name = fallback_category_name
+                if resolved_media_title and not play_item.media_title:
+                    play_item.media_title = resolved_media_title
+        return request
 
     def _current_player_session_is_placeholder(self) -> bool:
         if self.player_window is None:
@@ -3019,7 +3045,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             request = controller.build_request(getattr(item, "vod_id", ""))
             request.source_kind = "plugin"
             request.source_key = plugin_id
-            return request
+            return self._apply_request_fallback_metadata(request, item)
 
         self._start_plugin_open_request(build_request)
 

@@ -76,6 +76,42 @@ _TECHNICAL_FILENAME_MARKERS = (
     "atmos",
 )
 
+_QUALITY_ONLY_FILENAME_TOKENS = {
+    "4k",
+    "2160p",
+    "1080p",
+    "720p",
+    "480p",
+    "hdr",
+    "dv",
+    "hevc",
+    "x264",
+    "x265",
+    "h264",
+    "h265",
+    "av1",
+    "aac",
+    "ddp",
+    "atmos",
+    "webdl",
+    "webrip",
+    "bluray",
+    "bdrip",
+    "itunes",
+    "amzn",
+    "nf",
+    "国语",
+    "粤语",
+    "普通话",
+    "原声",
+    "超清",
+    "高清",
+    "蓝光",
+    "正片",
+    "完整版",
+    "全片",
+}
+
 
 def normalize_name(name: str) -> str:
     value = str(name).strip()
@@ -131,6 +167,24 @@ def _looks_like_technical_media_filename(name: str) -> bool:
     return has_marker and (has_file_extension or has_year_prefix)
 
 
+def _looks_like_quality_only_media_filename(name: str) -> bool:
+    value = normalize_name(name)
+    if re.search(r"\.(mkv|mp4|avi|mov|m4v|ts|flv)\b", value, re.IGNORECASE) is None:
+        return False
+    basename = re.sub(r"\([^)]*\)\s*$", "", value).strip()
+    basename = re.sub(r"\.(mkv|mp4|avi|mov|m4v|ts|flv)\b.*$", "", basename, flags=re.IGNORECASE).strip()
+    if not basename:
+        return False
+    tokens = [
+        token.casefold()
+        for token in re.split(r"[.\s_\-]+", basename)
+        if token.strip()
+    ]
+    if not tokens:
+        return False
+    return all(token in _QUALITY_ONLY_FILENAME_TOKENS for token in tokens)
+
+
 def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int | None:
     current_title = current_item.title or ""
     technical_filename = _looks_like_technical_media_filename(current_title)
@@ -138,6 +192,11 @@ def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[Pla
     if direct is not None and (not technical_filename or has_explicit_episode_marker(current_title)):
         return direct
     if technical_filename:
+        return None
+    if _looks_like_quality_only_media_filename(current_title) and (
+        (playlist is None and current_item.index <= 0)
+        or (playlist is not None and len(playlist) <= 1)
+    ):
         return None
     current_index = current_item.index
     if not playlist:

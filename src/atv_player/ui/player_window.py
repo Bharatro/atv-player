@@ -4661,6 +4661,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 current_item,
                 search_title_override=title,
                 search_episode_override=episode,
+                playlist=self.session.playlist,
                 force_refresh=True,
                 media_duration_seconds=media_duration_seconds,
                 provider_filter=current_item.danmaku_search_provider,
@@ -4686,6 +4687,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
                 current_item,
                 query_override=None,
+                playlist=self.session.playlist,
                 force_refresh=True,
                 media_duration_seconds=media_duration_seconds,
                 provider_filter=current_item.danmaku_search_provider,

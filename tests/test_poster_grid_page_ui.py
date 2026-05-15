@@ -289,6 +289,20 @@ def test_poster_grid_page_clicking_card_can_emit_item_open_requested(qtbot) -> N
     assert signal.args[0].vod_name == "霸王别姬"
 
 
+def test_poster_grid_page_clicking_category_card_emits_current_category_name(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), click_action="open"))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1 and page.card_buttons[0].text().startswith("活着"))
+
+    with qtbot.waitSignal(page.item_open_requested, timeout=1000) as signal:
+        page.card_buttons[0].click()
+
+    assert signal.args[0].vod_id == "m2"
+    assert signal.args[0].category_name == "电影"
+
+
 def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(SearchableDoubanController(), click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)

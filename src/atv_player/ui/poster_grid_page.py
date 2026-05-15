@@ -864,6 +864,10 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
     def _handle_card_clicked(self, item) -> None:
         if self._click_action == "open":
+            if not self._search_mode and not getattr(item, "category_name", "").strip():
+                category = self._current_category()
+                if category is not None:
+                    item.category_name = str(getattr(category, "type_name", "") or "").strip()
             self.item_open_requested.emit(item)
             self.open_requested.emit(item.vod_id)
             return

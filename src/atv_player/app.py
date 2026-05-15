@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import gc
 import inspect
 import threading
 import time
 import logging
+import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
@@ -44,6 +46,7 @@ from atv_player.ui.main_window import MainWindow, load_direct_parse_detail
 from atv_player.ui.icon_cache import load_icon
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+_MAIN_THREAD_GC_INTERVAL_MS = 30_000
 logger = logging.getLogger(__name__)
 
 
@@ -122,9 +125,24 @@ def _install_button_pointing_hand_cursor(app: QApplication) -> None:
     setattr(app, "_button_cursor_event_filter", filter_obj)
 
 
+def _install_main_thread_gc_workaround(app: QApplication) -> None:
+    if tuple(sys.version_info[:2]) < (3, 14) or not gc.isenabled():
+        return
+    gc.disable()
+    timer = QTimer(app if isinstance(app, QObject) else None)
+    timer.setInterval(_MAIN_THREAD_GC_INTERVAL_MS)
+    timer.timeout.connect(gc.collect)
+    timer.start()
+    setattr(app, "_main_thread_gc_timer", timer)
+    logger.warning(
+        "Enabled Python 3.14 GC workaround: automatic GC disabled, using main-thread periodic collection",
+    )
+
+
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     _install_button_pointing_hand_cursor(app)
+    _install_main_thread_gc_workaround(app)
     app.setApplicationName("atv-player")
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()

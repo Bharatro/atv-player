@@ -9,6 +9,7 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
 from atv_player.controllers.player_controller import PlayerController
+from atv_player.danmaku.errors import DanmakuEmptyResultError
 from atv_player.danmaku.providers.iqiyi import IqiyiDanmakuProvider
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
@@ -1635,6 +1636,121 @@ def test_controller_refresh_danmaku_sources_omits_episode_for_movie_like_title()
     assert item.danmaku_search_query == "名侦探柯南 剧场版"
 
 
+def test_controller_refresh_danmaku_sources_omits_episode_for_movie_category() -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="孤注一掷",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="孤注一掷",
+        category_name="多多电影",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item])
+
+    assert service.calls == ["孤注一掷"]
+    assert item.danmaku_search_episode == ""
+    assert item.danmaku_search_query == "孤注一掷"
+
+
+def test_controller_preserves_movie_category_for_drive_replacement_items() -> None:
+    class MovieDriveSpider(FakeSpider):
+        def danmaku(self):
+            return True
+
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "伪钞重案",
+                        "vod_play_from": "网盘线",
+                        "vod_play_url": "正片$https://pan.baidu.com/s/fake-movie",
+                    }
+                ]
+            }
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            calls.append((name, reg_src))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.baidu.com/s/fake-movie"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$112392$1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {
+                            "title": "4k.mp4(2.45 GB)",
+                            "url": "http://192.168.50.60:4567/p/web/1@112392",
+                            "path": "/伪钞重案/4k.mp4",
+                            "size": 2450000000,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        MovieDriveSpider(),
+        plugin_name="伪钞重案",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/movie-drive")
+    request.vod.category_name = "多多电影"
+    request.playlist[0].category_name = "多多电影"
+
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlist[0])
+
+    assert result is not None
+    replacement = result.replacement_playlist[0]
+    _wait_until(lambda: replacement.danmaku_pending is False)
+
+    assert replacement.category_name == "多多电影"
+    assert calls == [("伪钞重案", "https://pan.baidu.com/s/fake-movie")]
+    assert replacement.danmaku_search_episode == ""
+    assert replacement.danmaku_search_query == "伪钞重案"
+
+
 def test_controller_refresh_danmaku_sources_persists_search_title_only_after_successful_search(tmp_path) -> None:
     class SuccessfulDanmakuService:
         def search_danmu_sources(
@@ -1827,6 +1943,57 @@ def test_controller_switch_danmaku_source_emits_log_events() -> None:
     assert logs == [
         "弹幕下载中: 腾讯 - 红果短剧 第1集",
         "弹幕下载成功: 1 条弹幕",
+    ]
+
+
+def test_controller_resolve_danmaku_sync_emits_final_failure_after_all_candidates_fail() -> None:
+    class FailingDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[DanmakuSourceOption(provider="bilibili", name="世界的主人", url="https://bilibili/1")],
+                    ),
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="世界的主人", url="https://qq/1")],
+                    ),
+                ],
+                default_option_url="https://bilibili/1",
+                default_provider="bilibili",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+
+    logs: list[str] = []
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="世界的主人",
+        search_enabled=True,
+        danmaku_service=FailingDanmakuService(),
+    )
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(title="正片", url="https://stream.example/movie.m3u8", media_title="世界的主人", vod_id="movie-1")
+
+    controller._resolve_danmaku_sync(item, item.url, [item])
+
+    assert logs == [
+        "弹幕搜索中: 世界的主人",
+        "弹幕搜索成功: 找到 2 个候选",
+        "弹幕下载中: B站 - 世界的主人",
+        "弹幕下载中: 腾讯 - 世界的主人",
+        "弹幕下载失败: 未找到弹幕: https://qq/1",
     ]
 
 
@@ -3802,6 +3969,132 @@ def test_controller_uses_media_title_only_for_year_prefixed_movie_filename() -> 
     assert calls == [("search", "网盘剧集|http://m/1.mp4")]
 
 
+def test_controller_uses_media_title_only_for_single_quality_filename_drive_item() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "长夜将尽",
+                        "vod_play_from": "百度",
+                        "vod_play_url": "正片$https://pan.quark.cn/s/f518510ef92a",
+                    }
+                ]
+            }
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {
+                            "title": "4k.mp4(3.39 GB)",
+                            "url": "http://m/1.mp4",
+                            "path": "/长夜将尽/4k.mp4",
+                            "size": 3639986176,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="长夜将尽",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    request.playback_loader(result.replacement_playlist[0])
+    _wait_until(lambda: result.replacement_playlist[0].danmaku_pending is False)
+    assert calls == [("search", "长夜将尽|http://m/1.mp4")]
+
+
+def test_controller_movie_category_name_overrides_non_movie_type_name_for_drive_item() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "长夜将尽",
+                        "type_name": "剧情,爱情,短片",
+                        "vod_play_from": "百度",
+                        "vod_play_url": "正片$https://pan.quark.cn/s/f518510ef92a",
+                    }
+                ]
+            }
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            calls.append((name, reg_src))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {"title": "4k.mp4(3.39 GB)", "url": "http://m/1.mp4", "path": "/长夜将尽/4k.mp4", "size": 3639986176},
+                        {"title": "1080p.mp4(1.28 GB)", "url": "http://m/2.mp4", "path": "/长夜将尽/1080p.mp4", "size": 1374389534},
+                        {"title": "720p.mp4(0.74 GB)", "url": "http://m/3.mp4", "path": "/长夜将尽/720p.mp4", "size": 794568949},
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="长夜将尽",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    request.vod.category_name = "多多电影"
+    request.playlist[0].category_name = "多多电影"
+
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlist[0])
+
+    assert result is not None
+    replacement = result.replacement_playlist[0]
+    _wait_until(lambda: replacement.danmaku_pending is False)
+
+    assert replacement.category_name == "多多电影"
+    assert calls == [("长夜将尽", "https://pan.quark.cn/s/f518510ef92a")]
+    assert replacement.danmaku_search_episode == ""
+
+
 def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_episode_number() -> None:
     class DanmakuDriveLinkSpider(DriveLinkSpider):
         def danmaku(self):
@@ -4594,6 +4887,19 @@ def test_prefetch_next_episode_danmaku_emits_prefetch_start_log() -> None:
     controller.prefetch_next_episode_danmaku(e2, [e1, e2])
 
     assert logs == ["弹幕预下载中: 凡人修仙传 2集"]
+
+
+def test_resolve_play_item_existing_media_url_passes_session_playlist_to_danmaku() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="测试", search_enabled=True, danmaku_service=object())
+    request = controller.build_request("/detail/1")
+    captured: list[tuple[PlayItem, str, list[PlayItem] | None]] = []
+    controller._maybe_resolve_danmaku = lambda item, url, playlist=None, **kwargs: captured.append((item, url, playlist))
+
+    assert request.playback_loader is not None
+    direct_item = request.playlist[1]
+    request.playback_loader(direct_item)
+
+    assert captured == [(direct_item, "https://media.example/2.m3u8", request.playlist)]
 
 
 def test_prefetch_next_episode_danmaku_skips_log_when_already_resolved() -> None:

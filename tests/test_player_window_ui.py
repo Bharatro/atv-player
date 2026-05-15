@@ -660,7 +660,7 @@ def test_player_window_opens_danmaku_source_dialog_by_loading_cached_search_resu
 def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[tuple[str | None, str | None, str | None]] = []
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None]] = []
 
         def refresh_danmaku_sources(
             self,
@@ -668,11 +668,12 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
             query_override: str | None = None,
             search_title_override: str | None = None,
             search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
             provider_filter: str = "",
         ) -> None:
-            self.calls.append((query_override, search_title_override, search_episode_override))
+            self.calls.append((query_override, search_title_override, search_episode_override, playlist))
             item.danmaku_search_title = "红果短剧"
             item.danmaku_search_episode = "1集"
             item.danmaku_search_query = "红果短剧 1集" if query_override is None else query_override
@@ -707,6 +708,7 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
         and window._danmaku_source_episode_edit.text() == "1集"
     )
     assert item.danmaku_search_query_overridden is False
+    assert session.danmaku_controller.calls == [(None, None, None, session.playlist)]
 
 
 def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pending(qtbot) -> None:
@@ -760,7 +762,7 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
 def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[tuple[str | None, str | None, str | None, bool, int]] = []
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
 
         def refresh_danmaku_sources(
             self,
@@ -768,6 +770,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
             query_override: str | None = None,
             search_title_override: str | None = None,
             search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
             provider_filter: str = "",
@@ -777,6 +780,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
                     query_override,
                     search_title_override,
                     search_episode_override,
+                    playlist,
                     force_refresh,
                     media_duration_seconds,
                     provider_filter,
@@ -840,7 +844,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     assert window._danmaku_source_status_label is not None
     assert window._danmaku_source_status_label.text() == "搜索中（全部）..."
     qtbot.waitUntil(
-        lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", True, 120, "")]
+        lambda: controller.calls == [(None, "红果短剧 腾讯版", "2集", session.playlist, True, 120, "")]
     )
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
     qtbot.waitUntil(lambda: window._danmaku_source_status_label.text() == "")
@@ -855,7 +859,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
 def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[tuple[str | None, str | None, str | None, int]] = []
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, int]] = []
 
         def refresh_danmaku_sources(
             self,
@@ -863,11 +867,12 @@ def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot)
             query_override: str | None = None,
             search_title_override: str | None = None,
             search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
             provider_filter: str = "",
         ) -> None:
-            self.calls.append((query_override, search_title_override, search_episode_override, media_duration_seconds))
+            self.calls.append((query_override, search_title_override, search_episode_override, playlist, media_duration_seconds))
             item.danmaku_search_title = "红果短剧"
             item.danmaku_search_episode = "1集"
             item.danmaku_search_query = "红果短剧 1集" if query_override is None else query_override
@@ -897,13 +902,13 @@ def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot)
     window._open_danmaku_source_dialog()
     window._reset_current_item_danmaku_search_query()
 
-    qtbot.waitUntil(lambda: controller.calls == [(None, None, None, 120)])
+    qtbot.waitUntil(lambda: controller.calls == [(None, None, None, session.playlist, 120)])
 
 
 def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[tuple[str | None, str | None, str | None, bool, int, str]] = []
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
 
         def refresh_danmaku_sources(
             self,
@@ -911,6 +916,7 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
             query_override: str | None = None,
             search_title_override: str | None = None,
             search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
             provider_filter: str = "",
@@ -920,6 +926,7 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
                     query_override,
                     search_title_override,
                     search_episode_override,
+                    playlist,
                     force_refresh,
                     media_duration_seconds,
                     provider_filter,
@@ -965,7 +972,7 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     window._rerun_current_item_danmaku_search()
 
     qtbot.waitUntil(
-        lambda: controller.calls == [(None, "红果短剧", "1集", True, 120, "youku")]
+        lambda: controller.calls == [(None, "红果短剧", "1集", session.playlist, True, 120, "youku")]
     )
     assert item.danmaku_search_provider == "youku"
 

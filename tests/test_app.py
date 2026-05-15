@@ -2466,6 +2466,49 @@ def test_main_window_plugin_card_opens_placeholder_player_immediately_and_hydrat
     assert window.player_window.opened[1][0]["playlist"][0].title == "Episode 1"
 
 
+def test_main_window_plugin_card_preserves_card_category_name_when_request_detail_omits_it(qtbot, monkeypatch) -> None:
+    def build_request(vod_id: str) -> OpenPlayerRequest:
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+            playlist=[PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/fake-movie")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    controller = AsyncPluginController(build_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "_open_player_immediately", lambda request, restore_paused_state=False: None)
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    plugin_page = window._plugin_pages[0][0]
+    plugin_page.item_open_requested.emit(
+        VodItem(vod_id="plugin-vod-1", vod_name="占位电影", category_name="多多电影")
+    )
+
+    _wait_for_request_call(qtbot, controller, "plugin-vod-1")
+    controller.finish_request("plugin-vod-1", request=build_request("plugin-vod-1"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0].vod.category_name == "多多电影"
+    assert opened[0].playlist[0].category_name == "多多电影"
+
+
 def test_main_window_plugin_card_failure_keeps_placeholder_player_open_and_logs_error(qtbot, monkeypatch) -> None:
     class RecordingPlayerWindow:
         def __init__(self, controller, config, save_config) -> None:
@@ -3171,6 +3214,68 @@ def test_build_application_starts_async_danmaku_cache_cleanup(monkeypatch, tmp_p
     app_module.build_application()
 
     assert cleanup_calls == ["started", "cleaned"]
+
+
+def test_build_application_uses_main_thread_gc_timer_on_python_3_14(monkeypatch, tmp_path) -> None:
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks: list[object] = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+    timer_state: dict[str, object] = {}
+
+    class FakeTimer:
+        def __init__(self, parent=None) -> None:
+            timer_state["parent"] = parent
+            self.timeout = FakeSignal()
+
+        def setInterval(self, interval: int) -> None:
+            timer_state["interval"] = interval
+
+        def start(self) -> None:
+            timer_state["started"] = True
+
+    gc_calls: list[str] = []
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(app_module, "QApplication", lambda args: app)
+    monkeypatch.setattr(app_module, "QTimer", FakeTimer)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(app_module.gc, "isenabled", lambda: True)
+    monkeypatch.setattr(app_module.gc, "disable", lambda: gc_calls.append("disable"))
+    monkeypatch.setattr(app_module.gc, "collect", lambda: gc_calls.append("collect"))
+    monkeypatch.setattr(app_module.sys, "version_info", (3, 14, 0))
+
+    app, _repo = app_module.build_application()
+
+    assert gc_calls == ["disable"]
+    assert timer_state == {
+        "parent": app,
+        "interval": app_module._MAIN_THREAD_GC_INTERVAL_MS,
+        "started": True,
+    }
+    assert getattr(app, "_main_thread_gc_timer").timeout.callbacks == [app_module.gc.collect]
+
+
+def test_build_application_leaves_gc_enabled_before_python_3_14(monkeypatch, tmp_path) -> None:
+    gc_calls: list[str] = []
+    app = QApplication.instance() or QApplication([])
+    if hasattr(app, "_main_thread_gc_timer"):
+        delattr(app, "_main_thread_gc_timer")
+
+    monkeypatch.setattr(app_module, "QApplication", lambda args: app)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(app_module.gc, "disable", lambda: gc_calls.append("disable"))
+    monkeypatch.setattr(app_module.sys, "version_info", (3, 13, 7))
+
+    app, _repo = app_module.build_application()
+
+    assert gc_calls == []
+    assert hasattr(app, "_main_thread_gc_timer") is False
 
 
 def test_build_application_uses_shared_app_path_helpers(monkeypatch, tmp_path) -> None:
