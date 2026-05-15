@@ -26,6 +26,30 @@ class FakeAlivePlayer:
         self.options[key] = value
 
 
+def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    recorded: dict[str, object] = {}
+
+    class FakeMpvModule:
+        @staticmethod
+        def MPV(**kwargs):
+            recorded.update(kwargs)
+            return object()
+
+    monkeypatch.setitem(sys.modules, "mpv", FakeMpvModule)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdlp_path",
+        lambda: "/tmp/tools/linux/yt-dlp",
+    )
+
+    widget._create_player()
+
+    assert recorded["script_opts"] == "ytdl_hook-ytdl_path=/tmp/tools/linux/yt-dlp"
+
+
 def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -349,9 +373,10 @@ def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:
     widget.load("http://127.0.0.1:2323/dash/test-token.mpd")
 
     assert widget._player.options["cache-pause"] == "yes"
-    assert widget._player.options["cache-pause-initial"] == "no"
-    assert widget._player.options["cache-pause-wait"] == 1
-    assert widget._player.options["demuxer-readahead-secs"] == 15
+    assert widget._player.options["cache-pause-initial"] == "yes"
+    assert widget._player.options["cache-pause-wait"] == 5
+    assert widget._player.options["demuxer-readahead-secs"] == 30
+    assert widget._player.options["cache-secs"] == 30
 
 
 def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
@@ -362,10 +387,14 @@ def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
         def __init__(self) -> None:
             self.pause = False
             self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.audio_add_calls: list[str] = []
             self.options: dict[str, object] = {}
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
             self.calls.append((url, mode, index, options))
+
+        def audio_add(self, url: str) -> None:
+            self.audio_add_calls.append(url)
 
         def __setitem__(self, key: str, value: object) -> None:
             self.options[key] = value
@@ -382,13 +411,48 @@ def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
             "https://media.example/video-1080.mp4",
             "replace",
             None,
-            {"audio_files": "https://media.example/audio.webm"},
+            {},
         )
     ]
+    assert widget._player.audio_add_calls == ["https://media.example/audio.webm"]
     assert widget._player.options["cache-pause"] == "no"
     assert widget._player.options["cache-pause-initial"] == "no"
     assert widget._player.options["cache-pause-wait"] == 0
     assert widget._player.options["demuxer-readahead-secs"] == 3
+
+
+def test_mpv_widget_adds_external_audio_via_command_when_url_contains_commas(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.audio_add_calls: list[str] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def audio_add(self, url: str) -> None:
+            self.audio_add_calls.append(url)
+
+    widget._player = FakePlayer()
+
+    widget.load(
+        "https://media.example/video-1080.mp4",
+        audio_files="https://media.example/audio.webm?lsparams=a,b,c",
+    )
+
+    assert widget._player.calls == [
+        (
+            "https://media.example/video-1080.mp4",
+            "replace",
+            None,
+            {},
+        )
+    ]
+    assert widget._player.audio_add_calls == ["https://media.example/audio.webm?lsparams=a,b,c"]
 
 
 def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
@@ -423,9 +487,10 @@ def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
         )
     ]
     assert widget._player.options["cache-pause"] == "yes"
-    assert widget._player.options["cache-pause-initial"] == "no"
-    assert widget._player.options["cache-pause-wait"] == 1
-    assert widget._player.options["demuxer-readahead-secs"] == 15
+    assert widget._player.options["cache-pause-initial"] == "yes"
+    assert widget._player.options["cache-pause-wait"] == 5
+    assert widget._player.options["demuxer-readahead-secs"] == 30
+    assert widget._player.options["cache-secs"] == 30
 
 
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
@@ -687,6 +752,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["cache"] is True
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
+    assert captured["cache_secs"] == 30
     assert captured["demuxer_max_bytes"] == "512M"
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"

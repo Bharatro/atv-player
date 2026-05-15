@@ -12,6 +12,8 @@ from PySide6.QtCore import QCoreApplication, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from atv_player.player.ytdlp_runtime import resolve_mpv_ytdlp_path
+
 _MPV_ERROR_MESSAGES = {
     -1: "事件队列已满",
     -2: "内存分配失败",
@@ -58,9 +60,10 @@ _LOW_LATENCY_STREAM_PROFILE: dict[str, object] = {
 
 _YTDL_STREAM_PROFILE: dict[str, object] = {
     "cache-pause": "yes",
-    "cache-pause-initial": "no",
-    "cache-pause-wait": 1,
-    "demuxer-readahead-secs": 15,
+    "cache-pause-initial": "yes",
+    "cache-pause-wait": 5,
+    "cache-secs": 30,
+    "demuxer-readahead-secs": 30,
 }
 
 logger = logging.getLogger(__name__)
@@ -137,12 +140,16 @@ class MpvWidget(QWidget):
             cache=True,
             cache_pause_initial=True,
             cache_pause_wait=3,
+            cache_secs=30,
             demuxer_max_bytes="512M",
             demuxer_max_back_bytes="128M",
             demuxer_readahead_secs=20,
             stream_buffer_size="4M",
             network_timeout=15,
         )
+        ytdlp_path = resolve_mpv_ytdlp_path()
+        if ytdlp_path:
+            common["script_opts"] = f"ytdl_hook-ytdl_path={ytdlp_path}"
         if os.getenv("ATV_MPV_DEBUG"):
             common["log_handler"] = print
             common["loglevel"] = "warn"
@@ -439,8 +446,6 @@ class MpvWidget(QWidget):
             return
         header_fields = self._build_http_header_fields(headers)
         loadfile_options = self._loadfile_options(url)
-        if audio_files:
-            loadfile_options["audio_files"] = audio_files
         if ytdl_format:
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
@@ -479,10 +484,13 @@ class MpvWidget(QWidget):
                 self.attach_audio_cover(poster_image_path)
             elif start_seconds > 0 and can_loadfile:
                 player.loadfile(url, start=str(start_seconds), **loadfile_options)
+            elif audio_files and can_loadfile:
+                player.loadfile(url, **loadfile_options)
             elif (header_fields or loadfile_options) and can_loadfile:
                 player.loadfile(url, **loadfile_options)
             else:
                 player.play(url)
+            self._attach_external_audio(player, audio_files)
         except Exception:
             if getattr(player, "core_shutdown", False):
                 player = self._create_player()
@@ -522,10 +530,13 @@ class MpvWidget(QWidget):
                     self.attach_audio_cover(poster_image_path)
                 elif start_seconds > 0 and can_loadfile:
                     player.loadfile(url, start=str(start_seconds), **loadfile_options)
+                elif audio_files and can_loadfile:
+                    player.loadfile(url, **loadfile_options)
                 elif (header_fields or loadfile_options) and can_loadfile:
                     player.loadfile(url, **loadfile_options)
                 else:
                     player.play(url)
+                self._attach_external_audio(player, audio_files)
             else:
                 raise
         player.pause = pause
@@ -547,6 +558,20 @@ class MpvWidget(QWidget):
             player.loadfile(url, **loadfile_options)
             return
         player.play(url)
+
+    def _attach_external_audio(self, player: Any, audio_files: str) -> None:
+        if not audio_files:
+            return
+        audio_add = getattr(player, "audio_add", None)
+        if callable(audio_add):
+            audio_add(audio_files)
+            return
+        command = getattr(player, "command", None)
+        if callable(command):
+            command("audio-add", audio_files, "select")
+            return
+        if hasattr(player, "loadfile"):
+            player.loadfile(audio_files, "append")
 
     def attach_audio_cover(self, poster_image_path: str) -> None:
         player = self._player

@@ -2455,7 +2455,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                 "Result",
                 (),
                 {
-                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "https://img.example/poster.jpg",
                     "description": "async description",
@@ -2464,7 +2464,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": "",
+                    "ytdl_format": "299+140",
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -2523,8 +2523,10 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert session.vod.vod_name == "Async Test Video"
     assert session.vod.vod_pic == "https://img.example/poster.jpg"
     assert session.vod.vod_content == "async description"
-    assert request.playlist[0].url == "data:application/dash+xml;base64,PE1QRD48L01QRD4="
+    assert request.playlist[0].url == "https://www.youtube.com/watch?v=test123"
     assert request.playlist[0].headers == {"Referer": "https://www.youtube.com/"}
+    assert request.playlist[0].selected_playback_quality_id == "ytdlp_1080"
+    assert request.playlist[0].ytdl_format == "299+140"
 
 
 def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> None:
@@ -2551,7 +2553,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 "Result",
                 (),
                 {
-                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -2560,7 +2562,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": "",
+                    "ytdl_format": "299+140",
                     "extractor": "youtube",
                     "selected_quality_id": "ytdlp_1080",
                 },
@@ -2572,7 +2574,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 "Result",
                 (),
                 {
-                    "url": "data:application/dash+xml;base64,PE1QRD48L01QRD4=",
+                    "url": "https://www.youtube.com/watch?v=test123",
                     "title": "Async Test Video",
                     "thumbnail": "",
                     "description": "",
@@ -2581,7 +2583,7 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                     "subtitles": [],
                     "qualities": [],
                     "audio_url": "",
-                    "ytdl_format": "",
+                    "ytdl_format": "298+140",
                     "extractor": "youtube",
                     "selected_quality_id": quality_id,
                 },
@@ -2614,9 +2616,10 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
 
     assert service.resolve_calls == []
     assert service.resolve_for_quality_calls == [("https://www.youtube.com/watch?v=test123", "ytdlp_720")]
-    assert item.url == "data:application/dash+xml;base64,PE1QRD48L01QRD4="
+    assert item.url == "https://www.youtube.com/watch?v=test123"
     assert item.audio_url == ""
     assert item.selected_playback_quality_id == "ytdlp_720"
+    assert item.ytdl_format == "298+140"
 
 
 def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> None:

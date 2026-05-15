@@ -17,7 +17,6 @@ dependencies = [
   "pycryptodome>=3.23.0",
   "pyquery>=2.0.1",
   "requests>=2.33.1",
-  "yt-dlp>=2026.3.17",
 ]
 
 [dependency-groups]

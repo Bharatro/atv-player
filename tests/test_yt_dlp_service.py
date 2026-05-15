@@ -8,6 +8,11 @@ import pytest
 from atv_player.models import PlayItem, VodItem
 
 
+@pytest.fixture(autouse=True)
+def disable_system_ytdlp(monkeypatch):
+    monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
+
+
 @pytest.fixture
 def service():
     from atv_player.yt_dlp_service import YtdlpPlaybackService
@@ -148,9 +153,9 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/video-1080.mp4"
-        assert result.audio_url == "https://stream.test/audio.webm"
-        assert result.ytdl_format == ""
+        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.audio_url == ""
+        assert result.ytdl_format == "399+251"
 
     def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, service, mock_ytdlp_module):
         info = _sample_info(
@@ -231,12 +236,13 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/video-1080-avc.mp4"
-        assert result.audio_url == "https://stream.test/audio-140.m4a"
-        assert result.ytdl_format == ""
+        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.audio_url == ""
+        assert result.ytdl_format == "299+140"
 
     def test_embeds_segment_base_ranges_in_generated_dash_manifest(self, service, mock_ytdlp_module):
         info = _sample_info(
+            extractor="vimeo",
             url="https://stream.test/master.m3u8",
             requested_formats=[
                 {
@@ -289,6 +295,7 @@ class TestResolve:
 
     def test_prefers_muxed_fallback_url_when_info_url_missing(self, service, mock_ytdlp_module):
         info = _sample_info(
+            extractor="vimeo",
             url="",
             formats=[
                 {
@@ -336,8 +343,8 @@ class TestResolve:
         first = service.resolve("https://www.youtube.com/watch?v=test123")
         second = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert first.url == "https://stream.test/direct.mp4"
-        assert second.url == "https://stream.test/direct.mp4"
+        assert first.url == "https://www.youtube.com/watch?v=test123"
+        assert second.url == "https://www.youtube.com/watch?v=test123"
         assert extractor.call_count == 1
 
     def test_re_extracts_after_cache_expiry(self, mock_ytdlp_module):
@@ -368,14 +375,61 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/direct.mp4"
+        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.audio_url == ""
         assert result.title == "Test Video"
         assert result.thumbnail == "https://img.test/thumb.jpg"
         assert result.description == "A test video description"
         assert result.duration_seconds == 300
         assert result.extractor == "youtube"
         assert result.headers == {"Referer": "https://www.youtube.com/", "User-Agent": "test"}
-        assert result.ytdl_format == ""
+        assert result.selected_quality_id == "ytdlp_1080"
+        assert result.ytdl_format == "1080"
+
+    def test_prefers_selected_format_http_headers_when_top_level_headers_missing(self, service, mock_ytdlp_module):
+        info = _sample_info(
+            http_headers={},
+            requested_formats=[
+                {
+                    "format_id": "299",
+                    "url": "https://stream.test/video-1080-avc.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4800,
+                    "vcodec": "avc1.64002a",
+                    "acodec": "none",
+                    "ext": "mp4",
+                    "http_headers": {
+                        "Referer": "https://www.youtube.com/",
+                        "User-Agent": "Mozilla/5.0 Test",
+                    },
+                },
+                {
+                    "format_id": "140",
+                    "url": "https://stream.test/audio-140.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a.40.2",
+                    "ext": "m4a",
+                    "http_headers": {
+                        "Referer": "https://www.youtube.com/",
+                        "User-Agent": "Mozilla/5.0 Test",
+                    },
+                },
+            ],
+            formats=[],
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=info))
+        )
+        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.headers == {
+            "Referer": "https://www.youtube.com/",
+            "User-Agent": "Mozilla/5.0 Test",
+        }
 
     def test_qualities(self, service, mock_ytdlp_module):
         info = _sample_info()
@@ -504,7 +558,11 @@ class TestResolveToPlayItem:
             "ytdlp_1080",
             "ytdlp_720",
         ]
-        assert [quality.ytdl_format for quality in item.playback_qualities] == ["", "", ""]
+        assert [quality.ytdl_format for quality in item.playback_qualities] == [
+            "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best",
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+            "720-muxed",
+        ]
         assert item.selected_playback_quality_id == "ytdlp_1080"
 
     def test_success(self, service, mock_ytdlp_module):
@@ -520,13 +578,13 @@ class TestResolveToPlayItem:
         assert isinstance(item, PlayItem)
         assert vod.vod_name == "Test Video"
         assert vod.vod_pic == "https://img.test/thumb.jpg"
-        assert item.url == "https://stream.test/direct.mp4"
+        assert item.url == "https://www.youtube.com/watch?v=test123"
         assert item.original_url == "https://www.youtube.com/watch?v=test123"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
-        assert item.ytdl_format == ""
+        assert item.ytdl_format == "1080"
 
 
 class TestBuildQualityOptions:

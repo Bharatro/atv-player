@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import subprocess
 from dataclasses import dataclass
 from time import monotonic
 from typing import Callable
@@ -13,6 +15,7 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
+from atv_player.player.ytdlp_runtime import resolve_system_ytdlp_path
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,11 @@ def _build_format_selector(max_height: int | None) -> str:
             f"best[height<={max_height}]/bestvideo+bestaudio/best"
         )
     return "bestvideo+bestaudio/best"
+
+
+def _is_youtube_extractor(info: dict) -> bool:
+    extractor = str(info.get("extractor") or "").strip().lower()
+    return extractor.startswith("youtube")
 
 
 def _pick_requested_stream_pair(info: dict) -> tuple[str, str]:
@@ -222,6 +230,44 @@ def _quality_id_or_default(max_height: int | None) -> str:
     return "ytdlp_auto"
 
 
+def _selected_ytdl_format(
+    info: dict,
+    selected_video: dict | None,
+    selected_audio: dict | None,
+    *,
+    max_height: int | None,
+) -> str:
+    video_format_id = str((selected_video or {}).get("format_id") or "").strip()
+    audio_format_id = str((selected_audio or {}).get("format_id") or "").strip()
+    if video_format_id and audio_format_id:
+        return f"{video_format_id}+{audio_format_id}"
+    if video_format_id:
+        return video_format_id
+    format_id = str(info.get("format_id") or "").strip()
+    if format_id:
+        return format_id
+    return _build_format_selector(max_height)
+
+
+def _quality_option_ytdl_format(
+    info: dict,
+    video_format: dict,
+    *,
+    height: int,
+) -> str:
+    format_id = str(video_format.get("format_id") or "").strip()
+    if _has_muxed_audio(video_format):
+        return format_id or _build_format_selector(height)
+    preferred_audio = next(
+        iter(_preferred_audio_formats(info, preferred_ext=str(video_format.get("ext") or ""))),
+        None,
+    )
+    audio_format_id = str((preferred_audio or {}).get("format_id") or "").strip()
+    if format_id and audio_format_id:
+        return f"{format_id}+{audio_format_id}"
+    return _build_format_selector(height)
+
+
 def _pick_direct_url(info: dict, max_height: int | None) -> str:
     direct_url = info.get("url", "")
     requested_formats = info.get("requested_formats") or []
@@ -313,6 +359,26 @@ def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
     )
 
 
+def _has_dash_segment_metadata(fmt: dict | None) -> bool:
+    if not isinstance(fmt, dict):
+        return False
+    return bool(_format_dash_byte_range(fmt.get("init_range")) or _format_dash_byte_range(fmt.get("index_range")))
+
+
+def _merge_http_headers(*sources: object) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        http_headers = source.get("http_headers") or {}
+        if not isinstance(http_headers, dict):
+            continue
+        for key, value in http_headers.items():
+            if isinstance(key, str) and isinstance(value, str):
+                merged[key] = value
+    return merged
+
+
 def _build_dash_manifest_data_uri(
     video_format: dict,
     audio_format: dict,
@@ -382,6 +448,7 @@ class YtdlpPlaybackService:
         now: Callable[[], float] = monotonic,
     ) -> None:
         self._ytdlp_module: object | None = ...  # sentinel: not yet checked
+        self._ytdlp_path: str | None = None
         self._supported_domains: frozenset[str] | None = None
         self._ttl_seconds = float(ttl_seconds)
         self._now = now
@@ -411,6 +478,10 @@ class YtdlpPlaybackService:
         )
 
     def is_available(self) -> bool:
+        if self._ytdlp_path is None:
+            self._ytdlp_path = resolve_system_ytdlp_path()
+        if self._ytdlp_path:
+            return True
         module = self._ytdlp_module
         if module is ...:
             try:
@@ -421,6 +492,53 @@ class YtdlpPlaybackService:
                 module = yt_dlp
             self._ytdlp_module = module
         return module is not None
+
+    def _extract_info_via_command(self, url: str, max_height: int | None) -> dict:
+        if self._ytdlp_path is None:
+            self._ytdlp_path = resolve_system_ytdlp_path()
+        if not self._ytdlp_path:
+            raise ValueError("yt-dlp 未安装")
+        command = [
+            self._ytdlp_path,
+            "--no-warnings",
+            "--dump-single-json",
+            "--no-playlist",
+            "--socket-timeout",
+            "30",
+            "--sub-format",
+            "ass/srt/best",
+            "--all-subs",
+            "--format",
+            _build_format_selector(max_height),
+            "--",
+            url,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("yt-dlp 解析超时") from exc
+        stdout_text = (completed.stdout or "").strip()
+        stderr_text = (completed.stderr or "").strip()
+        if completed.returncode != 0:
+            message = stderr_text or stdout_text or f"退出码 {completed.returncode}"
+            if "geo" in message.lower():
+                raise ValueError("该内容受地区限制")
+            raise ValueError(f"下载错误: {message}")
+        if not stdout_text:
+            raise ValueError("yt-dlp 未返回结果")
+        try:
+            info = json.loads(stdout_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"yt-dlp 解析失败: {exc}") from exc
+        if not isinstance(info, dict):
+            raise ValueError("yt-dlp 未返回结果")
+        return info
 
     def can_resolve(self, url: str) -> bool:
         if not self.is_available():
@@ -463,33 +581,36 @@ class YtdlpPlaybackService:
             if callable(log):
                 log(f"yt-dlp 命中缓存 [{cached.extractor}]")
             return cached
-        if not self.is_available():
-            raise ValueError("yt-dlp 未安装")
-        import yt_dlp
-
-        ytdlp_opts: dict = {
-            "format": _build_format_selector(max_height),
-            "quiet": True,
-            "no_warnings": True,
-            "socket_timeout": 30,
-            "extract_flat": False,
-            "noplaylist": True,
-        }
 
         if callable(log):
             log("yt-dlp 正在提取视频信息...")
         started_at = monotonic()
-        try:
-            with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except yt_dlp.utils.GeoRestrictedError:
-            raise ValueError("该内容受地区限制")
-        except yt_dlp.utils.ExtractorError as exc:
-            raise ValueError(f"无法获取视频: {exc}")
-        except yt_dlp.utils.DownloadError as exc:
-            raise ValueError(f"下载错误: {exc}")
-        except Exception as exc:
-            raise ValueError(f"yt-dlp 解析失败: {exc}")
+        if not self.is_available():
+            raise ValueError("yt-dlp 未安装")
+        if self._ytdlp_path:
+            info = self._extract_info_via_command(url, max_height)
+        else:
+            module = self._ytdlp_module
+            assert module not in (..., None)
+            ytdlp_opts: dict = {
+                "format": _build_format_selector(max_height),
+                "quiet": True,
+                "no_warnings": True,
+                "socket_timeout": 30,
+                "extract_flat": False,
+                "noplaylist": True,
+            }
+            try:
+                with module.YoutubeDL(ytdlp_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+            except module.utils.GeoRestrictedError:
+                raise ValueError("该内容受地区限制")
+            except module.utils.ExtractorError as exc:
+                raise ValueError(f"无法获取视频: {exc}")
+            except module.utils.DownloadError as exc:
+                raise ValueError(f"下载错误: {exc}")
+            except Exception as exc:
+                raise ValueError(f"yt-dlp 解析失败: {exc}")
 
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
@@ -501,20 +622,28 @@ class YtdlpPlaybackService:
         playback_url = direct_url
         requested_audio_url = ""
         ytdl_format = ""
-        if selected_audio is not None and selected_audio.get("url"):
-            if selected_video is None or not selected_video.get("url"):
-                raise ValueError("未获取到视频流")
-            playback_url = _build_dash_manifest_data_uri(
+        if _is_youtube_extractor(info):
+            playback_url = url
+            ytdl_format = _selected_ytdl_format(
+                info,
                 selected_video,
                 selected_audio,
-                duration_seconds=int(info.get("duration") or 0),
+                max_height=max_height,
             )
+        elif selected_audio is not None and selected_audio.get("url"):
+            if selected_video is None or not selected_video.get("url"):
+                raise ValueError("未获取到视频流")
+            if _has_dash_segment_metadata(selected_video) or _has_dash_segment_metadata(selected_audio):
+                playback_url = _build_dash_manifest_data_uri(
+                    selected_video,
+                    selected_audio,
+                    duration_seconds=int(info.get("duration") or 0),
+                )
+            else:
+                playback_url = str(selected_video["url"])
+                requested_audio_url = str(selected_audio["url"])
 
-        http_headers = info.get("http_headers") or {}
-        headers = {
-            k: v for k, v in http_headers.items()
-            if isinstance(k, str) and isinstance(v, str)
-        }
+        headers = _merge_http_headers(info, selected_video, selected_audio)
 
         qualities = _build_quality_options(info)
         subtitles = _build_subtitle_options(info)
@@ -625,19 +754,18 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
     options: list[VideoQualityOption] = []
     for height in sorted(best_by_height.keys(), reverse=True):
         fmt = best_by_height[height]
-        paired_audio = None if _has_muxed_audio(fmt) else next(
-            iter(_preferred_audio_formats(info, preferred_ext=str(fmt.get("ext") or ""))),
-            None,
-        )
         tbr = fmt.get("tbr")
         label = f"{height}p"
         if tbr:
             label += f"  {tbr:.0f}kbps"
+        ytdl_format = ""
+        if _is_youtube_extractor(info):
+            ytdl_format = _quality_option_ytdl_format(info, fmt, height=height)
         options.append(VideoQualityOption(
             id=_quality_id_for_height(height),
             label=label,
             url="",
-            ytdl_format="",
+            ytdl_format=ytdl_format,
             width=fmt.get("width") or 0,
             height=height,
             bandwidth=int((tbr or 0) * 1000),
