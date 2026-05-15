@@ -569,6 +569,7 @@ class SpiderPluginController:
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
         playback_parser_service=None,
+        yt_dlp_service=None,
         preferred_parse_key_loader: Callable[[], str] | None = None,
         danmaku_service=None,
         danmaku_preference_store=None,
@@ -583,6 +584,7 @@ class SpiderPluginController:
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
         self._playback_parser_service = playback_parser_service
+        self._yt_dlp_service = yt_dlp_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._base_url_loader = base_url_loader
         self._danmaku_service = danmaku_service
@@ -1564,6 +1566,7 @@ class SpiderPluginController:
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         current_playlist = session.playlist if item in session.playlist else None
         if item.url:
+            self._maybe_hydrate_ytdlp_item(item, item.url)
             session.video_cover_override = item.video_cover_override
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url, current_playlist)
@@ -1762,19 +1765,21 @@ class SpiderPluginController:
         if not _looks_like_media_url(url):
             raise ValueError("插件未返回可播放地址")
         item.url = url
+        item.original_url = item.original_url or url
         item.headers = _normalize_headers(payload.get("header"))
         item.detail_fields = _map_playback_detail_fields(payload.get("ext"))
         item.detail_actions = _merge_playback_detail_actions(
             item.detail_actions,
             _map_playback_detail_actions(payload.get("actions")),
         )
-        item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
-            payload.get("qualities"),
-            url,
-        )
         item.external_subtitles = self._map_spider_karaoke_subtitle(payload.get("lyric"))
         if not item.external_subtitles:
             item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
+        if not self._maybe_hydrate_ytdlp_item(item, url):
+            item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
+                payload.get("qualities"),
+                url,
+            )
         if cover_source:
             item.video_cover_override = cover_source
         session.video_cover_override = item.video_cover_override
@@ -1786,6 +1791,36 @@ class SpiderPluginController:
             item.play_source,
         )
         return None
+
+    def _maybe_hydrate_ytdlp_item(self, item: PlayItem, source_url: str) -> bool:
+        yt_dlp = self._yt_dlp_service
+        if yt_dlp is None or not yt_dlp.is_available():
+            return False
+        candidate = str(source_url or "").strip()
+        if not candidate or not yt_dlp.can_resolve(candidate):
+            return False
+        selected_quality_id = item.selected_playback_quality_id or ""
+        if selected_quality_id.startswith("ytdlp_"):
+            result = yt_dlp.resolve_for_quality(candidate, selected_quality_id)
+        else:
+            result = yt_dlp.resolve(candidate, max_height=None)
+        item.url = result.url
+        item.original_url = candidate
+        item.headers = dict(result.headers)
+        item.audio_url = getattr(result, "audio_url", "")
+        item.ytdl_format = getattr(result, "ytdl_format", "")
+        item.playback_qualities = list(result.qualities)
+        resolved_quality_id = getattr(result, "selected_quality_id", "") or selected_quality_id
+        if resolved_quality_id:
+            item.selected_playback_quality_id = resolved_quality_id
+        elif item.playback_qualities:
+            item.selected_playback_quality_id = item.playback_qualities[0].id
+        if not item.external_subtitles:
+            item.external_subtitles = list(result.subtitles)
+        duration_seconds = int(getattr(result, "duration_seconds", 0) or 0)
+        if duration_seconds > 0:
+            item.duration_seconds = duration_seconds
+        return True
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
@@ -1823,12 +1858,14 @@ class SpiderPluginController:
         history_loader = None
         history_saver = None
         if self._playback_history_loader is not None:
-            history_loader = lambda source_vod_id=source_vod_id: self._playback_history_loader(source_vod_id)
+            def history_loader(source_vod_id=source_vod_id):
+                return self._playback_history_loader(source_vod_id)
         if self._playback_history_saver is not None:
-            history_saver = lambda payload, source_vod_id=source_vod_id: self._playback_history_saver(
-                source_vod_id,
-                payload,
-            )
+            def history_saver(payload, source_vod_id=source_vod_id):
+                return self._playback_history_saver(
+                    source_vod_id,
+                    payload,
+                )
 
         def playback_loader(
             session_or_item: PlayerSession | PlayItem,

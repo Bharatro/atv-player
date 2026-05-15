@@ -540,7 +540,7 @@ class YtdlpPlaybackService:
         url: str,
         log: object = None,
         *,
-        max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT,
+        max_height: int | None = None,
     ) -> YtdlpResolveResult:
         logger.info("yt-dlp resolve start url=%s max_height=%s", url, max_height)
         cached = self._get_cached_result(url, max_height)
@@ -657,7 +657,7 @@ class YtdlpPlaybackService:
         self,
         url: str,
         *,
-        max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT,
+        max_height: int | None = None,
     ) -> tuple[VodItem, PlayItem]:
         result = self.resolve(url, max_height=max_height)
         title = result.title or url

@@ -178,7 +178,7 @@ class TestResolve:
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        assert result.ytdl_format == "bestvideo+bestaudio/best"
 
     def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, monkeypatch, service):
         info = _sample_info(
@@ -258,7 +258,7 @@ class TestResolve:
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        assert result.ytdl_format == "bestvideo+bestaudio/best"
 
     def test_embeds_segment_base_ranges_in_generated_dash_manifest(self, monkeypatch, service):
         info = _sample_info(
@@ -298,13 +298,13 @@ class TestResolve:
         assert '<SegmentBase indexRange="738-1425"><Initialization range="0-737"/></SegmentBase>' in manifest
         assert '<SegmentBase indexRange="702-1189"><Initialization range="0-701"/></SegmentBase>' in manifest
 
-    def test_uses_1080p_cap_for_initial_startup_resolve(self, monkeypatch, service):
+    def test_uses_unbounded_initial_startup_resolve(self, monkeypatch, service):
         info = _sample_info()
         calls = _stub_extract_info(monkeypatch, service, info)
 
         service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", 1080)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None)]
 
     def test_prefers_muxed_fallback_url_when_info_url_missing(self, monkeypatch, service):
         info = _sample_info(
@@ -381,7 +381,7 @@ class TestResolve:
         assert result.extractor == "youtube"
         assert result.headers == {"Referer": "https://www.youtube.com/", "User-Agent": "test"}
         assert result.selected_quality_id == "ytdlp_1080"
-        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        assert result.ytdl_format == "bestvideo+bestaudio/best"
 
     def test_prefers_selected_format_http_headers_when_top_level_headers_missing(self, monkeypatch, service):
         info = _sample_info(
@@ -549,7 +549,7 @@ class TestResolveToPlayItem:
         assert len(item.external_subtitles) == 2
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
-        assert item.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        assert item.ytdl_format == "bestvideo+bestaudio/best"
 
 
 class TestBuildQualityOptions:

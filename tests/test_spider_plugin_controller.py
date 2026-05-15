@@ -227,6 +227,41 @@ class QualityPayloadSpider(FakeSpider):
         }
 
 
+class YoutubeDetailSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "YouTube 剧集",
+                    "vod_play_from": "YouTube线",
+                    "vod_play_url": "第1集$https://www.youtube.com/watch?v=test123",
+                }
+            ]
+        }
+
+
+class YoutubePlayerSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "YouTube 剧集",
+                    "vod_play_from": "YouTube线",
+                    "vod_play_url": "第1集$/play/yt",
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": "https://www.youtube.com/watch?v=test123",
+            "header": {"Referer": "https://site.example"},
+        }
+
+
 class CoverPayloadSpider(FakeSpider):
     def playerContent(self, flag, id, vipFlags):
         return {
@@ -851,6 +886,117 @@ def test_controller_build_request_ignores_malformed_spider_quality_entries() -> 
         ("720p", "720P", "https://stream.example/play/1-720.m3u8"),
     ]
     assert first.selected_playback_quality_id == "720p"
+
+
+def test_controller_build_request_hydrates_prefilled_youtube_url_via_ytdlp() -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int | None]] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str, *, max_height: int | None = None):
+            self.calls.append((url, max_height))
+            return type(
+                "Result",
+                (),
+                {
+                    "url": url,
+                    "audio_url": "",
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [
+                        type("Quality", (), {"id": "ytdlp_2160", "label": "2160P", "url": "", "ytdl_format": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best"})(),
+                        type("Quality", (), {"id": "ytdlp_1080", "label": "1080P", "url": "", "ytdl_format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"})(),
+                    ],
+                    "ytdl_format": "bestvideo+bestaudio/best",
+                    "selected_quality_id": "ytdlp_2160",
+                    "title": "YouTube 剧集",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 0,
+                },
+            )()
+
+    service = FakeYtdlpService()
+    controller = SpiderPluginController(
+        YoutubeDetailSpider(),
+        plugin_name="YouTube插件",
+        search_enabled=True,
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("/detail/youtube")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert service.calls == [("https://www.youtube.com/watch?v=test123", None)]
+    assert first.url == "https://www.youtube.com/watch?v=test123"
+    assert first.headers == {"Referer": "https://www.youtube.com/"}
+    assert first.ytdl_format == "bestvideo+bestaudio/best"
+    assert [quality.id for quality in first.playback_qualities] == ["ytdlp_2160", "ytdlp_1080"]
+    assert first.selected_playback_quality_id == "ytdlp_2160"
+
+
+def test_controller_build_request_resolves_playercontent_youtube_url_via_ytdlp() -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int | None]] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str, *, max_height: int | None = None):
+            self.calls.append((url, max_height))
+            return type(
+                "Result",
+                (),
+                {
+                    "url": url,
+                    "audio_url": "",
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [
+                        type("Quality", (), {"id": "ytdlp_2160", "label": "2160P", "url": "", "ytdl_format": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best"})(),
+                    ],
+                    "ytdl_format": "bestvideo+bestaudio/best",
+                    "selected_quality_id": "ytdlp_2160",
+                    "title": "YouTube 剧集",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 0,
+                },
+            )()
+
+    service = FakeYtdlpService()
+    controller = SpiderPluginController(
+        YoutubePlayerSpider(),
+        plugin_name="YouTube插件",
+        search_enabled=True,
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("/detail/youtube-player")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert service.calls == [("https://www.youtube.com/watch?v=test123", None)]
+    assert first.url == "https://www.youtube.com/watch?v=test123"
+    assert first.headers == {"Referer": "https://www.youtube.com/"}
+    assert first.ytdl_format == "bestvideo+bestaudio/best"
+    assert [quality.id for quality in first.playback_qualities] == ["ytdlp_2160"]
+    assert first.selected_playback_quality_id == "ytdlp_2160"
 
 
 def test_controller_build_request_resolves_relative_subt_against_base_url() -> None:

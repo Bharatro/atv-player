@@ -177,6 +177,7 @@ class AppCoordinator(QObject):
                 self._playback_history_repository,
             )
             setattr(self._plugin_manager, "_playback_parser_service", self._playback_parser_service)
+            setattr(self._plugin_manager, "_yt_dlp_service", self._yt_dlp_service)
             setattr(self._plugin_manager, "_danmaku_service", self._danmaku_service)
             setattr(
                 self._plugin_manager,
@@ -327,11 +328,12 @@ class AppCoordinator(QObject):
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
         prioritized_plugin_ids = self._startup_prioritized_plugin_ids(config)
-        plugin_loader_task = lambda: self._load_startup_spider_plugins(
-            drive_detail_loader,
-            offline_download_detail_loader,
-            prioritized_plugin_ids,
-        )
+        def plugin_loader_task():
+            return self._load_startup_spider_plugins(
+                drive_detail_loader,
+                offline_download_detail_loader,
+                prioritized_plugin_ids,
+            )
         live_epg_service = _NullLiveEpgService()
         if self._live_epg_repository is not None:
             live_epg_service = LiveEpgService(

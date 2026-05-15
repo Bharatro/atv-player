@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QIcon, QMouseEvent
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -35,10 +35,8 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlayItem,
     PlaybackDetailFieldAction,
-    VideoQualityOption,
     VodItem,
 )
-from atv_player.yt_dlp_service import _DEFAULT_STARTUP_MAX_HEIGHT
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
@@ -2426,7 +2424,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             selected_quality_id = current_item.selected_playback_quality_id or ""
             if selected_quality_id.startswith("ytdlp_"):
                 return yt_dlp.resolve_for_quality(source_url, selected_quality_id)
-            return yt_dlp.resolve(source_url)
+            return yt_dlp.resolve(source_url, max_height=None)
 
         def load_item(current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
@@ -2492,14 +2490,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
-        startup_quality_id = f"ytdlp_{_DEFAULT_STARTUP_MAX_HEIGHT}"
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             selected_quality_id = current_item.selected_playback_quality_id or ""
             if selected_quality_id.startswith("ytdlp_"):
                 result = self._yt_dlp_service.resolve_for_quality(source_url, selected_quality_id)
             else:
-                result = self._yt_dlp_service.resolve(source_url)
+                result = self._yt_dlp_service.resolve(source_url, max_height=None)
             current_item.url = result.url
             current_item.original_url = source_url
             current_item.headers = dict(result.headers)
@@ -2526,15 +2523,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             original_url=url,
             vod_id=url,
             media_title=url,
-            selected_playback_quality_id=startup_quality_id,
+            selected_playback_quality_id="",
             ytdl_format="",
-            playback_qualities=[
-                VideoQualityOption(
-                    id=startup_quality_id,
-                    label=f"{_DEFAULT_STARTUP_MAX_HEIGHT}p",
-                    height=_DEFAULT_STARTUP_MAX_HEIGHT,
-                )
-            ],
+            playback_qualities=[],
         )
         return OpenPlayerRequest(
             vod=VodItem(vod_id=url, vod_name=url),
@@ -2594,10 +2585,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _direct_parse_history_hooks(self, url: str) -> tuple[Any, Any]:
         history_loader = None
         if self._direct_parse_playback_history_loader is not None:
-            history_loader = lambda source_vod_id=url: self._direct_parse_playback_history_loader(source_vod_id)
+            def history_loader(source_vod_id=url):
+                return self._direct_parse_playback_history_loader(source_vod_id)
         history_saver = None
         if self._direct_parse_playback_history_saver is not None:
-            history_saver = lambda payload, source_vod_id=url: self._direct_parse_playback_history_saver(source_vod_id, payload)
+            def history_saver(payload, source_vod_id=url):
+                return self._direct_parse_playback_history_saver(source_vod_id, payload)
         return history_loader, history_saver
 
     def _build_direct_parse_danmaku_controller(self) -> object | None:

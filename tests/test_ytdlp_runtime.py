@@ -68,6 +68,20 @@ def test_build_ytdlp_command_args_prefers_browser_cookies(monkeypatch) -> None:
     ]
 
 
+def test_build_ytdlp_command_args_defaults_to_chrome_browser_cookies(monkeypatch) -> None:
+    from atv_player.player import ytdlp_runtime
+
+    monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
+    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
+
+    assert ytdlp_runtime.build_ytdlp_command_args() == [
+        "--cookies-from-browser",
+        "chrome",
+        "--remote-components",
+        "ejs:github",
+    ]
+
+
 def test_build_mpv_ytdl_raw_options_from_cookie_file(monkeypatch, tmp_path) -> None:
     from atv_player.player import ytdlp_runtime
 
@@ -80,3 +94,12 @@ def test_build_mpv_ytdl_raw_options_from_cookie_file(monkeypatch, tmp_path) -> N
     assert ytdlp_runtime.resolve_mpv_ytdl_raw_options() == (
         f"cookies={cookie_file},remote-components=ejs:github"
     )
+
+
+def test_build_ytdlp_command_args_allows_disabling_default_browser_cookies(monkeypatch) -> None:
+    from atv_player.player import ytdlp_runtime
+
+    monkeypatch.setenv("ATV_YTDLP_COOKIES_FROM_BROWSER", "off")
+    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
+
+    assert ytdlp_runtime.build_ytdlp_command_args() == []

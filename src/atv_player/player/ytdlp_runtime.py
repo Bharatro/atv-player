@@ -32,8 +32,19 @@ def _escaped_mpv_list_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace(",", "\\,")
 
 
+def _resolved_cookie_browser() -> str:
+    raw_value = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
+    if raw_value.lower() in {"0", "false", "no", "none", "off"}:
+        return ""
+    if raw_value:
+        return raw_value
+    if _resolved_cookie_file():
+        return ""
+    return "chrome"
+
+
 def _default_remote_components() -> str:
-    if _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER") or _resolved_cookie_file():
+    if _resolved_cookie_browser() or _resolved_cookie_file():
         return "ejs:github"
     return ""
 
@@ -81,7 +92,7 @@ def resolve_mpv_ytdlp_path() -> str:
 
 def build_ytdlp_command_args() -> list[str]:
     args: list[str] = []
-    browser = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
+    browser = _resolved_cookie_browser()
     if browser:
         args.extend(["--cookies-from-browser", browser])
     else:
@@ -96,7 +107,7 @@ def build_ytdlp_command_args() -> list[str]:
 
 def resolve_mpv_ytdl_raw_options() -> str:
     options: list[str] = []
-    browser = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
+    browser = _resolved_cookie_browser()
     if browser:
         options.append(f"cookies-from-browser={_escaped_mpv_list_value(browser)}")
     else:

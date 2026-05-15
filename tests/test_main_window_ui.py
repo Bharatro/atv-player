@@ -2443,13 +2443,14 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def playback_format_selector(self, max_height: int | None = 1080) -> str:
+        def playback_format_selector(self, max_height: int | None = None) -> str:
             return (
                 f"bestvideo[height<={max_height}]+bestaudio/"
                 f"best[height<={max_height}]/bestvideo+bestaudio/best"
             )
 
-        def resolve(self, url: str):
+        def resolve(self, url: str, *, max_height: int | None = None):
+            assert max_height is None
             self.resolve_calls.append(url)
             return type(
                 "Result",
@@ -2471,7 +2472,6 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
             )()
 
         def resolve_for_quality(self, url: str, quality_id: str):
-            assert quality_id == "ytdlp_1080"
             return self.resolve(url)
 
         def resolve_to_play_item(self, url: str):
@@ -2514,7 +2514,7 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
     assert request.async_playback_loader is True
     assert request.playlist[0].url == ""
     assert request.playlist[0].original_url == url
-    assert request.playlist[0].selected_playback_quality_id == "ytdlp_1080"
+    assert request.playlist[0].selected_playback_quality_id == ""
 
     session = type("Session", (), {"vod": request.vod})()
     request.playback_loader(session, request.playlist[0])
@@ -2541,13 +2541,14 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def playback_format_selector(self, max_height: int | None = 1080) -> str:
+        def playback_format_selector(self, max_height: int | None = None) -> str:
             return (
                 f"bestvideo[height<={max_height}]+bestaudio/"
                 f"best[height<={max_height}]/bestvideo+bestaudio/best"
             )
 
-        def resolve(self, url: str):
+        def resolve(self, url: str, *, max_height: int | None = None):
+            assert max_height is None
             self.resolve_calls.append(url)
             return type(
                 "Result",
@@ -3318,7 +3319,8 @@ def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, m
 
 
 def test_main_window_passes_detail_action_runner_to_player_controller(qtbot) -> None:
-    detail_action_runner = lambda item, action_id: [item, action_id]
+    def detail_action_runner(item, action_id):
+        return [item, action_id]
     window = MainWindow(
         browse_controller=FakeStaticController(),
         history_controller=FakeStaticController(),

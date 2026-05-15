@@ -13,7 +13,6 @@ from atv_player.models import (
     SpiderPluginAction,
     SpiderPluginConfig,
     SpiderPluginImportCancelled,
-    SpiderPluginImportProgress,
     SpiderPluginImportResult,
 )
 from atv_player.plugins import SpiderPluginManager
@@ -179,7 +178,7 @@ class RunnableActionLoader(FakeLoader):
 
 def test_manager_load_plugins_loads_only_requested_enabled_plugins(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    first = repository.add_plugin("local", "/plugins/a.py", "插件A", enabled=True)
+    repository.add_plugin("local", "/plugins/a.py", "插件A", enabled=True)
     second = repository.add_plugin("local", "/plugins/b.py", "插件B", enabled=True)
     repository.add_plugin("local", "/plugins/c.py", "插件C", enabled=False)
     manager = SpiderPluginManager(repository, FakeLoader())
@@ -639,6 +638,25 @@ def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> N
     assert getattr(definitions[0].controller, "_danmaku_service", None) is manager._danmaku_service
 
 
+def test_manager_load_enabled_plugins_wires_ytdlp_service(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+    manager = SpiderPluginManager(repository, FakeLoader())
+    manager._yt_dlp_service = FakeYtdlpService()
+
+    definitions = manager.load_enabled_plugins()
+
+    assert getattr(definitions[0].controller, "_yt_dlp_service", None) is manager._yt_dlp_service
+
+
 def test_manager_load_enabled_plugins_persists_manual_danmaku_source_preference_across_restart(
     tmp_path: Path,
     monkeypatch,
@@ -705,6 +723,7 @@ def test_manager_load_enabled_plugins_persists_manual_danmaku_source_preference_
             self,
             cached_result,
             *,
+            query_name: str = "",
             reg_src: str = "",
             preferred_provider: str = "",
             preferred_page_url: str = "",
