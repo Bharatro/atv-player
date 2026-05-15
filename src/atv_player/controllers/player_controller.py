@@ -55,7 +55,7 @@ class PlayerSession:
 
 
 class PlayerController:
-    _NEXT_EPISODE_DANMAKU_PREFETCH_DELAY_SECONDS = 30.0
+    _NEXT_EPISODE_DANMAKU_PREFETCH_DELAY_SECONDS = 10.0
 
     def __init__(self, api_client) -> None:
         self._api_client = api_client

@@ -2,19 +2,19 @@
 
 ## 概要
 
-保留现有“下一集弹幕预下载”能力，但将“开播后立即预下载”改为“当前集开始播放 30 秒后再预下载”。接近片尾时的预下载保持立即触发，继续作为兜底与补偿路径。
+保留现有“下一集弹幕预下载”能力，但将“开播后立即预下载”改为“当前集开始播放 10 秒后再预下载”。接近片尾时的预下载保持立即触发，继续作为兜底与补偿路径。
 
 这次调整只改变调度时机，不改变弹幕搜索、解析、缓存、排序、日志文案和 `SpiderPluginController` 的预下载执行语义。
 
 ## 目标
 
 - 避免一开播就立刻触发下一集弹幕请求。
-- 默认在当前集开播 30 秒后调度下一集预下载。
+- 默认在当前集开播 10 秒后调度下一集预下载。
 - 保留片尾阈值触发逻辑：
   - `duration_seconds > 15 * 60`
   - `duration_seconds - position_seconds < 150`
 - 保证同一“下一集”仍然最多预下载一次。
-- 如果用户在 30 秒内切集、停止播放或切换 session，旧延迟任务不能误触发到新的播放上下文。
+- 如果用户在 10 秒内切集、停止播放或切换 session，旧延迟任务不能误触发到新的播放上下文。
 
 ## 非目标
 
@@ -43,7 +43,7 @@
 
 - `PlayerController`
   - 负责判断现在是否应该预下载
-  - 负责 30 秒延迟
+  - 负责 10 秒延迟
   - 负责片尾立即触发
   - 负责让过期任务失效
 - `SpiderPluginController`
@@ -51,14 +51,14 @@
   - 负责缓存命中
   - 负责后台解析线程
 
-### 开播触发改为 30 秒延迟
+### 开播触发改为 10 秒延迟
 
 `PlayerController.on_item_started(session, current_index)` 不再直接预下载，而是改为：
 
 1. 计算 `next_index = current_index + 1`
 2. 先做和现在一致的边界检查与能力探测
 3. 为这次开播生成一个“延迟任务令牌”
-4. 安排一个 30 秒后的回调
+4. 安排一个 10 秒后的回调
 5. 回调真正执行时，再次确认：
    - 这个 session 仍然有效
    - 这次回调对应的令牌仍然是最新令牌
@@ -67,25 +67,25 @@
 
 ### 片尾触发保持立即执行
 
-`report_progress(...)` 中现有片尾条件保持不变。一旦命中，仍然直接调用 `_schedule_next_episode_danmaku_prefetch(...)`，不再额外等待 30 秒。
+`report_progress(...)` 中现有片尾条件保持不变。一旦命中，仍然直接调用 `_schedule_next_episode_danmaku_prefetch(...)`，不再额外等待 10 秒。
 
 这有两个作用：
 
-- 如果开播 30 秒后的延迟任务已经成功执行，片尾路径会被 `prefetched_next_danmaku_indices` 去重，立即返回。
+- 如果开播 10 秒后的延迟任务已经成功执行，片尾路径会被 `prefetched_next_danmaku_indices` 去重，立即返回。
 - 如果延迟任务因为切集、停止、异常或未到时机而没有执行，片尾路径仍然能补上这次预下载。
 
 ### 过期延迟任务失效机制
 
-为了避免 30 秒后的旧任务误触发到新的播放状态，需要在 `PlayerSession` 上增加一个轻量级版本号或令牌字段，例如：
+为了避免 10 秒后的旧任务误触发到新的播放状态，需要在 `PlayerSession` 上增加一个轻量级版本号或令牌字段，例如：
 
 - `pending_next_danmaku_prefetch_token: int = 0`
 
 行为如下：
 
-- 每次 `on_item_started(...)` 调度新的 30 秒任务时，先把 token 自增。
+- 每次 `on_item_started(...)` 调度新的 10 秒任务时，先把 token 自增。
 - 延迟回调捕获创建时的 token。
 - 回调触发时，只有当捕获 token 仍然等于 session 当前 token 时，才允许继续执行。
-- `stop_playback(...)` 或显式 session 结束路径中，也要让 token 失效，避免停止播放后 30 秒任务仍然触发。
+- `stop_playback(...)` 或显式 session 结束路径中，也要让 token 失效，避免停止播放后 10 秒任务仍然触发。
 
 这不是取消定时器本身，而是让旧任务即使被唤醒也变成 no-op。这样实现简单，也更适合当前代码结构。
 
@@ -100,15 +100,15 @@
 
 ## 数据流
 
-### 开播后 30 秒路径
+### 开播后 10 秒路径
 
 ```text
 当前集开始播放
   -> PlayerController.on_item_started(session, current_index)
   -> 生成新的 prefetch token
-  -> 安排 30 秒后的延迟任务
+  -> 安排 10 秒后的延迟任务
 
-30 秒后
+10 秒后
   -> 检查 token 是否仍然有效
   -> 检查 next_index 是否有效且未预下载
   -> _schedule_next_episode_danmaku_prefetch(session, current_index)
@@ -140,11 +140,11 @@ report_progress(...)
 ### `tests/test_player_controller.py`
 
 - `on_item_started(...)` 不再立即调用 prefetcher。
-- `on_item_started(...)` 会登记一个 30 秒延迟任务。
+- `on_item_started(...)` 会登记一个 10 秒延迟任务。
 - 延迟任务触发后才真正调用 prefetcher。
 - 在延迟触发前再次 `on_item_started(...)`，旧任务必须失效，只允许最新任务生效。
 - `stop_playback(...)` 或等效失效路径后，已登记的延迟任务触发时必须是 no-op。
-- `report_progress(...)` 命中片尾阈值时仍然立即调用 prefetcher，不等待 30 秒。
+- `report_progress(...)` 命中片尾阈值时仍然立即调用 prefetcher，不等待 10 秒。
 - 如果片尾路径已经先成功预下载，之后延迟任务触发时不得重复调用。
 
 ### `tests/test_spider_plugin_controller.py`
@@ -161,6 +161,6 @@ report_progress(...)
 ## 结果预期
 
 - 开播后日志中不再立刻出现下一集的“弹幕预下载中”。
-- 当前集播放约 30 秒后，才出现下一集预下载日志。
+- 当前集播放约 10 秒后，才出现下一集预下载日志。
 - 如果用户很快切到下一集，旧集安排的延迟任务不会污染新的播放状态。
 - 接近片尾时仍能兜底预下载，避免因为延迟任务未执行而丢失下一集热缓存。

@@ -959,7 +959,7 @@ def test_on_item_started_schedules_delayed_prefetch_instead_of_running_immediate
 
     assert danmaku_controller.calls == []
     assert len(timer_factory.timers) == 1
-    assert timer_factory.timers[0].delay_seconds == 30.0
+    assert timer_factory.timers[0].delay_seconds == 10.0
     assert timer_factory.timers[0].started is True
 
 
