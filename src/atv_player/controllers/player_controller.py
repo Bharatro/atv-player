@@ -1,5 +1,6 @@
 import logging
 import inspect
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
@@ -50,11 +51,15 @@ class PlayerSession:
     is_placeholder: bool = False
     video_cover_override: str = ""
     prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
+    pending_next_danmaku_prefetch_token: int = 0
 
 
 class PlayerController:
+    _NEXT_EPISODE_DANMAKU_PREFETCH_DELAY_SECONDS = 30.0
+
     def __init__(self, api_client) -> None:
         self._api_client = api_client
+        self._prefetch_timer_factory = lambda delay_seconds, callback: threading.Timer(delay_seconds, callback)
 
     def _bind_playback_loader(
         self,
@@ -349,6 +354,7 @@ class PlayerController:
         self._api_client.save_history(payload)
 
     def stop_playback(self, session: PlayerSession, current_index: int) -> None:
+        self._invalidate_pending_next_episode_danmaku_prefetch(session)
         if session.playback_stopper is None:
             return
         if not (0 <= current_index < len(session.playlist)):
@@ -356,8 +362,41 @@ class PlayerController:
         logger.info("Stop playback vod_id=%s index=%s", session.vod.vod_id, current_index)
         session.playback_stopper(session.playlist[current_index])
 
+    def _invalidate_pending_next_episode_danmaku_prefetch(self, session: PlayerSession) -> None:
+        session.pending_next_danmaku_prefetch_token += 1
+
+    def _schedule_delayed_next_episode_danmaku_prefetch(
+        self,
+        session: PlayerSession,
+        current_index: int,
+    ) -> None:
+        next_index = current_index + 1
+        if not (0 <= next_index < len(session.playlist)):
+            return
+        if next_index in session.prefetched_next_danmaku_indices:
+            return
+        controller = session.danmaku_controller
+        if controller is None:
+            return
+        prefetcher = getattr(controller, "prefetch_next_episode_danmaku", None)
+        if not callable(prefetcher):
+            return
+        self._invalidate_pending_next_episode_danmaku_prefetch(session)
+        token = session.pending_next_danmaku_prefetch_token
+
+        def run_if_still_current() -> None:
+            if token != session.pending_next_danmaku_prefetch_token:
+                return
+            self._schedule_next_episode_danmaku_prefetch(session, current_index)
+
+        timer = self._prefetch_timer_factory(
+            self._NEXT_EPISODE_DANMAKU_PREFETCH_DELAY_SECONDS,
+            run_if_still_current,
+        )
+        timer.start()
+
     def on_item_started(self, session: PlayerSession, current_index: int) -> None:
-        self._schedule_next_episode_danmaku_prefetch(session, current_index)
+        self._schedule_delayed_next_episode_danmaku_prefetch(session, current_index)
 
     def _schedule_next_episode_danmaku_prefetch(
         self,
