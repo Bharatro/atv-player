@@ -653,6 +653,49 @@ class YtdlpPlaybackService:
         max_height = _quality_height_from_id(quality_id)
         return self.resolve(url, log=log, max_height=max_height)
 
+    def apply_result(
+        self,
+        result: YtdlpResolveResult,
+        *,
+        vod: VodItem | None = None,
+        item: PlayItem | None = None,
+        source_url: str = "",
+    ) -> None:
+        resolved_source_url = (
+            str(source_url or "")
+            or (item.original_url if item is not None else "")
+            or (item.vod_id if item is not None else "")
+            or result.url
+        )
+        resolved_title = str(result.title or "").strip() or resolved_source_url
+
+        if vod is not None:
+            vod.vod_name = resolved_title
+            vod.vod_pic = str(result.thumbnail or "")
+            vod.vod_content = str(result.description or "")
+
+        if item is None:
+            return
+
+        item.url = str(result.url or "")
+        item.original_url = resolved_source_url
+        item.headers = dict(result.headers)
+        item.audio_url = str(result.audio_url or "")
+        item.ytdl_format = str(result.ytdl_format or "")
+        item.playback_qualities = list(result.qualities)
+        item.external_subtitles = list(result.subtitles)
+        item.duration_seconds = int(result.duration_seconds or 0)
+        item.title = resolved_title
+        item.media_title = resolved_title
+
+        resolved_quality_id = str(result.selected_quality_id or "").strip()
+        if resolved_quality_id:
+            item.selected_playback_quality_id = resolved_quality_id
+        elif item.playback_qualities:
+            item.selected_playback_quality_id = item.playback_qualities[0].id
+        else:
+            item.selected_playback_quality_id = ""
+
     def resolve_to_play_item(
         self,
         url: str,
@@ -660,30 +703,15 @@ class YtdlpPlaybackService:
         max_height: int | None = None,
     ) -> tuple[VodItem, PlayItem]:
         result = self.resolve(url, max_height=max_height)
-        title = result.title or url
-        vod = VodItem(
-            vod_id=url,
-            vod_name=title,
-            vod_pic=result.thumbnail,
-            vod_content=result.description,
-        )
+        vod = VodItem(vod_id=url, vod_name=url)
         item = PlayItem(
-            title=title,
-            url=result.url,
+            title=url,
+            url="",
             original_url=url,
             vod_id=url,
-            headers=dict(result.headers),
-            audio_url=result.audio_url,
-            ytdl_format=result.ytdl_format,
-            playback_qualities=list(result.qualities),
-            external_subtitles=list(result.subtitles),
-            media_title=title,
-            duration_seconds=result.duration_seconds,
+            media_title=url,
         )
-        if result.selected_quality_id:
-            item.selected_playback_quality_id = result.selected_quality_id
-        elif item.playback_qualities and not item.selected_playback_quality_id:
-            item.selected_playback_quality_id = item.playback_qualities[0].id
+        self.apply_result(result, vod=vod, item=item, source_url=url)
         return vod, item
 
 
