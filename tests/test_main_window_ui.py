@@ -2477,6 +2477,26 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
         def resolve_to_play_item(self, url: str):
             raise AssertionError("resolve_to_play_item should not be used")
 
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
     opened: list[OpenPlayerRequest] = []
     errors: list[str] = []
     service = FakeYtdlpService()
@@ -2590,6 +2610,26 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 },
             )()
 
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
     service = FakeYtdlpService()
     window = MainWindow(
         douban_controller=FakeStaticController(),
@@ -2621,6 +2661,91 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
     assert item.audio_url == ""
     assert item.selected_playback_quality_id == "ytdlp_720"
     assert item.ytdl_format == "298+140"
+
+
+def test_main_window_direct_parse_fallback_to_ytdlp_overwrites_session_metadata(qtbot) -> None:
+    class FailingParserService:
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            raise ValueError("parser failed")
+
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def resolve(self, url: str, *, max_height: int | None = None):
+            return type(
+                "Result",
+                (),
+                {
+                    "url": "https://www.youtube.com/watch?v=test123",
+                    "title": "Fallback Video",
+                    "thumbnail": "https://img.example/fallback.jpg",
+                    "description": "fallback description",
+                    "duration_seconds": 654,
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [],
+                    "audio_url": "",
+                    "ytdl_format": "299+140",
+                    "extractor": "youtube",
+                    "selected_quality_id": "ytdlp_1080",
+                },
+            )()
+
+        def resolve_for_quality(self, url: str, quality_id: str):
+            return self.resolve(url)
+
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(preferred_parse_key="jx1"),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=FailingParserService(),
+        yt_dlp_service=FakeYtdlpService(),
+    )
+
+    qtbot.addWidget(window)
+
+    request = window._build_direct_parse_request("https://www.youtube.com/watch?v=test123")
+    session = type("Session", (), {"vod": request.vod})()
+    item = request.playlist[0]
+
+    request.playback_loader(session, item)
+
+    assert session.vod.vod_name == "Fallback Video"
+    assert session.vod.vod_pic == "https://img.example/fallback.jpg"
+    assert session.vod.vod_content == "fallback description"
+    assert item.url == "https://www.youtube.com/watch?v=test123"
+    assert item.headers == {"Referer": "https://www.youtube.com/"}
+    assert item.selected_playback_quality_id == "ytdlp_1080"
+    assert item.ytdl_format == "299+140"
 
 
 def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> None:

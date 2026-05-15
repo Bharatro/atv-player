@@ -551,6 +551,52 @@ class TestResolveToPlayItem:
         assert item.selected_playback_quality_id == "ytdlp_1080"
         assert item.ytdl_format == "bestvideo+bestaudio/best"
 
+    def test_apply_result_overwrites_vod_and_play_item(self, monkeypatch, service):
+        info = _sample_info(
+            title="Resolved Title",
+            thumbnail="https://img.test/resolved.jpg",
+            description="",
+            duration=321,
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+        vod = VodItem(
+            vod_id="detail-1",
+            vod_name="Original Title",
+            vod_pic="https://img.test/original.jpg",
+            vod_content="original description",
+        )
+        item = PlayItem(
+            title="Original Episode",
+            url="",
+            original_url="",
+            vod_id="detail-1",
+            media_title="Original Media",
+            duration_seconds=12,
+            selected_playback_quality_id="",
+        )
+
+        service.apply_result(
+            result,
+            vod=vod,
+            item=item,
+            source_url="https://www.youtube.com/watch?v=test123",
+        )
+
+        assert vod.vod_id == "detail-1"
+        assert vod.vod_name == "Resolved Title"
+        assert vod.vod_pic == "https://img.test/resolved.jpg"
+        assert vod.vod_content == ""
+        assert item.url == "https://www.youtube.com/watch?v=test123"
+        assert item.original_url == "https://www.youtube.com/watch?v=test123"
+        assert item.title == "Resolved Title"
+        assert item.media_title == "Resolved Title"
+        assert item.duration_seconds == 321
+        assert item.selected_playback_quality_id == "ytdlp_1080"
+        assert len(item.playback_qualities) == 3
+        assert len(item.external_subtitles) == 2
+
 
 class TestBuildQualityOptions:
     def test_keeps_video_only_formats_for_quality_ladder(self):
