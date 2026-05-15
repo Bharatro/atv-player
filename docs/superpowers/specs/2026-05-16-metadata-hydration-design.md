@@ -2,7 +2,7 @@
 
 ## Summary
 
-播放器在打开插件详情页或内置远程详情页后，需要自动在后台补全并刷新媒体元数据，而不是把元数据获取耦合进播放地址解析。第一阶段只覆盖 `plugin` 和内置远程详情来源，采用“独立后台 hydration + 文件系统缓存 + 本地豆瓣优先 + 插件自定义 metadata 优先”的方案，最终仍然把结果统一写回现有 `VodItem` 和 `detail_fields`。
+播放器在打开插件详情页或内置远程详情页后，需要自动在后台补全并刷新媒体元数据，而不是把元数据获取耦合进播放地址解析。第一阶段只覆盖 `plugin` 和内置远程详情来源，采用“独立后台 hydration + 文件系统缓存 + `alist-tvbox` 元数据 API 优先 + 插件自定义 metadata 优先”的方案，最终仍然把结果统一写回现有 `VodItem` 和 `detail_fields`。
 
 ## Goals
 
@@ -24,6 +24,7 @@
 
 主要改动：
 
+- `src/atv_player/api.py`
 - `src/atv_player/models.py`
 - `src/atv_player/ui/main_window.py`
 - `src/atv_player/ui/player_window.py`
@@ -32,6 +33,7 @@
 
 主要验证：
 
+- `tests/test_api_client.py`
 - `tests/test_main_window_ui.py`
 - `tests/test_player_window_ui.py`
 - `tests/test_spider_plugin_controller.py`
@@ -45,12 +47,14 @@
 - 插件可以通过 `ext/detail_fields` 把结构化字段显示到播放器详情区，但没有统一 metadata provider 协议。
 - 播放器已经支持“先打开，再异步刷新标题、海报、元数据”的会话更新模式，但这个模式目前主要服务于播放地址和 `yt-dlp` 详情回写。
 - 现有 `vod_content`、`vod_remarks`、`detail_fields` 的语义没有被 metadata 系统统一约束。
+- 现有 `/tg-db` 接口适合豆瓣电影页的分类浏览，但不适合作为播放器详情页的按标题刮削入口；远程豆瓣搜索还可能触发风控。
 
 结果是：
 
 - 详情页打开后没有稳定的二次元数据增强。
 - 插件和内置远程源无法共享元数据补全链路。
 - 后续想接 `TMDB`、`爱奇艺`、`腾讯视频`、`B站` 时，没有一个可扩展的 provider 框架。
+- 即使现在直接做 DoubanProvider，也缺少一个稳定的后端搜索/详情 API 可供播放器详情页调用。
 
 ## Approach Options
 
@@ -242,8 +246,10 @@
 
 职责：
 
-- 如果当前 `VodItem.dbid` 已有值，优先按豆瓣 ID 直取详情
-- 否则按标题和年份搜索本地豆瓣数据
+- 调用 `alist-tvbox` 新增的 metadata API，而不是复用 `/tg-db`
+- 如果当前 `VodItem.dbid` 已有值，优先按豆瓣 ID 取详情
+- 否则按标题和年份搜索豆瓣数据
+- 当远程豆瓣搜索不可用、被风控或无结果时，允许后端回退到 `alist-tvbox` 内置的精简版豆瓣电影数据
 - 输出统一 `MetadataRecord`
 
 它可以提供：
@@ -261,6 +267,12 @@
 - `imdb_id`
 - `detail_fields`
 
+前端约束：
+
+- `DoubanProvider` 只依赖 `ApiClient` 暴露的新 metadata API
+- 前端不直接调用 `/tg-db` 做刮削搜索
+- 精简版豆瓣电影数据的 fallback 逻辑放在 `alist-tvbox` 后端，不放在桌面端
+
 #### 4.3 Deferred providers
 
 第二阶段预留但第一阶段不实现真实逻辑：
@@ -271,6 +283,30 @@
 - `BilibiliProvider`
 
 第一阶段只保留 provider 注册位和调用顺序扩展点，不写网络实现。
+
+### 4.4 Backend API dependency
+
+第一阶段需要 `alist-tvbox` 增加一组新的元数据 API，供桌面端的 `DoubanProvider` 使用。桌面端只负责：
+
+- 传入标题、年份、豆瓣 ID 等搜索条件
+- 读取统一的搜索结果和详情结果
+- 把结果映射到 `MetadataRecord`
+
+后端负责：
+
+- 豆瓣数据搜索
+- 豆瓣详情提取
+- 风控规避和重试策略
+- 精简版豆瓣电影数据 fallback
+
+推荐最小接口形态：
+
+- `GET /metadata/douban/search`
+  - 查询参数：`title`、`year`
+- `GET /metadata/douban/detail`
+  - 查询参数：`dbid`
+
+如果后端最终采用不同路径，桌面端只需要改 `ApiClient` 和 `DoubanProvider`，不影响 metadata hydration 其余设计。
 
 ### 5. Provider priority
 
@@ -350,6 +386,7 @@ TTL：
 
 - 只缓存 provider 的标准化结果和最少量原始字段
 - 不缓存 `VodItem` 合并结果，避免来源特定字段污染通用详情缓存
+- 不缓存 `/tg-db` 分类浏览结果来充当 metadata 搜索结果
 
 ### 9. Merge rules
 
@@ -453,6 +490,7 @@ metadata hydration 失败属于非致命失败。
 日志示例：
 
 - `元数据补全失败: 豆瓣搜索超时`
+- `元数据补全失败: metadata api 不可用`
 - `元数据补全失败: 插件 metadata 无效`
 - `元数据未命中: 豆瓣`
 
