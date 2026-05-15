@@ -909,6 +909,26 @@ class FakeDanmakuController:
             raise self.raise_on_call
 
 
+class FakeTimer:
+    def __init__(self, delay_seconds: float, callback) -> None:
+        self.delay_seconds = delay_seconds
+        self.callback = callback
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+
+class FakeTimerFactory:
+    def __init__(self) -> None:
+        self.timers: list[FakeTimer] = []
+
+    def __call__(self, delay_seconds: float, callback):
+        timer = FakeTimer(delay_seconds, callback)
+        self.timers.append(timer)
+        return timer
+
+
 def _make_session_for_prefetch(
     controller: PlayerController,
     danmaku_controller: object | None,
@@ -928,12 +948,30 @@ def _make_session_for_prefetch(
     return session, playlist
 
 
-def test_on_item_started_schedules_prefetch_for_next_index() -> None:
+def test_on_item_started_schedules_delayed_prefetch_instead_of_running_immediately() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     danmaku_controller = FakeDanmakuController()
     session, _ = _make_session_for_prefetch(controller, danmaku_controller)
 
     controller.on_item_started(session, current_index=0)
+
+    assert danmaku_controller.calls == []
+    assert len(timer_factory.timers) == 1
+    assert timer_factory.timers[0].delay_seconds == 30.0
+    assert timer_factory.timers[0].started is True
+
+
+def test_delayed_prefetch_callback_runs_prefetch_after_timer_fires() -> None:
+    controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    timer_factory.timers[0].callback()
 
     assert len(danmaku_controller.calls) == 1
     assert danmaku_controller.calls[0][0] is session.playlist[1]
@@ -941,35 +979,51 @@ def test_on_item_started_schedules_prefetch_for_next_index() -> None:
     assert 1 in session.prefetched_next_danmaku_indices
 
 
+def test_latest_on_item_started_invalidates_older_delayed_prefetch_callback() -> None:
+    controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    first_callback = timer_factory.timers[0].callback
+    controller.on_item_started(session, current_index=1)
+    second_callback = timer_factory.timers[1].callback
+
+    first_callback()
+    second_callback()
+
+    assert len(danmaku_controller.calls) == 1
+    assert danmaku_controller.calls[0][0] is session.playlist[2]
+    assert 1 not in session.prefetched_next_danmaku_indices
+    assert 2 in session.prefetched_next_danmaku_indices
+
+
 def test_on_item_started_noop_when_next_index_out_of_range() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     danmaku_controller = FakeDanmakuController()
     session, _ = _make_session_for_prefetch(controller, danmaku_controller)
 
     controller.on_item_started(session, current_index=len(session.playlist) - 1)
 
+    assert timer_factory.timers == []
     assert danmaku_controller.calls == []
     assert session.prefetched_next_danmaku_indices == set()
 
 
-def test_on_item_started_does_not_reschedule_same_next_index() -> None:
+def test_delayed_prefetch_discards_index_when_prefetcher_raises() -> None:
     controller = PlayerController(FakeApiClient())
-    danmaku_controller = FakeDanmakuController()
-    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
-
-    controller.on_item_started(session, current_index=0)
-    controller.on_item_started(session, current_index=0)
-
-    assert len(danmaku_controller.calls) == 1
-
-
-def test_on_item_started_discards_index_when_prefetcher_raises() -> None:
-    controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     danmaku_controller = FakeDanmakuController()
     danmaku_controller.raise_on_call = RuntimeError("boom")
     session, _ = _make_session_for_prefetch(controller, danmaku_controller)
 
     controller.on_item_started(session, current_index=0)
+    timer_factory.timers[0].callback()
 
     assert session.prefetched_next_danmaku_indices == set()
     assert len(danmaku_controller.calls) == 1
@@ -977,34 +1031,44 @@ def test_on_item_started_discards_index_when_prefetcher_raises() -> None:
 
 def test_on_item_started_skips_when_controller_lacks_prefetch() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
 
     class NoPrefetchController:
         pass
 
     session, _ = _make_session_for_prefetch(controller, NoPrefetchController())
     controller.on_item_started(session, current_index=0)
+    assert timer_factory.timers == []
     assert session.prefetched_next_danmaku_indices == set()
+    assert session.pending_next_danmaku_prefetch_token == 0
 
 
 def test_on_item_started_skips_when_danmaku_controller_is_none() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     session, _ = _make_session_for_prefetch(controller, None)
 
     controller.on_item_started(session, current_index=0)
 
+    assert timer_factory.timers == []
     assert session.prefetched_next_danmaku_indices == set()
 
 
-def test_on_item_started_advances_set_when_switching_episodes() -> None:
+def test_stop_playback_invalidates_pending_delayed_prefetch() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     danmaku_controller = FakeDanmakuController()
     session, _ = _make_session_for_prefetch(controller, danmaku_controller)
 
     controller.on_item_started(session, current_index=0)
-    controller.on_item_started(session, current_index=1)
+    controller.stop_playback(session, current_index=0)
+    timer_factory.timers[0].callback()
 
-    assert len(danmaku_controller.calls) == 2
-    assert {1, 2}.issubset(session.prefetched_next_danmaku_indices)
+    assert danmaku_controller.calls == []
+    assert session.prefetched_next_danmaku_indices == set()
 
 
 def test_report_progress_tail_prefetch_triggers_when_remaining_under_150s() -> None:
@@ -1104,6 +1168,8 @@ def test_report_progress_tail_prefetch_skipped_when_duration_unknown() -> None:
 
 def test_report_progress_tail_prefetch_deduplicates_with_on_item_started() -> None:
     controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
     danmaku_controller = FakeDanmakuController()
     session, _ = _make_session_for_prefetch(controller, danmaku_controller)
 
@@ -1118,5 +1184,54 @@ def test_report_progress_tail_prefetch_deduplicates_with_on_item_started() -> No
         paused=False,
         duration_seconds=60 * 20,
     )
+
+    assert len(danmaku_controller.calls) == 1
+    assert timer_factory.timers[0].started is True
+
+
+def test_report_progress_tail_prefetch_triggers_immediately_even_with_startup_delay() -> None:
+    controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 20,
+    )
+
+    assert len(danmaku_controller.calls) == 1
+    assert danmaku_controller.calls[0][0] is session.playlist[1]
+    assert 1 in session.prefetched_next_danmaku_indices
+
+
+def test_delayed_prefetch_callback_noops_after_tail_prefetch_already_succeeded() -> None:
+    controller = PlayerController(FakeApiClient())
+    timer_factory = FakeTimerFactory()
+    controller._prefetch_timer_factory = timer_factory
+    danmaku_controller = FakeDanmakuController()
+    session, _ = _make_session_for_prefetch(controller, danmaku_controller)
+
+    controller.on_item_started(session, current_index=0)
+    delayed_callback = timer_factory.timers[0].callback
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=60 * 18,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+        duration_seconds=60 * 20,
+    )
+    delayed_callback()
 
     assert len(danmaku_controller.calls) == 1
