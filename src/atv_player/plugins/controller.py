@@ -1566,7 +1566,7 @@ class SpiderPluginController:
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
         current_playlist = session.playlist if item in session.playlist else None
         if item.url:
-            self._maybe_hydrate_ytdlp_item(item, item.url)
+            self._maybe_hydrate_ytdlp_item(item, item.url, vod=session.vod)
             session.video_cover_override = item.video_cover_override
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url, current_playlist)
@@ -1775,7 +1775,7 @@ class SpiderPluginController:
         item.external_subtitles = self._map_spider_karaoke_subtitle(payload.get("lyric"))
         if not item.external_subtitles:
             item.external_subtitles = self._map_spider_external_subtitles(payload.get("subt"))
-        if not self._maybe_hydrate_ytdlp_item(item, url):
+        if not self._maybe_hydrate_ytdlp_item(item, url, vod=session.vod):
             item.playback_qualities, item.selected_playback_quality_id = _map_spider_playback_qualities(
                 payload.get("qualities"),
                 url,
@@ -1792,7 +1792,13 @@ class SpiderPluginController:
         )
         return None
 
-    def _maybe_hydrate_ytdlp_item(self, item: PlayItem, source_url: str) -> bool:
+    def _maybe_hydrate_ytdlp_item(
+        self,
+        item: PlayItem,
+        source_url: str,
+        *,
+        vod: VodItem | None = None,
+    ) -> bool:
         yt_dlp = self._yt_dlp_service
         if yt_dlp is None or not yt_dlp.is_available():
             return False
@@ -1804,22 +1810,7 @@ class SpiderPluginController:
             result = yt_dlp.resolve_for_quality(candidate, selected_quality_id)
         else:
             result = yt_dlp.resolve(candidate, max_height=None)
-        item.url = result.url
-        item.original_url = candidate
-        item.headers = dict(result.headers)
-        item.audio_url = getattr(result, "audio_url", "")
-        item.ytdl_format = getattr(result, "ytdl_format", "")
-        item.playback_qualities = list(result.qualities)
-        resolved_quality_id = getattr(result, "selected_quality_id", "") or selected_quality_id
-        if resolved_quality_id:
-            item.selected_playback_quality_id = resolved_quality_id
-        elif item.playback_qualities:
-            item.selected_playback_quality_id = item.playback_qualities[0].id
-        if not item.external_subtitles:
-            item.external_subtitles = list(result.subtitles)
-        duration_seconds = int(getattr(result, "duration_seconds", 0) or 0)
-        if duration_seconds > 0:
-            item.duration_seconds = duration_seconds
+        yt_dlp.apply_result(result, vod=vod, item=item, source_url=candidate)
         return True
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:

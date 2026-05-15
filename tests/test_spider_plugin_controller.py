@@ -922,6 +922,26 @@ def test_controller_build_request_hydrates_prefilled_youtube_url_via_ytdlp() -> 
                 },
             )()
 
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
     service = FakeYtdlpService()
     controller = SpiderPluginController(
         YoutubeDetailSpider(),
@@ -977,6 +997,26 @@ def test_controller_build_request_resolves_playercontent_youtube_url_via_ytdlp()
                 },
             )()
 
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
     service = FakeYtdlpService()
     controller = SpiderPluginController(
         YoutubePlayerSpider(),
@@ -997,6 +1037,83 @@ def test_controller_build_request_resolves_playercontent_youtube_url_via_ytdlp()
     assert first.ytdl_format == "bestvideo+bestaudio/best"
     assert [quality.id for quality in first.playback_qualities] == ["ytdlp_2160"]
     assert first.selected_playback_quality_id == "ytdlp_2160"
+
+
+def test_controller_playback_loader_overwrites_session_vod_with_ytdlp_metadata() -> None:
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str, *, max_height: int | None = None):
+            return type(
+                "Result",
+                (),
+                {
+                    "url": url,
+                    "audio_url": "",
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [],
+                    "ytdl_format": "bestvideo+bestaudio/best",
+                    "selected_quality_id": "ytdlp_2160",
+                    "title": "Resolved YouTube Title",
+                    "thumbnail": "https://img.example/youtube.jpg",
+                    "description": "resolved plugin description",
+                    "duration_seconds": 777,
+                },
+            )()
+
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
+    controller = SpiderPluginController(
+        YoutubeDetailSpider(),
+        plugin_name="YouTube插件",
+        search_enabled=True,
+        yt_dlp_service=FakeYtdlpService(),
+    )
+
+    request = controller.build_request("/detail/youtube")
+    first = request.playlists[0][0]
+    session = type(
+        "Session",
+        (),
+        {
+            "vod": request.vod,
+            "playlist": request.playlist,
+            "video_cover_override": "",
+        },
+    )()
+
+    assert request.playback_loader is not None
+    request.playback_loader(session, first)
+
+    assert session.vod.vod_name == "Resolved YouTube Title"
+    assert session.vod.vod_pic == "https://img.example/youtube.jpg"
+    assert session.vod.vod_content == "resolved plugin description"
+    assert first.title == "Resolved YouTube Title"
+    assert first.media_title == "Resolved YouTube Title"
+    assert first.duration_seconds == 777
 
 
 def test_controller_build_request_resolves_relative_subt_against_base_url() -> None:
