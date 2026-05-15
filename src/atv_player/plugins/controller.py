@@ -56,6 +56,20 @@ _MOVIE_CATEGORY_MARKERS = ("电影",)
 _SINGLE_VIDEO_GENERIC_TITLES = {"正片", "完整版", "全片"}
 
 
+def _strip_trailing_title_size_suffix(value: str) -> str:
+    title = str(value or "").strip()
+    if not title:
+        return ""
+    stripped = re.sub(
+        r"\s*[\(（\[【]\s*\d+(?:\.\d+)?\s*(?:kb|mb|gb|tb)\s*[\)）\]】]\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    stripped = stripped.strip()
+    return stripped or title
+
+
 def _strip_trailing_title_year_suffix(value: str) -> str:
     title = str(value or "").strip()
     if not title:
@@ -63,6 +77,10 @@ def _strip_trailing_title_year_suffix(value: str) -> str:
     stripped = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", title)
     stripped = stripped.strip()
     return stripped or title
+
+
+def _normalize_default_danmaku_search_title(value: str) -> str:
+    return _strip_trailing_title_year_suffix(_strip_trailing_title_size_suffix(value))
 
 
 def _looks_like_offline_download_link(value: str) -> bool:
@@ -164,7 +182,7 @@ def _should_omit_default_episode_label(item: PlayItem, playlist: list[PlayItem] 
 
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     if _looks_like_calendar_episode_title(item.title):
-        return item.title.strip()
+        return _strip_trailing_title_size_suffix(item.title)
     if _should_omit_default_episode_label(item, playlist):
         return ""
     episode_number = infer_playlist_episode_number(item, playlist)
@@ -1050,8 +1068,8 @@ class SpiderPluginController:
         if preference is not None and preference.search_title.strip():
             return preference.search_title.strip()
         return (
-            _strip_trailing_title_year_suffix(item.media_title)
-            or _strip_trailing_title_year_suffix(item.title)
+            _normalize_default_danmaku_search_title(item.media_title)
+            or _normalize_default_danmaku_search_title(item.title)
         )
 
     def _resolve_danmaku_search_episode(

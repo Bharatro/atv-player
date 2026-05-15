@@ -385,12 +385,15 @@ class BilibiliDanmakuProvider:
 
     def _cid_duration_from_pagelist(self, candidate: DanmakuSearchItem) -> tuple[int | None, int]:
         params = {"bvid": candidate.bvid} if candidate.bvid else {"aid": candidate.aid}
-        payload = self._get(
-            "https://api.bilibili.com/x/player/pagelist",
-            params=params,
-            timeout=10.0,
-            follow_redirects=True,
-        ).json()
+        try:
+            payload = self._request_json(
+                "https://api.bilibili.com/x/player/pagelist",
+                params=params,
+                error_cls=DanmakuResolveError,
+                context="pagelist",
+            )
+        except DanmakuResolveError:
+            return None, 0
         pages = payload.get("data") or []
         target = normalize_name(candidate.name)
         for page in pages:

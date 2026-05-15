@@ -1589,6 +1589,102 @@ def test_controller_refresh_danmaku_sources_strips_trailing_year_from_default_me
     assert item.danmaku_search_query == "黑夜告白"
 
 
+def test_controller_refresh_danmaku_sources_strips_trailing_size_suffix_from_calendar_episode_title() -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="mgtv",
+                        provider_label="芒果",
+                        options=[DanmakuSourceOption(provider="mgtv", name="候选", url="https://www.mgtv.com/b/1/2.html")],
+                    )
+                ],
+                default_option_url="https://www.mgtv.com/b/1/2.html",
+                default_provider="mgtv",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="你好星期六",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(
+        title="20250104期(1.74 GB)",
+        url="https://stream.example/1.m3u8",
+        media_title="你好星期六",
+        vod_id="episode-1",
+    )
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == ["你好星期六 20250104期"]
+    assert item.danmaku_search_title == "你好星期六"
+    assert item.danmaku_search_episode == "20250104期"
+    assert item.danmaku_search_query == "你好星期六 20250104期"
+
+
+def test_controller_refresh_danmaku_sources_strips_trailing_size_suffix_from_default_media_title() -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(
+        title="第12集",
+        url="https://stream.example/12.m3u8",
+        media_title="玄界之门 特别版(894.9 MB)",
+        vod_id="episode-12",
+    )
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == ["玄界之门 特别版 12集"]
+    assert item.danmaku_search_title == "玄界之门 特别版"
+    assert item.danmaku_search_episode == "12集"
+    assert item.danmaku_search_query == "玄界之门 特别版 12集"
+
+
 def test_controller_refresh_danmaku_sources_retries_title_only_for_auto_inferred_file_episode() -> None:
     class FakeDanmakuService:
         def __init__(self) -> None:
@@ -2391,26 +2487,27 @@ def test_controller_can_restore_cached_iqiyi_source_after_restart(monkeypatch, t
     )
 
     def fake_get(url: str, **kwargs):
-        if "search.video.iqiyi.com/o" in url:
+        if "mesh.if.iqiyi.com/portal/lw/search/homePageV3" in url:
             return JsonResponse(
                 {
                     "data": {
-                        "docinfos": [
+                        "templates": [
                             {
-                                "albumDocInfo": {
+                                "albumInfo": {
+                                    "title": "八千里路云和月",
                                     "channel": "电视剧,2",
-                                    "itemTotalNumber": 36,
-                                    "albumTitle": "八千里路云和月",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 6421036798758301,
+                                    "videos": [
+                                        {
+                                            "title": "八千里路云和月第10集",
+                                            "qipuId": 123456789000,
+                                            "pageUrl": "http://www.iqiyi.com/v_20imo31bths.html",
+                                            "duration": 300000,
+                                        }
+                                    ],
                                 },
-                                "videoinfos": [
-                                    {
-                                        "itemTitle": "八千里路云和月第10集",
-                                        "itemNumber": 10,
-                                        "itemLink": "http://www.iqiyi.com/v_20imo31bths.html",
-                                        "tvId": 123456789000,
-                                        "albumId": 6421036798758301,
-                                    }
-                                ],
                             }
                         ]
                     }

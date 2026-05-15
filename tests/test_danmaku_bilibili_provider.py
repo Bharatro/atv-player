@@ -715,6 +715,44 @@ def test_bilibili_resolve_uses_season_api_then_pagelist_then_html_fallback() -> 
     assert provider.resolve("https://www.bilibili.com/video/BVhtml1")[0].content == "html"
 
 
+def test_bilibili_resolve_falls_back_to_html_when_pagelist_returns_non_json() -> None:
+    class HtmlResponse:
+        status_code = 200
+        text = "<html><body>risk control</body></html>"
+
+        def json(self):
+            raise json.JSONDecodeError("Expecting value", self.text, 0)
+
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/player/pagelist" in url and params.get("bvid") == "BVhtmlfallback":
+            return HtmlResponse()
+        if "video/BVhtmlfallback" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<script>window.__INITIAL_STATE__={"videoData":{"cid":666777888}}</script>',
+            )
+        if "comment.bilibili.com/666777888.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="6.0,1,25,16777215,0,0,0,0">html-fallback</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/video/BVhtmlfallback"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="哈哈哈哈哈第六季 第1期",
+        url="https://www.bilibili.com/video/BVhtmlfallback",
+        bvid="BVhtmlfallback",
+        search_type="video",
+    )
+
+    records = provider.resolve("https://www.bilibili.com/video/BVhtmlfallback")
+
+    assert [record.content for record in records] == ["html-fallback"]
+
+
 def test_bilibili_resolve_uses_section_episodes_for_season_only_candidate() -> None:
     def fake_get(url: str, **kwargs):
         params = kwargs.get("params") or {}

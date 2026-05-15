@@ -591,6 +591,104 @@ def test_search_danmu_passes_original_name_to_providers() -> None:
     assert tencent.original_name_calls == ["白日提灯 20集"]
 
 
+def test_search_danmu_strips_variety_date_suffix_before_calling_providers() -> None:
+    mgtv = FakeProvider(
+        "mgtv",
+        [DanmakuSearchItem(provider="mgtv", name="你好星期六 20250104期", url="https://mgtv/date")],
+        [],
+    )
+    service = DanmakuService({"mgtv": mgtv}, provider_order=["mgtv"])
+
+    service.search_danmu("你好星期六 20250104期")
+
+    assert mgtv.search_calls == ["你好星期六"]
+
+
+def test_search_danmu_strips_noisy_variety_issue_title_before_calling_providers() -> None:
+    mgtv = FakeProvider(
+        "mgtv",
+        [DanmakuSearchItem(provider="mgtv", name="哈哈哈哈哈第六季 20260404期", url="https://mgtv/date")],
+        [],
+    )
+    service = DanmakuService({"mgtv": mgtv}, provider_order=["mgtv"])
+
+    service.search_danmu("哈哈哈哈哈第六季 20260404期 第1期上：最狠开局！五哈团命悬一线好刺激 4K60")
+
+    assert mgtv.search_calls == ["哈哈哈哈哈第六季"]
+
+
+def test_search_danmu_prefers_variety_candidate_with_matching_date() -> None:
+    mgtv = FakeProvider(
+        "mgtv",
+        [
+            DanmakuSearchItem(provider="mgtv", name="你好星期六 20241228期", url="https://mgtv/20241228"),
+            DanmakuSearchItem(provider="mgtv", name="你好星期六 20250104期", url="https://mgtv/20250104"),
+            DanmakuSearchItem(provider="mgtv", name="你好星期六 纯享版", url="https://mgtv/extra"),
+        ],
+        [],
+    )
+    service = DanmakuService({"mgtv": mgtv}, provider_order=["mgtv"])
+
+    results = service.search_danmu("你好星期六 20250104期")
+
+    assert [item.url for item in results] == [
+        "https://mgtv/20250104",
+        "https://mgtv/20241228",
+        "https://mgtv/extra",
+    ]
+
+
+def test_search_danmu_prefers_variety_candidate_with_matching_date_from_resolve_context() -> None:
+    bilibili = FakeProvider(
+        "bilibili",
+        [
+            DanmakuSearchItem(provider="bilibili", name="《哈哈哈哈哈第六季》 第七期 完整版", url="https://bili/7"),
+            DanmakuSearchItem(provider="bilibili", name="《哈哈哈哈哈第六季》 第一期", url="https://bili/1"),
+        ],
+        [],
+    )
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="哈哈哈哈哈第6季 第1期上 邓超陈赫癫狂式唱山歌",
+                url="https://iqiyi/20260404",
+                resolve_context={"variety_year": 20260404},
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"bilibili": bilibili, "iqiyi": iqiyi}, provider_order=["bilibili", "iqiyi"])
+
+    results = service.search_danmu("哈哈哈哈哈第六季 20260404期 第1期上：最狠开局！五哈团命悬一线好刺激 4K60")
+
+    assert [item.url for item in results] == [
+        "https://iqiyi/20260404",
+        "https://bili/1",
+        "https://bili/7",
+    ]
+
+
+def test_search_danmu_variety_without_matching_issue_falls_back_to_title_similarity() -> None:
+    mgtv = FakeProvider(
+        "mgtv",
+        [
+            DanmakuSearchItem(provider="mgtv", name="你好星期六 纯享版", url="https://mgtv/highlight"),
+            DanmakuSearchItem(provider="mgtv", name="你好星期六", url="https://mgtv/main"),
+        ],
+        [],
+    )
+    service = DanmakuService({"mgtv": mgtv}, provider_order=["mgtv"])
+
+    results = service.search_danmu("你好星期六 20250111期")
+
+    assert [item.url for item in results] == [
+        "https://mgtv/main",
+        "https://mgtv/highlight",
+    ]
+
+
 def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
     tencent = FakeProvider(
         "tencent",

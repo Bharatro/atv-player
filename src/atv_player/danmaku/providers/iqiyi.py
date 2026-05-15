@@ -35,24 +35,7 @@ class IqiyiDanmakuProvider:
         return "iqiyi.com" in page_url
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
-        response = self._get(
-            self._SEARCH_URL,
-            params={
-                "if": "html5",
-                "key": normalize_name(name),
-                "pageNum": 1,
-                "pageSize": 20,
-                "video_allow_3rd": 0,
-            },
-            headers=dict(self._SEARCH_HEADERS),
-            follow_redirects=True,
-            timeout=10.0,
-        )
-        try:
-            payload = response.json()
-        except Exception as exc:
-            raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败") from exc
-        return self._extract_search_items(payload, name)
+        return self._search_mesh_items(name)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         page_url = self._normalize_iqiyi_url(page_url)
@@ -122,8 +105,6 @@ class IqiyiDanmakuProvider:
 
     def _extract_search_items(self, payload: dict, query_name: str) -> list[DanmakuSearchItem]:
         data = payload.get("data")
-        if isinstance(data, dict) and "search result is empty" in data:
-            return []
         if not isinstance(data, dict) or not isinstance(data.get("docinfos"), list):
             raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败")
         results_by_url: dict[str, DanmakuSearchItem] = {}
@@ -168,6 +149,78 @@ class IqiyiDanmakuProvider:
                     results_by_url[url] = candidate
                 self._remember_metadata(url, merged_metadata)
         return list(results_by_url.values())
+
+    def _legacy_search_is_empty(self, payload: dict) -> bool:
+        data = payload.get("data")
+        return isinstance(data, str) and "search result is empty" in data
+
+    def _search_mesh_items(self, query_name: str) -> list[DanmakuSearchItem]:
+        response = self._get(
+            self._MESH_SEARCH_URL,
+            params={
+                "key": normalize_name(query_name),
+                "pageNum": 1,
+                "pageSize": 25,
+                "site": "iqiyi",
+                "mode": 1,
+                "current_page": 1,
+            },
+            headers=dict(self._SEARCH_HEADERS),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败") from exc
+        data = payload.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("templates"), list):
+            raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败")
+        results_by_url: dict[str, DanmakuSearchItem] = {}
+        for album_info in self._iter_mesh_album_infos(payload):
+            if self._should_drop_mesh_album_info(album_info):
+                continue
+            album_title = normalize_name(str(album_info.get("title") or ""))
+            for video in album_info.get("videos") or []:
+                subtitle = str(video.get("subtitle") or "").strip()
+                raw_title = str(video.get("title") or "").strip()
+                title = raw_title
+                if subtitle and album_title and album_title not in normalize_name(raw_title):
+                    title = f"{album_title} {subtitle}".strip()
+                url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
+                if not title or not url:
+                    continue
+                metadata = self._video_metadata(
+                    {
+                        "tvId": self._to_int(video.get("qipuId")),
+                        "albumId": self._to_int(album_info.get("qipuId")),
+                        "timeLength": self._mesh_duration_seconds(video.get("duration")),
+                        "year": self._to_int(video.get("year")),
+                    },
+                    album_info,
+                )
+                ratio = similarity_score(query_name, title)
+                candidate = DanmakuSearchItem(
+                    provider=self.key,
+                    name=title,
+                    url=url,
+                    ratio=ratio,
+                    simi=ratio,
+                    duration_seconds=self._to_int(metadata.get("duration_seconds")) or 0,
+                    resolve_context=dict(metadata),
+                )
+                existing = results_by_url.get(url)
+                if existing is None or self._search_item_rank(candidate) > self._search_item_rank(existing):
+                    results_by_url[url] = candidate
+                self._remember_metadata(url, metadata)
+        return list(results_by_url.values())
+
+    def _should_drop_mesh_album_info(self, album_info: dict) -> bool:
+        channel = str(album_info.get("channel") or "")
+        if any(keyword in channel for keyword in self._DROP_CHANNEL_KEYWORDS):
+            return True
+        title = str(album_info.get("title") or "")
+        return any(keyword in title for keyword in self._DROP_TITLE_KEYWORDS)
 
     def prime_resolve_context(self, page_url: str, resolve_context: dict[str, str | int | None] | None) -> None:
         if not isinstance(resolve_context, dict):
@@ -245,7 +298,12 @@ class IqiyiDanmakuProvider:
                 continue
             videos: list[dict] = []
             for video in matched_album_info.get("videos") or []:
-                title = str(video.get("title") or "").strip()
+                subtitle = str(video.get("subtitle") or "").strip()
+                raw_title = str(video.get("title") or "").strip()
+                album_title = normalize_name(str(matched_album_info.get("title") or album_info.get("albumTitle") or ""))
+                title = raw_title
+                if subtitle and album_title and album_title not in normalize_name(raw_title):
+                    title = f"{album_title} {subtitle}".strip()
                 page_url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
                 if not title or not page_url:
                     continue
@@ -257,6 +315,8 @@ class IqiyiDanmakuProvider:
                         "tvId": self._to_int(video.get("qipuId")),
                         "albumId": matched_album_id or target_album_id,
                         "timeLength": self._mesh_duration_seconds(video.get("duration")),
+                        "year": self._to_int(video.get("year")),
+                        "subtitle": subtitle,
                     }
                 )
             if videos:
@@ -369,6 +429,7 @@ class IqiyiDanmakuProvider:
             "album_id": self._to_int(video.get("albumId") or album_info.get("albumId")),
             "category_id": self._extract_category_id(album_info),
             "duration_seconds": self._to_int(video.get("timeLength")),
+            "variety_year": self._to_int(video.get("year")),
         }
 
     def _mesh_cache_key(self, query_name: str, album_info: dict) -> tuple[str, int | None, str]:

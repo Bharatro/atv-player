@@ -112,6 +112,17 @@ _QUALITY_ONLY_FILENAME_TOKENS = {
     "全片",
 }
 
+_VARIETY_HINT_TOKENS = (
+    "纯享",
+    "加更",
+    "舞台",
+    "未播",
+    "会员版",
+    "训练室",
+    "reaction",
+    "直拍",
+)
+
 
 def normalize_name(name: str) -> str:
     value = str(name).strip()
@@ -234,6 +245,83 @@ def strip_episode_suffix(name: str) -> str:
     return value
 
 
+def _extract_variety_date_key(name: str) -> str | None:
+    value = normalize_name(name)
+    match = re.search(
+        r"(?<!\d)((?:19|20)\d{2})[\s._/-]?(0[1-9]|1[0-2])[\s._/-]?(0[1-9]|[12]\d|3[01])(?:\s*期)?(?!\d)",
+        value,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return "".join(match.groups())
+
+
+def _extract_variety_issue_number(name: str) -> int | None:
+    value = normalize_name(name)
+    patterns = (
+        r"第\s*([0-9零一二两三四五六七八九十百]+)\s*期",
+        r"(?<!\d)0*([0-9]{1,4})\s*期",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value, re.IGNORECASE)
+        if match is None:
+            continue
+        raw = match.group(1)
+        issue = int(raw) if raw.isdigit() else _cn_to_int(raw)
+        if issue is not None and 1 <= issue <= 10000:
+            return issue
+    return None
+
+
+def extract_variety_issue_key(name: str) -> str | None:
+    date_key = _extract_variety_date_key(name)
+    if date_key is not None:
+        return date_key
+    issue_number = _extract_variety_issue_number(name)
+    if issue_number is not None:
+        return str(issue_number)
+    return None
+
+
+def is_likely_variety_title(name: str) -> bool:
+    value = normalize_name(name)
+    if re.search(r"第\s*[0-9零一二两三四五六七八九十百]+\s*期", value, re.IGNORECASE) is not None:
+        return True
+    if re.search(r"(?<!\d)0*[0-9]{1,4}\s*期", value, re.IGNORECASE) is not None:
+        return True
+    if _extract_variety_date_key(value) is not None:
+        return True
+    lowered = value.casefold()
+    return any(token in lowered for token in _VARIETY_HINT_TOKENS)
+
+
+def strip_variety_issue_suffix(name: str) -> str:
+    value = normalize_name(name)
+    split_patterns = (
+        r"^(?P<title>.+?)\s+(?:(?:19|20)\d{2}[\s._/-]?(?:0[1-9]|1[0-2])[\s._/-]?(?:0[1-9]|[12]\d|3[01])(?:\s*期)?)(?:\s+.*)?$",
+        r"^(?P<title>.*?\D)\s*第\s*[0-9零一二两三四五六七八九十百]+\s*期(?:[上下中终完]?)?(?:[：: ].*)?$",
+        r"^(?P<title>.*?\D)\s*0*[0-9]{1,4}\s*期(?:[上下中终完]?)?(?:[：: ].*)?$",
+    )
+    for pattern in split_patterns:
+        match = re.match(pattern, value, re.IGNORECASE)
+        if match is None:
+            continue
+        title = match.group("title").strip()
+        if title:
+            return title
+    patterns = (
+        r"[\s._/-]+第\s*[0-9零一二两三四五六七八九十百]+\s*期\s*$",
+        r"[\s._/-]+0*[0-9]{1,4}\s*期\s*$",
+        r"[\s._/-]+(?:19|20)\d{2}[\s._/-]?(?:0[1-9]|1[0-2])[\s._/-]?(?:0[1-9]|[12]\d|3[01])(?:\s*期)?\s*$",
+    )
+    for pattern in patterns:
+        stripped = re.sub(pattern, "", value, flags=re.IGNORECASE)
+        if stripped != value:
+            return stripped.strip()
+    return value
+
+
 def match_provider(reg_src: str) -> str | None:
     host = (urlparse(reg_src).hostname or reg_src or "").lower()
     if "qq.com" in host:
@@ -251,6 +339,11 @@ def match_provider(reg_src: str) -> str | None:
 
 def _simplify_name(name: str) -> str:
     value = normalize_name(name).casefold()
+    value = re.sub(
+        r"第\s*([0-9零一二两三四五六七八九十百]+)\s*季",
+        lambda match: f"第{_cn_to_int(match.group(1)) if not match.group(1).isdigit() else int(match.group(1))}季",
+        value,
+    )
     value = re.sub(r"第\s*\d+\s*[集话期]", "", value)
     value = re.sub(r"(?<!\d)\d+\s*[集话期]", "", value)
     value = re.sub(r"\s+0*\d{1,4}\s*$", "", value)

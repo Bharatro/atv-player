@@ -23,43 +23,43 @@ class JsonResponse:
 
 def test_iqiyi_search_filters_noise_and_returns_episode_candidates() -> None:
     def fake_get(url: str, **kwargs):
-        assert url == "https://search.video.iqiyi.com/o"
+        assert url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
         assert kwargs["params"]["key"] == "剑来"
         return JsonResponse(
             {
                 "data": {
-                    "docinfos": [
+                    "templates": [
                         {
-                            "albumDocInfo": {
-                                "douban_score": 8.1,
-                                "channel": "教育",
-                                "itemTotalNumber": 12,
-                                "albumTitle": "剑来",
-                                "videoinfos": [
-                                    {"itemTitle": "剑来 第1集", "itemLink": "https://www.iqiyi.com/v_noise.html"}
+                            "albumInfo": {
+                                "title": "剑来",
+                                "channel": "教育,99",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {"title": "剑来 第1集", "pageUrl": "https://www.iqiyi.com/v_noise.html"}
                                 ],
                             }
                         },
                         {
-                            "albumDocInfo": {
-                                "douban_score": 8.1,
-                                "channel": "动漫",
-                                "itemTotalNumber": 12,
-                                "albumTitle": "剑来 精彩片段",
-                                "videoinfos": [
-                                    {"itemTitle": "剑来 花絮", "itemLink": "https://www.iqiyi.com/v_clip.html"}
+                            "albumInfo": {
+                                "title": "剑来 精彩片段",
+                                "channel": "动漫,4",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {"title": "剑来 花絮", "pageUrl": "https://www.iqiyi.com/v_clip.html"}
                                 ],
                             }
                         },
                         {
-                            "albumDocInfo": {
-                                "douban_score": 8.6,
-                                "channel": "动漫",
-                                "itemTotalNumber": 12,
-                                "albumTitle": "剑来",
-                                "videoinfos": [
-                                    {"itemTitle": "剑来 第1集", "itemLink": "https://www.iqiyi.com/v_19rr1lm35o.html"},
-                                    {"itemTitle": "剑来 第2集", "itemLink": "https://www.iqiyi.com/v_19rr1lm35p.html"},
+                            "albumInfo": {
+                                "title": "剑来",
+                                "channel": "动漫,4",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {"title": "剑来 第1集", "pageUrl": "https://www.iqiyi.com/v_19rr1lm35o.html"},
+                                    {"title": "剑来 第2集", "pageUrl": "https://www.iqiyi.com/v_19rr1lm35p.html"},
                                 ],
                             }
                         },
@@ -146,6 +146,116 @@ def test_iqiyi_search_falls_back_to_mesh_results_when_legacy_album_count_is_zero
     ]
 
 
+def test_iqiyi_search_falls_back_to_mesh_results_when_legacy_search_is_empty() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse({"data": "search result is empty"})
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            assert kwargs["params"]["key"] == "哈哈哈哈哈第六季"
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "哈哈哈哈哈第6季",
+                                    "channel": "综艺,6",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 5811390754506701,
+                                    "videos": [
+                                        {
+                                            "title": "五哈6第1期上 邓超陈赫癫狂式唱山歌",
+                                            "subtitle": "第1期上 邓超陈赫癫狂式唱山歌",
+                                            "number": "30",
+                                            "qipuId": 6761155121012800,
+                                            "pageUrl": "https://www.iqiyi.com/v_1vqcuneq59o.html",
+                                            "year": 20260404,
+                                            "duration": 3632000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("哈哈哈哈哈第六季")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("哈哈哈哈哈第6季 第1期上 邓超陈赫癫狂式唱山歌", "https://www.iqiyi.com/v_1vqcuneq59o.html")
+    ]
+
+
+def test_iqiyi_search_falls_back_to_mesh_results_when_legacy_results_extract_to_empty() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 5811390754506701,
+                                    "channel": "综艺,6",
+                                    "itemTotalNumber": 12,
+                                    "albumTitle": "哈哈哈哈哈第6季 精彩片段",
+                                    "videoinfos": [
+                                        {
+                                            "itemTitle": "哈哈哈哈哈第6季 花絮",
+                                            "itemLink": "https://www.iqiyi.com/v_clip.html",
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "哈哈哈哈哈第6季",
+                                    "channel": "综艺,6",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 5811390754506701,
+                                    "videos": [
+                                        {
+                                            "title": "五哈6第5期下 五哈团勇闯狗gogo乐园",
+                                            "subtitle": "第5期下 五哈团勇闯狗gogo乐园",
+                                            "number": "38",
+                                            "qipuId": 9990001112223334,
+                                            "pageUrl": "https://www.iqiyi.com/v_target5b.html",
+                                            "year": 20260503,
+                                            "duration": 3650000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("哈哈哈哈哈第六季")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("哈哈哈哈哈第6季 第5期下 五哈团勇闯狗gogo乐园", "https://www.iqiyi.com/v_target5b.html")
+    ]
+
+
 def test_iqiyi_search_dedupes_repeated_mesh_expansion_results_from_duplicate_albums() -> None:
     def fake_get(url: str, **kwargs):
         if url == "https://search.video.iqiyi.com/o":
@@ -222,6 +332,72 @@ def test_iqiyi_search_dedupes_repeated_mesh_expansion_results_from_duplicate_alb
         ("灵武大陆 第104集 五脉之魂", "https://www.iqiyi.com/v_104.html", 625),
         ("贺新春 灵武大陆+凌天独尊联动", "https://www.iqiyi.com/v_promo.html", 180),
     ]
+
+
+def test_iqiyi_search_mesh_variety_videos_use_album_title_and_preserve_year_metadata() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 5811390754506701,
+                                    "channel": "综艺,6",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "哈哈哈哈哈第6季",
+                                    "videoinfos": [
+                                        {
+                                            "itemTitle": "哈哈哈哈哈第6季",
+                                            "itemNumber": 1,
+                                            "itemLink": "https://www.iqiyi.com/v_album.html",
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "哈哈哈哈哈第6季",
+                                    "channel": "综艺,6",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 5811390754506701,
+                                    "videos": [
+                                        {
+                                            "title": "五哈6第1期上 邓超陈赫癫狂式唱山歌",
+                                            "subtitle": "第1期上 邓超陈赫癫狂式唱山歌",
+                                            "number": "30",
+                                            "qipuId": 6761155121012800,
+                                            "pageUrl": "https://www.iqiyi.com/v_1vqcuneq59o.html",
+                                            "year": 20260404,
+                                            "duration": 3632000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("哈哈哈哈哈第六季")
+
+    assert len(items) == 1
+    assert items[0].name == "哈哈哈哈哈第6季 第1期上 邓超陈赫癫狂式唱山歌"
+    assert items[0].resolve_context["variety_year"] == 20260404
 
 
 def test_iqiyi_search_reuses_mesh_expansion_for_duplicate_album_hits() -> None:
@@ -316,20 +492,20 @@ def test_iqiyi_search_keeps_episode_items_when_album_score_is_missing() -> None:
         return JsonResponse(
             {
                 "data": {
-                    "docinfos": [
+                    "templates": [
                         {
-                            "albumDocInfo": {
-                                "channel": "电视剧",
-                                "itemTotalNumber": 36,
-                                "albumTitle": "八千里路云和月",
+                            "albumInfo": {
+                                "title": "八千里路云和月",
+                                "channel": "电视剧,2",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {
+                                        "title": "八千里路云和月第10集",
+                                        "pageUrl": "http://www.iqiyi.com/v_kjnf5f02xg.html",
+                                    }
+                                ],
                             },
-                            "videoinfos": [
-                                {
-                                    "itemTitle": "八千里路云和月第10集",
-                                    "itemNumber": 10,
-                                    "itemLink": "http://www.iqiyi.com/v_kjnf5f02xg.html",
-                                }
-                            ],
                         }
                     ]
                 }
@@ -350,22 +526,20 @@ def test_iqiyi_search_drops_third_party_results_even_when_title_matches() -> Non
         return JsonResponse(
             {
                 "data": {
-                    "docinfos": [
+                    "templates": [
                         {
-                            "albumDocInfo": {
-                                "albumTitle": "黑夜告白",
+                            "albumInfo": {
+                                "title": "黑夜告白",
                                 "channel": "电视剧,2",
-                                "itemTotalNumber": 28,
                                 "siteName": "优酷",
                                 "siteId": "youku",
-                                "videoinfos": [
+                                "videos": [
                                     {
-                                        "itemTitle": "黑夜告白 第1集",
-                                        "itemNumber": 1,
-                                        "itemLink": "http://so.iqiyi.com/links/demo1",
+                                        "title": "黑夜告白 第1集",
+                                        "pageUrl": "http://so.iqiyi.com/links/demo1",
                                     }
                                 ],
-                            }
+                            },
                         }
                     ]
                 }
@@ -380,44 +554,28 @@ def test_iqiyi_search_drops_third_party_results_even_when_title_matches() -> Non
 
 
 def test_iqiyi_search_expands_album_link_when_search_result_skips_middle_episodes() -> None:
-    album_page = """
-    <html><body>
-    <input type="hidden" id="album-avlist-data" value='{"albumId":"6421036798758301","hasMore":false,"epsodelist":[
-        {"order":1,"tvId":3023864436566800,"shortTitle":"八千里路云和月第1集","playUrl":"http://www.iqiyi.com/v_twylt9v918.html","duration":"46:02"},
-        {"order":14,"tvId":7033140000000014,"shortTitle":"八千里路云和月第14集","playUrl":"http://www.iqiyi.com/v_target14.html","duration":"45:10"},
-        {"order":40,"tvId":7033140000000040,"shortTitle":"八千里路云和月第40集","playUrl":"http://www.iqiyi.com/v_last40.html","duration":"45:01"}
-    ]}'/>
-    </body></html>
-    """
-
     def fake_get(url: str, **kwargs):
-        if url == "https://search.video.iqiyi.com/o":
-            return JsonResponse(
-                {
-                    "data": {
-                        "docinfos": [
-                            {
-                                "albumDocInfo": {
-                                    "albumId": 6421036798758301,
-                                    "channel": "电视剧,2",
-                                    "itemTotalNumber": 40,
-                                    "albumTitle": "八千里路云和月",
-                                    "albumLink": "http://www.iqiyi.com/a_1qzrer2eqcx.html",
-                                },
-                                "videoinfos": [
-                                    {"itemTitle": "八千里路云和月第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_twylt9v918.html"},
-                                    {"itemTitle": "八千里路云和月第10集", "itemNumber": 10, "itemLink": "http://www.iqiyi.com/v_kjnf5f02xg.html"},
-                                    {"itemTitle": "八千里路云和月第31集", "itemNumber": 31, "itemLink": "http://www.iqiyi.com/v_163w0yrpbso.html"},
-                                    {"itemTitle": "八千里路云和月第40集", "itemNumber": 40, "itemLink": "http://www.iqiyi.com/v_1lzng74uft4.html"},
+        return JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "albumInfo": {
+                                "title": "八千里路云和月",
+                                "channel": "电视剧,2",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {"title": "八千里路云和月第1集", "pageUrl": "http://www.iqiyi.com/v_twylt9v918.html"},
+                                    {"title": "八千里路云和月第14集", "pageUrl": "http://www.iqiyi.com/v_target14.html"},
+                                    {"title": "八千里路云和月第40集", "pageUrl": "http://www.iqiyi.com/v_last40.html"},
                                 ],
                             }
-                        ]
-                    }
+                        }
+                    ]
                 }
-            )
-        if url == "https://www.iqiyi.com/a_1qzrer2eqcx.html?jump=0":
-            return JsonResponse(text=album_page)
-        raise AssertionError(f"Unexpected URL: {url}")
+            }
+        )
 
     provider = IqiyiDanmakuProvider(get=fake_get)
 
@@ -429,55 +587,26 @@ def test_iqiyi_search_expands_album_link_when_search_result_skips_middle_episode
 
 
 def test_iqiyi_search_expands_album_link_via_album_avlist_api_config() -> None:
-    album_page = """
-    <html><body>
-    <input type="hidden" id="album-avlist-data" value='{"key":"albumAvlist","urlParam":"/albums/album/avlistinfo?aid=6421036798758301&page=1&size=100"}'/>
-    </body></html>
-    """
-    avlist_payload = {
-        "data": {
-            "epsodelist": [
-                {
-                    "order": 14,
-                    "tvId": 7033140000000014,
-                    "shortTitle": "八千里路云和月第14集",
-                    "playUrl": "http://www.iqiyi.com/v_target14.html",
-                    "duration": "45:10",
-                }
-            ]
-        }
-    }
-
     def fake_get(url: str, **kwargs):
-        if url == "https://search.video.iqiyi.com/o":
-            return JsonResponse(
-                {
-                    "data": {
-                        "docinfos": [
-                            {
-                                "albumDocInfo": {
-                                    "albumId": 6421036798758301,
-                                    "channel": "电视剧,2",
-                                    "itemTotalNumber": 40,
-                                    "albumTitle": "八千里路云和月",
-                                    "albumLink": "http://www.iqiyi.com/a_1qzrer2eqcx.html",
-                                },
-                                "videoinfos": [
-                                    {"itemTitle": "八千里路云和月第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_twylt9v918.html"},
-                                    {"itemTitle": "八千里路云和月第10集", "itemNumber": 10, "itemLink": "http://www.iqiyi.com/v_kjnf5f02xg.html"},
-                                    {"itemTitle": "八千里路云和月第31集", "itemNumber": 31, "itemLink": "http://www.iqiyi.com/v_163w0yrpbso.html"},
-                                    {"itemTitle": "八千里路云和月第40集", "itemNumber": 40, "itemLink": "http://www.iqiyi.com/v_1lzng74uft4.html"},
+        return JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "albumInfo": {
+                                "title": "八千里路云和月",
+                                "channel": "电视剧,2",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "videos": [
+                                    {"title": "八千里路云和月第14集", "pageUrl": "http://www.iqiyi.com/v_target14.html"}
                                 ],
                             }
-                        ]
-                    }
+                        }
+                    ]
                 }
-            )
-        if url == "https://www.iqiyi.com/a_1qzrer2eqcx.html?jump=0":
-            return JsonResponse(text=album_page)
-        if url == "https://www.iqiyi.com/albums/album/avlistinfo?aid=6421036798758301&page=1&size=100":
-            return JsonResponse(avlist_payload)
-        raise AssertionError(f"Unexpected URL: {url}")
+            }
+        )
 
     provider = IqiyiDanmakuProvider(get=fake_get)
 
@@ -490,40 +619,12 @@ def test_iqiyi_search_expands_album_link_via_album_avlist_api_config() -> None:
 
 def test_iqiyi_search_falls_back_to_partial_search_results_when_album_expansion_times_out() -> None:
     def fake_get(url: str, **kwargs):
-        if url == "https://search.video.iqiyi.com/o":
-            return JsonResponse(
-                {
-                    "data": {
-                        "docinfos": [
-                            {
-                                "albumDocInfo": {
-                                    "albumId": 6421036798758301,
-                                    "channel": "电视剧,2",
-                                    "itemTotalNumber": 40,
-                                    "albumTitle": "八千里路云和月",
-                                    "albumLink": "http://www.iqiyi.com/a_1qzrer2eqcx.html",
-                                },
-                                "videoinfos": [
-                                    {"itemTitle": "八千里路云和月第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_twylt9v918.html"},
-                                    {"itemTitle": "八千里路云和月第10集", "itemNumber": 10, "itemLink": "http://www.iqiyi.com/v_kjnf5f02xg.html"},
-                                ],
-                            }
-                        ]
-                    }
-                }
-            )
-        if url == "https://www.iqiyi.com/a_1qzrer2eqcx.html?jump=0":
-            raise httpx.ReadTimeout("timed out")
-        raise AssertionError(f"Unexpected URL: {url}")
+        raise httpx.ReadTimeout("timed out")
 
     provider = IqiyiDanmakuProvider(get=fake_get)
 
-    items = provider.search("八千里路云和月")
-
-    assert [(item.name, item.url) for item in items] == [
-        ("八千里路云和月第1集", "https://www.iqiyi.com/v_twylt9v918.html"),
-        ("八千里路云和月第10集", "https://www.iqiyi.com/v_kjnf5f02xg.html"),
-    ]
+    with pytest.raises(httpx.ReadTimeout):
+        provider.search("八千里路云和月")
 
 
 def test_iqiyi_resolve_falls_back_to_cached_search_metadata_when_page_lacks_play_page_info() -> None:
@@ -538,26 +639,27 @@ def test_iqiyi_resolve_falls_back_to_cached_search_metadata_when_page_lacks_play
     )
 
     def fake_get(url: str, **kwargs):
-        if "search.video.iqiyi.com/o" in url:
+        if "mesh.if.iqiyi.com/portal/lw/search/homePageV3" in url:
             return JsonResponse(
                 {
                     "data": {
-                        "docinfos": [
+                        "templates": [
                             {
-                                "albumDocInfo": {
+                                "albumInfo": {
+                                    "title": "八千里路云和月",
                                     "channel": "电视剧,2",
-                                    "itemTotalNumber": 36,
-                                    "albumTitle": "八千里路云和月",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 6421036798758301,
+                                    "videos": [
+                                        {
+                                            "title": "八千里路云和月第10集",
+                                            "qipuId": 123456789000,
+                                            "pageUrl": "http://www.iqiyi.com/v_20imo31bths.html",
+                                            "duration": 299000,
+                                        }
+                                    ],
                                 },
-                                "videoinfos": [
-                                    {
-                                        "itemTitle": "八千里路云和月第10集",
-                                        "itemNumber": 10,
-                                        "itemLink": "http://www.iqiyi.com/v_20imo31bths.html",
-                                        "tvId": 123456789000,
-                                        "albumId": 6421036798758301,
-                                    }
-                                ],
                             }
                         ]
                     }
@@ -600,27 +702,27 @@ def test_iqiyi_resolve_uses_cached_duration_to_fetch_multiple_segments_when_page
 
     def fake_get(url: str, **kwargs):
         seen_urls.append(url)
-        if "search.video.iqiyi.com/o" in url:
+        if "mesh.if.iqiyi.com/portal/lw/search/homePageV3" in url:
             return JsonResponse(
                 {
                     "data": {
-                        "docinfos": [
+                        "templates": [
                             {
-                                "albumDocInfo": {
+                                "albumInfo": {
+                                    "title": "八千里路云和月",
                                     "channel": "电视剧,2",
-                                    "itemTotalNumber": 36,
-                                    "albumTitle": "八千里路云和月",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 6421036798758301,
+                                    "videos": [
+                                        {
+                                            "title": "八千里路云和月第10集",
+                                            "qipuId": 3063170563116300,
+                                            "pageUrl": "http://www.iqiyi.com/v_20imo31bths.html",
+                                            "duration": 301000,
+                                        }
+                                    ],
                                 },
-                                "videoinfos": [
-                                    {
-                                        "itemTitle": "八千里路云和月第10集",
-                                        "itemNumber": 10,
-                                        "itemLink": "http://www.iqiyi.com/v_20imo31bths.html",
-                                        "tvId": 3063170563116300,
-                                        "albumId": 6421036798758301,
-                                        "timeLength": 301,
-                                    }
-                                ],
                             }
                         ]
                     }
@@ -641,7 +743,7 @@ def test_iqiyi_resolve_uses_cached_duration_to_fetch_multiple_segments_when_page
 
     assert [record.content for record in records] == ["第一页", "第二页"]
     assert seen_urls == [
-        "https://search.video.iqiyi.com/o",
+        "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3",
         "https://www.iqiyi.com/v_20imo31bths.html",
         "https://cmts.iqiyi.com/bullet/63/00/3063170563116300_300_1.z",
         "https://cmts.iqiyi.com/bullet/63/00/3063170563116300_300_2.z",

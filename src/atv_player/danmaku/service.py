@@ -19,12 +19,15 @@ from atv_player.danmaku.utils import (
     build_xml,
     episode_title_matches,
     extract_episode_number,
+    extract_variety_issue_key,
     has_explicit_episode_marker,
+    is_likely_variety_title,
     match_provider,
     normalize_name,
     should_filter_name,
     similarity_score,
     strip_episode_suffix,
+    strip_variety_issue_suffix,
 )
 
 
@@ -205,6 +208,17 @@ def _filter_source_options_by_media_duration_gap(
     ]
 
 
+def _is_likely_variety_search(query_name: str, items: list[DanmakuSearchItem]) -> bool:
+    return is_likely_variety_title(query_name) or any(is_likely_variety_title(item.name) for item in items)
+
+
+def _variety_issue_key_for_item(item: DanmakuSearchItem) -> str | None:
+    metadata_year = item.resolve_context.get("variety_year")
+    if metadata_year not in ("", None, 0):
+        return str(metadata_year)
+    return extract_variety_issue_key(item.name)
+
+
 class DanmakuService:
     def __init__(self, providers: dict[str, DanmakuProvider], provider_order: list[str]) -> None:
         self._providers = dict(providers)
@@ -320,9 +334,10 @@ class DanmakuService:
 
     def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
-        search_keyword = strip_episode_suffix(normalized) or normalized
+        search_keyword = strip_episode_suffix(strip_variety_issue_suffix(normalized)) or normalized
         requested_episode = extract_episode_number(normalized)
         explicit_episode_request = has_explicit_episode_marker(normalized)
+        variety_issue_key = extract_variety_issue_key(normalized)
         primary_query = search_keyword
         preferred_key = self._preferred_provider_key(reg_src)
         if provider_filter:
@@ -332,6 +347,26 @@ class DanmakuService:
             provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query, normalized)
         results = _filter_too_short_duration_candidates(results)
+        if _is_likely_variety_search(normalized, results):
+            if variety_issue_key is not None and preferred_key is not None and not provider_filter:
+                has_variety_match = any(_variety_issue_key_for_item(item) == variety_issue_key for item in results)
+                if not has_variety_match:
+                    fallback_keys = [
+                        key for key in self._provider_order if key in self._providers and key != preferred_key
+                    ]
+                    if fallback_keys:
+                        results.extend(self._collect_search_results(fallback_keys, primary_query, normalized))
+                        results = _filter_too_short_duration_candidates(results)
+            return sorted(
+                results,
+                key=lambda item: (
+                    -int(variety_issue_key is not None and _variety_issue_key_for_item(item) == variety_issue_key),
+                    -int(_compact_title(strip_variety_issue_suffix(item.name)) == _compact_title(primary_query)),
+                    -item.ratio,
+                    -item.simi,
+                    self._provider_rank.get(item.provider, len(self._provider_order)),
+                ),
+            )
         if requested_episode is not None:
             matching = [
                 item

@@ -2,10 +2,13 @@ from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.utils import (
     build_xml,
     extract_episode_number,
+    extract_variety_issue_key,
     infer_playlist_episode_number,
+    is_likely_variety_title,
     match_provider,
     normalize_name,
     should_filter_name,
+    strip_variety_issue_suffix,
 )
 from atv_player.models import PlayItem
 
@@ -34,6 +37,11 @@ def test_should_filter_name_rejects_sequel_mismatch() -> None:
     assert should_filter_name(target, "疯狂动物城2（普通话版）") is False
 
 
+def test_should_filter_name_accepts_season_number_format_variants() -> None:
+    target = normalize_name("哈哈哈哈哈第六季")
+    assert should_filter_name(target, "哈哈哈哈哈第6季 第1期上 邓超陈赫癫狂式唱山歌") is False
+
+
 def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> None:
     assert extract_episode_number("12(1.26 GB)") == 12
 
@@ -44,6 +52,21 @@ def test_extract_episode_number_supports_chinese_numerals() -> None:
 
 def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
     assert extract_episode_number("0002 剑来-笼中雀") == 2
+
+
+def test_extract_variety_issue_key_supports_calendar_issue_titles() -> None:
+    assert extract_variety_issue_key("你好星期六 20250104期") == "20250104"
+
+
+def test_is_likely_variety_title_distinguishes_issue_from_episode_titles() -> None:
+    assert is_likely_variety_title("歌手2026 第12期") is True
+    assert is_likely_variety_title("剑来 第12集") is False
+
+
+def test_strip_variety_issue_suffix_keeps_base_title() -> None:
+    assert strip_variety_issue_suffix("你好星期六 20250104期") == "你好星期六"
+    assert strip_variety_issue_suffix("你好星期六 2025-01-04") == "你好星期六"
+    assert strip_variety_issue_suffix("哈哈哈哈哈第六季 20260404期 第1期上：最狠开局！五哈团命悬一线好刺激 4K60") == "哈哈哈哈哈第六季"
 
 
 def test_extract_episode_number_supports_cjk_bar_separated_prefix_titles() -> None:
