@@ -219,6 +219,30 @@ def _variety_issue_key_for_item(item: DanmakuSearchItem) -> str | None:
     return extract_variety_issue_key(item.name)
 
 
+def _variety_issue_key_for_option(option: DanmakuSourceOption) -> str | None:
+    metadata_year = option.resolve_context.get("variety_year")
+    if metadata_year not in ("", None, 0):
+        return str(metadata_year)
+    return extract_variety_issue_key(option.name)
+
+
+def _source_option_query_match_priority(query_name: str, option: DanmakuSourceOption) -> tuple[int, int]:
+    normalized_query = normalize_name(query_name)
+    if not normalized_query:
+        return 0, 0
+    variety_issue_key = extract_variety_issue_key(normalized_query)
+    variety_issue_match = int(
+        variety_issue_key is not None and _variety_issue_key_for_option(option) == variety_issue_key
+    )
+    requested_episode = extract_episode_number(normalized_query)
+    exact_episode_match = int(
+        requested_episode is not None
+        and extract_episode_number(option.name) == requested_episode
+        and episode_title_matches(normalized_query, option.name)
+    )
+    return variety_issue_match, exact_episode_match
+
+
 class DanmakuService:
     def __init__(self, providers: dict[str, DanmakuProvider], provider_order: list[str]) -> None:
         self._providers = dict(providers)
@@ -323,6 +347,7 @@ class DanmakuService:
             ranked_rows.sort(
                 key=lambda row: self._danmaku_source_option_sort_key(
                     row[1],
+                    query_name=query_name,
                     preferred_provider=preferred_provider,
                     preferred_page_url=preferred_page_url,
                     reg_src=reg_src,
@@ -330,7 +355,13 @@ class DanmakuService:
                     stable_index=row[2],
                 )
             )
-        return self._group_ranked_source_rows(ranked_rows, preferred_provider, preferred_page_url, reg_src)
+        return self._group_ranked_source_rows(
+            ranked_rows,
+            query_name=query_name,
+            preferred_provider=preferred_provider,
+            preferred_page_url=preferred_page_url,
+            reg_src=reg_src,
+        )
 
     def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
@@ -477,18 +508,22 @@ class DanmakuService:
         self,
         option: DanmakuSourceOption,
         *,
+        query_name: str,
         preferred_provider: str,
         preferred_page_url: str,
         reg_src: str,
         media_duration_seconds: int,
         stable_index: int,
-    ) -> tuple[int, int, int, int, int, int, int]:
+    ) -> tuple[int, ...]:
+        variety_issue_match, exact_episode_match = _source_option_query_match_priority(query_name, option)
         preferred_page = int(bool(preferred_page_url) and option.url == preferred_page_url)
         preferred_provider_match = int(bool(preferred_provider) and option.provider == preferred_provider)
         reg_src_provider_match = int(option.provider == self._preferred_provider_key(reg_src))
         duration_known = int(option.duration_seconds > 0 and media_duration_seconds > 0)
         duration_gap = abs(option.duration_seconds - media_duration_seconds) if duration_known else 10**9
         return (
+            -variety_issue_match,
+            -exact_episode_match,
             -preferred_page,
             -preferred_provider_match,
             -reg_src_provider_match,
@@ -501,6 +536,7 @@ class DanmakuService:
     def _group_ranked_source_rows(
         self,
         ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]],
+        query_name: str,
         preferred_provider: str,
         preferred_page_url: str,
         reg_src: str,
@@ -535,7 +571,13 @@ class DanmakuService:
             )
             for provider in ordered_providers
         ]
-        default_option = self._pick_default_source_option(groups, preferred_provider, preferred_page_url, reg_src)
+        default_option = self._pick_default_source_option(
+            groups,
+            query_name=query_name,
+            preferred_provider=preferred_provider,
+            preferred_page_url=preferred_page_url,
+            reg_src=reg_src,
+        )
         return DanmakuSourceSearchResult(
             groups=groups,
             default_option_url=default_option.url if default_option is not None else "",
@@ -545,14 +587,29 @@ class DanmakuService:
     def _pick_default_source_option(
         self,
         groups: list[DanmakuSourceGroup],
+        *,
+        query_name: str,
         preferred_provider: str,
         preferred_page_url: str,
         reg_src: str,
     ) -> DanmakuSourceOption | None:
-        for group in groups:
-            for option in group.options:
-                if preferred_page_url and option.url == preferred_page_url:
-                    return option
+        preferred_option = None
+        best_query_match = (0, 0)
+        if query_name:
+            for group in groups:
+                for option in group.options:
+                    match_priority = _source_option_query_match_priority(query_name, option)
+                    if match_priority > best_query_match:
+                        best_query_match = match_priority
+                    if preferred_page_url and option.url == preferred_page_url:
+                        preferred_option = option
+            if preferred_option is not None and _source_option_query_match_priority(query_name, preferred_option) >= best_query_match:
+                return preferred_option
+        elif preferred_page_url:
+            for group in groups:
+                for option in group.options:
+                    if option.url == preferred_page_url:
+                        return option
         if preferred_provider:
             for group in groups:
                 if group.provider == preferred_provider and group.options:

@@ -152,6 +152,47 @@ def test_search_danmu_sources_prefers_exact_historical_page_url() -> None:
     assert result.groups[0].options[1].preferred_by_history is True
 
 
+def test_search_danmu_sources_variety_match_beats_historical_page_url_when_duration_known() -> None:
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="哈哈哈哈哈第6季 第1期下 邓超陈赫斗舞争抢马頔 李乃文滑冰传水笑到崩溃",
+                url="https://www.iqiyi.com/v_ep1b.html",
+                ratio=0.99,
+                simi=0.99,
+                duration_seconds=5480,
+                resolve_context={"variety_year": 20260405},
+            ),
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="哈哈哈哈哈第6季 第2期上 五哈团为抢圈大打出手",
+                url="https://www.iqiyi.com/v_ep2a.html",
+                ratio=0.96,
+                simi=0.96,
+                duration_seconds=5511,
+                resolve_context={"variety_year": 20260411},
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"iqiyi": iqiyi}, provider_order=["iqiyi"])
+
+    result = service.search_danmu_sources(
+        "哈哈哈哈哈第六季 20260411期 第2期上：五哈团为抢圈“大打出手” 4K60",
+        preferred_provider="iqiyi",
+        preferred_page_url="https://www.iqiyi.com/v_ep1b.html",
+        media_duration_seconds=5511,
+    )
+
+    assert [option.url for option in result.groups[0].options] == [
+        "https://www.iqiyi.com/v_ep2a.html",
+        "https://www.iqiyi.com/v_ep1b.html",
+    ]
+    assert result.default_option_url == "https://www.iqiyi.com/v_ep2a.html"
+
+
 def test_search_danmu_sources_reorders_candidates_by_media_duration() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -321,6 +362,49 @@ def test_rerank_danmaku_source_search_result_dedupes_cached_duplicate_options_by
         "album_id": 4812694274119401,
         "category_id": 4,
     }
+
+
+def test_rerank_danmaku_source_search_result_prefers_exact_variety_part_over_historical_page_url() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="哈哈哈哈哈第6季 第6期下 勇闯海岛",
+                        url="https://www.iqiyi.com/v_ep6b.html",
+                        duration_seconds=5400,
+                        resolve_context={"variety_year": 20260509},
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="哈哈哈哈哈第6季 第6期上 邓超表情包大师课2.0",
+                        url="https://www.iqiyi.com/v_ep6a.html",
+                        duration_seconds=5418,
+                        resolve_context={"variety_year": 20260509},
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="哈哈哈哈哈第六季 20260509期 第6期上：邓超表情包大师课2.0[4K60FPS]",
+        preferred_provider="iqiyi",
+        preferred_page_url="https://www.iqiyi.com/v_ep6b.html",
+        media_duration_seconds=5418,
+    )
+
+    assert [option.url for option in reranked.groups[0].options] == [
+        "https://www.iqiyi.com/v_ep6a.html",
+        "https://www.iqiyi.com/v_ep6b.html",
+    ]
+    assert reranked.default_option_url == "https://www.iqiyi.com/v_ep6a.html"
 
 
 def test_rerank_danmaku_source_search_result_drops_promotional_no_episode_items_for_explicit_episode_query() -> None:
