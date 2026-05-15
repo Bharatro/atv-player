@@ -24,7 +24,7 @@ from atv_player.danmaku.cache import (
 )
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.danmaku.utils import infer_playlist_episode_number, normalize_name
+from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist_episode_number, normalize_name
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -197,6 +197,18 @@ def _build_danmaku_search_name(item: PlayItem, playlist: list[PlayItem] | None =
 
 def _compose_danmaku_search_query(title: str, episode: str) -> str:
     return " ".join(part for part in (title.strip(), episode.strip()) if part).strip()
+
+
+def _should_retry_danmaku_search_title_only(item: PlayItem) -> bool:
+    if item.danmaku_search_query_overridden:
+        return False
+    if not item.danmaku_search_episode.strip():
+        return False
+    if has_explicit_episode_marker(item.title):
+        return False
+    if _looks_like_calendar_episode_title(item.title):
+        return False
+    return True
 
 
 def _save_cached_danmaku_source_search_result_variants(
@@ -1193,6 +1205,20 @@ class SpiderPluginController:
         playlist: list[PlayItem] | None = None,
         provider_filter: str = "",
     ) -> str:
+        def execute_source_search(search_name: str):
+            if hasattr(self._danmaku_service, "search_danmu_sources"):
+                search_method = self._danmaku_service.search_danmu_sources
+                search_kwargs = {
+                    "preferred_provider": preference.provider if preference is not None else "",
+                    "preferred_page_url": preference.page_url if preference is not None else "",
+                    "media_duration_seconds": target_duration,
+                }
+                if "provider_filter" in inspect.signature(search_method).parameters:
+                    search_kwargs["provider_filter"] = provider_filter
+                return search_method(search_name, reg_src, **search_kwargs)
+            candidates = self._danmaku_service.search_danmu(search_name, reg_src, provider_filter=provider_filter)
+            return self._legacy_source_search_result(candidates)
+
         series_key = build_danmaku_series_key(item.media_title or query_name)
         target_duration = media_duration_seconds if media_duration_seconds > 0 else int(item.duration_seconds or 0)
         item.danmaku_series_key = series_key
@@ -1212,19 +1238,18 @@ class SpiderPluginController:
             and self.load_cached_danmaku_sources(item, media_duration_seconds=target_duration, playlist=playlist)
         ):
             return item.selected_danmaku_url
-        if hasattr(self._danmaku_service, "search_danmu_sources"):
-            search_method = self._danmaku_service.search_danmu_sources
-            search_kwargs = {
-                "preferred_provider": preference.provider if preference is not None else "",
-                "preferred_page_url": preference.page_url if preference is not None else "",
-                "media_duration_seconds": target_duration,
-            }
-            if "provider_filter" in inspect.signature(search_method).parameters:
-                search_kwargs["provider_filter"] = provider_filter
-            result = search_method(query_name, reg_src, **search_kwargs)
-        else:
-            candidates = self._danmaku_service.search_danmu(query_name, reg_src, provider_filter=provider_filter)
-            result = self._legacy_source_search_result(candidates)
+        result = execute_source_search(query_name)
+        fallback_query_name = item.danmaku_search_title.strip()
+        if (
+            hasattr(self._danmaku_service, "search_danmu_sources")
+            and
+            not provider_filter
+            and not result.groups
+            and fallback_query_name
+            and fallback_query_name != query_name
+            and _should_retry_danmaku_search_title_only(item)
+        ):
+            result = execute_source_search(fallback_query_name)
         if not provider_filter:
             for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
                 _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)

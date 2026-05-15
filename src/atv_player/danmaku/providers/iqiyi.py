@@ -18,6 +18,7 @@ from atv_player.danmaku.utils import normalize_name, similarity_score
 class IqiyiDanmakuProvider:
     key = "iqiyi"
     _SEARCH_URL = "https://search.video.iqiyi.com/o"
+    _MESH_SEARCH_URL = "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
     _SEARCH_HEADERS = {"user-agent": "Mozilla/5.0", "referer": "https://www.iqiyi.com/"}
     _PAGE_HEADERS = {"user-agent": "Mozilla/5.0", "referer": "https://www.iqiyi.com/"}
     _DROP_CHANNEL_KEYWORDS = ("生活", "教育")
@@ -129,7 +130,7 @@ class IqiyiDanmakuProvider:
             if self._should_drop_search_item(item):
                 continue
             album_info = item.get("albumDocInfo") or {}
-            videos = self._collect_search_videos(item, album_info)
+            videos = self._collect_search_videos(item, album_info, query_name)
             for video in videos:
                 title = str(video.get("itemTitle") or "").strip()
                 url = self._normalize_iqiyi_url(str(video.get("itemLink") or "").strip())
@@ -164,8 +165,15 @@ class IqiyiDanmakuProvider:
             return
         self._remember_metadata(self._normalize_iqiyi_url(page_url), metadata)
 
-    def _collect_search_videos(self, item: dict, album_info: dict) -> list[dict]:
+    def _collect_search_videos(self, item: dict, album_info: dict, query_name: str) -> list[dict]:
         videos = list(item.get("videoinfos") or album_info.get("videoinfos") or [])
+        if self._should_use_mesh_search_videos(videos, album_info):
+            try:
+                expanded = self._expand_mesh_videos(query_name, album_info)
+            except httpx.HTTPError:
+                expanded = []
+            if expanded:
+                return expanded
         if not self._should_expand_album_videos(videos, album_info):
             return videos
         try:
@@ -175,6 +183,80 @@ class IqiyiDanmakuProvider:
         if expanded:
             return expanded
         return videos
+
+    def _should_use_mesh_search_videos(self, videos: list[dict], album_info: dict) -> bool:
+        item_total = self._to_int(album_info.get("itemTotalNumber"))
+        if item_total not in (None, 0):
+            return False
+        return bool(videos) and any(album_info.get(key) not in ("", None) for key in ("albumId", "albumTitle"))
+
+    def _expand_mesh_videos(self, query_name: str, album_info: dict) -> list[dict]:
+        response = self._get(
+            self._MESH_SEARCH_URL,
+            params={
+                "key": normalize_name(query_name),
+                "pageNum": 1,
+                "pageSize": 25,
+                "site": "iqiyi",
+                "mode": 1,
+                "current_page": 1,
+            },
+            headers=dict(self._SEARCH_HEADERS),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        payload = response.json()
+        target_album_id = self._to_int(album_info.get("albumId"))
+        target_title = normalize_name(str(album_info.get("albumTitle") or ""))
+        for matched_album_info in self._iter_mesh_album_infos(payload):
+            matched_album_id = self._to_int(matched_album_info.get("qipuId"))
+            matched_title = normalize_name(str(matched_album_info.get("title") or ""))
+            if target_album_id is not None and matched_album_id != target_album_id:
+                continue
+            if target_album_id is None and target_title and matched_title != target_title:
+                continue
+            videos: list[dict] = []
+            for video in matched_album_info.get("videos") or []:
+                title = str(video.get("title") or "").strip()
+                page_url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
+                if not title or not page_url:
+                    continue
+                videos.append(
+                    {
+                        "itemTitle": title,
+                        "itemLink": page_url,
+                        "itemNumber": self._to_int(video.get("number")),
+                        "tvId": self._to_int(video.get("qipuId")),
+                        "albumId": matched_album_id or target_album_id,
+                        "timeLength": self._mesh_duration_seconds(video.get("duration")),
+                    }
+                )
+            if videos:
+                return videos
+        return []
+
+    def _iter_mesh_album_infos(self, payload: dict) -> list[dict]:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return []
+        templates = data.get("templates")
+        if not isinstance(templates, list):
+            return []
+        albums: list[dict] = []
+        for template in templates:
+            if not isinstance(template, dict):
+                continue
+            album_info = template.get("albumInfo")
+            if not isinstance(album_info, dict):
+                continue
+            site_id = str(album_info.get("siteId") or "").strip().lower()
+            site_name = str(album_info.get("siteName") or "").strip()
+            if site_id not in self._ALLOWED_SITE_IDS or site_name not in self._ALLOWED_SITE_NAMES:
+                continue
+            if not isinstance(album_info.get("videos"), list):
+                continue
+            albums.append(album_info)
+        return albums
 
     def _should_expand_album_videos(self, videos: list[dict], album_info: dict) -> bool:
         item_total = self._to_int(album_info.get("itemTotalNumber"))
@@ -279,7 +361,7 @@ class IqiyiDanmakuProvider:
         channel = str(album_info.get("channel") or "")
         if any(keyword in channel for keyword in self._DROP_CHANNEL_KEYWORDS):
             return True
-        if not album_info.get("itemTotalNumber"):
+        if not album_info.get("itemTotalNumber") and not (item.get("videoinfos") or album_info.get("videoinfos")):
             return True
         title = str(album_info.get("albumTitle") or "")
         return any(keyword in title for keyword in self._DROP_TITLE_KEYWORDS)
@@ -373,6 +455,14 @@ class IqiyiDanmakuProvider:
         if len(values) == 1:
             return values[0]
         return 0
+
+    def _mesh_duration_seconds(self, raw_duration) -> int:
+        duration = self._to_int(raw_duration)
+        if duration is None or duration <= 0:
+            return 0
+        if duration >= 1000:
+            return int(round(duration / 1000.0))
+        return duration
 
     def _parse_segment_records(self, xml_text: str, duration_seconds: int) -> list[DanmakuRecord]:
         try:

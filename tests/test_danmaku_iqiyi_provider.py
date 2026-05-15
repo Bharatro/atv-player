@@ -85,6 +85,67 @@ def test_iqiyi_search_raises_for_invalid_payload() -> None:
         provider.search("剑来")
 
 
+def test_iqiyi_search_falls_back_to_mesh_results_when_legacy_album_count_is_zero() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4812694274119401,
+                                    "channel": "动漫,4",
+                                    "itemTotalNumber": 0,
+                                    "albumTitle": "灵武大陆",
+                                    "videoinfos": [
+                                        {"itemTitle": "灵武大陆 第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_2gjv1pyuyik.html"},
+                                        {"itemTitle": "灵武大陆 第178集", "itemNumber": 178, "itemLink": "http://www.iqiyi.com/v_1gpns7kbxog.html"},
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "albumInfo": {
+                                    "title": "灵武大陆",
+                                    "channel": "动漫,4",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "qipuId": 4812694274119401,
+                                    "videos": [
+                                        {
+                                            "title": "灵武大陆 第100集",
+                                            "number": "100",
+                                            "qipuId": 8142858142151200,
+                                            "pageUrl": "https://www.iqiyi.com/v_100.html",
+                                            "duration": 625000,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("灵武大陆")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("灵武大陆 第100集", "https://www.iqiyi.com/v_100.html", 625)
+    ]
+
+
 def test_iqiyi_search_keeps_episode_items_when_album_score_is_missing() -> None:
     def fake_get(url: str, **kwargs):
         return JsonResponse(

@@ -1589,6 +1589,64 @@ def test_controller_refresh_danmaku_sources_strips_trailing_year_from_default_me
     assert item.danmaku_search_query == "黑夜告白"
 
 
+def test_controller_refresh_danmaku_sources_retries_title_only_for_auto_inferred_file_episode() -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            if name == "灵武大陆 100集":
+                return DanmakuSourceSearchResult(groups=[])
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="iqiyi",
+                        provider_label="爱奇艺",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="iqiyi",
+                                name="灵武大陆",
+                                url="https://www.iqiyi.com/v_demo.html",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://www.iqiyi.com/v_demo.html",
+                default_provider="iqiyi",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="灵武大陆",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(
+        title="100.mp4",
+        url="http://m/100.mp4",
+        media_title="灵武大陆",
+        vod_id="http://m/100.mp4",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item])
+
+    assert service.calls == ["灵武大陆 100集", "灵武大陆"]
+    assert item.danmaku_search_title == "灵武大陆"
+    assert item.danmaku_search_episode == "100集"
+    assert item.danmaku_search_query == "灵武大陆 100集"
+    assert item.selected_danmaku_provider == "iqiyi"
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_demo.html"
+
+
 def test_controller_refresh_danmaku_sources_omits_episode_for_movie_like_title() -> None:
     class FakeDanmakuService:
         def __init__(self) -> None:
