@@ -2426,7 +2426,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 return yt_dlp.resolve_for_quality(source_url, selected_quality_id)
             return yt_dlp.resolve(source_url, max_height=None)
 
-        def load_item(current_item: PlayItem):
+        def load_item(
+            session_or_item,
+            item: PlayItem | None = None,
+        ):
+            session = session_or_item if item is not None else None
+            current_item = item or session_or_item
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             try:
                 result = self._playback_parser_service.resolve(
@@ -2439,21 +2444,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 current_item.headers = dict(result.headers)
             except ValueError:
                 yt_result = resolve_with_ytdlp(current_item, source_url)
-                current_item.url = yt_result.url
-                current_item.original_url = source_url
-                current_item.headers = dict(yt_result.headers)
-                current_item.audio_url = getattr(yt_result, "audio_url", "")
-                current_item.ytdl_format = getattr(yt_result, "ytdl_format", "")
-                current_item.playback_qualities = list(yt_result.qualities)
-                current_item.external_subtitles = list(yt_result.subtitles)
-                if yt_result.title:
-                    current_item.title = yt_result.title
-                    current_item.media_title = yt_result.title
-                selected_quality_id = getattr(yt_result, "selected_quality_id", "") or current_item.selected_playback_quality_id
-                if selected_quality_id:
-                    current_item.selected_playback_quality_id = selected_quality_id
-                elif yt_result.qualities and not current_item.selected_playback_quality_id:
-                    current_item.selected_playback_quality_id = yt_result.qualities[0].id
+                self._yt_dlp_service.apply_result(
+                    yt_result,
+                    vod=None if session is None else session.vod,
+                    item=current_item,
+                    source_url=source_url,
+                )
             current_item.parse_required = True
             if danmaku_controller is not None:
                 danmaku_controller.maybe_resolve(current_item)
@@ -2497,24 +2493,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 result = self._yt_dlp_service.resolve_for_quality(source_url, selected_quality_id)
             else:
                 result = self._yt_dlp_service.resolve(source_url, max_height=None)
-            current_item.url = result.url
-            current_item.original_url = source_url
-            current_item.headers = dict(result.headers)
-            current_item.audio_url = getattr(result, "audio_url", "")
-            current_item.ytdl_format = getattr(result, "ytdl_format", "")
-            current_item.playback_qualities = list(result.qualities)
-            current_item.external_subtitles = list(result.subtitles)
-            current_item.duration_seconds = result.duration_seconds
-            current_item.media_title = result.title or current_item.media_title or source_url
-            current_item.title = result.title or current_item.title or source_url
-            selected_quality_id = getattr(result, "selected_quality_id", "") or current_item.selected_playback_quality_id
-            if selected_quality_id:
-                current_item.selected_playback_quality_id = selected_quality_id
-            elif current_item.playback_qualities and not current_item.selected_playback_quality_id:
-                current_item.selected_playback_quality_id = current_item.playback_qualities[0].id
-            session.vod.vod_name = result.title or session.vod.vod_name or source_url
-            session.vod.vod_pic = result.thumbnail
-            session.vod.vod_content = result.description
+            self._yt_dlp_service.apply_result(
+                result,
+                vod=session.vod,
+                item=current_item,
+                source_url=source_url,
+            )
             return None
 
         item = PlayItem(
