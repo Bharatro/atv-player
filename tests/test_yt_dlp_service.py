@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import base64
-from unittest.mock import MagicMock, patch
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,8 +10,8 @@ from atv_player.models import PlayItem, VodItem
 
 
 @pytest.fixture(autouse=True)
-def disable_system_ytdlp(monkeypatch):
-    monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
+def stub_system_ytdlp(monkeypatch):
+    monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "/usr/bin/yt-dlp")
 
 
 @pytest.fixture
@@ -18,16 +19,6 @@ def service():
     from atv_player.yt_dlp_service import YtdlpPlaybackService
     svc = YtdlpPlaybackService()
     return svc
-
-
-@pytest.fixture
-def mock_ytdlp_module():
-    mock_module = MagicMock()
-    mock_module.utils.GeoRestrictedError = type("GeoRestrictedError", (Exception,), {})
-    mock_module.utils.ExtractorError = type("ExtractorError", (Exception,), {})
-    mock_module.utils.DownloadError = type("DownloadError", (Exception,), {})
-    with patch.dict("sys.modules", {"yt_dlp": mock_module, "yt_dlp.utils": mock_module.utils}):
-        yield mock_module
 
 
 def _sample_info(**overrides):
@@ -88,39 +79,74 @@ def _sample_info(**overrides):
     return info
 
 
+def _stub_extract_info(monkeypatch, service, payload):
+    calls: list[tuple[str, int | None]] = []
+
+    def fake_extract_info(url: str, max_height: int | None):
+        calls.append((url, max_height))
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    monkeypatch.setattr(service, "_extract_info_via_command", fake_extract_info)
+    return calls
+
+
 class TestIsAvailable:
     def test_not_installed(self, service):
-        with patch("builtins.__import__", side_effect=ImportError("no yt_dlp")):
-            service._ytdlp_module = ...
-            assert service.is_available() is False
-
-    def test_installed(self, service, mock_ytdlp_module):
-        service._ytdlp_module = ...
+        service._ytdlp_path = None
         assert service.is_available() is True
+
+    def test_returns_false_when_system_ytdlp_missing(self, monkeypatch, service):
+        service._ytdlp_path = None
+        monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
+        assert service.is_available() is False
+
+    def test_extract_info_via_command_includes_browser_cookies(self, monkeypatch, service):
+        monkeypatch.setenv("ATV_YTDLP_COOKIES_FROM_BROWSER", "chrome")
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_sample_info()),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        result = service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        assert result["id"] == "test123"
+        command = run_calls[0]
+        assert "--cookies-from-browser" in command
+        assert command[command.index("--cookies-from-browser") + 1] == "chrome"
 
 
 class TestCanResolve:
-    def test_known_domain(self, service, mock_ytdlp_module):
+    def test_known_domain(self, service):
         assert service.can_resolve("https://www.youtube.com/watch?v=test") is True
         assert service.can_resolve("https://twitter.com/user/status/123") is True
         assert service.can_resolve("https://x.com/user/status/123") is True
         assert service.can_resolve("https://youtu.be/test123") is True
 
-    def test_unknown_domain(self, service, mock_ytdlp_module):
+    def test_unknown_domain(self, service):
         assert service.can_resolve("https://example.com/video.mp4") is False
         assert service.can_resolve("https://random-site.org/watch/123") is False
 
-    def test_empty_url(self, service, mock_ytdlp_module):
+    def test_empty_url(self, service):
         assert service.can_resolve("") is False
         assert service.can_resolve("  ") is False
 
-    def test_not_available(self, service):
-        service._ytdlp_module = None
+    def test_not_available(self, monkeypatch, service):
+        service._ytdlp_path = None
+        monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
         assert service.can_resolve("https://www.youtube.com/watch?v=test") is False
 
 
 class TestResolve:
-    def test_prefers_requested_formats_video_and_audio_pair_over_master_url(self, service, mock_ytdlp_module):
+    def test_prefers_requested_formats_video_and_audio_pair_over_master_url(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
             formats=[],
@@ -146,18 +172,15 @@ class TestResolve:
                 },
             ],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "399+251"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
-    def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, service, mock_ytdlp_module):
+    def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
             requested_formats=[
@@ -229,18 +252,15 @@ class TestResolve:
                 },
             ],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert result.url == "https://www.youtube.com/watch?v=test123"
         assert result.audio_url == ""
-        assert result.ytdl_format == "299+140"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
-    def test_embeds_segment_base_ranges_in_generated_dash_manifest(self, service, mock_ytdlp_module):
+    def test_embeds_segment_base_ranges_in_generated_dash_manifest(self, monkeypatch, service):
         info = _sample_info(
             extractor="vimeo",
             url="https://stream.test/master.m3u8",
@@ -270,10 +290,7 @@ class TestResolve:
             ],
             formats=[],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
@@ -281,19 +298,15 @@ class TestResolve:
         assert '<SegmentBase indexRange="738-1425"><Initialization range="0-737"/></SegmentBase>' in manifest
         assert '<SegmentBase indexRange="702-1189"><Initialization range="0-701"/></SegmentBase>' in manifest
 
-    def test_uses_1080p_cap_for_initial_startup_resolve(self, service, mock_ytdlp_module):
+    def test_uses_1080p_cap_for_initial_startup_resolve(self, monkeypatch, service):
         info = _sample_info()
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        calls = _stub_extract_info(monkeypatch, service, info)
 
         service.resolve("https://www.youtube.com/watch?v=test123")
 
-        options = mock_ytdlp_module.YoutubeDL.call_args.args[0]
-        assert options["format"] == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        assert calls == [("https://www.youtube.com/watch?v=test123", 1080)]
 
-    def test_prefers_muxed_fallback_url_when_info_url_missing(self, service, mock_ytdlp_module):
+    def test_prefers_muxed_fallback_url_when_info_url_missing(self, monkeypatch, service):
         info = _sample_info(
             extractor="vimeo",
             url="",
@@ -318,60 +331,44 @@ class TestResolve:
                 },
             ],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert result.url == "https://stream.test/720-muxed.mp4"
 
-    def test_uses_cached_result_before_ttl_expires(self, mock_ytdlp_module):
+    def test_uses_cached_result_before_ttl_expires(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
         info = _sample_info()
-        extractor = MagicMock(return_value=info)
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=extractor)
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
-
         clock = {"now": 100.0}
         service = YtdlpPlaybackService(ttl_seconds=300.0, now=lambda: clock["now"])
+        calls = _stub_extract_info(monkeypatch, service, info)
 
         first = service.resolve("https://www.youtube.com/watch?v=test123")
         second = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert first.url == "https://www.youtube.com/watch?v=test123"
         assert second.url == "https://www.youtube.com/watch?v=test123"
-        assert extractor.call_count == 1
+        assert len(calls) == 1
 
-    def test_re_extracts_after_cache_expiry(self, mock_ytdlp_module):
+    def test_re_extracts_after_cache_expiry(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
         info = _sample_info()
-        extractor = MagicMock(return_value=info)
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=extractor)
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
-
         clock = {"now": 100.0}
         service = YtdlpPlaybackService(ttl_seconds=5.0, now=lambda: clock["now"])
+        calls = _stub_extract_info(monkeypatch, service, info)
 
         service.resolve("https://www.youtube.com/watch?v=test123")
         clock["now"] = 110.0
         service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert extractor.call_count == 2
+        assert len(calls) == 2
 
-    def test_success(self, service, mock_ytdlp_module):
+    def test_success(self, monkeypatch, service):
         info = _sample_info()
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
@@ -384,9 +381,9 @@ class TestResolve:
         assert result.extractor == "youtube"
         assert result.headers == {"Referer": "https://www.youtube.com/", "User-Agent": "test"}
         assert result.selected_quality_id == "ytdlp_1080"
-        assert result.ytdl_format == "1080"
+        assert result.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
-    def test_prefers_selected_format_http_headers_when_top_level_headers_missing(self, service, mock_ytdlp_module):
+    def test_prefers_selected_format_http_headers_when_top_level_headers_missing(self, monkeypatch, service):
         info = _sample_info(
             http_headers={},
             requested_formats=[
@@ -419,10 +416,7 @@ class TestResolve:
             ],
             formats=[],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
@@ -431,12 +425,9 @@ class TestResolve:
             "User-Agent": "Mozilla/5.0 Test",
         }
 
-    def test_qualities(self, service, mock_ytdlp_module):
+    def test_qualities(self, monkeypatch, service):
         info = _sample_info()
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
@@ -448,12 +439,9 @@ class TestResolve:
         for q in result.qualities:
             assert q.height >= 360
 
-    def test_subtitles(self, service, mock_ytdlp_module):
+    def test_subtitles(self, monkeypatch, service):
         info = _sample_info()
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
@@ -463,57 +451,40 @@ class TestResolve:
         assert any("简体中文" in n for n in names)
         # Japanese is filtered out (only zh/en kept)
 
-    def test_geo_restricted(self, service, mock_ytdlp_module):
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(
-                extract_info=MagicMock(side_effect=mock_ytdlp_module.utils.GeoRestrictedError("geo"))
-            )
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+    def test_geo_restricted(self, monkeypatch, service):
+        _stub_extract_info(monkeypatch, service, ValueError("该内容受地区限制"))
 
         with pytest.raises(ValueError, match="地区限制"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
-    def test_extractor_error(self, service, mock_ytdlp_module):
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(
-                extract_info=MagicMock(
-                    side_effect=mock_ytdlp_module.utils.ExtractorError("not found")
-                )
-            )
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+    def test_extractor_error(self, monkeypatch, service):
+        _stub_extract_info(monkeypatch, service, ValueError("下载错误: not found"))
 
-        with pytest.raises(ValueError, match="无法获取视频"):
+        with pytest.raises(ValueError, match="下载错误"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
-    def test_no_url(self, service, mock_ytdlp_module):
+    def test_no_url(self, monkeypatch, service):
         info = _sample_info(url="", formats=[])
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         with pytest.raises(ValueError, match="未获取到播放地址"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
-    def test_no_result(self, service, mock_ytdlp_module):
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=None))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+    def test_no_result(self, monkeypatch, service):
+        _stub_extract_info(monkeypatch, service, None)
 
         with pytest.raises(ValueError, match="未返回结果"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
-    def test_not_available(self, service):
-        service._ytdlp_module = None
+    def test_not_available(self, monkeypatch, service):
+        service._ytdlp_path = None
+        monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
         with pytest.raises(ValueError, match="未安装"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
 
 class TestResolveToPlayItem:
-    def test_prefers_current_resolved_height_over_highest_available_quality(self, service, mock_ytdlp_module):
+    def test_prefers_current_resolved_height_over_highest_available_quality(self, monkeypatch, service):
         info = _sample_info(
             height=1080,
             formats=[
@@ -546,10 +517,7 @@ class TestResolveToPlayItem:
                 },
             ],
         )
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         _, item = service.resolve_to_play_item("https://www.youtube.com/watch?v=test123")
 
@@ -561,16 +529,13 @@ class TestResolveToPlayItem:
         assert [quality.ytdl_format for quality in item.playback_qualities] == [
             "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best",
             "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
-            "720-muxed",
+            "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
         ]
         assert item.selected_playback_quality_id == "ytdlp_1080"
 
-    def test_success(self, service, mock_ytdlp_module):
+    def test_success(self, monkeypatch, service):
         info = _sample_info()
-        mock_ytdlp_module.YoutubeDL.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(extract_info=MagicMock(return_value=info))
-        )
-        mock_ytdlp_module.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+        _stub_extract_info(monkeypatch, service, info)
 
         vod, item = service.resolve_to_play_item("https://www.youtube.com/watch?v=test123")
 
@@ -584,7 +549,7 @@ class TestResolveToPlayItem:
         assert len(item.external_subtitles) == 2
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
-        assert item.ytdl_format == "1080"
+        assert item.ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
 
 
 class TestBuildQualityOptions:

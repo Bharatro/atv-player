@@ -15,7 +15,10 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
-from atv_player.player.ytdlp_runtime import resolve_system_ytdlp_path
+from atv_player.player.ytdlp_runtime import (
+    build_ytdlp_command_args,
+    resolve_system_ytdlp_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -237,15 +240,7 @@ def _selected_ytdl_format(
     *,
     max_height: int | None,
 ) -> str:
-    video_format_id = str((selected_video or {}).get("format_id") or "").strip()
-    audio_format_id = str((selected_audio or {}).get("format_id") or "").strip()
-    if video_format_id and audio_format_id:
-        return f"{video_format_id}+{audio_format_id}"
-    if video_format_id:
-        return video_format_id
-    format_id = str(info.get("format_id") or "").strip()
-    if format_id:
-        return format_id
+    del info, selected_video, selected_audio
     return _build_format_selector(max_height)
 
 
@@ -255,16 +250,7 @@ def _quality_option_ytdl_format(
     *,
     height: int,
 ) -> str:
-    format_id = str(video_format.get("format_id") or "").strip()
-    if _has_muxed_audio(video_format):
-        return format_id or _build_format_selector(height)
-    preferred_audio = next(
-        iter(_preferred_audio_formats(info, preferred_ext=str(video_format.get("ext") or ""))),
-        None,
-    )
-    audio_format_id = str((preferred_audio or {}).get("format_id") or "").strip()
-    if format_id and audio_format_id:
-        return f"{format_id}+{audio_format_id}"
+    del info, video_format
     return _build_format_selector(height)
 
 
@@ -447,7 +433,6 @@ class YtdlpPlaybackService:
         ttl_seconds: float = 300.0,
         now: Callable[[], float] = monotonic,
     ) -> None:
-        self._ytdlp_module: object | None = ...  # sentinel: not yet checked
         self._ytdlp_path: str | None = None
         self._supported_domains: frozenset[str] | None = None
         self._ttl_seconds = float(ttl_seconds)
@@ -480,18 +465,7 @@ class YtdlpPlaybackService:
     def is_available(self) -> bool:
         if self._ytdlp_path is None:
             self._ytdlp_path = resolve_system_ytdlp_path()
-        if self._ytdlp_path:
-            return True
-        module = self._ytdlp_module
-        if module is ...:
-            try:
-                import yt_dlp  # noqa: F401
-            except ImportError:
-                module = None
-            else:
-                module = yt_dlp
-            self._ytdlp_module = module
-        return module is not None
+        return bool(self._ytdlp_path)
 
     def _extract_info_via_command(self, url: str, max_height: int | None) -> dict:
         if self._ytdlp_path is None:
@@ -510,6 +484,7 @@ class YtdlpPlaybackService:
             "--all-subs",
             "--format",
             _build_format_selector(max_height),
+            *build_ytdlp_command_args(),
             "--",
             url,
         ]
@@ -587,30 +562,7 @@ class YtdlpPlaybackService:
         started_at = monotonic()
         if not self.is_available():
             raise ValueError("yt-dlp 未安装")
-        if self._ytdlp_path:
-            info = self._extract_info_via_command(url, max_height)
-        else:
-            module = self._ytdlp_module
-            assert module not in (..., None)
-            ytdlp_opts: dict = {
-                "format": _build_format_selector(max_height),
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 30,
-                "extract_flat": False,
-                "noplaylist": True,
-            }
-            try:
-                with module.YoutubeDL(ytdlp_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-            except module.utils.GeoRestrictedError:
-                raise ValueError("该内容受地区限制")
-            except module.utils.ExtractorError as exc:
-                raise ValueError(f"无法获取视频: {exc}")
-            except module.utils.DownloadError as exc:
-                raise ValueError(f"下载错误: {exc}")
-            except Exception as exc:
-                raise ValueError(f"yt-dlp 解析失败: {exc}")
+        info = self._extract_info_via_command(url, max_height)
 
         if info is None:
             raise ValueError("yt-dlp 未返回结果")

@@ -12,7 +12,10 @@ from PySide6.QtCore import QCoreApplication, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from atv_player.player.ytdlp_runtime import resolve_mpv_ytdlp_path
+from atv_player.player.ytdlp_runtime import (
+    resolve_mpv_ytdl_raw_options,
+    resolve_mpv_ytdlp_path,
+)
 
 _MPV_ERROR_MESSAGES = {
     -1: "事件队列已满",
@@ -62,8 +65,8 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
     "cache-pause": "yes",
     "cache-pause-initial": "yes",
     "cache-pause-wait": 5,
-    "cache-secs": 30,
-    "demuxer-readahead-secs": 30,
+    "cache-secs": 120,
+    "demuxer-readahead-secs": 120,
 }
 
 logger = logging.getLogger(__name__)
@@ -150,6 +153,9 @@ class MpvWidget(QWidget):
         ytdlp_path = resolve_mpv_ytdlp_path()
         if ytdlp_path:
             common["script_opts"] = f"ytdl_hook-ytdl_path={ytdlp_path}"
+        ytdl_raw_options = resolve_mpv_ytdl_raw_options()
+        if ytdl_raw_options:
+            common["ytdl_raw_options"] = ytdl_raw_options
         if os.getenv("ATV_MPV_DEBUG"):
             common["log_handler"] = print
             common["loglevel"] = "warn"

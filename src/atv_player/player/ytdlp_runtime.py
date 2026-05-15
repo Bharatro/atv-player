@@ -14,6 +14,30 @@ def _is_usable_file(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
+def _normalized_env(name: str) -> str:
+    return os.environ.get(name, "").strip()
+
+
+def _resolved_cookie_file() -> str:
+    raw_value = _normalized_env("ATV_YTDLP_COOKIE_FILE")
+    if not raw_value:
+        return ""
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_file():
+        return ""
+    return str(candidate)
+
+
+def _escaped_mpv_list_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(",", "\\,")
+
+
+def _default_remote_components() -> str:
+    if _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER") or _resolved_cookie_file():
+        return "ejs:github"
+    return ""
+
+
 def _iter_path_candidates(executable_name: str) -> list[Path]:
     candidates: list[Path] = []
     current_python_dir = Path(sys.executable).resolve().parent
@@ -53,3 +77,33 @@ def resolve_system_ytdlp_path() -> str:
 
 def resolve_mpv_ytdlp_path() -> str:
     return resolve_system_ytdlp_path()
+
+
+def build_ytdlp_command_args() -> list[str]:
+    args: list[str] = []
+    browser = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
+    if browser:
+        args.extend(["--cookies-from-browser", browser])
+    else:
+        cookie_file = _resolved_cookie_file()
+        if cookie_file:
+            args.extend(["--cookies", cookie_file])
+    remote_components = _default_remote_components()
+    if remote_components:
+        args.extend(["--remote-components", remote_components])
+    return args
+
+
+def resolve_mpv_ytdl_raw_options() -> str:
+    options: list[str] = []
+    browser = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
+    if browser:
+        options.append(f"cookies-from-browser={_escaped_mpv_list_value(browser)}")
+    else:
+        cookie_file = _resolved_cookie_file()
+        if cookie_file:
+            options.append(f"cookies={_escaped_mpv_list_value(cookie_file)}")
+    remote_components = _default_remote_components()
+    if remote_components:
+        options.append(f"remote-components={_escaped_mpv_list_value(remote_components)}")
+    return ",".join(options)

@@ -1,4 +1,3 @@
-import os
 import sys
 import types
 
@@ -48,6 +47,34 @@ def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeyp
     widget._create_player()
 
     assert recorded["script_opts"] == "ytdl_hook-ytdl_path=/tmp/tools/linux/yt-dlp"
+
+
+def test_mpv_widget_create_player_passes_ytdlp_raw_cookie_options(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    recorded: dict[str, object] = {}
+
+    class FakeMpvModule:
+        @staticmethod
+        def MPV(**kwargs):
+            recorded.update(kwargs)
+            return object()
+
+    monkeypatch.setitem(sys.modules, "mpv", FakeMpvModule)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdlp_path",
+        lambda: "/tmp/tools/linux/yt-dlp",
+    )
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options",
+        lambda: "cookies-from-browser=chrome",
+    )
+
+    widget._create_player()
+
+    assert recorded["ytdl_raw_options"] == "cookies-from-browser=chrome"
 
 
 def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -> None:
@@ -375,8 +402,8 @@ def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:
     assert widget._player.options["cache-pause"] == "yes"
     assert widget._player.options["cache-pause-initial"] == "yes"
     assert widget._player.options["cache-pause-wait"] == 5
-    assert widget._player.options["demuxer-readahead-secs"] == 30
-    assert widget._player.options["cache-secs"] == 30
+    assert widget._player.options["demuxer-readahead-secs"] == 120
+    assert widget._player.options["cache-secs"] == 120
 
 
 def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
@@ -489,8 +516,8 @@ def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
     assert widget._player.options["cache-pause"] == "yes"
     assert widget._player.options["cache-pause-initial"] == "yes"
     assert widget._player.options["cache-pause-wait"] == 5
-    assert widget._player.options["demuxer-readahead-secs"] == 30
-    assert widget._player.options["cache-secs"] == 30
+    assert widget._player.options["demuxer-readahead-secs"] == 120
+    assert widget._player.options["cache-secs"] == 120
 
 
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:

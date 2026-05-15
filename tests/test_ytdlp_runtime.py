@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 
 def test_resolve_mpv_ytdlp_path_prefers_explicit_env_path(monkeypatch, tmp_path) -> None:
     from atv_player.player import ytdlp_runtime
@@ -54,3 +52,31 @@ def test_resolve_mpv_ytdlp_path_returns_empty_when_no_candidate_exists(monkeypat
 
     assert ytdlp_runtime.resolve_mpv_ytdlp_path() == ""
     assert ytdlp_runtime.resolve_system_ytdlp_path() == ""
+
+
+def test_build_ytdlp_command_args_prefers_browser_cookies(monkeypatch) -> None:
+    from atv_player.player import ytdlp_runtime
+
+    monkeypatch.setenv("ATV_YTDLP_COOKIES_FROM_BROWSER", "chrome")
+    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
+
+    assert ytdlp_runtime.build_ytdlp_command_args() == [
+        "--cookies-from-browser",
+        "chrome",
+        "--remote-components",
+        "ejs:github",
+    ]
+
+
+def test_build_mpv_ytdl_raw_options_from_cookie_file(monkeypatch, tmp_path) -> None:
+    from atv_player.player import ytdlp_runtime
+
+    cookie_file = tmp_path / "yt.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+
+    monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
+    monkeypatch.setenv("ATV_YTDLP_COOKIE_FILE", str(cookie_file))
+
+    assert ytdlp_runtime.resolve_mpv_ytdl_raw_options() == (
+        f"cookies={cookie_file},remote-components=ejs:github"
+    )
