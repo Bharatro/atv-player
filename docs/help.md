@@ -19,6 +19,7 @@
 - 安装 Python `3.12+`
 - 安装 `uv`
 - 系统中存在可用的 `libmpv`
+- 如果要播放 `YouTube` 等页面链接，系统中还需要可用的 `yt-dlp`
 - 有一个可访问的 `alist-tvbox` 后端
 
 Linux 上推荐先验证以下两步：
@@ -33,6 +34,23 @@ uv sync --group dev
 ```bash
 uv run src/atv_player/main.py
 ```
+
+如果你希望在应用里直接打开 `YouTube` 等页面链接，建议先确认系统里已经安装 `yt-dlp`。
+
+常见安装方式：
+
+- macOS：`brew install yt-dlp`
+- Windows：`winget install yt-dlp.yt-dlp`
+- Linux / 通用 Python 环境：`pipx install yt-dlp`
+- 如果你已经有 Python 环境，也可以使用：`python -m pip install -U yt-dlp`
+
+安装后建议先在终端确认：
+
+```bash
+yt-dlp --version
+```
+
+如果这条命令不能执行，应用通常也无法直接播放 `YouTube` 页面链接。
 
 如果启动时报错找不到 `libmpv`，优先先解决系统运行库问题，再继续排查应用本身。
 
@@ -100,9 +118,12 @@ uv run src/atv_player/main.py
 
 - 输入 `magnet:?` 或 `ed2k://`：进入离线下载打开流程
 - 输入常见网盘分享链接：进入网盘详情/解析流程
+- 输入 `YouTube` 页面链接：如果系统里有可用的 `yt-dlp`，应用会尝试直接拉起播放器
 - 输入普通 `HTTP/HTTPS` 媒体或页面地址：走内置全局解析并直接拉起播放器
 
 如果你输入的是普通 URL，但应用提示“当前未配置内置解析”，说明当前运行环境里没有可用的内置解析服务链路。
+
+也就是说，`YouTube` 这类页面地址不需要你先手动转换成直链媒体文件；只要系统里能找到可用的 `yt-dlp`，应用会优先尝试走 `yt-dlp` 打开。
 
 ### 4.3 快捷键帮助
 
