@@ -1891,6 +1891,15 @@ class SpiderPluginController:
                     break
             return self._run_detail_action(detail, playlists, playlist_index, item, action_id)
 
+        metadata_hydrator = None
+        if self._metadata_hydrator_factory is not None and self._danmaku_enabled:
+            metadata_hydrator = self._metadata_hydrator_factory(
+                source_kind="plugin",
+                source_key=self._plugin_name,
+                vod=detail,
+                raw_detail=raw_detail,
+            )
+
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
@@ -1907,12 +1916,7 @@ class SpiderPluginController:
             playback_loader=playback_loader,
             async_playback_loader=True,
             detail_action_runner=detail_action_runner,
-            metadata_hydrator=None if self._metadata_hydrator_factory is None else self._metadata_hydrator_factory(
-                source_kind="plugin",
-                source_key=self._plugin_name,
-                vod=detail,
-                raw_detail=raw_detail,
-            ),
+            metadata_hydrator=metadata_hydrator,
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,

@@ -5490,7 +5490,21 @@ def test_count_danmaku_entries_ignores_similar_tags() -> None:
     assert _count_danmaku_entries(xml) == 1
 
 
-def test_spider_plugin_request_exposes_metadata_hydrator_for_detail_sessions() -> None:
+def test_spider_plugin_request_exposes_metadata_hydrator_when_plugin_danmaku_is_enabled() -> None:
+    hydrator = object()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        metadata_hydrator_factory=lambda **_: hydrator,
+    )
+
+    request = controller.build_request("/detail/1")
+
+    assert request.metadata_hydrator is hydrator
+
+
+def test_spider_plugin_request_disables_metadata_hydrator_when_plugin_danmaku_is_disabled() -> None:
     hydrator = object()
     controller = SpiderPluginController(
         FakeSpider(),
@@ -5501,7 +5515,7 @@ def test_spider_plugin_request_exposes_metadata_hydrator_for_detail_sessions() -
 
     request = controller.build_request("/detail/1")
 
-    assert request.metadata_hydrator is hydrator
+    assert request.metadata_hydrator is None
 
 
 def test_plugin_metadata_provider_maps_custom_metadata_payload() -> None:
