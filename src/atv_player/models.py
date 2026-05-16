@@ -14,6 +14,8 @@ class AppConfig:
     username: str = ""
     token: str = ""
     vod_token: str = ""
+    metadata_douban_cookie: str = ""
+    metadata_tmdb_api_key: str = ""
     last_path: str = "/"
     last_active_window: str = "main"
     last_playback_source: str = "browse"

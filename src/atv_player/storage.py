@@ -97,6 +97,8 @@ class SettingsRepository:
                     username TEXT NOT NULL,
                     token TEXT NOT NULL,
                     vod_token TEXT NOT NULL,
+                    metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                    metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -138,6 +140,14 @@ class SettingsRepository:
             if "vod_token" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN vod_token TEXT NOT NULL DEFAULT ''"
+                )
+            if "metadata_douban_cookie" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN metadata_douban_cookie TEXT NOT NULL DEFAULT ''"
+                )
+            if "metadata_tmdb_api_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN metadata_tmdb_api_key TEXT NOT NULL DEFAULT ''"
                 )
             if "last_active_window" not in columns:
                 conn.execute(
@@ -259,6 +269,8 @@ class SettingsRepository:
                     username,
                     token,
                     vod_token,
+                    metadata_douban_cookie,
+                    metadata_tmdb_api_key,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -292,7 +304,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', '', '', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -309,6 +321,8 @@ class SettingsRepository:
                     username,
                     token,
                     vod_token,
+                    metadata_douban_cookie,
+                    metadata_tmdb_api_key,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -350,6 +364,8 @@ class SettingsRepository:
             username,
             token,
             vod_token,
+            metadata_douban_cookie,
+            metadata_tmdb_api_key,
             last_path,
             last_active_window,
             last_playback_source,
@@ -387,6 +403,8 @@ class SettingsRepository:
             username=username,
             token=token,
             vod_token=vod_token,
+            metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
+            metadata_tmdb_api_key=str(metadata_tmdb_api_key or "").strip(),
             last_path=last_path,
             last_active_window=last_active_window,
             last_playback_source=last_playback_source,
@@ -430,6 +448,8 @@ class SettingsRepository:
                     username = ?,
                     token = ?,
                     vod_token = ?,
+                    metadata_douban_cookie = ?,
+                    metadata_tmdb_api_key = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -468,6 +488,8 @@ class SettingsRepository:
                     config.username,
                     config.token,
                     config.vod_token,
+                    str(config.metadata_douban_cookie or "").strip(),
+                    str(config.metadata_tmdb_api_key or "").strip(),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,
