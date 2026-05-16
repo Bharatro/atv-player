@@ -258,3 +258,57 @@ def test_tencent_metadata_provider_detail_omits_source_site_field() -> None:
     record = provider.get_detail(match)
 
     assert record.detail_fields == []
+
+
+def test_tencent_metadata_provider_search_prefers_category_matched_result_for_same_title() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        assert kwargs["json"]["query"] == "仙剑奇侠传3"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "drama"},
+                                "videoInfo": {
+                                    "title": "仙剑奇侠传三",
+                                    "year": 2025,
+                                    "typeName": "电视剧",
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [{"url": "https://v.qq.com/x/cover/drama/ep1.html"}],
+                                        }
+                                    ],
+                                },
+                            },
+                            {
+                                "doc": {"dataType": 2, "id": "anime"},
+                                "videoInfo": {
+                                    "title": "仙剑奇侠传三",
+                                    "year": 2025,
+                                    "typeName": "动漫",
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [{"url": "https://v.qq.com/x/cover/anime/ep1.html"}],
+                                        }
+                                    ],
+                                },
+                            },
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    matches = provider.search(MetadataQuery(title="仙剑奇侠传3", year="2025", category_name="动漫"))
+
+    assert [(match.title, match.provider_id) for match in matches] == [
+        ("仙剑奇侠传三", "https://v.qq.com/x/cover/anime/ep1.html"),
+        ("仙剑奇侠传三", "https://v.qq.com/x/cover/drama/ep1.html"),
+    ]
+    assert matches[0].score > matches[1].score

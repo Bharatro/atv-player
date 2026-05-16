@@ -2,11 +2,32 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 import re
+from typing import TYPE_CHECKING
 
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
 _MIN_CONFIDENT_MATCH_SCORE = 0.45
+_CATEGORY_MATCH_BONUS = 0.12
+_CATEGORY_MISMATCH_PENALTY = 0.08
+
+_CATEGORY_SYNONYMS = {
+    "动漫": {"动漫", "动画", "番剧", "anime"},
+    "动画": {"动漫", "动画", "番剧", "anime"},
+    "番剧": {"动漫", "动画", "番剧", "anime"},
+    "电视剧": {"电视剧", "剧集", "连续剧", "tv"},
+    "剧集": {"电视剧", "剧集", "连续剧", "tv"},
+    "连续剧": {"电视剧", "剧集", "连续剧", "tv"},
+    "电影": {"电影", "影片", "movie"},
+    "影片": {"电影", "影片", "movie"},
+    "少儿": {"少儿", "儿童"},
+    "儿童": {"少儿", "儿童"},
+    "纪录片": {"纪录片", "纪录"},
+    "纪录": {"纪录片", "纪录"},
+}
 
 
 def normalize_match_title(value: object) -> str:
@@ -67,6 +88,8 @@ def score_match(query: MetadataQuery, match: MetadataMatch) -> float:
         else:
             score -= 0.08
 
+    score += _category_score(query.category_name, match.raw)
+
     if _is_full_exact_match(query.title, match.title):
         if match.provider == "iqiyi":
             score += 0.15
@@ -94,3 +117,62 @@ def _title_similarity_score(query_title: str, match_title: str) -> float:
 
 def _is_full_exact_match(query_title: str, match_title: str) -> bool:
     return normalize_match_title(query_title) == normalize_match_title(match_title)
+
+
+def _category_score(query_category_name: str, raw: Mapping[str, object]) -> float:
+    query_categories = _expanded_categories(_category_tokens(query_category_name))
+    if not query_categories:
+        return 0.0
+    match_categories = _expanded_categories(_raw_category_tokens(raw))
+    if not match_categories:
+        return 0.0
+    if query_categories & match_categories:
+        return _CATEGORY_MATCH_BONUS
+    return -_CATEGORY_MISMATCH_PENALTY
+
+
+def _expanded_categories(values: Iterable[str]) -> set[str]:
+    expanded: set[str] = set()
+    for value in values:
+        normalized = normalize_match_title(value)
+        if not normalized:
+            continue
+        expanded.add(normalized)
+        expanded.update(normalize_match_title(alias) for alias in _CATEGORY_SYNONYMS.get(value, set()))
+        expanded.update(normalize_match_title(alias) for alias in _CATEGORY_SYNONYMS.get(normalized, set()))
+    return {value for value in expanded if value}
+
+
+def _raw_category_tokens(raw: Mapping[str, object]) -> list[str]:
+    values: list[str] = []
+    values.extend(_category_tokens(raw.get("typeName")))
+    values.extend(_category_tokens(raw.get("channel")))
+    values.extend(_category_tokens(raw.get("genres")))
+    values.extend(_category_tokens(raw.get("categories")))
+    values.extend(_category_tokens(raw.get("baseTags")))
+
+    category = raw.get("category")
+    if isinstance(category, dict):
+        values.extend(_category_tokens(category.get("value")))
+    else:
+        values.extend(_category_tokens(category))
+    return values
+
+
+def _category_tokens(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return _category_tokens(value.get("value"))
+    if isinstance(value, list):
+        tokens: list[str] = []
+        for item in value:
+            tokens.extend(_category_tokens(item))
+        return tokens
+    text = str(value or "").strip()
+    if not text:
+        return []
+    candidates = re.split(r"[,/|、]", text)
+    return [
+        token
+        for token in (candidate.strip() for candidate in candidates)
+        if token and not token.isdigit()
+    ]

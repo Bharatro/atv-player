@@ -272,3 +272,49 @@ def test_iqiyi_metadata_provider_detail_omits_source_site_field() -> None:
         {"label": "上映时间", "value": "2025-11-26"},
         {"label": "片长", "value": "01:43:26"},
     ]
+
+
+def test_iqiyi_metadata_provider_search_prefers_category_matched_result_for_same_title() -> None:
+    def fake_get(url: str, **kwargs):
+        assert url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
+        assert kwargs["params"]["key"] == "仙剑奇侠传3"
+        return JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "仙剑奇侠传三",
+                                "channel": "电视剧,2",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "pageUrl": "https://www.iqiyi.com/v_drama.html",
+                                "year": {"value": "2025"},
+                            }
+                        },
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "仙剑奇侠传三",
+                                "channel": "动漫,4",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "pageUrl": "https://www.iqiyi.com/v_anime.html",
+                                "year": {"value": "2025"},
+                            }
+                        },
+                    ]
+                }
+            }
+        )
+
+    provider = IqiyiMetadataProvider(get=fake_get)
+
+    matches = provider.search(MetadataQuery(title="仙剑奇侠传3", year="2025", category_name="动漫"))
+
+    assert [(match.title, match.provider_id) for match in matches] == [
+        ("仙剑奇侠传三", "https://www.iqiyi.com/v_anime.html"),
+        ("仙剑奇侠传三", "https://www.iqiyi.com/v_drama.html"),
+    ]
+    assert matches[0].score > matches[1].score
