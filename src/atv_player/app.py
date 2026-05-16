@@ -426,9 +426,10 @@ class AppCoordinator(QObject):
                 default_season = _guess_season_number(session_vod)
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
-                search_year = "" if _title_has_season_marker(session_vod.vod_name) else year
+                has_season_marker = _title_has_season_marker(session_vod.vod_name)
+                search_year = "" if has_season_marker else year
                 search_results = list(tmdb_client.search_tv(search_title, year=search_year))
-                if not search_results and search_title != session_vod.vod_name:
+                if not search_results and search_title != session_vod.vod_name and not has_season_marker:
                     search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=search_year))
                 if not search_results:
                     return None
@@ -464,6 +465,7 @@ class AppCoordinator(QObject):
                     requested_seasons.add(resolved_season)
                 if not requested_seasons:
                     requested_seasons.add(default_season)
+                include_season_prefix = len(requested_seasons) > 1
                 titles_by_index: dict[int, str] = {}
                 titles_by_season_episode: dict[tuple[int, int], str] = {}
                 for season_number in sorted(requested_seasons):
@@ -481,7 +483,10 @@ class AppCoordinator(QObject):
                         episode_title = str(episode.get("name") or "").strip()
                         if episode_number <= 0 or not episode_title:
                             continue
-                        titles_by_season_episode[(season_number, episode_number)] = f"第{episode_number}集 {episode_title}"
+                        prefix = f"第{season_number}季 " if include_season_prefix else ""
+                        titles_by_season_episode[(season_number, episode_number)] = (
+                            f"{prefix}第{episode_number}集 {episode_title}"
+                        )
                 for index, pair in enumerate(season_episode_pairs):
                     if pair is None:
                         continue

@@ -4092,7 +4092,7 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(monke
     )
 
     assert updated is not None
-    assert [item.episode_display_title for item in updated] == ["第1集 第二季开篇", "第2集 第一季终章"]
+    assert [item.episode_display_title for item in updated] == ["第2季 第1集 第二季开篇", "第1季 第2集 第一季终章"]
     assert client_holder["client"].requested_seasons == [1, 2]
 
 
@@ -4182,6 +4182,47 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
     assert updated is not None
     assert seen == {"title": "掩耳盗邻", "year": "", "season_number": 2}
     assert updated[0].episode_display_title == "第1集 第二季首集"
+
+
+def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_title_search(monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            calls.append((title, year))
+            return []
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            raise AssertionError((tmdb_id, season_number))
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+            playlist=[PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv")],
+        )
+    )
+
+    assert updated is None
+    assert calls == [("掩耳盗邻", "")]
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:

@@ -125,3 +125,13 @@ def test_tmdb_provider_search_cache_key_ignores_year_for_season_marked_tv_titles
         "掩耳盗邻",
         "",
     )
+
+
+def test_tmdb_provider_does_not_fallback_to_raw_season_title_search() -> None:
+    client = FakeTMDBClient()
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧"))
+
+    assert matches == []
+    assert client.calls == [("search_tv", "掩耳盗邻", "")]

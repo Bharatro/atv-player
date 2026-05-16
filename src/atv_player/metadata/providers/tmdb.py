@@ -125,7 +125,7 @@ class TMDBProvider:
         search_title = _strip_search_season_suffix(candidate.title) if media_type == "tv" else candidate.title
         search_year = self._search_year(media_type, candidate)
         payload = search_fn(search_title, year=search_year)
-        if not payload and search_title != candidate.title:
+        if not payload and search_title != candidate.title and not (media_type == "tv" and _title_has_season_marker(candidate.title)):
             payload = search_fn(candidate.title, year=search_year)
         matches: list[MetadataMatch] = []
         fallback_matches: list[MetadataMatch] = []
