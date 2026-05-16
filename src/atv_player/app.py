@@ -41,7 +41,14 @@ from atv_player.episode_titles import (
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
-from atv_player.metadata import MetadataBindingRepository, MetadataCache, MetadataContext, MetadataHydrator
+from atv_player.metadata import (
+    METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    MetadataBindingRepository,
+    MetadataCache,
+    MetadataContext,
+    MetadataHydrator,
+    build_provider_episode_playlist,
+)
 from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
 from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
@@ -495,6 +502,51 @@ class AppCoordinator(QObject):
             cache.save_payload("tmdb_episode_season_detail", cache_key, detail)
             return detail
 
+        def _season_episode_pairs(playlist: list[PlayItem], default_season: int) -> list[tuple[int, int] | None]:
+            pairs: list[tuple[int, int] | None] = []
+            for item in playlist:
+                season_number = None
+                for value in (item.original_title, item.title, item.path):
+                    season_number = extract_season_number(value)
+                    if season_number is not None:
+                        break
+                episode_number = infer_playlist_episode_number(item, playlist)
+                if episode_number is None:
+                    episode_number = _extract_quality_variant_episode_number(item)
+                if episode_number is None:
+                    pairs.append(None)
+                    continue
+                pairs.append((season_number or default_season, episode_number))
+            return pairs
+
+        def _finalize_episode_playlist(
+            playlist: list[PlayItem],
+            season_episode_pairs: list[tuple[int, int] | None],
+        ) -> list[PlayItem] | None:
+            if not playlist_has_title_variants(playlist):
+                return None
+            if len(playlist) > 1:
+                indexed_playlist = list(enumerate(playlist))
+                indexed_playlist.sort(
+                    key=lambda entry: season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL)
+                )
+                playlist = [item for _original_index, item in indexed_playlist]
+            for index, item in enumerate(playlist):
+                item.index = index
+            return playlist
+
+        def _search_metadata_candidates(session_vod: VodItem, provider_source_kind: str) -> list[object]:
+            query = MetadataContext(vod=session_vod, source_kind=provider_source_kind).to_query()
+            candidates: list[object] = []
+            for provider in (TencentMetadataProvider(), IqiyiMetadataProvider()):
+                try:
+                    matches = provider.search(query)
+                except Exception:
+                    continue
+                if matches:
+                    candidates.append(matches[0])
+            return candidates
+
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
             if source_kind != "plugin" or vod is None:
@@ -518,6 +570,19 @@ class AppCoordinator(QObject):
                     return None
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
                 default_season = _guess_season_number(session_vod)
+                season_episode_pairs = _season_episode_pairs(playlist, default_season)
+                for candidate in _search_metadata_candidates(session_vod, source_kind):
+                    updated_playlist = build_provider_episode_playlist(
+                        session_vod,
+                        playlist,
+                        candidate,
+                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                    )
+                    if updated_playlist is not None:
+                        updated_pairs = _season_episode_pairs(updated_playlist, default_season)
+                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                        if finalized is not None:
+                            return finalized
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
                 has_season_marker = _title_has_season_marker(session_vod.vod_name)
@@ -543,22 +608,10 @@ class AppCoordinator(QObject):
                 if not tmdb_id:
                     return None
                 requested_seasons: set[int] = set()
-                season_episode_pairs: list[tuple[int, int] | None] = []
-                for item in playlist:
-                    season_number = None
-                    for candidate in (item.original_title, item.title, item.path):
-                        season_number = extract_season_number(candidate)
-                        if season_number is not None:
-                            break
-                    episode_number = infer_playlist_episode_number(item, playlist)
-                    if episode_number is None:
-                        episode_number = _extract_quality_variant_episode_number(item)
-                    if episode_number is None:
-                        season_episode_pairs.append(None)
+                for pair in season_episode_pairs:
+                    if pair is None:
                         continue
-                    resolved_season = season_number or default_season
-                    season_episode_pairs.append((resolved_season, episode_number))
-                    requested_seasons.add(resolved_season)
+                    requested_seasons.add(pair[0])
                 if not requested_seasons:
                     requested_seasons.add(default_season)
                 include_season_prefix = len(requested_seasons) > 1
@@ -595,17 +648,9 @@ class AppCoordinator(QObject):
                     playlist,
                     titles_by_index,
                     source="tmdb",
-                    source_priority=["plugin", "iqiyi", "tencent", "bilibili", "tmdb"],
+                    source_priority=["plugin", "tencent", "iqiyi", "bilibili", "tmdb"],
                 )
-                if len(playlist) > 1:
-                    indexed_playlist = list(enumerate(playlist))
-                    indexed_playlist.sort(
-                        key=lambda entry: season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL)
-                    )
-                    playlist = [item for _original_index, item in indexed_playlist]
-                for index, item in enumerate(playlist):
-                    item.index = index
-                return playlist if playlist_has_title_variants(playlist) else None
+                return _finalize_episode_playlist(playlist, season_episode_pairs)
 
             return enhance
 

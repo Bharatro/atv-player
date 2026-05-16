@@ -12,6 +12,7 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
+from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
 
@@ -4509,6 +4510,141 @@ def test_app_coordinator_episode_title_enhancer_reorders_multi_version_playlist_
         "第2集 星火初燃",
     ]
     assert [item.index for item in updated] == [0, 1, 2, 3]
+
+
+def test_app_coordinator_episode_title_enhancer_prefers_tencent_over_iqiyi_and_tmdb(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeSearchProvider:
+        def __init__(self, provider_name: str, title: str) -> None:
+            self.name = provider_name
+            self._title = title
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            raw = (
+                {"episode_sites": [{"episodeInfoList": [{"title": self._title}]}]}
+                if self.name == "tencent"
+                else {"videos": [{"itemNumber": 1, "itemTitle": self._title}]}
+            )
+            return [
+                MetadataMatch(
+                    provider=self.name,
+                    provider_id=f"{self.name}:1",
+                    title=candidate.title,
+                    year=candidate.year,
+                    raw=raw,
+                )
+            ]
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: FakeSearchProvider("tencent", "第01话 金银米小圈1"))
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: FakeSearchProvider("iqiyi", "终局开篇"))
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+            playlist=[PlayItem(title="01.mp4", url="http://m/1.mp4", original_title="01.mp4")],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tencent"
+    assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
+
+
+def test_app_coordinator_episode_title_enhancer_falls_back_from_tencent_to_iqiyi(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="tencent",
+                    provider_id="tencent:1",
+                    title=candidate.title,
+                    year=candidate.year,
+                    raw={},
+                )
+            ]
+
+    class FakeIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="iqiyi",
+                    provider_id="iqiyi:1",
+                    title=candidate.title,
+                    year=candidate.year,
+                    raw={"videos": [{"itemNumber": 1, "itemTitle": "终局开篇"}]},
+                )
+            ]
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+            playlist=[PlayItem(title="S05E01.mkv", url="http://m/1.mp4", original_title="S05E01.mkv")],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "iqiyi"
+    assert updated[0].episode_display_title == "第1集 终局开篇"
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
