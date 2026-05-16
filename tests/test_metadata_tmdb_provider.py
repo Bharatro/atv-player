@@ -68,3 +68,27 @@ def test_tmdb_provider_strips_season_suffix_from_tv_search_title() -> None:
 
     assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
     assert client.calls == [("search_tv", "掩耳盗邻", "2025")]
+
+
+def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_missing() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [
+        {
+            "id": 314,
+            "name": "A Knight of the Seven Kingdoms: The Hedge Knight",
+            "first_air_date": "2025-01-01",
+        }
+    ]
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="七王国的骑士 第一季", year="2025", category_name="电视剧"))
+
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:314",
+            title="A Knight of the Seven Kingdoms: The Hedge Knight",
+            year="2025",
+        )
+    ]
+    assert client.calls == [("search_tv", "七王国的骑士", "2025")]

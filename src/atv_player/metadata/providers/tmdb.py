@@ -100,11 +100,35 @@ class TMDBProvider:
         if not payload and search_title != candidate.title:
             payload = search_fn(candidate.title, year=candidate.year)
         matches: list[MetadataMatch] = []
+        fallback_matches: list[MetadataMatch] = []
         for item in payload:
-            match = self._match_from_payload(media_type, dict(item), search_title, candidate.year)
+            normalized_item = dict(item)
+            match = self._match_from_payload(media_type, normalized_item, search_title, candidate.year)
             if match is not None:
                 matches.append(match)
-        return matches
+                continue
+            provider_id = str(normalized_item.get("id") or "").strip()
+            item_title = str(
+                normalized_item.get("title")
+                or normalized_item.get("name")
+                or normalized_item.get("original_title")
+                or normalized_item.get("original_name")
+                or ""
+            ).strip()
+            if not provider_id or not item_title:
+                continue
+            item_year = _extract_year(normalized_item, media_type=media_type)
+            if candidate.year and item_year and item_year != str(candidate.year).strip():
+                continue
+            fallback_matches.append(
+                MetadataMatch(
+                    provider=self.name,
+                    provider_id=f"{media_type}:{provider_id}",
+                    title=item_title,
+                    year=item_year,
+                )
+            )
+        return matches or fallback_matches[:1]
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         if not candidate.title:
