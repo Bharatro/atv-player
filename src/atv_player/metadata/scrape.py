@@ -12,9 +12,11 @@ from atv_player.metadata.episode_title_resolver import (
 )
 from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.metadata.providers.bangumi import is_bangumi_anime_query
 from atv_player.models import PlayItem, VodItem
 
 _PROVIDER_LABELS = {
+    "bangumi": "Bangumi",
     "bilibili": "B站",
     "tencent": "腾讯",
     "official_douban": "豆瓣官方",
@@ -79,8 +81,13 @@ class MetadataScrapeService:
     def _provider_label(self, provider_name: str) -> str:
         return _PROVIDER_LABELS.get(provider_name, provider_name)
 
-    def provider_options(self) -> list[tuple[str, str]]:
-        return [(provider.name, self._provider_label(provider.name)) for provider in self._providers]
+    def provider_options(self, query: MetadataQuery | None = None) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        for provider in self._providers:
+            if provider.name == "bangumi" and query is not None and not is_bangumi_anime_query(query):
+                continue
+            options.append((provider.name, self._provider_label(provider.name)))
+        return options
 
     def _candidate_from_match(self, match: MetadataMatch) -> MetadataScrapeCandidate:
         return MetadataScrapeCandidate(

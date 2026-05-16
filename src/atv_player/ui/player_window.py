@@ -4777,7 +4777,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         service = self.session.metadata_scrape_service if self.session is not None else None
         provider_options = getattr(service, "provider_options", None)
         if callable(provider_options):
-            options = [(str(key or "").strip(), str(label or "").strip()) for key, label in provider_options()]
+            query = None
+            if self.session is not None:
+                query = MetadataQuery(
+                    title=normalize_metadata_scrape_title(self.session.vod.vod_name),
+                    year=str(self.session.vod.vod_year or "").strip(),
+                    type_name=str(self.session.vod.type_name or "").strip(),
+                    category_name=str(self.session.vod.category_name or "").strip(),
+                )
+            options = [(str(key or "").strip(), str(label or "").strip()) for key, label in provider_options(query)]
             options = [(key, label) for key, label in options if key and label]
         self._metadata_scrape_provider_combo.clear()
         self._metadata_scrape_provider_combo.addItem("全部", "")

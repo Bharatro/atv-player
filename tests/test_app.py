@@ -4899,6 +4899,28 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
         def __init__(self, client) -> None:
             raise AssertionError(f"unexpected tmdb provider: {client!r}")
 
+    bangumi_tokens: list[str] = []
+
+    class RecordingBangumiClient:
+        def __init__(self, access_token: str = "", transport=None) -> None:
+            del transport
+            bangumi_tokens.append(access_token)
+
+    class RecordingBangumiProvider:
+        name = "bangumi"
+
+        def __init__(self, client) -> None:
+            self.client = client
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
+
     class RecordingRemoteDoubanProvider:
         name = "remote_douban"
 
@@ -4924,6 +4946,8 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     monkeypatch.setattr(app_module, "OfficialDoubanProvider", RecordingLocalDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
     monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
+    monkeypatch.setattr(app_module, "BangumiClient", RecordingBangumiClient, raising=False)
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", RecordingBangumiProvider, raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
@@ -4931,7 +4955,8 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
 
     assert service is not None
-    assert [provider.name for provider in service._providers] == ["bilibili", "iqiyi", "tencent", "remote_douban"]
+    assert [provider.name for provider in service._providers] == ["bangumi", "bilibili", "iqiyi", "tencent", "remote_douban"]
+    assert bangumi_tokens == [""]
 
 
 def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -> None:

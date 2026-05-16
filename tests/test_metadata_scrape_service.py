@@ -272,6 +272,25 @@ def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path
     assert service.provider_options() == [("bilibili", "B站"), ("tencent", "腾讯")]
 
 
+def test_metadata_scrape_service_provider_options_hide_bangumi_for_non_anime_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bangumi"), FakeProvider("tmdb")])
+
+    options = service.provider_options(MetadataQuery(title="深空彼岸", category_name="电影"))
+
+    assert ("bangumi", "Bangumi") not in options
+    assert ("tmdb", "TMDB") in options
+
+
+def test_metadata_scrape_service_provider_options_show_bangumi_for_anime_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bangumi"), FakeProvider("tmdb")])
+
+    options = service.provider_options(MetadataQuery(title="牧神记", category_name="动漫"))
+
+    assert ("bangumi", "Bangumi") in options
+
+
 def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     broken = FakeProvider("tmdb", search_error=RuntimeError("tmdb timeout"))
