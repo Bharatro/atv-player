@@ -362,6 +362,7 @@ class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
+        self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
         self._provider_options = list(
             provider_options
             or [
@@ -408,13 +409,34 @@ class FakeMetadataScrapeService:
             metadata_field_sources={"poster": "tmdb", "overview": "tmdb", "detail_fields": "tmdb"},
         )
 
+    def reset(
+        self,
+        query,
+        *,
+        bound_provider: str = "",
+        bound_provider_id: str = "",
+        detail_keys: list[tuple[str, str]] | None = None,
+    ) -> None:
+        self.reset_calls.append(
+            (query.title, query.year, bound_provider, bound_provider_id, list(detail_keys or []))
+        )
+
 
 class FakeMetadataBindingRepository:
     def __init__(self) -> None:
         self.saved: list[tuple[str, str, str, str, str, str]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.binding = None
+
+    def load(self, title, year):
+        del title, year
+        return self.binding
 
     def save(self, title, year, *, provider, provider_id, matched_title="", matched_year="") -> None:
         self.saved.append((title, year, provider, provider_id, matched_title, matched_year))
+
+    def delete(self, title, year) -> None:
+        self.deleted.append((title, year))
 
 
 def test_player_window_metadata_scrape_dialog_hides_providers_missing_from_service(qtbot) -> None:
@@ -559,6 +581,56 @@ def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields
 
     qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
     assert "站内热度: 99" not in window.metadata_view.toPlainText()
+
+
+def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_search(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    bindings.binding = type("Binding", (), {"provider": "tmdb", "provider_id": "tv:42:season:5"})()
+    hydration_calls: list[str] = []
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队", vod_year="2026", vod_content="当前简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.metadata_hydrator = lambda current_session: (
+        hydration_calls.append(current_session.vod.vod_name)
+        or VodItem(vod_id="v1", vod_name=current_session.vod.vod_name, vod_year="2026", vod_content="自动简介")
+    )
+    window.session.metadata_hydrated = True
+    window._metadata_scrape_binding_title = "黑袍纠察队第五季"
+    window._metadata_scrape_binding_year = "2026"
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("手动改过的标题")
+    window._metadata_scrape_year_edit.setText("2030")
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._reset_metadata_scrape_state()
+
+    qtbot.waitUntil(lambda: "自动简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert bindings.deleted == [("黑袍纠察队第五季", "2026")]
+    assert service.reset_calls == [
+        (
+            "黑袍纠察队",
+            "2026",
+            "tmdb",
+            "tv:42:season:5",
+            [("tmdb", "movie:1")],
+        )
+    ]
+    assert hydration_calls == ["黑袍纠察队"]
+    assert service.search_calls[-1] == ("黑袍纠察队", "2026", "")
+    assert window._metadata_scrape_title_edit.text() == "黑袍纠察队"
+    assert window._metadata_scrape_year_edit.text() == "2026"
+    assert "已重置元数据缓存与手动绑定" in window.log_view.toPlainText()
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:

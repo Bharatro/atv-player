@@ -41,6 +41,9 @@ class MetadataCache:
             {"items": [asdict(match) for match in matches]},
         )
 
+    def delete_search(self, provider: str, title: str, year: str) -> None:
+        self._delete_path(self._search_path(provider, title, year))
+
     def load_detail(self, provider: str, provider_id: str, ttl_seconds: int) -> MetadataRecord | None:
         payload = self._load_json(self._detail_path(provider, provider_id))
         if payload is None:
@@ -54,6 +57,9 @@ class MetadataCache:
 
     def save_detail(self, provider: str, provider_id: str, record: MetadataRecord) -> None:
         self._save_json(self._detail_path(provider, provider_id), asdict(record))
+
+    def delete_detail(self, provider: str, provider_id: str) -> None:
+        self._delete_path(self._detail_path(provider, provider_id))
 
     def load_payload(
         self,
@@ -108,3 +114,10 @@ class MetadataCache:
             json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _delete_path(path: Path) -> None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return

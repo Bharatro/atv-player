@@ -81,6 +81,29 @@ class MetadataScrapeService:
             futures = [executor.submit(run, provider) for provider in providers]
         return [future.result() for future in futures]
 
+    def reset(
+        self,
+        query: MetadataQuery,
+        *,
+        bound_provider: str = "",
+        bound_provider_id: str = "",
+        detail_keys: list[tuple[str, str]] | None = None,
+    ) -> None:
+        for provider in self._providers:
+            cache_title = query.title
+            cache_year = query.year
+            search_cache_key = getattr(provider, "search_cache_key", None)
+            if callable(search_cache_key):
+                provider_cache_key = search_cache_key(query)
+                if provider_cache_key is not None:
+                    cache_title, cache_year = provider_cache_key
+            self._cache.delete_search(provider.name, cache_title, cache_year)
+        if bound_provider and bound_provider_id:
+            self._cache.delete_detail(bound_provider, bound_provider_id)
+        for provider_name, provider_id in detail_keys or []:
+            if provider_name and provider_id:
+                self._cache.delete_detail(provider_name, provider_id)
+
     def apply(self, vod: VodItem, candidate: MetadataScrapeCandidate) -> VodItem:
         provider = self._providers_by_name[candidate.provider]
         record = self._cache.load_detail(candidate.provider, candidate.provider_id, ttl_seconds=7 * 24 * 3600)

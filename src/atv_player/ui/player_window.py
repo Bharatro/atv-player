@@ -468,10 +468,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_status_label: QLabel | None = None
         self._metadata_scrape_rerun_button: QPushButton | None = None
         self._metadata_scrape_reset_button: QPushButton | None = None
+        self._metadata_scrape_restore_query_button: QPushButton | None = None
         self._metadata_scrape_apply_button: QPushButton | None = None
         self._metadata_scrape_groups: list[object] = []
         self._metadata_scrape_default_title = ""
         self._metadata_scrape_default_year = ""
+        self._metadata_scrape_binding_title = ""
+        self._metadata_scrape_binding_year = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -1386,6 +1389,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
+        self._metadata_scrape_binding_title = str(session.vod.vod_name or "").strip()
+        self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self.current_index = session.start_index
         self.playlist_title_mode = "episode"
         self._install_danmaku_log_handler(session)
@@ -4702,15 +4707,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         actions = QHBoxLayout()
         self._metadata_scrape_rerun_button = QPushButton("重新搜索", dialog)
-        self._metadata_scrape_reset_button = QPushButton("恢复默认搜索词", dialog)
+        self._metadata_scrape_reset_button = QPushButton("重置", dialog)
+        self._metadata_scrape_restore_query_button = QPushButton("恢复默认搜索词", dialog)
         self._metadata_scrape_apply_button = QPushButton("应用结果", dialog)
         actions.addWidget(self._metadata_scrape_rerun_button)
         actions.addWidget(self._metadata_scrape_reset_button)
+        actions.addWidget(self._metadata_scrape_restore_query_button)
         actions.addWidget(self._metadata_scrape_apply_button)
         layout.addLayout(actions)
 
         self._metadata_scrape_rerun_button.clicked.connect(self._rerun_metadata_scrape_search)
-        self._metadata_scrape_reset_button.clicked.connect(self._reset_metadata_scrape_search_query)
+        self._metadata_scrape_reset_button.clicked.connect(self._reset_metadata_scrape_state)
+        self._metadata_scrape_restore_query_button.clicked.connect(self._reset_metadata_scrape_search_query)
         self._metadata_scrape_apply_button.clicked.connect(self._apply_selected_metadata_scrape_result)
         self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
 
@@ -4736,6 +4744,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._metadata_scrape_default_title = str(self.session.vod.vod_name or "").strip()
         self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
+        if not self._metadata_scrape_binding_title:
+            self._metadata_scrape_binding_title = self._metadata_scrape_default_title
+        if not self._metadata_scrape_binding_year:
+            self._metadata_scrape_binding_year = self._metadata_scrape_default_year
         dialog = self._ensure_metadata_scrape_dialog()
         self._populate_metadata_scrape_provider_options()
         if self._metadata_scrape_title_edit is not None:
@@ -4822,6 +4834,45 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
         self._rerun_metadata_scrape_search()
 
+    def _reset_metadata_scrape_state(self) -> None:
+        if self.session is None or self.session.metadata_scrape_service is None:
+            return
+        binding_title = self._metadata_scrape_binding_title or str(self.session.vod.vod_name or "").strip()
+        binding_year = self._metadata_scrape_binding_year or str(self.session.vod.vod_year or "").strip()
+        bound_provider = ""
+        bound_provider_id = ""
+        bindings = self.session.metadata_binding_repository
+        if bindings is not None and hasattr(bindings, "load"):
+            binding = bindings.load(binding_title, binding_year)
+            if binding is not None:
+                bound_provider = str(getattr(binding, "provider", "") or "").strip()
+                bound_provider_id = str(getattr(binding, "provider_id", "") or "").strip()
+        detail_keys: list[tuple[str, str]] = []
+        for group in self._metadata_scrape_groups:
+            for candidate in getattr(group, "items", []) or []:
+                provider = str(getattr(candidate, "provider", "") or "").strip()
+                provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+                key = (provider, provider_id)
+                if provider and provider_id and key not in detail_keys:
+                    detail_keys.append(key)
+        self.session.metadata_scrape_service.reset(
+            MetadataQuery(
+                title=self._metadata_scrape_default_title,
+                year=self._metadata_scrape_default_year,
+                type_name=str(self.session.vod.type_name or "").strip(),
+                category_name=str(self.session.vod.category_name or "").strip(),
+            ),
+            bound_provider=bound_provider,
+            bound_provider_id=bound_provider_id,
+            detail_keys=detail_keys,
+        )
+        if bindings is not None and hasattr(bindings, "delete"):
+            bindings.delete(binding_title, binding_year)
+        self._reset_metadata_scrape_search_query()
+        self.session.metadata_hydrated = False
+        self._start_metadata_hydration()
+        self._append_log("已重置元数据缓存与手动绑定，重新开始自动搜索")
+
     def _selected_metadata_scrape_candidate(self):
         if self._metadata_scrape_result_list is None:
             return None
@@ -4879,6 +4930,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 matched_title=candidate.title,
                 matched_year=candidate.year,
             )
+            self._metadata_scrape_binding_title = str(previous_vod.vod_name or "").strip()
+            self._metadata_scrape_binding_year = str(previous_vod.vod_year or "").strip()
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()

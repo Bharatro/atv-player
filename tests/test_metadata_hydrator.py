@@ -199,6 +199,43 @@ def test_metadata_hydrator_prefers_manual_binding_before_provider_search(tmp_pat
     assert tmdb.search_calls == 0
 
 
+def test_metadata_hydrator_manual_binding_blocks_other_provider_overrides(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("深空彼岸", "2026", provider="tmdb", provider_id="tv:42")
+    tmdb = FakeProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            poster="https://img.example/manual-poster.jpg",
+            overview="手动绑定简介",
+            rating="9.2",
+        ),
+    )
+    douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="35746415", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="35746415",
+            overview="自动搜索简介",
+            rating="8.1",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, douban], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"), source_kind="browse")
+    )
+
+    assert updated.vod_pic == "https://img.example/manual-poster.jpg"
+    assert updated.vod_content == "手动绑定简介"
+    assert updated.vod_remarks == "9.2"
+    assert douban.search_calls == 0
+    assert douban.get_detail_calls == []
+
+
 def test_metadata_hydrator_deletes_invalid_manual_binding_and_falls_back_to_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     bindings = MetadataBindingRepository(tmp_path / "app.db")

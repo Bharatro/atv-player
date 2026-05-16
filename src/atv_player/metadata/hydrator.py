@@ -64,13 +64,10 @@ class MetadataHydrator:
         vod = replace(context.vod)
         query = context.to_query()
         bound_record = self._load_bound_record(query)
-        bound_provider = ""
         if bound_record is not None:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])
-            bound_provider = bound_record.provider
+            return vod
         for provider in self._providers:
-            if provider.name == bound_provider:
-                continue
             if not provider.can_enrich(context):
                 continue
             search_cache_key = getattr(provider, "search_cache_key", None)

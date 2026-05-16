@@ -14,6 +14,7 @@ class FakeProvider:
         self.search_error = search_error
         self.search_calls: list[MetadataQuery] = []
         self.detail_calls: list[MetadataMatch] = []
+        self.cache_key: tuple[str, str] | None = None
 
     def can_enrich(self, _context) -> bool:
         return True
@@ -28,6 +29,10 @@ class FakeProvider:
         self.detail_calls.append(match)
         assert self.record is not None
         return self.record
+
+    def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
+        del candidate
+        return self.cache_key
 
 
 def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: Path) -> None:
@@ -189,3 +194,27 @@ def test_metadata_scrape_service_apply_uses_distinct_tmdb_tv_season_cache_keys(t
 
     assert updated.vod_content == "第五季简介"
     assert provider.detail_calls[0].provider_id == "tv:42:season:5"
+
+
+def test_metadata_scrape_service_reset_clears_search_cache_and_selected_detail_cache(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider("tmdb")
+    tmdb.cache_key = ("黑袍纠察队", "")
+    douban = FakeProvider("local_douban")
+    cache.save_search("tmdb", "黑袍纠察队", "", [MetadataMatch(provider="tmdb", provider_id="tv:42:season:5", title="黑袍纠察队")])
+    cache.save_search("local_douban", "黑袍纠察队第五季", "2026", [MetadataMatch(provider="local_douban", provider_id="357", title="黑袍纠察队")])
+    cache.save_detail("tmdb", "tv:42:season:5", MetadataRecord(provider="tmdb", provider_id="tv:42:season:5", overview="第五季简介"))
+    cache.save_detail("local_douban", "357", MetadataRecord(provider="local_douban", provider_id="357", overview="豆瓣简介"))
+    service = MetadataScrapeService(cache=cache, providers=[tmdb, douban])
+
+    service.reset(
+        MetadataQuery(title="黑袍纠察队第五季", year="2026", category_name="电视剧"),
+        bound_provider="tmdb",
+        bound_provider_id="tv:42:season:5",
+        detail_keys=[("local_douban", "357")],
+    )
+
+    assert cache.load_search("tmdb", "黑袍纠察队", "", ttl_seconds=7 * 24 * 3600) is None
+    assert cache.load_search("local_douban", "黑袍纠察队第五季", "2026", ttl_seconds=7 * 24 * 3600) is None
+    assert cache.load_detail("tmdb", "tv:42:season:5", ttl_seconds=7 * 24 * 3600) is None
+    assert cache.load_detail("local_douban", "357", ttl_seconds=7 * 24 * 3600) is None
