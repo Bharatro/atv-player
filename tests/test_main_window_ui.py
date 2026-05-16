@@ -3293,6 +3293,61 @@ def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) 
     assert not hasattr(window, "parse_manager_button")
 
 
+def test_main_window_shows_advanced_settings_button_after_live_source_manager(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=object(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.live_source_manager_button.text() == "直播源管理"
+    assert window.advanced_settings_button.text() == "高级设置"
+    assert window.header_layout.indexOf(window.live_source_manager_button) < window.header_layout.indexOf(window.advanced_settings_button)
+
+
+def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
+    opened: list[tuple[object, object, object]] = []
+
+    class FakeDialog:
+        def __init__(self, config, save_config, parent=None) -> None:
+            opened.append((config, save_config, parent))
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "AdvancedSettingsDialog", FakeDialog)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window._open_advanced_settings()
+
+    assert len(opened) == 1
+    assert opened[0][0] is window.config
+    assert opened[0][2] is window
+
+
 def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

@@ -38,6 +38,7 @@ from atv_player.models import (
     VodItem,
 )
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.plugin_actions import PluginActions
@@ -1121,6 +1122,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.startup_plugin_retry_button.hide()
         self.plugin_manager_button = QPushButton("插件管理")
         self.live_source_manager_button = QPushButton("直播源管理")
+        self.advanced_settings_button = QPushButton("高级设置")
         self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(
@@ -1368,6 +1370,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
+        self.advanced_settings_button.clicked.connect(self._open_advanced_settings)
         self.global_search_button.clicked.connect(self._start_global_search)
         self.global_search_popup_button.clicked.connect(self._toggle_global_search_popup)
         self.global_search_clear_button.clicked.connect(self._clear_global_search)
@@ -1393,6 +1396,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.header_layout.addWidget(self.startup_plugin_retry_button)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
+        self.header_layout.addWidget(self.advanced_settings_button)
         self.header_layout.addWidget(self.logout_button)
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -3056,6 +3060,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         dialog = LiveSourceManagerDialog(self._live_source_manager, self)
         dialog.exec()
         self.live_page.reload_categories()
+
+    def _open_advanced_settings(self) -> None:
+        self._dismiss_visible_global_search_popup()
+        self._close_plugin_overflow_drawer()
+        self._close_help_dialog()
+        dialog = AdvancedSettingsDialog(self.config, self._save_config, self)
+        dialog.exec()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         self._start_media_load(
