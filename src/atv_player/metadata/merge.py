@@ -18,10 +18,11 @@ _FIELD_PROVIDER_PRIORITY = {
 }
 
 _OVERVIEW_PROVIDER_PRIORITY = {
-    "local_douban": 0,
+    "official_douban": 0,
     "tmdb_season": 1,
     "douban": 2,
     "tmdb": 3,
+    "local_douban": 4,
     "remote_douban": 4,
     "plugin": 5,
 }

@@ -108,13 +108,13 @@ def test_metadata_hydrator_skips_provider_detail_failure_and_keeps_existing_vod(
     ]
 
 
-def test_metadata_hydrator_keeps_douban_overview_but_uses_tmdb_visual_fields(tmp_path: Path) -> None:
+def test_metadata_hydrator_keeps_official_douban_overview_but_uses_tmdb_visual_fields(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
-    local_douban = FakeProvider(
-        "local_douban",
-        matches=[MetadataMatch(provider="local_douban", provider_id="35746415", title="深空彼岸")],
+    official_douban = FakeProvider(
+        "official_douban",
+        matches=[MetadataMatch(provider="official_douban", provider_id="35746415", title="深空彼岸")],
         record=MetadataRecord(
-            provider="local_douban",
+            provider="official_douban",
             provider_id="35746415",
             overview="豆瓣简介",
             rating="8.1",
@@ -133,7 +133,7 @@ def test_metadata_hydrator_keeps_douban_overview_but_uses_tmdb_visual_fields(tmp
             rating="7.2",
         ),
     )
-    hydrator = MetadataHydrator(cache=cache, providers=[local_douban, tmdb])
+    hydrator = MetadataHydrator(cache=cache, providers=[official_douban, tmdb])
 
     updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse"))
 
@@ -143,39 +143,7 @@ def test_metadata_hydrator_keeps_douban_overview_but_uses_tmdb_visual_fields(tmp
     assert updated.vod_remarks == "8.1"
 
 
-def test_metadata_hydrator_prefers_tmdb_season_over_remote_douban_overview(tmp_path: Path) -> None:
-    cache = MetadataCache(tmp_path)
-    tmdb = FakeProvider(
-        "tmdb",
-        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42:season:5", title="黑袍纠察队", year="2019")],
-        record=MetadataRecord(
-            provider="tmdb",
-            provider_id="tv:42:season:5",
-            overview="第五季简介",
-        ),
-    )
-    remote_douban = FakeProvider(
-        "remote_douban",
-        matches=[MetadataMatch(provider="remote_douban", provider_id="357", title="黑袍纠察队")],
-        record=MetadataRecord(
-            provider="remote_douban",
-            provider_id="357",
-            overview="本地豆瓣简介",
-        ),
-    )
-    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, remote_douban])
-
-    updated = hydrator.hydrate(
-        MetadataContext(
-            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
-            source_kind="browse",
-        )
-    )
-
-    assert updated.vod_content == "第五季简介"
-
-
-def test_metadata_hydrator_local_douban_overrides_tmdb_season_overview(tmp_path: Path) -> None:
+def test_metadata_hydrator_prefers_tmdb_season_over_local_douban_overview(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(
         "tmdb",
@@ -192,10 +160,42 @@ def test_metadata_hydrator_local_douban_overrides_tmdb_season_overview(tmp_path:
         record=MetadataRecord(
             provider="local_douban",
             provider_id="357",
-            overview="豆瓣官方简介",
+            overview="本地豆瓣简介",
         ),
     )
     hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+            source_kind="browse",
+        )
+    )
+
+    assert updated.vod_content == "第五季简介"
+
+
+def test_metadata_hydrator_official_douban_overrides_tmdb_season_overview(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42:season:5", title="黑袍纠察队", year="2019")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42:season:5",
+            overview="第五季简介",
+        ),
+    )
+    official_douban = FakeProvider(
+        "official_douban",
+        matches=[MetadataMatch(provider="official_douban", provider_id="357", title="黑袍纠察队")],
+        record=MetadataRecord(
+            provider="official_douban",
+            provider_id="357",
+            overview="豆瓣官方简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, official_douban])
 
     updated = hydrator.hydrate(
         MetadataContext(

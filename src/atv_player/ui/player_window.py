@@ -90,7 +90,8 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _METADATA_PROVIDER_LABELS: dict[str, str] = {
-    "local_douban": "豆瓣官方",
+    "official_douban": "豆瓣官方",
+    "local_douban": "本地豆瓣",
     "remote_douban": "本地豆瓣",
     "douban": "豆瓣",
     "tmdb": "TMDB",
@@ -99,9 +100,9 @@ _METADATA_PROVIDER_LABELS: dict[str, str] = {
 }
 
 _METADATA_PROVIDER_OPTIONS: list[tuple[str, str]] = [
-    ("local_douban", "豆瓣官方"),
+    ("official_douban", "豆瓣官方"),
     ("tmdb", "TMDB"),
-    ("remote_douban", "本地豆瓣"),
+    ("local_douban", "本地豆瓣"),
     ("douban", "豆瓣"),
     ("plugin", "插件"),
 ]

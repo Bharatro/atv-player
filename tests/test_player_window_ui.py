@@ -366,9 +366,9 @@ class FakeMetadataScrapeService:
         self._provider_options = list(
             provider_options
             or [
-                ("local_douban", "豆瓣官方"),
+                ("official_douban", "豆瓣官方"),
                 ("tmdb", "TMDB"),
-                ("remote_douban", "alist-tvbox豆瓣"),
+                ("local_douban", "本地豆瓣"),
                 ("douban", "豆瓣"),
                 ("plugin", "插件"),
             ]
@@ -387,7 +387,7 @@ class FakeMetadataScrapeService:
                     )
                 ],
             ),
-            MetadataScrapeGroup(provider="local_douban", provider_label="豆瓣官方", items=[]),
+            MetadataScrapeGroup(provider="official_douban", provider_label="豆瓣官方", items=[]),
         ]
 
     def provider_options(self) -> list[tuple[str, str]]:
@@ -442,7 +442,7 @@ class FakeMetadataBindingRepository:
 def test_player_window_metadata_scrape_dialog_hides_providers_missing_from_service(qtbot) -> None:
     service = FakeMetadataScrapeService(
         provider_options=[
-            ("remote_douban", "alist-tvbox豆瓣"),
+            ("local_douban", "本地豆瓣"),
             ("plugin", "插件"),
         ]
     )
@@ -462,7 +462,7 @@ def test_player_window_metadata_scrape_dialog_hides_providers_missing_from_servi
 
     assert [window._metadata_scrape_provider_combo.itemData(index) for index in range(window._metadata_scrape_provider_combo.count())] == [
         "",
-        "remote_douban",
+        "local_douban",
         "plugin",
     ]
 

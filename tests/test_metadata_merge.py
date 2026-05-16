@@ -74,7 +74,7 @@ def test_merge_metadata_fills_core_detail_rows_from_douban_record() -> None:
     assert vod.vod_director == "周琛"
 
 
-def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_douban_overview_and_rating() -> None:
+def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_official_douban_overview_and_rating() -> None:
     vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_content="原始简介")
     tmdb_record = MetadataRecord(
         provider="tmdb",
@@ -92,7 +92,7 @@ def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_douban_overview_and
         rating="7.2",
     )
     douban_record = MetadataRecord(
-        provider="local_douban",
+        provider="official_douban",
         provider_id="35746415",
         overview="豆瓣简介",
         rating="8.1",
@@ -100,7 +100,7 @@ def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_douban_overview_and
     )
 
     merge_metadata_record(vod, tmdb_record, provider_priority=["tmdb"])
-    merge_metadata_record(vod, douban_record, provider_priority=["local_douban", "tmdb"])
+    merge_metadata_record(vod, douban_record, provider_priority=["official_douban", "tmdb"])
 
     assert vod.vod_pic == "https://img.example/tmdb-poster.jpg"
     assert vod.vod_content == "豆瓣简介"

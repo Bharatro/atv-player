@@ -54,9 +54,9 @@ def test_remote_douban_provider_maps_search_and_detail_from_api() -> None:
     record = provider.get_detail(matches[0])
 
     assert matches == [
-        MetadataMatch(provider="remote_douban", provider_id="35746415", title="深空彼岸", year="2026")
+        MetadataMatch(provider="local_douban", provider_id="35746415", title="深空彼岸", year="2026")
     ]
-    assert record.provider == "remote_douban"
+    assert record.provider == "local_douban"
     assert record.overview == "远程豆瓣简介"
     assert record.rating == "8.1"
 
