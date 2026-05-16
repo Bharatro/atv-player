@@ -4874,7 +4874,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                groups = service.search(MetadataQuery(title=title, year=year), provider_filter=provider_filter)
+                groups = service.search(
+                    MetadataQuery(
+                        title=title,
+                        year=year,
+                        category_name=str(self.session.vod.category_name or "").strip(),
+                        type_name=str(self.session.vod.type_name or "").strip(),
+                    ),
+                    provider_filter=provider_filter,
+                )
             except Exception as exc:
                 if self._is_window_alive():
                     self._metadata_scrape_signals.failed.emit(request_id, f"刮削搜索失败: {exc}")

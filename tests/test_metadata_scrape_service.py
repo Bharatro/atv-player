@@ -2,7 +2,7 @@ from pathlib import Path
 
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
-from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeService
+from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup, MetadataScrapeService
 from atv_player.models import PlayItem, PlaybackDetailField, VodItem
 
 
@@ -349,6 +349,34 @@ def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_
     assert groups[0].items == []
     assert groups[1].provider == "local_douban"
     assert groups[1].items[0].provider_id == "35746415"
+
+
+def test_metadata_scrape_service_uses_cached_search_results_before_retrying_provider(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cached_match = MetadataMatch(provider="tmdb", provider_id="movie:1", title="深空彼岸", year="2026")
+    cache.save_search("tmdb", "深空彼岸", "2026", [cached_match])
+    broken = FakeProvider("tmdb", search_error=RuntimeError("tmdb timeout"))
+    service = MetadataScrapeService(cache=cache, providers=[broken])
+
+    groups = service.search(MetadataQuery(title="深空彼岸", year="2026"), provider_filter="")
+
+    assert groups == [
+        MetadataScrapeGroup(
+            provider="tmdb",
+            provider_label="TMDB",
+            items=[
+                MetadataScrapeCandidate(
+                    provider="tmdb",
+                    provider_label="TMDB",
+                    provider_id="movie:1",
+                    title="深空彼岸",
+                    year="2026",
+                    raw={},
+                )
+            ],
+        )
+    ]
+    assert broken.search_calls == []
 
 
 def test_metadata_scrape_service_apply_uses_cached_detail_before_fetching_provider(tmp_path: Path) -> None:

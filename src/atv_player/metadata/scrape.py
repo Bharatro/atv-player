@@ -27,6 +27,9 @@ _PROVIDER_LABELS = {
     "plugin": "插件",
 }
 
+_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
+
 
 def normalize_metadata_scrape_title(value: object) -> str:
     text = str(value or "").strip()
@@ -167,8 +170,24 @@ class MetadataScrapeService:
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
 
         def run(provider: object) -> MetadataScrapeGroup:
+            cache_title = query.title
+            cache_year = query.year
+            search_cache_key = getattr(provider, "search_cache_key", None)
+            if callable(search_cache_key):
+                provider_cache_key = search_cache_key(query)
+                if provider_cache_key is not None:
+                    cache_title, cache_year = provider_cache_key
             try:
-                matches = provider.search(query)
+                matches = self._cache.load_search(
+                    provider.name,
+                    cache_title,
+                    cache_year,
+                    ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
+                    empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+                )
+                if matches is None:
+                    matches = provider.search(query)
+                    self._cache.save_search(provider.name, cache_title, cache_year, matches)
             except Exception as exc:
                 return MetadataScrapeGroup(
                     provider=provider.name,

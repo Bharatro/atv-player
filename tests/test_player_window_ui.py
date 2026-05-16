@@ -382,9 +382,31 @@ def test_player_window_metadata_scrape_dialog_normalizes_leading_topic_marker_in
     assert service.search_calls == [("牧神记 年番2", "2024", "")]
 
 
+def test_player_window_metadata_scrape_search_passes_category_and_type_into_query(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫", type_name="动画"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_queries == [("动漫", "动画")]
+
+
 class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
+        self.search_queries: list[tuple[str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
         self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
@@ -415,11 +437,13 @@ class FakeMetadataScrapeService:
             MetadataScrapeGroup(provider="official_douban", provider_label="豆瓣官方", items=[]),
         ]
 
-    def provider_options(self) -> list[tuple[str, str]]:
+    def provider_options(self, query=None) -> list[tuple[str, str]]:
+        del query
         return list(self._provider_options)
 
     def search(self, query, provider_filter: str = "") -> list[MetadataScrapeGroup]:
         self.search_calls.append((query.title, query.year, provider_filter))
+        self.search_queries.append((getattr(query, "category_name", ""), getattr(query, "type_name", "")))
         return self.groups
 
     def apply(self, vod: VodItem, candidate: MetadataScrapeCandidate) -> VodItem:
