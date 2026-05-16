@@ -23,6 +23,7 @@ class FakeProvider:
         self.detail_error = detail_error
         self.search_calls = 0
         self.get_detail_calls: list[MetadataMatch] = []
+        self.cache_key = None
 
     def can_enrich(self, _context: MetadataContext) -> bool:
         return True
@@ -39,6 +40,11 @@ class FakeProvider:
             raise self.detail_error
         assert self.record is not None
         return self.record
+
+    def search_cache_key(self, candidate):
+        if self.cache_key is None:
+            return None
+        return self.cache_key
 
 
 def test_metadata_hydrator_uses_douban_when_plugin_provider_returns_no_overview(tmp_path: Path) -> None:
@@ -149,3 +155,24 @@ def test_metadata_hydrator_caches_empty_search_results_and_skips_repeat_search(t
     assert second.vod_name == "深空彼岸"
     assert provider.search_calls == 1
     assert provider.get_detail_calls == []
+
+
+def test_metadata_hydrator_uses_provider_specific_search_cache_key(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cache.save_search("tmdb", "掩耳盗邻第二季", "2025", [])
+    provider = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")],
+        record=MetadataRecord(provider="tmdb", provider_id="tv:42", poster="https://img.example/poster.jpg"),
+    )
+    provider.cache_key = ("掩耳盗邻", "2025")
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+    context = MetadataContext(
+        vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2025", category_name="电视剧"),
+        source_kind="plugin",
+    )
+
+    updated = hydrator.hydrate(context)
+
+    assert updated.vod_pic == "https://img.example/poster.jpg"
+    assert provider.search_calls == 1

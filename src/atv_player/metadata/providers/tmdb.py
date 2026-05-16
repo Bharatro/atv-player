@@ -57,6 +57,12 @@ class TMDBProvider:
     def can_enrich(self, _context) -> bool:
         return True
 
+    def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
+        title = candidate.title
+        if infer_tmdb_media_type(candidate) == "tv":
+            title = _strip_search_season_suffix(title)
+        return (title, candidate.year)
+
     def _match_from_payload(
         self,
         media_type: str,

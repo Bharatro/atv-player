@@ -27,10 +27,17 @@ class MetadataHydrator:
         for provider in self._providers:
             if not provider.can_enrich(context):
                 continue
+            search_cache_key = getattr(provider, "search_cache_key", None)
+            cache_title = query.title
+            cache_year = query.year
+            if callable(search_cache_key):
+                provider_cache_key = search_cache_key(query)
+                if provider_cache_key is not None:
+                    cache_title, cache_year = provider_cache_key
             matches = self._cache.load_search(
                 provider.name,
-                query.title,
-                query.year,
+                cache_title,
+                cache_year,
                 ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
                 empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
             )
@@ -40,7 +47,7 @@ class MetadataHydrator:
                 except Exception as exc:
                     logger.warning("Metadata provider search failed provider=%s", provider.name, exc_info=exc)
                     continue
-                self._cache.save_search(provider.name, query.title, query.year, matches)
+                self._cache.save_search(provider.name, cache_title, cache_year, matches)
             if not matches:
                 continue
             cached = self._cache.load_detail(
