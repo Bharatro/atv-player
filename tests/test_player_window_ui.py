@@ -13032,6 +13032,86 @@ def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late
     assert window.current_index == 0
 
 
+def test_player_window_async_episode_title_enhancer_reorders_playlist_and_keeps_current_item_selected(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str] | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    def enhance(current_session: PlayerSession) -> list[PlayItem]:
+        return [
+            PlayItem(
+                title="1-4K.mp4",
+                url="https://media.example/1-4k.mp4",
+                vod_id="ep1-4k",
+                original_title="1-4K.mp4",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            ),
+            PlayItem(
+                title="1-1080P.mp4",
+                url="https://media.example/1-1080.mp4",
+                vod_id="ep1-1080",
+                original_title="1-1080P.mp4",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            ),
+            PlayItem(
+                title="2-4K.mp4",
+                url="https://media.example/2-4k.mp4",
+                vod_id="ep2-4k",
+                original_title="2-4K.mp4",
+                episode_display_title="第2集 星火初燃",
+                episode_title_source="tmdb",
+            ),
+            PlayItem(
+                title="2-1080P.mp4",
+                url="https://media.example/2-1080.mp4",
+                vod_id="ep2-1080",
+                original_title="2-1080P.mp4",
+                episode_display_title="第2集 星火初燃",
+                episode_title_source="tmdb",
+            ),
+        ]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(title="1-4K.mp4", url="https://media.example/1-4k.mp4", vod_id="ep1-4k", original_title="1-4K.mp4"),
+            PlayItem(title="2-4K.mp4", url="https://media.example/2-4k.mp4", vod_id="ep2-4k", original_title="2-4K.mp4"),
+            PlayItem(title="1-1080P.mp4", url="https://media.example/1-1080.mp4", vod_id="ep1-1080", original_title="1-1080P.mp4"),
+            PlayItem(title="2-1080P.mp4", url="https://media.example/2-1080.mp4", vod_id="ep2-1080", original_title="2-1080P.mp4"),
+        ],
+        start_index=2,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=enhance,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.playlist_title_tabs.isHidden() is False, timeout=1000)
+    qtbot.waitUntil(lambda: window.playlist.count() == 4 and window.playlist.item(1).text() == "第1集 星门初启", timeout=1000)
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert window.session.playlist[window.current_index].original_title == "1-1080P.mp4"
+
+
 def test_player_window_async_route_replacement_restarts_episode_title_enhancement(qtbot) -> None:
     ready = threading.Event()
 

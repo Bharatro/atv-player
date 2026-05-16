@@ -2472,6 +2472,32 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if metadata_log:
             self._append_log(metadata_log)
 
+    @staticmethod
+    def _playlist_identity_key(item: PlayItem) -> tuple[str, str, str, str, str]:
+        return (
+            item.vod_id.strip(),
+            item.original_title.strip(),
+            item.path.strip(),
+            item.title.strip(),
+            item.play_source.strip(),
+        )
+
+    def _find_updated_playlist_index(
+        self,
+        updated_playlist: list[PlayItem],
+        current_item: PlayItem | None,
+        fallback_index: int,
+    ) -> int:
+        if not updated_playlist:
+            return 0
+        if current_item is None:
+            return max(0, min(fallback_index, len(updated_playlist) - 1))
+        identity = self._playlist_identity_key(current_item)
+        for index, candidate in enumerate(updated_playlist):
+            if self._playlist_identity_key(candidate) == identity:
+                return index
+        return max(0, min(fallback_index, len(updated_playlist) - 1))
+
     def _handle_episode_title_enhancement_succeeded(self, request_id: int, updated_playlist: list[PlayItem] | None) -> None:
         if request_id != self._episode_title_request_id:
             return
@@ -2481,7 +2507,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         if self.session is not pending_session:
             return
+        current_item = self.session.playlist[self.current_index] if 0 <= self.current_index < len(self.session.playlist) else None
         self.session.playlist = list(updated_playlist)
+        self.current_index = self._find_updated_playlist_index(self.session.playlist, current_item, self.current_index)
+        self.session.start_index = self.current_index
         if 0 <= self.session.playlist_index < len(self.session.playlists):
             self.session.playlists[self.session.playlist_index] = self.session.playlist
         source_groups = self._session_source_groups()

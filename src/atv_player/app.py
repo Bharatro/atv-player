@@ -50,7 +50,7 @@ from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
 from atv_player.metadata.scrape import MetadataScrapeService
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
-from atv_player.models import AppConfig, LiveEpgConfig, VodItem
+from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
@@ -69,6 +69,8 @@ _MAIN_THREAD_GC_INTERVAL_MS = 30_000
 _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_EPISODE_SORT_SENTINEL = 10**9
+_QUALITY_VARIANT_EPISODE_RE = re.compile(r"^\s*0*(\d{1,3})\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -159,6 +161,32 @@ def _install_main_thread_gc_workaround(app: QApplication) -> None:
     logger.warning(
         "Enabled Python 3.14 GC workaround: automatic GC disabled, using main-thread periodic collection",
     )
+
+
+def _path_basename(value: str) -> str:
+    text = str(value or "").strip().rstrip("/\\")
+    if not text:
+        return ""
+    return re.split(r"[\\/]", text)[-1]
+
+
+def _extract_quality_variant_episode_number(item: PlayItem) -> int | None:
+    seen: set[str] = set()
+    for value in (item.original_title, item.title, item.path):
+        candidate = _path_basename(str(value or ""))
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        match = _QUALITY_VARIANT_EPISODE_RE.match(candidate)
+        if match is None:
+            continue
+        try:
+            episode_number = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if episode_number > 0:
+            return episode_number
+    return None
 
 
 def build_application() -> tuple[QApplication, SettingsRepository]:
@@ -522,6 +550,8 @@ class AppCoordinator(QObject):
                             break
                     episode_number = infer_playlist_episode_number(item, playlist)
                     if episode_number is None:
+                        episode_number = _extract_quality_variant_episode_number(item)
+                    if episode_number is None:
                         season_episode_pairs.append(None)
                         continue
                     resolved_season = season_number or default_season
@@ -565,6 +595,14 @@ class AppCoordinator(QObject):
                     source="tmdb",
                     source_priority=["plugin", "iqiyi", "tencent", "bilibili", "tmdb"],
                 )
+                if len(playlist) > 1:
+                    indexed_playlist = list(enumerate(playlist))
+                    indexed_playlist.sort(
+                        key=lambda entry: season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL)
+                    )
+                    playlist = [item for _original_index, item in indexed_playlist]
+                for index, item in enumerate(playlist):
+                    item.index = index
                 return playlist if playlist_has_title_variants(playlist) else None
 
             return enhance
