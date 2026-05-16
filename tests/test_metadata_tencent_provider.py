@@ -158,3 +158,103 @@ def test_tencent_exact_match_bonus_is_point_two() -> None:
     )
 
     assert tencent_score == pytest.approx(iqiyi_score + 0.05)
+
+
+def test_tencent_metadata_provider_search_penalizes_non_native_site_results() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "third"},
+                                "videoInfo": {
+                                    "title": "米小圈上学记4",
+                                    "year": 2026,
+                                    "playSites": [
+                                        {
+                                            "showName": "爱奇艺",
+                                            "episodeInfoList": [
+                                                {"url": "https://v.qq.com/x/cover/third/ep1.html"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            },
+                            {
+                                "doc": {"dataType": 2, "id": "native"},
+                                "videoInfo": {
+                                    "title": "米小圈上学记4",
+                                    "year": 2026,
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {"url": "https://v.qq.com/x/cover/native/ep1.html"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            },
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    matches = provider.search(MetadataQuery(title="米小圈上学记4", year="2026", category_name="少儿"))
+
+    assert [(match.title, match.provider_id) for match in matches] == [
+        ("米小圈上学记4", "https://v.qq.com/x/cover/native/ep1.html"),
+        ("米小圈上学记4", "https://v.qq.com/x/cover/third/ep1.html"),
+    ]
+    assert matches[0].score > matches[1].score
+
+
+def test_tencent_metadata_provider_detail_omits_source_site_field() -> None:
+    def fake_post(url: str, **kwargs):
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "mzc002008bgugk0"},
+                                "videoInfo": {
+                                    "title": "米小圈上学记4",
+                                    "year": 2026,
+                                    "typeName": "少儿",
+                                    "area": "内地",
+                                    "language": ["普通话版"],
+                                    "directors": ["赵聪"],
+                                    "actors": ["郭赫轩", "陈芷琰"],
+                                    "richTags": [{"text": "儿童剧", "type": 80, "uiType": 1}],
+                                    "descrip": "第一条不应被使用",
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {
+                                                    "url": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="米小圈上学记4", year="2026", category_name="少儿"))[0]
+    record = provider.get_detail(match)
+
+    assert record.detail_fields == []
