@@ -4136,7 +4136,7 @@ def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_s
     )
 
     assert updated is not None
-    assert seen == {"title": "掩耳盗邻", "year": "2025", "season_number": 2}
+    assert seen == {"title": "掩耳盗邻", "year": "", "season_number": 2}
     assert updated[0].episode_display_title == "第1集 第二季首集"
 
 
@@ -4180,7 +4180,7 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
     )
 
     assert updated is not None
-    assert seen == {"title": "掩耳盗邻", "year": "2026", "season_number": 2}
+    assert seen == {"title": "掩耳盗邻", "year": "", "season_number": 2}
     assert updated[0].episode_display_title == "第1集 第二季首集"
 
 

@@ -5,18 +5,21 @@ import re
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
 
+def _title_has_season_marker(value: object) -> bool:
+    return re.search(
+        r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|\bS\d+\b)",
+        str(value or "").strip(),
+        re.IGNORECASE,
+    ) is not None
+
+
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
     category = str(query.category_name or "").strip().lower()
     if any(token in category for token in ("电影", "影片", "movie")):
         return "movie"
     if any(token in category for token in ("电视剧", "剧集", "动漫", "番剧", "综艺", "纪录片", "tv")):
         return "tv"
-    title = str(query.title or "").strip()
-    if re.search(
-        r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|\bS\d+\b)",
-        title,
-        re.IGNORECASE,
-    ):
+    if _title_has_season_marker(query.title):
         return "tv"
     return ""
 
@@ -71,10 +74,21 @@ class TMDBProvider:
         return True
 
     def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
+        media_type = infer_tmdb_media_type(candidate)
         title = candidate.title
-        if infer_tmdb_media_type(candidate) == "tv":
+        year = candidate.year
+        if media_type == "tv":
             title = _strip_search_season_suffix(title)
-        return (title, candidate.year)
+            if _title_has_season_marker(candidate.title):
+                year = ""
+        return (title, year)
+
+    def _search_year(self, media_type: str, candidate: MetadataQuery) -> str:
+        if media_type != "tv":
+            return candidate.year
+        if _title_has_season_marker(candidate.title):
+            return ""
+        return candidate.year
 
     def _match_from_payload(
         self,
@@ -109,9 +123,10 @@ class TMDBProvider:
     def _search_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
         search_fn = self._client.search_movie if media_type == "movie" else self._client.search_tv
         search_title = _strip_search_season_suffix(candidate.title) if media_type == "tv" else candidate.title
-        payload = search_fn(search_title, year=candidate.year)
+        search_year = self._search_year(media_type, candidate)
+        payload = search_fn(search_title, year=search_year)
         if not payload and search_title != candidate.title:
-            payload = search_fn(candidate.title, year=candidate.year)
+            payload = search_fn(candidate.title, year=search_year)
         matches: list[MetadataMatch] = []
         fallback_matches: list[MetadataMatch] = []
         for item in payload:

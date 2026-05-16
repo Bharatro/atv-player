@@ -69,7 +69,7 @@ def test_tmdb_provider_strips_season_suffix_from_tv_search_title() -> None:
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2025", category_name="电视剧"))
 
     assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
-    assert client.calls == [("search_tv", "掩耳盗邻", "2025")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "")]
 
 
 def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_missing() -> None:
@@ -93,7 +93,7 @@ def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_m
             year="2025",
         )
     ]
-    assert client.calls == [("search_tv", "七王国的骑士", "2025")]
+    assert client.calls == [("search_tv", "七王国的骑士", "")]
 
 
 def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_first_air_date() -> None:
@@ -104,7 +104,7 @@ def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_fir
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧"))
 
     assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
-    assert client.calls == [("search_tv", "掩耳盗邻", "2026")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "")]
 
 
 def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_without_category() -> None:
@@ -115,4 +115,13 @@ def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_with
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name=""))
 
     assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
-    assert client.calls == [("search_tv", "掩耳盗邻", "2026")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "")]
+
+
+def test_tmdb_provider_search_cache_key_ignores_year_for_season_marked_tv_titles() -> None:
+    provider = TMDBProvider(FakeTMDBClient())
+
+    assert provider.search_cache_key(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧")) == (
+        "掩耳盗邻",
+        "",
+    )

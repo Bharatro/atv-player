@@ -365,6 +365,13 @@ class AppCoordinator(QObject):
             ).strip()
             return stripped or text
 
+        def _title_has_season_marker(value: object) -> bool:
+            return re.search(
+                r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|\bS\d+\b)",
+                str(value or "").strip(),
+                re.IGNORECASE,
+            ) is not None
+
         def _extract_season_number(value: object) -> int | None:
             text = str(value or "")
             for pattern in (
@@ -419,9 +426,10 @@ class AppCoordinator(QObject):
                 default_season = _guess_season_number(session_vod)
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
-                search_results = list(tmdb_client.search_tv(search_title, year=year))
+                search_year = "" if _title_has_season_marker(session_vod.vod_name) else year
+                search_results = list(tmdb_client.search_tv(search_title, year=search_year))
                 if not search_results and search_title != session_vod.vod_name:
-                    search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=year))
+                    search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=search_year))
                 if not search_results:
                     return None
                 normalized_title = _normalize_title(search_title)
@@ -430,10 +438,7 @@ class AppCoordinator(QObject):
                     candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
                     if not candidate_title:
                         continue
-                    candidate_year = str(candidate.get("first_air_date") or "").strip()[:4]
                     if _normalize_title(candidate_title) != normalized_title:
-                        continue
-                    if year and candidate_year and candidate_year != year:
                         continue
                     matched = candidate
                     break
