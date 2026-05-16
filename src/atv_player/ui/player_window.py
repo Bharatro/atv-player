@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.metadata.models import MetadataQuery
 from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
@@ -268,6 +269,12 @@ class _MetadataHydrationSignals(QObject):
     failed = Signal(int, str)
 
 
+class _MetadataScrapeSignals(QObject):
+    search_succeeded = Signal(int, object)
+    apply_succeeded = Signal(int, object, object)
+    failed = Signal(int, str)
+
+
 class _EpisodeTitleEnhancementSignals(QObject):
     succeeded = Signal(int, object)
     failed = Signal(int, str)
@@ -424,6 +431,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
         self._metadata_request_id = 0
+        self._metadata_scrape_request_id = 0
         self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
@@ -499,6 +507,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_hydration_signals = _MetadataHydrationSignals()
         self._connect_async_signal(self._metadata_hydration_signals.succeeded, self._handle_metadata_hydration_succeeded)
         self._connect_async_signal(self._metadata_hydration_signals.failed, self._handle_metadata_hydration_failed)
+        self._metadata_scrape_signals = _MetadataScrapeSignals()
+        self._connect_async_signal(
+            self._metadata_scrape_signals.search_succeeded,
+            self._handle_metadata_scrape_search_succeeded,
+        )
+        self._connect_async_signal(
+            self._metadata_scrape_signals.apply_succeeded,
+            self._handle_metadata_scrape_apply_succeeded,
+        )
+        self._connect_async_signal(self._metadata_scrape_signals.failed, self._handle_metadata_scrape_failed)
         self._episode_title_enhancement_signals = _EpisodeTitleEnhancementSignals()
         self._connect_async_signal(
             self._episode_title_enhancement_signals.succeeded,
@@ -4658,6 +4676,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         provider_column.addWidget(QLabel("搜索来源", dialog))
         self._metadata_scrape_provider_combo = QComboBox(dialog)
         self._metadata_scrape_provider_combo.addItem("全部", "")
+        self._metadata_scrape_provider_combo.addItem("本地豆瓣", "local_douban")
+        self._metadata_scrape_provider_combo.addItem("TMDB", "tmdb")
+        self._metadata_scrape_provider_combo.addItem("alist-tvbox豆瓣", "remote_douban")
+        self._metadata_scrape_provider_combo.addItem("豆瓣", "douban")
+        self._metadata_scrape_provider_combo.addItem("插件", "plugin")
         provider_column.addWidget(self._metadata_scrape_provider_combo)
 
         search_row.addLayout(title_column, 2)
@@ -4684,6 +4707,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         actions.addWidget(self._metadata_scrape_apply_button)
         layout.addLayout(actions)
 
+        self._metadata_scrape_rerun_button.clicked.connect(self._rerun_metadata_scrape_search)
+        self._metadata_scrape_reset_button.clicked.connect(self._reset_metadata_scrape_search_query)
+        self._metadata_scrape_apply_button.clicked.connect(self._apply_selected_metadata_scrape_result)
+        self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
+
         self._metadata_scrape_dialog = dialog
         return dialog
 
@@ -4702,6 +4730,152 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _metadata_scrape_provider_label(self, provider_key: str) -> str:
+        return "全部" if not provider_key else _metadata_provider_label(provider_key)
+
+    def _populate_metadata_scrape_groups(self, groups) -> None:
+        if self._metadata_scrape_group_list is None:
+            return
+        self._metadata_scrape_groups = list(groups)
+        self._metadata_scrape_group_list.clear()
+        for group in self._metadata_scrape_groups:
+            self._metadata_scrape_group_list.addItem(f"{group.provider_label} ({len(group.items)})")
+        if self._metadata_scrape_groups:
+            first_non_empty = next(
+                (index for index, group in enumerate(self._metadata_scrape_groups) if group.items),
+                0,
+            )
+            self._metadata_scrape_group_list.setCurrentRow(first_non_empty)
+
+    def _populate_metadata_scrape_results(self, group_index: int) -> None:
+        if self._metadata_scrape_result_list is None:
+            return
+        self._metadata_scrape_result_list.clear()
+        if group_index < 0 or group_index >= len(self._metadata_scrape_groups):
+            return
+        group = self._metadata_scrape_groups[group_index]
+        for candidate in group.items:
+            label = candidate.title if not candidate.year else f"{candidate.title} ({candidate.year})"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, candidate)
+            self._metadata_scrape_result_list.addItem(item)
+        if self._metadata_scrape_result_list.count():
+            self._metadata_scrape_result_list.setCurrentRow(0)
+
+    def _rerun_metadata_scrape_search(self) -> None:
+        if (
+            self.session is None
+            or self.session.metadata_scrape_service is None
+            or self._metadata_scrape_title_edit is None
+            or self._metadata_scrape_year_edit is None
+            or self._metadata_scrape_provider_combo is None
+            or self._metadata_scrape_status_label is None
+        ):
+            return
+        title = self._metadata_scrape_title_edit.text().strip()
+        year = self._metadata_scrape_year_edit.text().strip()
+        if not title:
+            self._metadata_scrape_status_label.setText("当前条目缺少标题")
+            return
+        provider_filter = str(self._metadata_scrape_provider_combo.currentData() or "")
+        self._metadata_scrape_status_label.setText(
+            f"刮削搜索中（{self._metadata_scrape_provider_label(provider_filter)}）..."
+        )
+        self._metadata_scrape_request_id += 1
+        request_id = self._metadata_scrape_request_id
+        service = self.session.metadata_scrape_service
+
+        def run() -> None:
+            try:
+                groups = service.search(MetadataQuery(title=title, year=year), provider_filter=provider_filter)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._metadata_scrape_signals.failed.emit(request_id, f"刮削搜索失败: {exc}")
+                return
+            if self._is_window_alive():
+                self._metadata_scrape_signals.search_succeeded.emit(request_id, groups)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _reset_metadata_scrape_search_query(self) -> None:
+        if self._metadata_scrape_title_edit is not None:
+            self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
+        if self._metadata_scrape_year_edit is not None:
+            self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
+        self._rerun_metadata_scrape_search()
+
+    def _selected_metadata_scrape_candidate(self):
+        if self._metadata_scrape_result_list is None:
+            return None
+        current_item = self._metadata_scrape_result_list.currentItem()
+        if current_item is None:
+            return None
+        return current_item.data(Qt.ItemDataRole.UserRole)
+
+    def _apply_selected_metadata_scrape_result(self) -> None:
+        if self.session is None or self.session.metadata_scrape_service is None:
+            return
+        candidate = self._selected_metadata_scrape_candidate()
+        if candidate is None:
+            return
+        self._metadata_request_id += 1
+        request_id = self._metadata_request_id
+        service = self.session.metadata_scrape_service
+        current_vod = self.session.vod
+
+        def run() -> None:
+            try:
+                updated_vod = service.apply(current_vod, candidate)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._metadata_scrape_signals.failed.emit(request_id, f"刮削应用失败: {exc}")
+                return
+            if self._is_window_alive():
+                self._metadata_scrape_signals.apply_succeeded.emit(request_id, updated_vod, candidate)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_metadata_scrape_search_succeeded(self, request_id: int, groups) -> None:
+        if request_id != self._metadata_scrape_request_id:
+            return
+        self._populate_metadata_scrape_groups(groups)
+        if self._metadata_scrape_group_list is not None:
+            self._populate_metadata_scrape_results(self._metadata_scrape_group_list.currentRow())
+        if self._metadata_scrape_status_label is not None:
+            self._metadata_scrape_status_label.setText("")
+
+    def _handle_metadata_scrape_apply_succeeded(self, request_id: int, updated_vod: VodItem, candidate) -> None:
+        if request_id != self._metadata_scrape_request_id or self.session is None:
+            return
+        previous_vod = self.session.vod
+        self.session.vod = updated_vod
+        bindings = self.session.metadata_binding_repository
+        if bindings is not None and hasattr(bindings, "save"):
+            bindings.save(
+                previous_vod.vod_name,
+                previous_vod.vod_year,
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                matched_title=candidate.title,
+                matched_year=candidate.year,
+            )
+        metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
+        self._render_poster()
+        self._render_metadata()
+        self._render_detail_fields()
+        self._refresh_window_title()
+        if metadata_log:
+            self._append_log(metadata_log)
+        self._append_log(f"已绑定手动刮削结果: {candidate.title} ({candidate.provider_label})")
+        if self._metadata_scrape_status_label is not None:
+            self._metadata_scrape_status_label.setText("")
+
+    def _handle_metadata_scrape_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._metadata_scrape_request_id:
+            return
+        if self._metadata_scrape_status_label is not None:
+            self._metadata_scrape_status_label.setText(message)
 
     def _ensure_danmaku_source_dialog(self) -> QDialog:
         if self._danmaku_source_dialog is not None:
