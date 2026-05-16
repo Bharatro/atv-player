@@ -142,8 +142,21 @@ class TencentMetadataProvider:
             "actors": self._string_list(video_info.get("actors")),
             "genres": self._genres(video_info),
             "site_name": self._site_name(video_info),
+            "episode_sites": self._episode_sites(video_info),
+            "play_sites": self._play_sites(video_info),
             "provider_id": self._provider_id(video_info, doc),
         }
+
+    def _episode_sites(self, video_info: dict) -> list[dict]:
+        return self._site_list(video_info.get("episodeSites"))
+
+    def _play_sites(self, video_info: dict) -> list[dict]:
+        return self._site_list(video_info.get("playSites"))
+
+    def _site_list(self, payload: object) -> list[dict]:
+        if not isinstance(payload, list):
+            return []
+        return [dict(site) for site in payload if isinstance(site, dict)]
 
     def _provider_id(self, video_info: dict, doc: dict) -> str:
         for site_key in ("playSites", "episodeSites"):
