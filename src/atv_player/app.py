@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 import gc
 import inspect
 import threading
 import time
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
+from atv_player.episode_titles import apply_episode_title_map, playlist_has_title_variants, seed_original_titles
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
@@ -37,9 +40,9 @@ from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.metadata.providers.remote_douban import RemoteDoubanProvider
-from atv_player.metadata.providers.tmdb import TMDBProvider
+from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
-from atv_player.models import AppConfig, LiveEpgConfig
+from atv_player.models import AppConfig, LiveEpgConfig, VodItem
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
@@ -339,6 +342,97 @@ class AppCoordinator(QObject):
 
         return factory
 
+    def _build_episode_title_enhancer_factory(self, api_client: ApiClient):
+        del api_client
+
+        def _normalize_title(value: object) -> str:
+            return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+        def _guess_season_number(vod: VodItem) -> int:
+            for value in (vod.vod_name, vod.vod_remarks, vod.category_name):
+                text = str(value or "")
+                match = re.search(r"第\s*0*(\d{1,2})\s*季", text, re.IGNORECASE)
+                if match is not None:
+                    return max(1, int(match.group(1)))
+                match = re.search(r"\bS(?:eason)?\s*0*(\d{1,2})\b", text, re.IGNORECASE)
+                if match is not None:
+                    return max(1, int(match.group(1)))
+            return 1
+
+        def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
+            del request, source_key, raw_detail
+            if source_kind != "plugin" or vod is None:
+                return None
+            config = self.repo.load_config()
+            if not config.metadata_enhancement_enabled:
+                return None
+            if not config.episode_title_enhancement_enabled:
+                return None
+            if not config.metadata_tmdb_api_key.strip():
+                return None
+            query = MetadataContext(vod=vod, source_kind=source_kind).to_query()
+            if infer_tmdb_media_type(query) == "movie":
+                return None
+            tmdb_client = TMDBClient(api_key=config.metadata_tmdb_api_key)
+
+            def enhance(session) -> list | None:
+                session_vod = getattr(session, "vod", None) or vod
+                current_playlist = list(getattr(session, "playlist", []) or [])
+                if not current_playlist:
+                    return None
+                playlist = seed_original_titles([replace(item) for item in current_playlist])
+                year = str(getattr(session_vod, "vod_year", "") or "").strip()
+                search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=year))
+                if not search_results:
+                    return None
+                normalized_title = _normalize_title(session_vod.vod_name)
+                matched = None
+                for candidate in search_results:
+                    candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
+                    if not candidate_title:
+                        continue
+                    candidate_year = str(candidate.get("first_air_date") or "").strip()[:4]
+                    if _normalize_title(candidate_title) != normalized_title:
+                        continue
+                    if year and candidate_year and candidate_year != year:
+                        continue
+                    matched = candidate
+                    break
+                if matched is None:
+                    matched = search_results[0]
+                tmdb_id = str(matched.get("id") or "").strip()
+                if not tmdb_id:
+                    return None
+                season_detail = tmdb_client.get_tv_season_detail(tmdb_id, _guess_season_number(session_vod))
+                episodes = season_detail.get("episodes")
+                if not isinstance(episodes, list):
+                    return None
+                titles_by_episode: dict[int, str] = {}
+                for episode in episodes:
+                    if not isinstance(episode, dict):
+                        continue
+                    try:
+                        episode_number = int(episode.get("episode_number") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    episode_title = str(episode.get("name") or "").strip()
+                    if episode_number <= 0 or not episode_title:
+                        continue
+                    titles_by_episode[episode_number] = f"第{episode_number}集 {episode_title}"
+                if not titles_by_episode:
+                    return None
+                apply_episode_title_map(
+                    playlist,
+                    titles_by_episode,
+                    source="tmdb",
+                    source_priority=["plugin", "iqiyi", "tencent", "bilibili", "tmdb"],
+                )
+                return playlist if playlist_has_title_variants(playlist) else None
+
+            return enhance
+
+        return factory
+
     def _show_login(self, error_message: str = "") -> LoginWindow:
         logger.info("Show login window has_error=%s", bool(error_message))
         self._close_api_client()
@@ -416,7 +510,9 @@ class AppCoordinator(QObject):
         self._close_api_client()
         self._api_client = self._build_api_client()
         metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
+        episode_title_enhancer_factory = self._build_episode_title_enhancer_factory(self._api_client)
         setattr(self._plugin_manager, "_metadata_hydrator_factory", metadata_hydrator_factory)
+        setattr(self._plugin_manager, "_episode_title_enhancer_factory", episode_title_enhancer_factory)
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)

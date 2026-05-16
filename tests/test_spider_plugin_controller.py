@@ -5518,6 +5518,14 @@ def test_spider_plugin_request_disables_metadata_hydrator_when_plugin_danmaku_is
     assert request.metadata_hydrator is None
 
 
+def test_spider_plugin_request_seeds_original_titles_for_playlist_items() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+
+    assert [item.original_title for item in request.playlist] == ["第1集", "第2集"]
+
+
 def test_plugin_metadata_provider_maps_custom_metadata_payload() -> None:
     payload = {
         "id": "plugin:1",

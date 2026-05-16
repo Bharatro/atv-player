@@ -3288,6 +3288,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             detail_action_runner=request.detail_action_runner,
             detail_field_runner=request.detail_field_runner,
             metadata_hydrator=request.metadata_hydrator,
+            episode_title_enhancer=request.episode_title_enhancer,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,

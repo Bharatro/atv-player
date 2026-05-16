@@ -436,6 +436,7 @@ class FakePlayerController:
         detail_action_runner=None,
         detail_field_runner=None,
         metadata_hydrator=None,
+        episode_title_enhancer=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -462,6 +463,7 @@ class FakePlayerController:
             "detail_action_runner": detail_action_runner,
             "detail_field_runner": detail_field_runner,
             "metadata_hydrator": metadata_hydrator,
+            "episode_title_enhancer": episode_title_enhancer,
             "danmaku_controller": danmaku_controller,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
@@ -3909,6 +3911,84 @@ def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) 
 
     assert captured["window_kwargs"]["metadata_hydrator_factory"] is marker
     assert plugin_manager._metadata_hydrator_factory is marker
+
+
+def test_app_coordinator_show_main_wires_episode_title_enhancer_factory(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    captured: dict[str, object] = {}
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured["window_kwargs"] = kwargs
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    marker = object()
+    plugin_manager = SimpleNamespace(
+        load_enabled_plugins=lambda drive_detail_loader=None, offline_download_detail_loader=None: [],
+        _episode_title_enhancer_factory=None,
+    )
+    coordinator._plugin_manager = plugin_manager
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+    monkeypatch.setattr(coordinator, "_start_live_background_refresh", lambda *args: None)
+    monkeypatch.setattr(coordinator, "_build_episode_title_enhancer_factory", lambda api_client: marker, raising=False)
+
+    coordinator._show_main()
+
+    assert plugin_manager._episode_title_enhancer_factory is marker
+
+
+def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb_key_are_enabled(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(source_kind="plugin", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert callable(enhance)
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:

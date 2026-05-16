@@ -28,6 +28,7 @@ from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
+from atv_player.episode_titles import seed_original_titles
 from atv_player.models import (
     CategoryFilter,
     CategoryFilterOption,
@@ -575,6 +576,7 @@ class SpiderPluginController:
         danmaku_preference_store=None,
         base_url_loader: Callable[[], str] | None = None,
         metadata_hydrator_factory: Callable[..., object] | None = None,
+        episode_title_enhancer_factory: Callable[..., object] | None = None,
     ) -> None:
         self.uses_result_length_for_pagination = True
         self._spider = spider
@@ -589,6 +591,7 @@ class SpiderPluginController:
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._base_url_loader = base_url_loader
         self._metadata_hydrator_factory = metadata_hydrator_factory
+        self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
@@ -795,7 +798,7 @@ class SpiderPluginController:
                     )
                 )
             if playlist:
-                playlists.append(_mark_short_bare_numeric_playlist(playlist))
+                playlists.append(seed_original_titles(_mark_short_bare_numeric_playlist(playlist)))
         return playlists
 
     def _build_grouped_play_item(self, detail: VodItem, raw_media: Mapping[object, object]) -> PlayItem | None:
@@ -809,6 +812,7 @@ class SpiderPluginController:
         return PlayItem(
             title=title,
             url=raw_url if is_media_url else "",
+            original_title=title,
             media_title=detail.vod_name,
             path=detail.vod_id if is_drive_link else "",
             vod_id="" if is_media_url else raw_url,
@@ -841,7 +845,7 @@ class SpiderPluginController:
                 item = self._build_grouped_play_item(detail, raw_media)
                 if item is None:
                     continue
-                playlist = [item]
+                playlist = seed_original_titles([item])
                 playlists.append(playlist)
                 sources.append(PlaybackSource(label=item.title, playlist=playlist))
             if sources:
@@ -872,7 +876,7 @@ class SpiderPluginController:
         resolved_media_title = media_title.strip() or detail.vod_name
         resolved_category_name = detail.category_name or category_name
         if detail.items:
-            return _mark_short_bare_numeric_playlist([
+            return seed_original_titles(_mark_short_bare_numeric_playlist([
                 PlayItem(
                     title=item.title,
                     url=item.url,
@@ -888,9 +892,9 @@ class SpiderPluginController:
                 )
                 for index, item in enumerate(detail.items)
                 if item.url
-            ])
+            ]))
         playlist = build_detail_playlist(detail)
-        return _mark_short_bare_numeric_playlist([
+        return seed_original_titles(_mark_short_bare_numeric_playlist([
             PlayItem(
                 title=item.title,
                 url=item.url,
@@ -906,7 +910,7 @@ class SpiderPluginController:
             )
             for index, item in enumerate(playlist)
             if item.url and not _looks_like_drive_share_link(item.url)
-        ])
+        ]))
 
     def _resolve_folder_like_detail(self, item: PlayItem) -> VodItem | None:
         if not item.vod_id or self._drive_detail_loader is None:
@@ -925,7 +929,7 @@ class SpiderPluginController:
     ) -> list[PlayItem]:
         playlist = build_detail_playlist(detail)
         resolved_media_title = media_title.strip() or detail.vod_name
-        return _mark_short_bare_numeric_playlist([
+        return seed_original_titles(_mark_short_bare_numeric_playlist([
             PlayItem(
                 title=item.title,
                 url=item.url,
@@ -941,7 +945,7 @@ class SpiderPluginController:
             )
             for index, item in enumerate(playlist)
             if item.url or item.vod_id
-        ])
+        ]))
 
     def _apply_single_offline_download_item(self, current_item: PlayItem, replacement: PlayItem) -> None:
         current_item.vod_id = replacement.vod_id
@@ -1899,6 +1903,14 @@ class SpiderPluginController:
                 vod=detail,
                 raw_detail=raw_detail,
             )
+        episode_title_enhancer = None
+        if self._episode_title_enhancer_factory is not None and self._danmaku_enabled:
+            episode_title_enhancer = self._episode_title_enhancer_factory(
+                source_kind="plugin",
+                source_key=self._plugin_name,
+                vod=detail,
+                raw_detail=raw_detail,
+            )
 
         return OpenPlayerRequest(
             vod=detail,
@@ -1917,6 +1929,7 @@ class SpiderPluginController:
             async_playback_loader=True,
             detail_action_runner=detail_action_runner,
             metadata_hydrator=metadata_hydrator,
+            episode_title_enhancer=episode_title_enhancer,
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,

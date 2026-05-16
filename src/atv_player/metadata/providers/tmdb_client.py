@@ -65,3 +65,6 @@ class TMDBClient:
             append_to_response="external_ids,images,alternative_titles,aggregate_credits",
         )
         return self._with_image_urls(payload)
+
+    def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, Any]:
+        return self._request(f"/tv/{tmdb_id}/season/{season_number}")
