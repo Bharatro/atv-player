@@ -1449,6 +1449,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._render_detail_actions()
+        self.session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
 
     def _start_playback_loader(
@@ -2686,6 +2687,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._render_playlist_source_combos()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self.session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
         try:
             self._load_current_item(previous_index=previous_index)

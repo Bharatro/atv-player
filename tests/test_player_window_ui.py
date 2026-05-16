@@ -12632,6 +12632,83 @@ def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late
     assert window.current_index == 0
 
 
+def test_player_window_async_route_replacement_restarts_episode_title_enhancement(qtbot) -> None:
+    ready = threading.Event()
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    replacement = [
+        PlayItem(title="01(2.49 GB)", url="http://m/1.mp4", vod_id="ep1", play_source="百度"),
+        PlayItem(title="02(2.51 GB)", url="http://m/2.mp4", vod_id="ep2", play_source="百度"),
+    ]
+    enhancement_inputs: list[list[str]] = []
+
+    def load_item(item: PlayItem):
+        assert item.title == "百度"
+        assert ready.wait(timeout=1)
+        return PlaybackLoadResult(replacement_playlist=replacement, replacement_start_index=0)
+
+    def enhance(session: PlayerSession):
+        titles = [item.title for item in session.playlist]
+        enhancement_inputs.append(titles)
+        if titles == ["01(2.49 GB)", "02(2.51 GB)"]:
+            return [
+                PlayItem(
+                    title=session.playlist[0].title,
+                    url=session.playlist[0].url,
+                    vod_id=session.playlist[0].vod_id,
+                    play_source=session.playlist[0].play_source,
+                    original_title="01(2.49 GB)",
+                    episode_display_title="第1集 超能路人甲",
+                    episode_title_source="tmdb",
+                ),
+                PlayItem(
+                    title=session.playlist[1].title,
+                    url=session.playlist[1].url,
+                    vod_id=session.playlist[1].vod_id,
+                    play_source=session.playlist[1].play_source,
+                    original_title="02(2.51 GB)",
+                    episode_display_title="第2集 超能路人甲",
+                    episode_title_source="tmdb",
+                ),
+            ]
+        return None
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="超能路人甲"),
+        playlist=[PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/abc", play_source="百度")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=load_item,
+        async_playback_loader=True,
+        episode_title_enhancer=enhance,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.playlist.count() == 2, timeout=1000)
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 超能路人甲", timeout=1000)
+
+    assert enhancement_inputs[0] == ["百度"]
+    assert enhancement_inputs[-1] == ["01(2.49 GB)", "02(2.51 GB)"]
+
+
 def test_player_window_ignores_stale_metadata_hydration_results(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
