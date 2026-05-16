@@ -384,6 +384,27 @@ def test_settings_repository_round_trip_persists_metadata_enhancement_toggle(tmp
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_episode_title_enhancement_toggle(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        base_url="http://127.0.0.1:4567",
+        username="alice",
+        token="token-123",
+        vod_token="vod-123",
+        episode_title_enhancement_enabled=False,
+        metadata_tmdb_api_key="tmdb-demo-key",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.episode_title_enhancement_enabled is False
+    assert saved.metadata_tmdb_api_key == "tmdb-demo-key"
+    assert saved == config
+
+
 def test_settings_repository_migrates_missing_metadata_credential_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
@@ -535,6 +556,84 @@ def test_settings_repository_migrates_missing_metadata_enhancement_column(tmp_pa
     config = repo.load_config()
 
     assert config.metadata_enhancement_enabled is True
+
+
+def test_settings_repository_migrates_missing_episode_title_enhancement_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                last_path TEXT NOT NULL,
+                last_active_window TEXT NOT NULL DEFAULT 'main',
+                last_playback_source TEXT NOT NULL DEFAULT 'browse',
+                last_playback_source_key TEXT NOT NULL DEFAULT '',
+                last_playback_mode TEXT NOT NULL DEFAULT '',
+                last_playback_path TEXT NOT NULL DEFAULT '',
+                last_playback_vod_id TEXT NOT NULL DEFAULT '',
+                last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
+                last_player_paused INTEGER NOT NULL DEFAULT 0,
+                player_volume INTEGER NOT NULL DEFAULT 100,
+                player_muted INTEGER NOT NULL DEFAULT 0,
+                player_wide_mode INTEGER NOT NULL DEFAULT 0,
+                player_log_visible INTEGER NOT NULL DEFAULT 1,
+                preferred_parse_key TEXT NOT NULL DEFAULT '',
+                preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
+                preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
+                preferred_danmaku_render_mode TEXT NOT NULL DEFAULT 'static',
+                preferred_danmaku_color_mode TEXT NOT NULL DEFAULT 'source',
+                preferred_danmaku_uniform_color TEXT NOT NULL DEFAULT '#FFFFFF',
+                preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top',
+                preferred_danmaku_scroll_speed REAL NOT NULL DEFAULT 1.0,
+                preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32,
+                main_window_geometry BLOB,
+                player_window_geometry BLOB,
+                player_main_splitter_state BLOB,
+                browse_content_splitter_state BLOB,
+                last_selected_tab TEXT NOT NULL DEFAULT 'douban',
+                last_selected_category_tab TEXT NOT NULL DEFAULT '',
+                last_selected_category_id TEXT NOT NULL DEFAULT '',
+                global_search_history TEXT NOT NULL DEFAULT '[]',
+                global_search_hot_source TEXT NOT NULL DEFAULT '360'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, metadata_enhancement_enabled,
+                metadata_douban_cookie, metadata_tmdb_api_key, last_path, last_active_window,
+                last_playback_source, last_playback_source_key, last_playback_mode, last_playback_path,
+                last_playback_vod_id, last_playback_clicked_vod_id, last_player_paused,
+                player_volume, player_muted, player_wide_mode, player_log_visible,
+                preferred_parse_key, preferred_danmaku_enabled, preferred_danmaku_line_count,
+                preferred_danmaku_render_mode, preferred_danmaku_color_mode,
+                preferred_danmaku_uniform_color, preferred_danmaku_position_preset,
+                preferred_danmaku_scroll_speed, preferred_danmaku_font_size,
+                main_window_geometry, player_window_geometry, player_main_splitter_state,
+                browse_content_splitter_state, last_selected_tab, last_selected_category_tab,
+                last_selected_category_id, global_search_history, global_search_hot_source
+            )
+            VALUES (
+                1, 'http://127.0.0.1:4567', '', '', '', 1, '', '', '/', 'main', 'browse', '', '', '', '', '',
+                0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
+                NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
+            )
+            """
+        )
+
+    repo = SettingsRepository(db_path)
+    config = repo.load_config()
+
+    assert config.episode_title_enhancement_enabled is True
 
 
 def test_settings_repository_migrates_missing_global_search_hot_source_column(tmp_path: Path) -> None:
