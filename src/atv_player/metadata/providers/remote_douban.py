@@ -19,7 +19,7 @@ def _normalize_search_title(title: object) -> str:
 
 
 class LocalDoubanProvider:
-    name = "remote_douban"
+    name = "local_douban"
 
     def __init__(self, api_client) -> None:
         self._api_client = api_client

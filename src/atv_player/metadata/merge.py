@@ -5,16 +5,16 @@ from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
-    "overview": ["local_douban", "remote_douban", "douban", "tmdb", "plugin"],
-    "rating": ["local_douban", "remote_douban", "douban", "tmdb", "plugin"],
-    "poster": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "year": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "actors": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "directors": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "genres": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "country": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "language": ["tmdb", "local_douban", "remote_douban", "douban", "plugin"],
-    "douban_id": ["local_douban", "remote_douban", "douban", "plugin"],
+    "overview": ["official_douban", "local_douban", "douban", "tmdb", "plugin"],
+    "rating": ["official_douban", "local_douban", "douban", "tmdb", "plugin"],
+    "poster": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "year": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "actors": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "directors": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "genres": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "country": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "language": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "douban_id": ["official_douban", "local_douban", "douban", "plugin"],
 }
 
 
