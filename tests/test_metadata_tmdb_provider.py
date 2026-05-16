@@ -8,6 +8,7 @@ class FakeTMDBClient:
         self.tv_search_results: list[dict] = []
         self.movie_detail: dict = {}
         self.tv_detail: dict = {}
+        self.tv_season_detail: dict = {}
         self.calls: list[tuple[str, str, str]] = []
 
     def search_movie(self, title: str, year: str = "") -> list[dict]:
@@ -25,6 +26,10 @@ class FakeTMDBClient:
     def get_tv_detail(self, tmdb_id: str | int) -> dict:
         self.calls.append(("get_tv_detail", str(tmdb_id), ""))
         return dict(self.tv_detail)
+
+    def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict:
+        self.calls.append(("get_tv_season_detail", str(tmdb_id), str(season_number)))
+        return dict(self.tv_season_detail)
 
 
 def test_infer_tmdb_media_type_uses_category_name() -> None:
@@ -68,7 +73,15 @@ def test_tmdb_provider_strips_season_suffix_from_tv_search_title() -> None:
 
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2025", category_name="电视剧"))
 
-    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:2",
+            title="掩耳盗邻",
+            year="2025",
+            raw={"season_number": 2},
+        )
+    ]
     assert client.calls == [("search_tv", "掩耳盗邻", "")]
 
 
@@ -88,9 +101,10 @@ def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_m
     assert matches == [
         MetadataMatch(
             provider="tmdb",
-            provider_id="tv:314",
+            provider_id="tv:314:season:1",
             title="A Knight of the Seven Kingdoms: The Hedge Knight",
             year="2025",
+            raw={"season_number": 1},
         )
     ]
     assert client.calls == [("search_tv", "七王国的骑士", "")]
@@ -103,7 +117,15 @@ def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_fir
 
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧"))
 
-    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:2",
+            title="掩耳盗邻",
+            year="2025",
+            raw={"season_number": 2},
+        )
+    ]
     assert client.calls == [("search_tv", "掩耳盗邻", "")]
 
 
@@ -114,7 +136,15 @@ def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_with
 
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name=""))
 
-    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:2",
+            title="掩耳盗邻",
+            year="2025",
+            raw={"season_number": 2},
+        )
+    ]
     assert client.calls == [("search_tv", "掩耳盗邻", "")]
 
 
@@ -135,3 +165,39 @@ def test_tmdb_provider_does_not_fallback_to_raw_season_title_search() -> None:
 
     assert matches == []
     assert client.calls == [("search_tv", "掩耳盗邻", "")]
+
+
+def test_tmdb_provider_get_detail_uses_tv_season_overview_when_provider_id_contains_season() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "黑袍纠察队",
+        "overview": "剧集总简介",
+        "first_air_date": "2019-01-01",
+        "genres": [{"name": "剧情"}],
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {"imdb_id": "tt1190634"},
+    }
+    client.tv_season_detail = {
+        "season_number": 5,
+        "overview": "第五季简介",
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:5",
+            title="黑袍纠察队",
+            year="2019",
+            raw={"season_number": 5},
+        )
+    )
+
+    assert record.title == "黑袍纠察队"
+    assert record.overview == "第五季简介"
+    assert client.calls == [
+        ("get_tv_detail", "42", ""),
+        ("get_tv_season_detail", "42", "5"),
+    ]

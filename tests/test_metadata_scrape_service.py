@@ -161,3 +161,31 @@ def test_metadata_scrape_service_apply_replaces_all_metadata_fields_from_selecte
     assert updated.vod_remarks == ""
     assert updated.dbid == 0
     assert [(field.label, field.value) for field in updated.detail_fields] == [("TMDB ID", "1")]
+
+
+def test_metadata_scrape_service_apply_uses_distinct_tmdb_tv_season_cache_keys(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42:season:5",
+            title="黑袍纠察队",
+            overview="第五季简介",
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    updated = service.apply(
+        VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_content="旧简介"),
+        MetadataScrapeCandidate(
+            provider="tmdb",
+            provider_label="TMDB",
+            provider_id="tv:42:season:5",
+            title="黑袍纠察队",
+            year="2019",
+        ),
+    )
+
+    assert updated.vod_content == "第五季简介"
+    assert provider.detail_calls[0].provider_id == "tv:42:season:5"

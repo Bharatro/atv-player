@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
 
@@ -11,6 +12,22 @@ def _title_has_season_marker(value: object) -> bool:
         str(value or "").strip(),
         re.IGNORECASE,
     ) is not None
+
+
+def _provider_id_with_season(media_type: str, provider_id: str, title: str) -> str:
+    if media_type != "tv":
+        return provider_id
+    season_number = extract_season_number(title)
+    if season_number is None:
+        return provider_id
+    return f"{provider_id}:season:{season_number}"
+
+
+def _season_number_from_provider_id(provider_id: str) -> tuple[str, int | None]:
+    match = re.match(r"^(.*):season:(\d+)$", str(provider_id or "").strip())
+    if match is None:
+        return str(provider_id or "").strip(), None
+    return match.group(1), int(match.group(2))
 
 
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
@@ -96,6 +113,7 @@ class TMDBProvider:
         item: dict[str, object],
         title: str,
         year: str,
+        query_title: str,
     ) -> MetadataMatch | None:
         item_title = str(item.get("title") or item.get("name") or "").strip()
         normalized_title = _normalize_title(title)
@@ -113,11 +131,13 @@ class TMDBProvider:
         provider_id = str(item.get("id") or "").strip()
         if not provider_id:
             return None
+        season_number = extract_season_number(query_title) if media_type == "tv" else None
         return MetadataMatch(
             provider=self.name,
-            provider_id=f"{media_type}:{provider_id}",
+            provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, query_title)}",
             title=item_title,
             year=item_year,
+            raw={"season_number": season_number} if season_number is not None else {},
         )
 
     def _search_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
@@ -131,7 +151,7 @@ class TMDBProvider:
         fallback_matches: list[MetadataMatch] = []
         for item in payload:
             normalized_item = dict(item)
-            match = self._match_from_payload(media_type, normalized_item, search_title, candidate.year)
+            match = self._match_from_payload(media_type, normalized_item, search_title, candidate.year, candidate.title)
             if match is not None:
                 matches.append(match)
                 continue
@@ -151,9 +171,14 @@ class TMDBProvider:
             fallback_matches.append(
                 MetadataMatch(
                     provider=self.name,
-                    provider_id=f"{media_type}:{provider_id}",
+                    provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, candidate.title)}",
                     title=item_title,
                     year=item_year,
+                    raw=(
+                        {"season_number": extract_season_number(candidate.title)}
+                        if media_type == "tv" and extract_season_number(candidate.title) is not None
+                        else {}
+                    ),
                 )
             )
         return matches or fallback_matches[:1]
@@ -172,11 +197,16 @@ class TMDBProvider:
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         media_type, provider_id = str(match.provider_id).split(":", 1)
+        provider_id, season_number = _season_number_from_provider_id(provider_id)
         payload = (
             self._client.get_movie_detail(provider_id)
             if media_type == "movie"
             else self._client.get_tv_detail(provider_id)
         )
+        season_overview = ""
+        if media_type == "tv" and season_number is not None:
+            season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
+            season_overview = str(season_payload.get("overview") or "").strip()
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []
@@ -215,7 +245,7 @@ class TMDBProvider:
             year=_extract_year(payload, media_type=media_type) or str(match.year or "").strip(),
             poster=str(payload.get("poster_url") or "").strip(),
             backdrop=str(payload.get("backdrop_url") or "").strip(),
-            overview=str(payload.get("overview") or "").strip(),
+            overview=season_overview or str(payload.get("overview") or "").strip(),
             rating=str(payload.get("vote_average") or "").strip(),
             actors=_split_names(actors),
             directors=_split_names(directors),
