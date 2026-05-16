@@ -265,11 +265,72 @@ def test_metadata_scrape_service_auto_search_prefers_bilibili_over_tmdb_tencent_
     assert updated[0].episode_display_title == "第1集 天黑别出门"
 
 
+def test_metadata_scrape_service_auto_search_prefers_bangumi_over_bilibili_tmdb_tencent_and_iqiyi(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bangumi = FakeProvider(
+        "bangumi",
+        matches=[
+            MetadataMatch(
+                provider="bangumi",
+                provider_id="subject:1",
+                title="牧神记",
+                year="2024",
+            )
+        ],
+    )
+    bilibili = FakeProvider(
+        "bilibili",
+        matches=[
+            MetadataMatch(
+                provider="bilibili",
+                provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+                title="牧神记",
+                year="2024",
+                raw={"eps": [{"title": "1", "index_title": "1", "long_title": "旧B站标题"}]},
+            )
+        ],
+    )
+    bangumi._client = type(
+        "BangumiClient",
+        (),
+        {"get_episodes": lambda self, subject_id: [{"sort": 1, "type": 0, "name_cn": "天黑别出门"}]},
+    )()
+    service = MetadataScrapeService(cache=cache, providers=[bangumi, bilibili, FakeProvider("tmdb"), FakeProvider("tencent"), FakeProvider("iqiyi")])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bangumi"
+    assert updated[0].episode_display_title == "第1集 天黑别出门"
+
+
 def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bilibili"), FakeProvider("tencent")])
 
     assert service.provider_options() == [("bilibili", "B站"), ("tencent", "腾讯")]
+
+
+def test_metadata_scrape_service_provider_options_hide_bangumi_for_non_anime_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bangumi"), FakeProvider("tmdb")])
+
+    options = service.provider_options(MetadataQuery(title="深空彼岸", category_name="电影"))
+
+    assert ("bangumi", "Bangumi") not in options
+    assert ("tmdb", "TMDB") in options
+
+
+def test_metadata_scrape_service_provider_options_show_bangumi_for_anime_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bangumi"), FakeProvider("tmdb")])
+
+    options = service.provider_options(MetadataQuery(title="牧神记", category_name="动漫"))
+
+    assert ("bangumi", "Bangumi") in options
 
 
 def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_path: Path) -> None:

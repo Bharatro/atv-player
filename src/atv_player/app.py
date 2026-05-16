@@ -49,6 +49,8 @@ from atv_player.metadata import (
     MetadataHydrator,
     build_provider_episode_playlist,
 )
+from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
+from atv_player.metadata.providers.bangumi_client import BangumiClient
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
 from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
 from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
@@ -366,6 +368,7 @@ class AppCoordinator(QObject):
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
+        providers.append(BangumiMetadataProvider(BangumiClient(access_token=config.metadata_bangumi_access_token)))
         providers.append(BilibiliMetadataProvider())
         providers.append(IqiyiMetadataProvider())
         providers.append(TencentMetadataProvider())

@@ -12,9 +12,11 @@ from atv_player.metadata.episode_title_resolver import (
 )
 from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.metadata.providers.bangumi import is_bangumi_anime_query
 from atv_player.models import PlayItem, VodItem
 
 _PROVIDER_LABELS = {
+    "bangumi": "Bangumi",
     "bilibili": "B站",
     "tencent": "腾讯",
     "official_douban": "豆瓣官方",
@@ -70,6 +72,13 @@ def _parse_tmdb_provider_id(provider_id: str) -> tuple[str, int | None]:
     return tmdb_id, season_number
 
 
+def _parse_bangumi_provider_id(provider_id: str) -> str:
+    text = str(provider_id or "").strip()
+    if not text.startswith("subject:"):
+        return ""
+    return text.split(":", 1)[1].strip()
+
+
 class MetadataScrapeService:
     def __init__(self, cache: MetadataCache, providers: list[object]) -> None:
         self._cache = cache
@@ -79,8 +88,13 @@ class MetadataScrapeService:
     def _provider_label(self, provider_name: str) -> str:
         return _PROVIDER_LABELS.get(provider_name, provider_name)
 
-    def provider_options(self) -> list[tuple[str, str]]:
-        return [(provider.name, self._provider_label(provider.name)) for provider in self._providers]
+    def provider_options(self, query: MetadataQuery | None = None) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        for provider in self._providers:
+            if provider.name == "bangumi" and query is not None and not is_bangumi_anime_query(query):
+                continue
+            options.append((provider.name, self._provider_label(provider.name)))
+        return options
 
     def _candidate_from_match(self, match: MetadataMatch) -> MetadataScrapeCandidate:
         return MetadataScrapeCandidate(
@@ -126,6 +140,28 @@ class MetadataScrapeService:
             return replace(candidate, raw=raw)
         return candidate
 
+    def _hydrate_bangumi_episode_candidate(self, candidate: object) -> object:
+        provider = str(getattr(candidate, "provider", "") or "").strip()
+        if provider != "bangumi":
+            return candidate
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        if isinstance(raw.get("episodes"), list):
+            return candidate
+        bangumi_provider = self._providers_by_name.get("bangumi")
+        client = getattr(bangumi_provider, "_client", None)
+        if client is None or not hasattr(client, "get_episodes"):
+            return candidate
+        subject_id = _parse_bangumi_provider_id(str(getattr(candidate, "provider_id", "") or "").strip())
+        if not subject_id:
+            return candidate
+        episodes = client.get_episodes(subject_id) or []
+        if not isinstance(episodes, list) or not episodes:
+            return candidate
+        raw["episodes"] = episodes
+        if isinstance(candidate, MetadataScrapeCandidate | MetadataMatch):
+            return replace(candidate, raw=raw)
+        return candidate
+
     def search(self, query: MetadataQuery, provider_filter: str = "") -> list[MetadataScrapeGroup]:
         query = replace(query, title=normalize_metadata_scrape_title(query.title))
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
@@ -158,13 +194,14 @@ class MetadataScrapeService:
     ) -> list[PlayItem] | None:
         ordered_candidates: list[object] = []
         if preferred_candidate is not None:
-            ordered_candidates.append(self._hydrate_tmdb_episode_candidate(vod, preferred_candidate))
+            enriched = self._hydrate_tmdb_episode_candidate(vod, preferred_candidate)
+            ordered_candidates.append(self._hydrate_bangumi_episode_candidate(enriched))
         query = MetadataQuery(
             title=str(vod.vod_name or "").strip(),
             year=str(vod.vod_year or "").strip(),
             category_name=str(vod.category_name or "").strip(),
         )
-        for provider_name in ("bilibili", "tmdb", "tencent", "iqiyi"):
+        for provider_name in ("bangumi", "bilibili", "tmdb", "tencent", "iqiyi"):
             if preferred_candidate is not None and provider_name == preferred_candidate.provider:
                 continue
             provider = self._providers_by_name.get(provider_name)
@@ -175,7 +212,8 @@ class MetadataScrapeService:
             except Exception:
                 continue
             if matches:
-                ordered_candidates.append(self._hydrate_tmdb_episode_candidate(vod, matches[0]))
+                enriched = self._hydrate_tmdb_episode_candidate(vod, matches[0])
+                ordered_candidates.append(self._hydrate_bangumi_episode_candidate(enriched))
         for candidate in ordered_candidates:
             updated = build_provider_episode_playlist(
                 vod,

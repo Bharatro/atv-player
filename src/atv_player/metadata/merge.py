@@ -5,27 +5,28 @@ from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
-    "overview": ["iqiyi", "official_douban", "local_douban", "douban", "tmdb", "plugin"],
-    "rating": ["official_douban", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
-    "poster": ["tmdb", "official_douban", "local_douban", "douban", "plugin", "iqiyi"],
-    "year": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "actors": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "directors": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "genres": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "country": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "language": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "overview": ["iqiyi", "official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin"],
+    "rating": ["official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
+    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi"],
+    "year": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "actors": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "directors": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "genres": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "country": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "language": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
     "douban_id": ["official_douban", "local_douban", "douban", "plugin", "iqiyi"],
 }
 
 _OVERVIEW_PROVIDER_PRIORITY = {
     "iqiyi": 0,
     "official_douban": 1,
-    "tmdb_season": 2,
-    "douban": 3,
-    "tmdb": 4,
-    "local_douban": 5,
-    "remote_douban": 5,
-    "plugin": 6,
+    "bangumi": 2,
+    "tmdb_season": 3,
+    "douban": 4,
+    "tmdb": 5,
+    "local_douban": 6,
+    "remote_douban": 6,
+    "plugin": 7,
 }
 
 
