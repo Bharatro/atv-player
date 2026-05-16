@@ -5850,6 +5850,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         dialog.close()
 
+    def _close_metadata_scrape_dialog(self) -> None:
+        dialog = self._metadata_scrape_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog.close()
+
     def _dismiss_escape_dialog(self) -> bool:
         dialog = self._danmaku_settings_dialog
         if dialog is not None and dialog.isVisible():
@@ -5858,6 +5864,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog = self._danmaku_source_dialog
         if dialog is not None and dialog.isVisible():
             self._close_danmaku_source_dialog()
+            return True
+        dialog = self._metadata_scrape_dialog
+        if dialog is not None and dialog.isVisible():
+            self._close_metadata_scrape_dialog()
             return True
         if self.help_dialog is not None and self.help_dialog.isVisible():
             self._close_help_dialog()
@@ -5868,6 +5878,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._close_help_dialog()
         self._close_danmaku_source_dialog()
         self._close_danmaku_settings_dialog()
+        self._close_metadata_scrape_dialog()
         self._close_video_context_menu()
         self._remember_restore_state()
         try:
