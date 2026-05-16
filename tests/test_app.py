@@ -3970,22 +3970,55 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
             del transport
             seen_cookies.append(cookie)
 
-    class RecordingDoubanProvider:
-        name = "douban"
+    class RecordingLocalDoubanProvider:
+        name = "local_douban"
 
-        def __init__(self, api_client, cache=None, local_client=None) -> None:
-            captured["api_client"] = api_client
-            captured["cache_root"] = getattr(cache, "_root", None)
+        def __init__(self, local_client) -> None:
             captured["local_client"] = local_client
 
         def can_enrich(self, _context) -> bool:
-            return True
+            return False
 
         def search(self, _candidate):
             return []
 
         def get_detail(self, _match):
-            raise AssertionError("detail should not be called in this wiring test")
+            raise AssertionError("not used")
+
+    class RecordingRemoteDoubanProvider:
+        name = "remote_douban"
+
+        def __init__(self, api_client) -> None:
+            captured["api_client"] = api_client
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
+
+    class RecordingTMDBClient:
+        def __init__(self, api_key: str, transport=None) -> None:
+            del transport
+            captured["tmdb_api_key"] = api_key
+
+    class RecordingTMDBProvider:
+        name = "tmdb"
+
+        def __init__(self, client) -> None:
+            captured["tmdb_client"] = client
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
 
     seen_cookies: list[str] = []
     captured: dict[str, object] = {}
@@ -3994,7 +4027,10 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
     api_client = object()
 
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
-    monkeypatch.setattr(app_module, "DoubanProvider", RecordingDoubanProvider)
+    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingLocalDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "RemoteDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
+    monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
     factory = coordinator._build_metadata_hydrator_factory(api_client)
@@ -4007,7 +4043,8 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
 
     assert seen_cookies == ["bid=first;", "bid=second;"]
     assert captured["api_client"] is api_client
-    assert captured["cache_root"] == (tmp_path / "app-cache" / "metadata")
+    assert captured["tmdb_api_key"] == "tmdb-key"
+    assert "tmdb_client" in captured
 
 
 def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_path) -> None:

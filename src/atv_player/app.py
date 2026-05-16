@@ -33,9 +33,12 @@ from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.metadata import MetadataCache, MetadataContext, MetadataHydrator
-from atv_player.metadata.providers.douban import DoubanProvider
+from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
+from atv_player.metadata.providers.remote_douban import RemoteDoubanProvider
+from atv_player.metadata.providers.tmdb import TMDBProvider
+from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.models import AppConfig, LiveEpgConfig
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
@@ -311,7 +314,10 @@ class AppCoordinator(QObject):
                 plugin_payload = self._build_plugin_metadata_payload(raw_detail)
                 if plugin_payload is not None:
                     providers.append(CustomPluginProvider(plugin_payload))
-            providers.append(DoubanProvider(api_client, cache, local_client=local_douban_client))
+            providers.append(LocalDoubanProvider(local_douban_client))
+            if config.metadata_tmdb_api_key:
+                providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
+            providers.append(RemoteDoubanProvider(api_client))
             hydrator = MetadataHydrator(cache=cache, providers=providers)
 
             def hydrate(session) -> object:
