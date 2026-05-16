@@ -403,6 +403,97 @@ def test_player_window_metadata_scrape_search_passes_category_and_type_into_quer
     assert service.search_queries == [("动漫", "动画")]
 
 
+def test_player_window_metadata_scrape_dialog_clears_previous_results_when_reopened_for_another_item(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=service,
+        )
+    )
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._close_metadata_scrape_dialog()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v2", vod_name="牧神记", vod_year="2024"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/2.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=service,
+        )
+    )
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "牧神记"
+    assert window._metadata_scrape_year_edit.text() == "2024"
+    assert window._metadata_scrape_group_list.count() == 0
+    assert window._metadata_scrape_result_list.count() == 0
+    assert window._metadata_scrape_groups == []
+    assert window._metadata_scrape_status_label.text() == ""
+
+
+def test_player_window_metadata_scrape_dialog_ignores_inflight_previous_search_when_reopened(qtbot) -> None:
+    class BlockingMetadataScrapeService(FakeMetadataScrapeService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.search_started = threading.Event()
+            self.release_search = threading.Event()
+
+        def search(self, query, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+            self.search_started.set()
+            assert self.release_search.wait(timeout=1)
+            return super().search(query, provider_filter=provider_filter)
+
+    blocking_service = BlockingMetadataScrapeService()
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=blocking_service,
+        )
+    )
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    assert blocking_service.search_started.wait(timeout=1)
+
+    window._close_metadata_scrape_dialog()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v2", vod_name="牧神记", vod_year="2024"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/2.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    window._open_metadata_scrape_dialog()
+
+    blocking_service.release_search.set()
+    qtbot.wait(100)
+
+    assert window._metadata_scrape_title_edit.text() == "牧神记"
+    assert window._metadata_scrape_result_list.count() == 0
+    assert window._metadata_scrape_group_list.count() == 0
+
+
 class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []

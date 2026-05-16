@@ -4803,6 +4803,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._metadata_scrape_binding_year = self._metadata_scrape_default_year
         dialog = self._ensure_metadata_scrape_dialog()
         self._populate_metadata_scrape_provider_options()
+        self._clear_metadata_scrape_search_results()
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
         if self._metadata_scrape_year_edit is not None:
@@ -4815,6 +4816,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _metadata_scrape_provider_label(self, provider_key: str) -> str:
         return "全部" if not provider_key else _metadata_provider_label(provider_key)
+
+    def _clear_metadata_scrape_search_results(self) -> None:
+        self._metadata_scrape_request_id += 1
+        self._metadata_scrape_groups = []
+        if self._metadata_scrape_group_list is not None:
+            self._metadata_scrape_group_list.clear()
+        if self._metadata_scrape_result_list is not None:
+            self._metadata_scrape_result_list.clear()
+        if self._metadata_scrape_status_label is not None:
+            self._metadata_scrape_status_label.setText("")
 
     def _populate_metadata_scrape_groups(self, groups) -> None:
         if self._metadata_scrape_group_list is None:
