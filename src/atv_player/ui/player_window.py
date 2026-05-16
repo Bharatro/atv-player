@@ -511,6 +511,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_restore_main_scale: int | None = None
         self._danmaku_restore_secondary_position: int | None = None
         self._danmaku_restore_secondary_scale: int | None = None
+        self._active_danmaku_source_task_item_ids: set[int] = set()
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals()
         self._connect_async_signal(self._poster_load_signals.loaded, self._handle_poster_load_finished)
@@ -1544,6 +1545,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             error_prefix="恢复缓存弹幕失败",
             task=lambda: switch_source(current_item, selected_url),
             configure_danmaku_on_success=True,
+            debug_label="缓存恢复",
         )
 
     def _video_load(
@@ -2501,6 +2503,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]
+        self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
         if not current_item.url:
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
@@ -2623,6 +2626,39 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 return index
         return max(0, min(fallback_index, len(updated_playlist) - 1))
 
+    def _merge_episode_title_enhancement_item(self, existing_item: PlayItem, updated_item: PlayItem) -> PlayItem:
+        existing_item.title = updated_item.title
+        existing_item.original_title = updated_item.original_title
+        existing_item.episode_display_title = updated_item.episode_display_title
+        existing_item.episode_title_source = updated_item.episode_title_source
+        if updated_item.media_title:
+            existing_item.media_title = updated_item.media_title
+        if updated_item.type_name:
+            existing_item.type_name = updated_item.type_name
+        if updated_item.category_name:
+            existing_item.category_name = updated_item.category_name
+        return existing_item
+
+    def _merge_episode_title_enhancement_playlist(
+        self,
+        updated_playlist: list[PlayItem],
+    ) -> list[PlayItem]:
+        if self.session is None:
+            return list(updated_playlist)
+        existing_items_by_identity = {
+            self._playlist_identity_key(item): item
+            for item in self.session.playlist
+        }
+        merged_playlist: list[PlayItem] = []
+        for updated_item in updated_playlist:
+            identity = self._playlist_identity_key(updated_item)
+            existing_item = existing_items_by_identity.get(identity)
+            if existing_item is None:
+                merged_playlist.append(updated_item)
+                continue
+            merged_playlist.append(self._merge_episode_title_enhancement_item(existing_item, updated_item))
+        return merged_playlist
+
     def _handle_episode_title_enhancement_succeeded(self, request_id: int, updated_playlist: list[PlayItem] | None) -> None:
         if request_id != self._episode_title_request_id:
             return
@@ -2633,7 +2669,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is not pending_session:
             return
         current_item = self.session.playlist[self.current_index] if 0 <= self.current_index < len(self.session.playlist) else None
-        self.session.playlist = list(updated_playlist)
+        self.session.playlist = self._merge_episode_title_enhancement_playlist(updated_playlist)
         self.current_index = self._find_updated_playlist_index(self.session.playlist, current_item, self.current_index)
         self.session.start_index = self.current_index
         if 0 <= self.session.playlist_index < len(self.session.playlists):
@@ -4020,6 +4056,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_track_id = track_id
         self._danmaku_active = True
         self._danmaku_line_count = line_count
+        self._append_log(f"已加载弹幕文件: {subtitle_path}")
 
     def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
         self._danmaku_loading_slot = "primary"
@@ -5337,14 +5374,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_danmaku_source_dialog_actions(current_item)
         self._refresh_danmaku_source_entry_points()
 
+    def _has_active_danmaku_source_task(self, item: PlayItem | None) -> bool:
+        return item is not None and id(item) in self._active_danmaku_source_task_item_ids
+
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
-            self._danmaku_source_rerun_button.setEnabled(bool(current_item is not None and not current_item.danmaku_pending))
+            self._danmaku_source_rerun_button.setEnabled(
+                bool(current_item is not None and not self._has_active_danmaku_source_task(current_item))
+            )
         if self._danmaku_source_switch_button is not None:
             self._danmaku_source_switch_button.setEnabled(
                 bool(
                     current_item is not None
-                    and not current_item.danmaku_pending
+                    and not self._has_active_danmaku_source_task(current_item)
                     and any(group.options for group in current_item.danmaku_candidates)
                 )
             )
@@ -5358,9 +5400,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         error_prefix: str,
         task: Callable[[], None],
         configure_danmaku_on_success: bool = False,
+        debug_label: str = "",
     ) -> None:
-        if item.danmaku_pending:
+        item_id = id(item)
+        if item_id in self._active_danmaku_source_task_item_ids:
             return
+        self._active_danmaku_source_task_item_ids.add(item_id)
+        was_pending_before_start = item.danmaku_pending
         item.danmaku_pending = True
         self._refresh_danmaku_source_dialog_from_item(item)
 
@@ -5370,7 +5416,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 task()
                 succeeded = True
             finally:
-                item.danmaku_pending = False
+                self._active_danmaku_source_task_item_ids.discard(item_id)
+                item.danmaku_pending = was_pending_before_start
                 item.danmaku_status_text = ""
                 self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
 
@@ -5432,6 +5479,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 media_duration_seconds=media_duration_seconds,
                 provider_filter=current_item.danmaku_search_provider,
             ),
+            debug_label="重新搜索",
         )
 
     def _reset_current_item_danmaku_search_query(self) -> None:
@@ -5458,14 +5506,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 media_duration_seconds=media_duration_seconds,
                 provider_filter=current_item.danmaku_search_provider,
             ),
+            debug_label="恢复默认搜索词",
         )
 
     def _switch_current_item_danmaku_source(self) -> None:
         if self.session is None or self.session.danmaku_controller is None:
             return
         current_item = self.session.playlist[self.current_index]
-        if current_item.danmaku_pending:
-            return
         selected_url = self._selected_danmaku_source_url_from_dialog()
         if not selected_url:
             return
@@ -5476,6 +5523,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             error_prefix="弹幕切换失败",
             task=lambda: self.session.danmaku_controller.switch_danmaku_source(current_item, selected_url),
             configure_danmaku_on_success=True,
+            debug_label="手动切换",
         )
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:

@@ -1321,20 +1321,33 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
     assert session.danmaku_controller.calls == [(None, None, None, session.playlist)]
 
 
-def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pending(qtbot) -> None:
+def test_player_window_allows_rerun_danmaku_search_while_current_item_is_pending(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[str | None] = []
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
 
         def refresh_danmaku_sources(
             self,
             item: PlayItem,
             query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
             force_refresh: bool = False,
             media_duration_seconds: int = 0,
             provider_filter: str = "",
         ) -> None:
-            self.calls.append(query_override)
+            self.calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    playlist,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
 
     item = PlayItem(
         title="第1集",
@@ -1358,18 +1371,16 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
     window._open_danmaku_source_dialog()
 
     assert window._danmaku_source_rerun_button is not None
-    assert window._danmaku_source_rerun_button.isEnabled() is False
-
-    window._rerun_current_item_danmaku_search()
-    assert session.danmaku_controller.calls == []
-
-    item.danmaku_pending = False
-    window._refresh_danmaku_source_dialog_from_item(item)
-
     assert window._danmaku_source_rerun_button.isEnabled() is True
 
+    window._rerun_current_item_danmaku_search()
+    qtbot.waitUntil(
+        lambda: session.danmaku_controller.calls
+        == [(None, "", "", session.playlist, True, 0, "")]
+    )
 
-def test_player_window_disables_danmaku_source_switch_while_current_item_is_pending(qtbot) -> None:
+
+def test_player_window_allows_danmaku_source_switch_while_current_item_is_pending(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
             self.switch_calls: list[str] = []
@@ -1411,14 +1422,11 @@ def test_player_window_disables_danmaku_source_switch_while_current_item_is_pend
     window._open_danmaku_source_dialog()
 
     assert window._danmaku_source_switch_button is not None
-    assert window._danmaku_source_switch_button.isEnabled() is False
+    assert window._danmaku_source_switch_button.isEnabled() is True
 
     window._switch_current_item_danmaku_source()
 
-    assert controller.switch_calls == []
-    assert item.danmaku_status_text == ""
-    assert window._danmaku_source_status_label is not None
-    assert window._danmaku_source_status_label.text() == ""
+    qtbot.waitUntil(lambda: controller.switch_calls == ["https://v.qq.com/demo"])
 
 
 def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot) -> None:
@@ -11892,6 +11900,124 @@ def test_player_window_open_session_restores_cached_danmaku_via_controller_when_
     assert window.danmaku_combo.currentText() == "弹幕"
 
 
+def test_player_window_playback_loader_replacement_restores_cached_danmaku_for_current_item(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+            self.switch_calls: list[str] = []
+
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del playlist, media_duration_seconds
+            self.load_calls.append(item.title)
+            item.danmaku_search_title = "低智商犯罪"
+            item.danmaku_search_episode = "11集"
+            item.danmaku_search_query = "低智商犯罪 11集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="低智商犯罪 第11集", url="https://v.qq.com/ep11")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/ep11"
+            item.selected_danmaku_title = "低智商犯罪 第11集"
+            return True
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            self.switch_calls.append(page_url)
+            item.danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第十一集弹幕</d></i>'
+            return item.danmaku_xml
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    controller = FakeDanmakuController()
+
+    def playback_loader(item: PlayItem) -> PlaybackLoadResult:
+        assert item.title == "百度"
+        return PlaybackLoadResult(
+            replacement_playlist=[
+                PlayItem(
+                    title="11.mp4(1.21 GB)",
+                    url="http://m/11.mp4",
+                    media_title="低智商犯罪",
+                    play_source="百度",
+                )
+            ],
+            replacement_start_index=0,
+        )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="drive-1", vod_name="低智商犯罪"),
+        playlist=[PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/demo", media_title="低智商犯罪", play_source="百度")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=playback_loader,
+        async_playback_loader=True,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    assert controller.load_calls == ["11.mp4(1.21 GB)"]
+    assert controller.switch_calls == ["https://v.qq.com/ep11"]
+    assert "第十一集弹幕" in session.playlist[0].danmaku_xml
+    assert "缓存弹幕恢复命中: 11.mp4(1.21 GB) -> https://v.qq.com/ep11" in window.log_view.toPlainText()
+
+
 def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
@@ -12011,6 +12137,10 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert controller.load_calls[-1] == "第2集"
     assert controller.switch_calls == ["https://v.qq.com/ep2"]
     assert "第二集弹幕" in session.playlist[1].danmaku_xml
+    log_text = window.log_view.toPlainText()
+    assert "缓存弹幕恢复命中: 第2集 -> https://v.qq.com/ep2" in log_text
+    assert "弹幕任务开始: 缓存恢复 第2集" in log_text
+    assert "弹幕任务完成: 缓存恢复 第2集 success=True has_xml=True" in log_text
 
 
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
@@ -13675,6 +13805,63 @@ def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late
     qtbot.waitUntil(lambda: window.playlist_title_tabs.isHidden() is False, timeout=1000)
     assert window.playlist.item(0).text() == "第1集 星门初启"
     assert window.current_index == 0
+
+
+def test_player_window_async_episode_title_enhancer_preserves_existing_play_item_object(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    original_item = PlayItem(
+        title="11.mp4(1.21 GB)",
+        url="https://media.example/11.mp4",
+        vod_id="ep11",
+        path="/网盘剧集/11.mp4",
+        original_title="11.mp4(1.21 GB)",
+        play_source="百度",
+        media_title="低智商犯罪",
+        danmaku_pending=True,
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="drive-1", vod_name="低智商犯罪"),
+        playlist=[original_item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=lambda current_session: [
+            PlayItem(
+                title=current_session.playlist[0].title,
+                url=current_session.playlist[0].url,
+                vod_id=current_session.playlist[0].vod_id,
+                path=current_session.playlist[0].path,
+                original_title=current_session.playlist[0].original_title,
+                play_source=current_session.playlist[0].play_source,
+                media_title=current_session.playlist[0].media_title,
+                episode_display_title="第11集 真相逼近",
+                episode_title_source="tmdb",
+            )
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第11集 真相逼近", timeout=1000)
+    assert session.playlist[0] is original_item
+    assert session.playlist[0].danmaku_pending is True
+    assert session.playlist[0].episode_display_title == "第11集 真相逼近"
+    assert session.playlist[0].episode_title_source == "tmdb"
 
 
 def test_player_window_async_episode_title_enhancer_reorders_playlist_and_keeps_current_item_selected(qtbot) -> None:
