@@ -129,7 +129,6 @@ def test_iqiyi_metadata_provider_maps_movie_people_and_detail_fields() -> None:
     assert record.actors == ["金妮弗·古德温", "杰森·贝特曼"]
     assert record.genres == ["冒险", "动画", "喜剧"]
     assert record.detail_fields == [
-        {"label": "来源站点", "value": "爱奇艺"},
         {"label": "上映时间", "value": "2025-11-26"},
         {"label": "片长", "value": "01:43:26"},
     ]

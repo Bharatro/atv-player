@@ -104,7 +104,7 @@ def test_tencent_metadata_provider_search_keeps_only_datatype_2_and_omits_rating
     assert record.directors == ["赵聪"]
     assert record.actors == ["郭赫轩", "陈芷琰"]
     assert record.genres == ["少儿", "儿童剧", "情景喜剧"]
-    assert record.detail_fields == [{"label": "来源站点", "value": "腾讯视频"}]
+    assert record.detail_fields == []
 
 
 def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> None:
