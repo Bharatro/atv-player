@@ -33,6 +33,7 @@ class AdvancedSettingsDialog(QDialog):
 
         self.metadata_group = QGroupBox("元数据增强配置")
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
+        self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过本地豆瓣抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -41,11 +42,13 @@ class AdvancedSettingsDialog(QDialog):
         self.cancel_button = QPushButton("取消")
 
         self.metadata_enabled_checkbox.setChecked(config.metadata_enhancement_enabled)
+        self.episode_title_enhancement_checkbox.setChecked(config.episode_title_enhancement_enabled)
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
 
         metadata_layout = QFormLayout()
         metadata_layout.addRow(self.metadata_enabled_checkbox)
+        metadata_layout.addRow(self.episode_title_enhancement_checkbox)
         metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
         metadata_layout.addRow("TMDB API Key", self.tmdb_api_key_edit)
         self.metadata_group.setLayout(metadata_layout)
@@ -65,11 +68,13 @@ class AdvancedSettingsDialog(QDialog):
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
+        self.episode_title_enhancement_checkbox.setEnabled(enabled)
         self.douban_cookie_edit.setEnabled(enabled)
         self.tmdb_api_key_edit.setEnabled(enabled)
 
     def _save(self) -> None:
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
+        self._config.episode_title_enhancement_enabled = self.episode_title_enhancement_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._save_config()

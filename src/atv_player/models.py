@@ -17,6 +17,7 @@ class AppConfig:
     metadata_enhancement_enabled: bool = True
     metadata_douban_cookie: str = ""
     metadata_tmdb_api_key: str = ""
+    episode_title_enhancement_enabled: bool = False
     last_path: str = "/"
     last_active_window: str = "main"
     last_playback_source: str = "browse"
@@ -118,6 +119,9 @@ class PlaybackDetailField:
 class PlayItem:
     title: str
     url: str
+    original_title: str = ""
+    episode_display_title: str = ""
+    episode_title_source: str = ""
     original_url: str = ""
     video_cover_override: str = ""
     path: str = ""
@@ -395,6 +399,7 @@ class OpenPlayerRequest:
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
+    episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

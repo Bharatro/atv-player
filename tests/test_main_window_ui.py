@@ -3447,6 +3447,35 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_loads_episode_title_enhancement_checkbox(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        metadata_enhancement_enabled=True,
+        metadata_tmdb_api_key="tmdb-demo-key",
+        episode_title_enhancement_enabled=True,
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.episode_title_enhancement_checkbox.isChecked() is True
+    assert dialog.episode_title_enhancement_checkbox.isEnabled() is True
+
+
+def test_advanced_settings_dialog_saves_episode_title_enhancement_checkbox(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig(metadata_enhancement_enabled=True)
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.episode_title_enhancement_checkbox.setChecked(True)
+    dialog.save_button.click()
+
+    assert saved[-1].episode_title_enhancement_enabled is True
+
+
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
