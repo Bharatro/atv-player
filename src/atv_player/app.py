@@ -34,6 +34,7 @@ from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.metadata import MetadataCache, MetadataContext, MetadataHydrator
 from atv_player.metadata.providers.douban import DoubanProvider
+from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.models import AppConfig, LiveEpgConfig
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -301,12 +302,14 @@ class AppCoordinator(QObject):
             del request
             if vod is None or source_kind not in supported_sources:
                 return None
+            config = self.repo.load_config()
+            local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
             providers: list[object] = []
             if source_kind == "plugin":
                 plugin_payload = self._build_plugin_metadata_payload(raw_detail)
                 if plugin_payload is not None:
                     providers.append(CustomPluginProvider(plugin_payload))
-            providers.append(DoubanProvider(api_client, cache))
+            providers.append(DoubanProvider(api_client, cache, local_client=local_douban_client))
             hydrator = MetadataHydrator(cache=cache, providers=providers)
 
             def hydrate(session) -> object:

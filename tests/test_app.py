@@ -3957,6 +3957,59 @@ def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_r
     }
 
 
+def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypatch, tmp_path) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(metadata_douban_cookie="bid=first;", metadata_tmdb_api_key="tmdb-key")
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+    class RecordingLocalDoubanClient:
+        def __init__(self, cookie: str = "", transport=None) -> None:
+            del transport
+            seen_cookies.append(cookie)
+
+    class RecordingDoubanProvider:
+        name = "douban"
+
+        def __init__(self, api_client, cache=None, local_client=None) -> None:
+            captured["api_client"] = api_client
+            captured["cache_root"] = getattr(cache, "_root", None)
+            captured["local_client"] = local_client
+
+        def can_enrich(self, _context) -> bool:
+            return True
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("detail should not be called in this wiring test")
+
+    seen_cookies: list[str] = []
+    captured: dict[str, object] = {}
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    api_client = object()
+
+    monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
+    monkeypatch.setattr(app_module, "DoubanProvider", RecordingDoubanProvider)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_metadata_hydrator_factory(api_client)
+    hydrate = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+    assert callable(hydrate)
+
+    repo.config.metadata_douban_cookie = "bid=second;"
+    hydrate = factory(source_kind="browse", vod=VodItem(vod_id="v2", vod_name="牧神记"))
+    assert callable(hydrate)
+
+    assert seen_cookies == ["bid=first;", "bid=second;"]
+    assert captured["api_client"] is api_client
+    assert captured["cache_root"] == (tmp_path / "app-cache" / "metadata")
+
+
 def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:
     class RestoreBrowseController:
         def build_request_from_detail(self, vod_id: str):

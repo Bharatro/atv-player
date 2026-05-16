@@ -3348,6 +3348,40 @@ def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
     assert opened[0][2] is window
 
 
+def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeypatch) -> None:
+    config = AppConfig()
+    saved: list[tuple[str, str]] = []
+
+    class FakeDialog:
+        def __init__(self, config_arg, save_config, parent=None) -> None:
+            del parent
+            config_arg.metadata_douban_cookie = "bid=demo;"
+            config_arg.metadata_tmdb_api_key = "tmdb-key"
+            save_config()
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "AdvancedSettingsDialog", FakeDialog)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.append((config.metadata_douban_cookie, config.metadata_tmdb_api_key)),
+    )
+    qtbot.addWidget(window)
+
+    window._open_advanced_settings()
+
+    assert saved == [("bid=demo;", "tmdb-key")]
+
+
 def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
