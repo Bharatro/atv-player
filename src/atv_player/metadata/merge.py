@@ -5,26 +5,27 @@ from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
-    "overview": ["official_douban", "local_douban", "douban", "tmdb", "plugin"],
-    "rating": ["official_douban", "local_douban", "douban", "tmdb", "plugin"],
-    "poster": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "year": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "actors": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "directors": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "genres": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "country": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "language": ["tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "douban_id": ["official_douban", "local_douban", "douban", "plugin"],
+    "overview": ["iqiyi", "official_douban", "local_douban", "douban", "tmdb", "plugin"],
+    "rating": ["official_douban", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
+    "poster": ["tmdb", "official_douban", "local_douban", "douban", "plugin", "iqiyi"],
+    "year": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "actors": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "directors": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "genres": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "country": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "language": ["iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "douban_id": ["official_douban", "local_douban", "douban", "plugin", "iqiyi"],
 }
 
 _OVERVIEW_PROVIDER_PRIORITY = {
-    "official_douban": 0,
-    "tmdb_season": 1,
-    "douban": 2,
-    "tmdb": 3,
-    "local_douban": 4,
-    "remote_douban": 4,
-    "plugin": 5,
+    "iqiyi": 0,
+    "official_douban": 1,
+    "tmdb_season": 2,
+    "douban": 3,
+    "tmdb": 4,
+    "local_douban": 5,
+    "remote_douban": 5,
+    "plugin": 6,
 }
 
 
@@ -142,6 +143,57 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
                 seen_labels.add(label)
         vod.detail_fields = merged
         _set_field_source(vod, "detail_fields", record.provider)
+    return vod
+
+
+def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
+    if not vod.vod_name and record.title:
+        vod.vod_name = record.title
+    if not vod.vod_pic and record.poster:
+        vod.vod_pic = record.poster
+        _set_field_source(vod, "poster", record.provider)
+    if not vod.vod_year and record.year:
+        vod.vod_year = record.year
+        _set_field_source(vod, "year", record.provider)
+    if not vod.type_name and record.genres:
+        vod.type_name = " / ".join(record.genres)
+        _set_field_source(vod, "genres", record.provider)
+    if not vod.vod_area and record.country:
+        vod.vod_area = record.country
+        _set_field_source(vod, "country", record.provider)
+    if not vod.vod_lang and record.language:
+        vod.vod_lang = record.language
+        _set_field_source(vod, "language", record.provider)
+    if not vod.vod_director and record.directors:
+        vod.vod_director = ",".join(record.directors)
+        _set_field_source(vod, "directors", record.provider)
+    if not vod.vod_actor and record.actors:
+        vod.vod_actor = ",".join(record.actors)
+        _set_field_source(vod, "actors", record.provider)
+    cleaned_overview = clean_overview_text(record.overview)
+    if not vod.vod_content and cleaned_overview:
+        vod.vod_content = cleaned_overview
+        _set_field_source(vod, "overview", _overview_source_key(record.provider, record.provider_id))
+    if not vod.vod_remarks and record.rating:
+        vod.vod_remarks = record.rating
+        _set_field_source(vod, "rating", record.provider)
+    if not vod.dbid and record.douban_id:
+        vod.dbid = record.douban_id
+        _set_field_source(vod, "douban_id", record.provider)
+    detail_fields = _record_detail_fields(record)
+    if detail_fields:
+        existing_labels = {field.label for field in vod.detail_fields}
+        appended = False
+        for item in detail_fields:
+            label = str(item.get("label") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if not label or not value or label in existing_labels:
+                continue
+            vod.detail_fields.append(PlaybackDetailField(label=label, value=value))
+            existing_labels.add(label)
+            appended = True
+        if appended:
+            _set_field_source(vod, "detail_fields", record.provider)
     return vod
 
 

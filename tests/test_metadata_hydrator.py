@@ -103,8 +103,8 @@ def test_metadata_hydrator_skips_provider_detail_failure_and_keeps_existing_vod(
 
     assert updated.vod_name == "深空彼岸"
     assert updated.vod_content == "原始简介"
-    assert douban_provider.get_detail_calls == [
-        MetadataMatch(provider="douban", provider_id="35746415", title="深空彼岸")
+    assert [(item.provider, item.provider_id, item.title) for item in douban_provider.get_detail_calls] == [
+        ("douban", "35746415", "深空彼岸")
     ]
 
 
@@ -175,7 +175,7 @@ def test_metadata_hydrator_prefers_tmdb_season_over_local_douban_overview(tmp_pa
     assert updated.vod_content == "第五季简介"
 
 
-def test_metadata_hydrator_official_douban_overrides_tmdb_season_overview(tmp_path: Path) -> None:
+def test_metadata_hydrator_tmdb_season_primary_is_not_overridden_by_official_douban(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(
         "tmdb",
@@ -204,7 +204,7 @@ def test_metadata_hydrator_official_douban_overrides_tmdb_season_overview(tmp_pa
         )
     )
 
-    assert updated.vod_content == "豆瓣官方简介"
+    assert updated.vod_content == "第五季简介"
 
 
 def test_metadata_hydrator_non_season_tmdb_overview_still_loses_to_douban(tmp_path: Path) -> None:
@@ -382,3 +382,60 @@ def test_metadata_hydrator_deletes_invalid_manual_binding_and_falls_back_to_sear
 
     assert bindings.load("深空彼岸", "2026") is None
     assert updated.vod_name == "深空彼岸"
+
+
+def test_metadata_hydrator_uses_highest_scored_primary_match_and_only_fills_missing_fields_from_supplements(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="movie:404", title="错误结果", year="2026", score=0.1)],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:404",
+            poster="https://img.example/wrong-poster.jpg",
+            overview="错误简介",
+        ),
+    )
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(provider="iqiyi", provider_id="iqiyi:s1", title="剑来", year="2024", score=0.4),
+            MetadataMatch(provider="iqiyi", provider_id="iqiyi:s2", title="剑来 第二季", year="2025", score=1.2),
+        ],
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="iqiyi:s2",
+            overview="爱奇艺简介",
+            year="2025",
+            actors=["演员甲"],
+        ),
+    )
+    douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="357", title="剑来 第二季", year="2025", score=0.95)],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="357",
+            overview="豆瓣简介",
+            rating="8.8",
+            poster="https://img.example/right-poster.jpg",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, iqiyi, douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="剑来 第二季", vod_year="2025", category_name="动漫"),
+            source_kind="browse",
+        )
+    )
+
+    assert iqiyi.get_detail_calls[0].provider_id == "iqiyi:s2"
+    assert tmdb.get_detail_calls == []
+    assert updated.vod_content == "爱奇艺简介"
+    assert updated.vod_year == "2025"
+    assert updated.vod_actor == "演员甲"
+    assert updated.vod_pic == "https://img.example/right-poster.jpg"
+    assert updated.vod_remarks == "8.8"

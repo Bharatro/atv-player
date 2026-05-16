@@ -42,6 +42,7 @@ from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.metadata import MetadataBindingRepository, MetadataCache, MetadataContext, MetadataHydrator
+from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
 from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
@@ -328,6 +329,7 @@ class AppCoordinator(QObject):
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
+        providers.append(IqiyiMetadataProvider())
         if str(config.metadata_douban_cookie or "").strip():
             local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
             providers.append(OfficialDoubanProvider(local_douban_client))

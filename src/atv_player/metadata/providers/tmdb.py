@@ -137,6 +137,7 @@ class TMDBProvider:
             provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, query_title)}",
             title=item_title,
             year=item_year,
+            score=1.0,
             raw={"season_number": season_number} if season_number is not None else {},
         )
 
@@ -174,6 +175,7 @@ class TMDBProvider:
                     provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, candidate.title)}",
                     title=item_title,
                     year=item_year,
+                    score=0.55,
                     raw=(
                         {"season_number": extract_season_number(candidate.title)}
                         if media_type == "tv" and extract_season_number(candidate.title) is not None

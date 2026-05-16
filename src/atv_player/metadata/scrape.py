@@ -12,6 +12,7 @@ _PROVIDER_LABELS = {
     "official_douban": "豆瓣官方",
     "local_douban": "本地豆瓣",
     "douban": "豆瓣",
+    "iqiyi": "爱奇艺",
     "tmdb": "TMDB",
     "plugin": "插件",
 }
