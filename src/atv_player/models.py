@@ -390,6 +390,7 @@ class OpenPlayerRequest:
     async_playback_loader: bool = False
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
+    metadata_hydrator: Callable[[object], VodItem | None] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

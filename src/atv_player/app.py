@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import gc
 import inspect
 import threading
@@ -31,6 +32,9 @@ from atv_player.controllers.telegram_search_controller import TelegramSearchCont
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+from atv_player.metadata import MetadataCache, MetadataContext, MetadataHydrator
+from atv_player.metadata.providers.douban import DoubanProvider
+from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.models import AppConfig, LiveEpgConfig
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
@@ -247,6 +251,83 @@ class AppCoordinator(QObject):
         logger.info("Fetched and stored vod token")
         return vod_token
 
+    @staticmethod
+    def _metadata_has_value(value: object) -> bool:
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, tuple, dict, set)):
+            return bool(value)
+        return value is not None
+
+    def _build_plugin_metadata_payload(self, raw_detail: Mapping[str, object] | None) -> dict[str, object] | None:
+        if not isinstance(raw_detail, Mapping):
+            return None
+        payload: dict[str, object] = {}
+        for key in ("metadata", "meta"):
+            candidate = raw_detail.get(key)
+            if isinstance(candidate, Mapping):
+                payload.update({str(item_key): item_value for item_key, item_value in candidate.items()})
+                break
+        derived = {
+            "id": raw_detail.get("vod_id") or raw_detail.get("id"),
+            "title": raw_detail.get("vod_name") or raw_detail.get("title") or raw_detail.get("name"),
+            "overview": raw_detail.get("vod_content") or raw_detail.get("description") or raw_detail.get("intro"),
+            "rating": raw_detail.get("vod_remarks") or raw_detail.get("rating"),
+            "year": raw_detail.get("vod_year") or raw_detail.get("year"),
+            "poster": raw_detail.get("vod_pic") or raw_detail.get("poster") or raw_detail.get("cover"),
+            "actors": raw_detail.get("vod_actor") or raw_detail.get("actors"),
+            "country": raw_detail.get("vod_area") or raw_detail.get("country"),
+            "language": raw_detail.get("vod_lang") or raw_detail.get("language"),
+            "directors": raw_detail.get("vod_director") or raw_detail.get("directors") or raw_detail.get("director"),
+            "genre": raw_detail.get("type_name") or raw_detail.get("genre"),
+            "detail_fields": raw_detail.get("detail_fields") or raw_detail.get("ext"),
+            "imdb_id": raw_detail.get("imdb_id"),
+            "tmdb_id": raw_detail.get("tmdb_id"),
+        }
+        for key, value in derived.items():
+            if not self._metadata_has_value(payload.get(key)) and self._metadata_has_value(value):
+                payload[key] = value
+        if "detail_fields" in payload and not isinstance(payload["detail_fields"], list):
+            payload.pop("detail_fields", None)
+        if not any(self._metadata_has_value(value) for value in payload.values()):
+            return None
+        return payload
+
+    def _build_metadata_hydrator_factory(self, api_client: ApiClient):
+        cache = MetadataCache(app_cache_dir() / "metadata")
+        supported_sources = {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+
+        def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
+            del request
+            if vod is None or source_kind not in supported_sources:
+                return None
+            providers: list[object] = []
+            if source_kind == "plugin":
+                plugin_payload = self._build_plugin_metadata_payload(raw_detail)
+                if plugin_payload is not None:
+                    providers.append(CustomPluginProvider(plugin_payload))
+            providers.append(DoubanProvider(api_client, cache))
+            hydrator = MetadataHydrator(cache=cache, providers=providers)
+
+            def hydrate(session) -> object:
+                session_vod = getattr(session, "vod", None) or vod
+                playlist = list(getattr(session, "playlist", []) or [])
+                start_index = int(getattr(session, "start_index", 0) or 0)
+                current_item = playlist[start_index] if 0 <= start_index < len(playlist) else None
+                return hydrator.hydrate(
+                    MetadataContext(
+                        vod=session_vod,
+                        source_kind=source_kind,
+                        source_key=source_key,
+                        current_item=current_item,
+                        raw_detail=raw_detail,
+                    )
+                )
+
+            return hydrate
+
+        return factory
+
     def _show_login(self, error_message: str = "") -> LoginWindow:
         logger.info("Show login window has_error=%s", bool(error_message))
         self._close_api_client()
@@ -323,6 +404,8 @@ class AppCoordinator(QObject):
     def _show_main(self):
         self._close_api_client()
         self._api_client = self._build_api_client()
+        metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
+        setattr(self._plugin_manager, "_metadata_hydrator_factory", metadata_hydrator_factory)
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
@@ -458,6 +541,7 @@ class AppCoordinator(QObject):
             m3u8_ad_filter=self._m3u8_ad_filter,
             playback_parser_service=self._playback_parser_service,
             yt_dlp_service=self._yt_dlp_service,
+            metadata_hydrator_factory=metadata_hydrator_factory,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

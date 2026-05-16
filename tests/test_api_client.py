@@ -474,6 +474,52 @@ def test_api_client_lists_douban_items_with_filters() -> None:
     assert seen_queries == ["ac=gui&t=movie&pg=2&size=30&sc=6&status=1"]
 
 
+def test_metadata_douban_search_requests_backend_endpoint() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"items": []})
+
+    client = ApiClient(
+        "http://127.0.0.1:4567",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    payload = client.search_douban_metadata("深空彼岸", year="2026")
+
+    assert payload == {"items": []}
+    assert seen == {
+        "path": "/api/movies",
+        "query": "q=%E6%B7%B1%E7%A9%BA%E5%BD%BC%E5%B2%B8",
+    }
+
+
+def test_metadata_douban_detail_requests_backend_endpoint() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"dbid": 35746415})
+
+    client = ApiClient(
+        "http://127.0.0.1:4567",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    payload = client.get_douban_metadata_detail(35746415)
+
+    assert payload == {"dbid": 35746415}
+    assert seen == {
+        "path": "/api/movies/35746415",
+        "query": "",
+    }
+
+
 def test_api_client_lists_telegram_search_categories() -> None:
     seen = {"path": "", "query": ""}
 

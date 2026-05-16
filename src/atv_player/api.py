@@ -148,6 +148,13 @@ class ApiClient:
             params=params,
         )
 
+    def search_douban_metadata(self, title: str, year: str = "") -> dict[str, Any]:
+        del year
+        return self._request("GET", "/api/movies", params={"q": title})
+
+    def get_douban_metadata_detail(self, dbid: int | str) -> dict[str, Any]:
+        return self._request("GET", f"/api/movies/{dbid}")
+
     def list_telegram_search_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/tg-search/{self._vod_token}", params={"web": True})
 

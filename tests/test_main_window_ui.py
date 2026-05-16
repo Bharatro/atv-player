@@ -126,6 +126,9 @@ class FakePlayerController:
         clicked_index: int,
         playlists=None,
         playlist_index: int = 0,
+        source_groups=None,
+        source_group_index: int = 0,
+        source_index: int = 0,
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
@@ -134,6 +137,7 @@ class FakePlayerController:
         async_playback_loader=False,
         detail_action_runner=None,
         detail_field_runner=None,
+        metadata_hydrator=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -148,10 +152,14 @@ class FakePlayerController:
             "clicked_index": clicked_index,
             "playlists": playlists,
             "playlist_index": playlist_index,
+            "source_groups": source_groups,
+            "source_group_index": source_group_index,
+            "source_index": source_index,
             "restore_history": restore_history,
             "async_playback_loader": async_playback_loader,
             "detail_action_runner": detail_action_runner,
             "detail_field_runner": detail_field_runner,
+            "metadata_hydrator": metadata_hydrator,
             "danmaku_controller": danmaku_controller,
             "playback_history_loader": playback_history_loader,
             "playback_history_saver": playback_history_saver,
@@ -4175,3 +4183,28 @@ def test_main_window_ignores_async_restore_after_window_deletion(qtbot) -> None:
     qtbot.wait(100)
 
     assert destroyed["count"] == 1
+
+
+def test_main_window_prepares_metadata_hydrator_for_browse_request(qtbot) -> None:
+    marker = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **_: marker,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="v1", vod_name="Movie"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        clicked_index=0,
+        source_kind="browse",
+        source_mode="detail",
+        source_vod_id="v1",
+    )
+
+    prepared = window._prepare_request_for_open(request)
+
+    assert prepared.metadata_hydrator is marker

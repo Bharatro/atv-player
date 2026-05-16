@@ -43,6 +43,8 @@ class PlayerSession:
     async_playback_loader: bool = False
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
+    metadata_hydrator: Callable[[object], VodItem | None] | None = None
+    metadata_hydrated: bool = False
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
@@ -207,6 +209,7 @@ class PlayerController:
         async_playback_loader: bool = False,
         detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None,
         detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None,
+        metadata_hydrator: Callable[[object], VodItem | None] | None = None,
         danmaku_controller: object | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
@@ -271,6 +274,7 @@ class PlayerController:
             async_playback_loader=async_playback_loader,
             detail_action_runner=detail_action_runner,
             detail_field_runner=detail_field_runner,
+            metadata_hydrator=metadata_hydrator,
             danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,

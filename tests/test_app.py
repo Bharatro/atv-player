@@ -2,6 +2,7 @@ import os
 import httpx
 import threading
 import time
+from types import SimpleNamespace
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
@@ -424,6 +425,9 @@ class FakePlayerController:
         clicked_index: int,
         playlists=None,
         playlist_index: int = 0,
+        source_groups=None,
+        source_group_index: int = 0,
+        source_index: int = 0,
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
@@ -431,6 +435,7 @@ class FakePlayerController:
         playback_loader=None,
         detail_action_runner=None,
         detail_field_runner=None,
+        metadata_hydrator=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -446,6 +451,9 @@ class FakePlayerController:
             "clicked_index": clicked_index,
             "playlists": playlists,
             "playlist_index": playlist_index,
+            "source_groups": source_groups,
+            "source_group_index": source_group_index,
+            "source_index": source_index,
             "detail_resolver": detail_resolver,
             "resolved_vod_by_id": resolved_vod_by_id or {},
             "use_local_history": use_local_history,
@@ -453,6 +461,7 @@ class FakePlayerController:
             "playback_loader": playback_loader,
             "detail_action_runner": detail_action_runner,
             "detail_field_runner": detail_field_runner,
+            "metadata_hydrator": metadata_hydrator,
             "danmaku_controller": danmaku_controller,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
@@ -3839,6 +3848,113 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     assert callable(captured["bilibili_saver"])
     assert captured["window_kwargs"]["show_feiniu_tab"] is True
     assert captured["window_kwargs"]["show_bilibili_tab"] is True
+
+
+def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    captured: dict[str, object] = {}
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured["window_kwargs"] = kwargs
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    marker = object()
+    plugin_manager = SimpleNamespace(
+        load_enabled_plugins=lambda drive_detail_loader=None, offline_download_detail_loader=None: [],
+        _metadata_hydrator_factory=None,
+    )
+    coordinator._plugin_manager = plugin_manager
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+    monkeypatch.setattr(coordinator, "_start_live_background_refresh", lambda *args: None)
+    monkeypatch.setattr(coordinator, "_build_metadata_hydrator_factory", lambda api_client: marker, raising=False)
+
+    coordinator._show_main()
+
+    assert captured["window_kwargs"]["metadata_hydrator_factory"] is marker
+    assert plugin_manager._metadata_hydrator_factory is marker
+
+
+def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    coordinator = AppCoordinator(FakeRepo())
+
+    payload = coordinator._build_plugin_metadata_payload(
+        {
+            "metadata": {
+                "id": "plugin-meta-1",
+                "title": "自定义标题",
+                "overview": "自定义简介",
+                "rating": "8.8",
+            },
+            "vod_id": "detail-1",
+            "vod_name": "原始标题",
+            "vod_content": "原始简介",
+            "vod_remarks": "9.9",
+            "vod_year": "2026",
+            "vod_pic": "https://img.example/poster.jpg",
+            "vod_actor": "梁达伟,唐雅菁",
+            "vod_area": "中国大陆",
+            "vod_lang": "汉语普通话",
+            "vod_director": "周琛",
+            "type_name": "动画 / 科幻",
+            "ext": [{"label": "别名", "value": "深空彼岸"}],
+        }
+    )
+
+    assert payload == {
+        "id": "plugin-meta-1",
+        "title": "自定义标题",
+        "overview": "自定义简介",
+        "rating": "8.8",
+        "year": "2026",
+        "poster": "https://img.example/poster.jpg",
+        "actors": "梁达伟,唐雅菁",
+        "country": "中国大陆",
+        "language": "汉语普通话",
+        "directors": "周琛",
+        "genre": "动画 / 科幻",
+        "detail_fields": [{"label": "别名", "value": "深空彼岸"}],
+    }
 
 
 def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:

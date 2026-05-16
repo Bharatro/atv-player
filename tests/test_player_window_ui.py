@@ -12306,7 +12306,7 @@ def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_
     monkeypatch.setattr(
         window,
         "_start_playback_loader",
-        lambda previous_index, start_position_seconds, pause: (
+        lambda previous_index, start_position_seconds, pause, hydrate_only=False: (
             setattr(window, "_playback_loader_request_id", window._playback_loader_request_id + 1),
             setattr(
                 window,
@@ -12316,9 +12316,12 @@ def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_
                     previous_index=previous_index,
                     start_position_seconds=start_position_seconds,
                     pause=pause,
+                    hydrate_only=hydrate_only,
                 ),
             ),
-            window._append_log(f"正在加载播放地址: {window.session.playlist[window.current_index].title}"),
+            window._append_log(
+                f"{'正在刷新详情' if hydrate_only else '正在加载播放地址'}: {window.session.playlist[window.current_index].title}"
+            ),
         ),
     )
 
@@ -12394,6 +12397,103 @@ def test_player_window_ignores_stale_async_loader_result_after_switching_items(q
     assert window.current_index == 1
     assert window.playlist.item(1).text() == "第二集"
     assert "旧结果" not in window.windowTitle()
+
+
+def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloading_video(qtbot, monkeypatch) -> None:
+    poster_sources: list[tuple[str, str]] = []
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        poster_sources.append((target, source))
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", vod_id="ep1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=current_session.vod.vod_name,
+            vod_pic="https://img.example/poster.jpg",
+            vod_content="豆瓣简介",
+            vod_remarks="8.1",
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert window.video.load_calls == [("https://media.example/1.mp4", False, 0, {})]
+    assert "评分: 8.1" in window.metadata_view.toPlainText()
+    assert ("detail", "https://img.example/poster.jpg") in poster_sources
+
+
+def test_player_window_ignores_stale_metadata_hydration_results(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", vod_id="ep1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    def hydrate(current_session: PlayerSession) -> VodItem:
+        assert ready.wait(timeout=1)
+        return VodItem(vod_id=current_session.vod.vod_id, vod_name="旧结果", vod_content="旧简介")
+
+    session.metadata_hydrator = hydrate
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="v2", vod_name="新会话", vod_content="新简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/2.mp4", vod_id="ep2")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    ready.set()
+
+    qtbot.wait(100)
+    assert "旧简介" not in window.metadata_view.toPlainText()
 
 
 def test_player_window_resume_from_main_preserves_resume_offset_with_async_loader(qtbot) -> None:

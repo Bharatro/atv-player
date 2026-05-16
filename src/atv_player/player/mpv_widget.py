@@ -65,7 +65,7 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
     "cache-pause": "yes",
     "cache-pause-initial": "yes",
     "cache-pause-wait": 5,
-    "cache-secs": 120,
+    # "cache-secs": 120,
     "demuxer-readahead-secs": 120,
 }
 

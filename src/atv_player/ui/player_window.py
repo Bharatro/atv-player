@@ -203,6 +203,11 @@ class _PlaybackLoaderSignals(QObject):
     failed = Signal(int, str)
 
 
+class _MetadataHydrationSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
 class _DetailActionSignals(QObject):
     succeeded = Signal(int, object, object)
     failed = Signal(int, str)
@@ -353,11 +358,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._video_poster_request_id = 0
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
+        self._metadata_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
+        self._pending_metadata_session = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
@@ -409,6 +416,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._playback_loader_signals = _PlaybackLoaderSignals()
         self._connect_async_signal(self._playback_loader_signals.succeeded, self._handle_playback_loader_succeeded)
         self._connect_async_signal(self._playback_loader_signals.failed, self._handle_playback_loader_failed)
+        self._metadata_hydration_signals = _MetadataHydrationSignals()
+        self._connect_async_signal(self._metadata_hydration_signals.succeeded, self._handle_metadata_hydration_succeeded)
+        self._connect_async_signal(self._metadata_hydration_signals.failed, self._handle_metadata_hydration_failed)
         self._detail_action_signals = _DetailActionSignals()
         self._connect_async_signal(self._detail_action_signals.succeeded, self._handle_detail_action_succeeded)
         self._connect_async_signal(self._detail_action_signals.failed, self._handle_detail_action_failed)
@@ -1243,6 +1253,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._start_metadata_hydration()
         self._reset_log()
         self.current_speed = session.speed
         self.opening_spin.blockSignals(True)
@@ -2246,6 +2257,50 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
         self._append_log(f"播放失败: {message}")
 
+    def _start_metadata_hydration(self) -> None:
+        if self.session is None or self.session.metadata_hydrator is None or self.session.metadata_hydrated:
+            return
+        self._metadata_request_id += 1
+        request_id = self._metadata_request_id
+        session = self.session
+        self._pending_metadata_session = session
+        session.metadata_hydrated = True
+
+        def run() -> None:
+            try:
+                updated_vod = session.metadata_hydrator(session)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._metadata_hydration_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._metadata_hydration_signals.succeeded.emit(request_id, updated_vod)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_metadata_hydration_succeeded(self, request_id: int, updated_vod: VodItem | None) -> None:
+        if request_id != self._metadata_request_id:
+            return
+        pending_session = self._pending_metadata_session
+        self._pending_metadata_session = None
+        if updated_vod is None or pending_session is None:
+            return
+        if self.session is not pending_session:
+            return
+        self.session.vod = updated_vod
+        self._render_poster()
+        self._render_metadata()
+        self._render_detail_fields()
+        self._refresh_window_title()
+        self._append_log("元数据已更新: 简介 / 评分 / 扩展字段")
+
+    def _handle_metadata_hydration_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._metadata_request_id:
+            return
+        self._pending_metadata_session = None
+        self._append_log(f"元数据补全失败: {message}")
+
     def _handle_detail_action_succeeded(self, request_id: int, item: PlayItem, payload: object) -> None:
         if request_id != self._detail_action_request_id or self.session is None:
             return
@@ -2329,15 +2384,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _current_item_load_is_pending(self) -> bool:
         if self.session is None:
             return False
+        pending_playback_loader = self._pending_playback_loader
+        if (
+            pending_playback_loader is not None
+            and getattr(pending_playback_loader, "hydrate_only", False)
+        ):
+            pending_playback_loader = None
         pending_items = (
             self._pending_play_item_load,
-            self._pending_playback_loader,
+            pending_playback_loader,
             self._pending_playback_prepare,
         )
-        return any(
-            pending is not None and pending.index == self.current_index
-            for pending in pending_items
-        )
+        return any(pending is not None and pending.index == self.current_index for pending in pending_items)
 
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():

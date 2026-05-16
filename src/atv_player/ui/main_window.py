@@ -1062,6 +1062,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             m3u8_ad_filter=None,
             playback_parser_service=None,
             yt_dlp_service=None,
+            metadata_hydrator_factory=None,
     ) -> None:
         super().__init__()
         self._init_async_guard()
@@ -1069,6 +1070,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
+        self._metadata_hydrator_factory = metadata_hydrator_factory
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
@@ -3274,6 +3276,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             async_playback_loader=request.async_playback_loader,
             detail_action_runner=request.detail_action_runner,
             detail_field_runner=request.detail_field_runner,
+            metadata_hydrator=request.metadata_hydrator,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
@@ -3299,6 +3302,17 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         return None
 
     def _prepare_request_for_open(self, request: OpenPlayerRequest) -> OpenPlayerRequest:
+        if (
+            request.metadata_hydrator is None
+            and self._metadata_hydrator_factory is not None
+            and request.source_kind in {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        ):
+            request.metadata_hydrator = self._metadata_hydrator_factory(
+                request=request,
+                source_kind=request.source_kind,
+                source_key=request.source_key,
+                vod=request.vod,
+            )
         if request.detail_field_runner is not None:
             return request
         if request.source_kind == "plugin" and request.source_key:

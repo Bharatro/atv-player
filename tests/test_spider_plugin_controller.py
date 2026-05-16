@@ -14,6 +14,7 @@ from atv_player.danmaku.providers.iqiyi import IqiyiDanmakuProvider
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
+from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction, PlaybackDetailField
 from atv_player.plugins.controller import SpiderPluginController, _count_danmaku_entries
 
@@ -5487,3 +5488,37 @@ def test_count_danmaku_entries_ignores_similar_tags() -> None:
     xml = "<i><dialog>x</dialog><d p='1'>y</d></i>"
 
     assert _count_danmaku_entries(xml) == 1
+
+
+def test_spider_plugin_request_exposes_metadata_hydrator_for_detail_sessions() -> None:
+    hydrator = object()
+    controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        metadata_hydrator_factory=lambda **_: hydrator,
+    )
+
+    request = controller.build_request("/detail/1")
+
+    assert request.metadata_hydrator is hydrator
+
+
+def test_plugin_metadata_provider_maps_custom_metadata_payload() -> None:
+    payload = {
+        "id": "plugin:1",
+        "title": "插件标题",
+        "overview": "插件简介",
+        "rating": "9.3",
+        "imdb_id": "tt1234567",
+        "detail_fields": [{"label": "别名", "value": "深空彼岸"}],
+    }
+
+    record = CustomPluginProvider().record_from_payload(payload)
+
+    assert record.provider == "plugin"
+    assert record.provider_id == "plugin:1"
+    assert record.title == "插件标题"
+    assert record.overview == "插件简介"
+    assert record.rating == "9.3"
+    assert record.imdb_id == "tt1234567"

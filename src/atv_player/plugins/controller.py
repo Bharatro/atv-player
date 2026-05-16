@@ -574,6 +574,7 @@ class SpiderPluginController:
         danmaku_service=None,
         danmaku_preference_store=None,
         base_url_loader: Callable[[], str] | None = None,
+        metadata_hydrator_factory: Callable[..., object] | None = None,
     ) -> None:
         self.uses_result_length_for_pagination = True
         self._spider = spider
@@ -587,6 +588,7 @@ class SpiderPluginController:
         self._yt_dlp_service = yt_dlp_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._base_url_loader = base_url_loader
+        self._metadata_hydrator_factory = metadata_hydrator_factory
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
@@ -1905,6 +1907,12 @@ class SpiderPluginController:
             playback_loader=playback_loader,
             async_playback_loader=True,
             detail_action_runner=detail_action_runner,
+            metadata_hydrator=None if self._metadata_hydrator_factory is None else self._metadata_hydrator_factory(
+                source_kind="plugin",
+                source_key=self._plugin_name,
+                vod=detail,
+                raw_detail=raw_detail,
+            ),
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
