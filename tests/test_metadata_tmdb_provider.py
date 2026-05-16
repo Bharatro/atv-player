@@ -30,6 +30,8 @@ class FakeTMDBClient:
 def test_infer_tmdb_media_type_uses_category_name() -> None:
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="电影")) == "movie"
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="动漫")) == "tv"
+    assert infer_tmdb_media_type(MetadataQuery(title="掩耳盗邻第二季", category_name="")) == "tv"
+    assert infer_tmdb_media_type(MetadataQuery(title="七王国的骑士 第一季", category_name="")) == "tv"
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="")) == ""
 
 
@@ -100,6 +102,17 @@ def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_fir
     provider = TMDBProvider(client)
 
     matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧"))
+
+    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "2026")]
+
+
+def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_without_category() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [{"id": 42, "name": "掩耳盗邻", "first_air_date": "2025-01-01"}]
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name=""))
 
     assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
     assert client.calls == [("search_tv", "掩耳盗邻", "2026")]

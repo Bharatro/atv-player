@@ -11,6 +11,13 @@ def infer_tmdb_media_type(query: MetadataQuery) -> str:
         return "movie"
     if any(token in category for token in ("电视剧", "剧集", "动漫", "番剧", "综艺", "纪录片", "tv")):
         return "tv"
+    title = str(query.title or "").strip()
+    if re.search(
+        r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|\bS\d+\b)",
+        title,
+        re.IGNORECASE,
+    ):
+        return "tv"
     return ""
 
 
