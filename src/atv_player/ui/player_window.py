@@ -747,7 +747,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
         sidebar_actions.addWidget(self.toggle_log_button)
-        sidebar_actions.addWidget(self.metadata_scrape_button)
 
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(72)
@@ -780,6 +779,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.danmaku_source_button)
         control_group_layout.addWidget(self.danmaku_settings_button)
+        control_group_layout.addWidget(self.metadata_scrape_button)
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
         control_group_layout.addWidget(self.danmaku_combo)

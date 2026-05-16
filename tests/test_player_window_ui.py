@@ -313,6 +313,14 @@ def test_player_window_shows_metadata_scrape_button_with_search_icon(qtbot) -> N
     assert window.metadata_scrape_button.isEnabled() is True
 
 
+def test_player_window_places_metadata_scrape_button_in_playback_controls(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.metadata_scrape_button.parentWidget() is window.danmaku_source_button.parentWidget()
+    assert window.metadata_scrape_button.parentWidget() is not window.sidebar_actions_widget
+
+
 def test_player_window_uses_dedicated_metadata_scrape_icon(qtbot, monkeypatch) -> None:
     calls: list[str] = []
 
