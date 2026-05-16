@@ -466,6 +466,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
+        self._danmaku_source_switch_button: QPushButton | None = None
         self._metadata_scrape_title_edit: QLineEdit | None = None
         self._metadata_scrape_year_edit: QLineEdit | None = None
         self._metadata_scrape_provider_combo: QComboBox | None = None
@@ -1408,8 +1409,27 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_binding_title = str(session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self.current_index = session.start_index
+        current_title = (
+            session.playlist[self.current_index].title
+            if 0 <= self.current_index < len(session.playlist)
+            else ""
+        )
+        logger.info(
+            (
+                "PlayerWindow open session vod_id=%s start_index=%s playlist_index=%s "
+                "source_group_index=%s source_index=%s start_title=%s paused=%s"
+            ),
+            session.vod.vod_id,
+            session.start_index,
+            session.playlist_index,
+            session.source_group_index,
+            session.source_index,
+            current_title,
+            start_paused,
+        )
         self.playlist_title_mode = "episode"
         self._install_danmaku_log_handler(session)
+        self._maybe_restore_cached_danmaku_for_current_item()
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -1457,6 +1477,75 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.progress_timer.start()
         self._sync_video_cursor_autohide()
 
+    def _maybe_restore_cached_danmaku_for_current_item(self, *, allow_with_playback_loader: bool = False) -> None:
+        if self.session is None:
+            return
+        if self.session.playback_loader is not None and not allow_with_playback_loader:
+            logger.info(
+                "Skip cached danmaku restore during open because playback_loader is active index=%s title=%s",
+                self.current_index,
+                self.session.playlist[self.current_index].title if 0 <= self.current_index < len(self.session.playlist) else "",
+            )
+            return
+        if not (0 <= self.current_index < len(self.session.playlist)):
+            return
+        current_item = self.session.playlist[self.current_index]
+        if not str(current_item.url or "").strip():
+            logger.info("Skip cached danmaku restore because current item has no url index=%s title=%s", self.current_index, current_item.title)
+            return
+        if current_item.danmaku_xml or current_item.danmaku_pending:
+            logger.info(
+                "Skip cached danmaku restore because danmaku already present index=%s title=%s has_xml=%s pending=%s",
+                self.current_index,
+                current_item.title,
+                bool(current_item.danmaku_xml),
+                current_item.danmaku_pending,
+            )
+            return
+        controller = getattr(self.session, "danmaku_controller", None)
+        if controller is None:
+            return
+        load_cached = getattr(controller, "load_cached_danmaku_sources", None)
+        switch_source = getattr(controller, "switch_danmaku_source", None)
+        if not callable(load_cached) or not callable(switch_source):
+            return
+        try:
+            restored = bool(
+                load_cached(
+                    current_item,
+                    playlist=self.session.playlist,
+                    media_duration_seconds=self._current_media_duration_seconds(),
+                )
+            )
+        except TypeError:
+            restored = bool(load_cached(current_item))
+        logger.info(
+            "Attempt cached danmaku restore index=%s title=%s restored=%s selected_url=%s",
+            self.current_index,
+            current_item.title,
+            restored,
+            current_item.selected_danmaku_url,
+        )
+        if not restored:
+            return
+        selected_url = str(current_item.selected_danmaku_url or "").strip()
+        if not selected_url or current_item.danmaku_xml or current_item.danmaku_pending:
+            logger.info(
+                "Skip cached danmaku download after restore index=%s title=%s selected_url=%s has_xml=%s pending=%s",
+                self.current_index,
+                current_item.title,
+                selected_url,
+                bool(current_item.danmaku_xml),
+                current_item.danmaku_pending,
+            )
+            return
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="恢复缓存弹幕失败",
+            task=lambda: switch_source(current_item, selected_url),
+            configure_danmaku_on_success=True,
+        )
+
     def _video_load(
         self,
         url: str,
@@ -1495,6 +1584,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._render_detail_actions()
             return
         replacement = list(load_result.replacement_playlist)
+        logger.info(
+            "Apply playback loader replacement old_index=%s replacement_size=%s replacement_start_index=%s",
+            self.current_index,
+            len(replacement),
+            load_result.replacement_start_index,
+        )
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
@@ -1709,6 +1804,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not current_item.url:
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
+        self._maybe_restore_cached_danmaku_for_current_item()
         self._refresh_parse_combo_enabled_state()
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
@@ -2387,7 +2483,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._render_detail_fields()
         self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
+        logger.info(
+            (
+                "Playback loader succeeded request_id=%s hydrate_only=%s current_index=%s "
+                "title=%s has_url=%s has_danmaku=%s pending_danmaku=%s"
+            ),
+            request_id,
+            pending_loader.hydrate_only,
+            self.current_index,
+            self.session.playlist[self.current_index].title if self.session and 0 <= self.current_index < len(self.session.playlist) else "",
+            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].url),
+            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_xml),
+            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_pending),
+        )
         if pending_loader.hydrate_only:
+            self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
+            self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
@@ -2582,6 +2693,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if pending_prepare.requested_dash_video_id:
             current_item.dash_video_id = pending_prepare.requested_dash_video_id
         current_item.url = prepared_url
+        self._maybe_restore_cached_danmaku_for_current_item()
         self._refresh_video_quality_state(prepared_url)
         try:
             self._start_current_item_playback(
@@ -5079,6 +5191,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_source_rerun_button = rerun_button
         reset_button = QPushButton("恢复默认搜索词", dialog)
         switch_button = QPushButton("切换并加载", dialog)
+        self._danmaku_source_switch_button = switch_button
         rerun_button.clicked.connect(self._rerun_current_item_danmaku_search)
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
         switch_button.clicked.connect(self._switch_current_item_danmaku_source)
@@ -5227,6 +5340,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
             self._danmaku_source_rerun_button.setEnabled(bool(current_item is not None and not current_item.danmaku_pending))
+        if self._danmaku_source_switch_button is not None:
+            self._danmaku_source_switch_button.setEnabled(
+                bool(
+                    current_item is not None
+                    and not current_item.danmaku_pending
+                    and any(group.options for group in current_item.danmaku_candidates)
+                )
+            )
         if self._danmaku_source_status_label is not None:
             self._danmaku_source_status_label.setText(current_item.danmaku_status_text if current_item is not None else "")
 
@@ -5343,6 +5464,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.session.danmaku_controller is None:
             return
         current_item = self.session.playlist[self.current_index]
+        if current_item.danmaku_pending:
+            return
         selected_url = self._selected_danmaku_source_url_from_dialog()
         if not selected_url:
             return
@@ -6116,6 +6239,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         row = self.playlist.row(item)
         if row == self.current_index or self.session is None:
             return
+        logger.info(
+            "PlayerWindow playlist click current_index=%s target_index=%s current_title=%s target_title=%s",
+            self.current_index,
+            row,
+            self.session.playlist[self.current_index].title if 0 <= self.current_index < len(self.session.playlist) else "",
+            self.session.playlist[row].title if 0 <= row < len(self.session.playlist) else "",
+        )
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         try:

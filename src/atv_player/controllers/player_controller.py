@@ -245,6 +245,8 @@ class PlayerController:
             history,
         )
         start_index = resolve_resume_index(history, active_playlist, clicked_index)
+        history_episode = history.episode if history is not None else None
+        history_episode_url = history.episode_url if history is not None else ""
         matched_history = history is not None and (
             start_index == history.episode or playback_history_loader is not None
         )
@@ -255,11 +257,21 @@ class PlayerController:
             position_seconds = 0
             speed = 1.0
         logger.info(
-            "Create player session vod_id=%s playlist_size=%s start_index=%s restored=%s",
+            (
+                "Create player session vod_id=%s playlist_size=%s clicked_index=%s "
+                "start_index=%s restored=%s playlist_index=%s source_group_index=%s source_index=%s "
+                "history_episode=%s history_episode_url=%s"
+            ),
             vod.vod_id,
             len(active_playlist),
+            clicked_index,
             start_index,
             matched_history,
+            playlist_index,
+            source_group_index,
+            source_index,
+            history_episode,
+            history_episode_url,
         )
         session = PlayerSession(
             vod=vod,

@@ -1369,6 +1369,58 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
     assert window._danmaku_source_rerun_button.isEnabled() is True
 
 
+def test_player_window_disables_danmaku_source_switch_while_current_item_is_pending(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.switch_calls: list[str] = []
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            self.switch_calls.append(page_url)
+            return ""
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_pending=True,
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+        selected_danmaku_provider="tencent",
+        selected_danmaku_url="https://v.qq.com/demo",
+        selected_danmaku_title="红果短剧 第1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_switch_button is not None
+    assert window._danmaku_source_switch_button.isEnabled() is False
+
+    window._switch_current_item_danmaku_source()
+
+    assert controller.switch_calls == []
+    assert item.danmaku_status_text == ""
+    assert window._danmaku_source_status_label is not None
+    assert window._danmaku_source_status_label.text() == ""
+
+
 def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
@@ -10060,6 +10112,7 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
     assert window.video.set_subtitle_ass_override_calls == []
     assert window.video.subtitle_apply_calls[-1] == ("track", 40)
     assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
+    assert f"已加载弹幕文件: {window.video.loaded_danmaku_paths[0]}" in window.log_view.toPlainText()
 
 
 def test_player_window_uses_saved_off_danmaku_preference_on_open_session(qtbot) -> None:
@@ -11631,6 +11684,333 @@ def test_player_window_auto_loads_cached_danmaku_after_restart_with_manual_overr
 
     qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
     assert window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_player_window_open_session_keeps_playback_loader_episode_danmaku_when_url_already_exists(qtbot) -> None:
+    episode_one_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一集弹幕</d></i>'
+    episode_ten_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第十集弹幕</d></i>'
+
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.switch_calls: list[str] = []
+            self.restore_attempted = threading.Event()
+
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del playlist, media_duration_seconds
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/ep1")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/ep1"
+            item.selected_danmaku_title = "红果短剧 第1集"
+            return True
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            self.switch_calls.append(page_url)
+            item.danmaku_xml = episode_one_xml
+            self.restore_attempted.set()
+            return item.danmaku_xml
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    controller = FakeDanmakuController()
+
+    def playback_loader(item: PlayItem) -> None:
+        controller.restore_attempted.wait(0.1)
+        if not item.danmaku_xml:
+            item.danmaku_xml = episode_ten_xml
+        return None
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="红果短剧"),
+        playlist=[
+            PlayItem(
+                title="第10集",
+                url="https://stream.example/10.m3u8",
+                media_title="红果短剧",
+                danmaku_search_title="红果短剧",
+                danmaku_search_episode="10集",
+                danmaku_search_query="红果短剧 10集",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=playback_loader,
+        async_playback_loader=True,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    assert controller.switch_calls == []
+    assert "第十集弹幕" in session.playlist[0].danmaku_xml
+    assert "第十集弹幕" in Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8")
+
+
+def test_player_window_open_session_restores_cached_danmaku_via_controller_when_item_starts_empty(qtbot) -> None:
+    class FakeDanmakuController:
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            item.danmaku_search_title = "红果短剧"
+            item.danmaku_search_episode = "1集"
+            item.danmaku_search_query = "红果短剧 1集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/demo"
+            item.selected_danmaku_title = "红果短剧 第1集"
+            return True
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            item.danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+            return item.danmaku_xml
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="第1集", url="http://m/1.m3u8", media_title="红果短剧")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FakeDanmakuController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    assert window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+            self.switch_calls: list[str] = []
+
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del playlist, media_duration_seconds
+            self.load_calls.append(item.title)
+            item.danmaku_search_title = "红果短剧"
+            item.danmaku_search_episode = "2集"
+            item.danmaku_search_query = "红果短剧 2集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第2集", url="https://v.qq.com/ep2")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/ep2"
+            item.selected_danmaku_title = "红果短剧 第2集"
+            return item.title == "第2集"
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            self.switch_calls.append(page_url)
+            item.danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第二集弹幕</d></i>'
+            return item.danmaku_xml
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="红果短剧"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://stream.example/1.m3u8",
+                media_title="红果短剧",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一集弹幕</d></i>',
+            ),
+            PlayItem(
+                title="第2集",
+                url="https://stream.example/2.m3u8",
+                media_title="红果短剧",
+            ),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+
+    target_item = window.playlist.item(1)
+    assert target_item is not None
+
+    window._play_clicked_item(target_item)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 2)
+    assert controller.load_calls[-1] == "第2集"
+    assert controller.switch_calls == ["https://v.qq.com/ep2"]
+    assert "第二集弹幕" in session.playlist[1].danmaku_xml
 
 
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
@@ -15088,6 +15468,77 @@ def test_player_window_resume_from_main_reloads_current_item_and_updates_state(q
     assert window.is_playing is True
     assert window.windowTitle() == "Movie - Episode 1"
     assert config.last_player_paused is False
+
+
+def test_player_window_resume_from_main_reloads_active_danmaku(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_danmaku_paths: list[str] = []
+            self.removed_danmaku_track_ids: list[int] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self.removed_danmaku_track_ids.append(track_id)
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="Episode 1",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    config = AppConfig(last_active_window="main", last_player_paused=True)
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    initial_count = len(window.video.loaded_danmaku_paths)
+
+    window._return_to_main()
+    window.resume_from_main()
+
+    assert len(window.video.loaded_danmaku_paths) == initial_count + 1
+    assert window.video.removed_danmaku_track_ids == [70]
+    assert window.video.load_calls == [("http://m/1.m3u8", 0), ("http://m/1.m3u8", 30)]
 
 
 def test_player_window_close_clears_session_for_future_restore(qtbot) -> None:

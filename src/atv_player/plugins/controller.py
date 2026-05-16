@@ -283,6 +283,13 @@ def _count_danmaku_entries(xml_text: str) -> int:
     return len(re.findall(r"<d\b", xml_text))
 
 
+def _query_requests_explicit_episode(query_name: str) -> tuple[bool, int | None]:
+    normalized_query = normalize_name(query_name)
+    if not normalized_query or not has_explicit_episode_marker(normalized_query):
+        return False, None
+    return True, extract_episode_number(normalized_query)
+
+
 def _prioritize_requested_episode_in_source_search_result(query_name: str, result):
     normalized_query = normalize_name(query_name)
     if not normalized_query or not has_explicit_episode_marker(normalized_query):
@@ -1177,6 +1184,13 @@ class SpiderPluginController:
     ) -> bool:
         cached_xml = load_cached_danmaku_xml(query_name, reg_src)
         if cached_xml:
+            logger.info(
+                "Spider plugin loaded cached danmaku xml directly plugin=%s query=%s reg_src=%s title=%s",
+                self._plugin_name,
+                query_name,
+                reg_src,
+                item.title,
+            )
             item.danmaku_xml = cached_xml
             return True
         if self._apply_cached_danmaku_preference_xml(item, query_name, preference):
@@ -1205,8 +1219,40 @@ class SpiderPluginController:
     ) -> bool:
         if not self.load_cached_danmaku_sources(item, playlist=playlist):
             return False
+        explicit_episode_requested, requested_episode = _query_requests_explicit_episode(query_name)
+        logger.info(
+            (
+                "Spider plugin inspect cached danmaku candidates plugin=%s query=%s title=%s "
+                "explicit_episode=%s requested_episode=%s selected_url=%s candidate_groups=%s"
+            ),
+            self._plugin_name,
+            query_name,
+            item.title,
+            explicit_episode_requested,
+            requested_episode,
+            item.selected_danmaku_url,
+            len(item.danmaku_candidates),
+        )
         for candidate in self._iter_danmaku_candidate_options(item.danmaku_candidates, item.selected_danmaku_url):
+            candidate_episode = extract_episode_number(candidate.name)
+            episode_match = (
+                requested_episode is not None
+                and candidate_episode == requested_episode
+                and episode_title_matches(query_name, candidate.name)
+            )
             cached_xml = load_cached_danmaku_xml(query_name, candidate.url)
+            logger.info(
+                (
+                    "Spider plugin inspect cached danmaku candidate plugin=%s query=%s candidate=%s "
+                    "candidate_episode=%s episode_match=%s cached=%s"
+                ),
+                self._plugin_name,
+                query_name,
+                candidate.url,
+                candidate_episode,
+                episode_match,
+                bool(cached_xml),
+            )
             if not cached_xml:
                 continue
             item.danmaku_xml = cached_xml
@@ -1214,6 +1260,13 @@ class SpiderPluginController:
             item.selected_danmaku_url = candidate.url
             item.selected_danmaku_title = candidate.name
             item.danmaku_error = ""
+            logger.info(
+                "Spider plugin loaded cached danmaku via candidate plugin=%s query=%s candidate=%s candidate_title=%s",
+                self._plugin_name,
+                query_name,
+                candidate.url,
+                candidate.name,
+            )
             return True
         return False
 
@@ -1297,6 +1350,20 @@ class SpiderPluginController:
         preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
         item.danmaku_search_title = self._resolve_danmaku_search_title(item, preference)
         item.danmaku_search_episode = self._resolve_danmaku_search_episode(item, playlist)
+        logger.info(
+            (
+                "Spider plugin populate danmaku candidates plugin=%s title=%s query=%s search_title=%s "
+                "search_episode=%s reg_src=%s provider_filter=%s duration=%s"
+            ),
+            self._plugin_name,
+            item.title,
+            query_name,
+            item.danmaku_search_title,
+            item.danmaku_search_episode,
+            reg_src,
+            provider_filter,
+            target_duration,
+        )
         if not item.danmaku_search_query_overridden or not item.danmaku_search_query:
             item.danmaku_search_query = _compose_danmaku_search_query(item.danmaku_search_title, item.danmaku_search_episode)
         else:
@@ -1384,6 +1451,14 @@ class SpiderPluginController:
         item.danmaku_search_query = query_name
         reg_src = str(item.vod_id or item.url or "").strip()
         cached_result = _load_cached_danmaku_source_search_result_variants(query_name, reg_src)
+        logger.info(
+            "Spider plugin load cached danmaku sources plugin=%s title=%s query=%s reg_src=%s cache_hit=%s",
+            self._plugin_name,
+            item.title,
+            query_name,
+            reg_src,
+            cached_result is not None,
+        )
         if cached_result is None:
             return False
         target_duration = media_duration_seconds if media_duration_seconds > 0 else int(item.duration_seconds or 0)

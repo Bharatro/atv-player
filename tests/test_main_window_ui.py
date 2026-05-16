@@ -5,14 +5,20 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import Qt
 
-from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
+import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
+from atv_player.controllers.player_controller import PlayerController
+from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+from atv_player.plugins.controller import SpiderPluginController
 from atv_player.ui.main_window import (
     MainWindow,
     load_tencent_hot_search_sections,
     load_tencent_hot_searches,
 )
+from atv_player.ui.player_window import PlayerWindow
 
 
 class FakeStaticController:
@@ -4105,6 +4111,1312 @@ def test_main_window_restore_last_player_routes_custom_live_to_live_controller(q
     assert controller.calls == ["custom-channel:9:channel-0"]
     assert window.player_window.opened[0][0]["vod"].vod_name == "自定义频道"
     assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_reloads_cached_plugin_danmaku(qtbot, monkeypatch, tmp_path) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"https://stream.example{id}.m3u8", "header": {"Referer": "https://site.example"}}
+
+        def danmaku(self):
+            return True
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FakeParserService:
+        def parsers(self):
+            return []
+
+        def resolve(self, _flag, _url, preferred_key=""):
+            return type(
+                "Resolved",
+                (),
+                {"url": "https://media.example/demo.m3u8", "headers": {"Referer": "https://site.example"}},
+            )()
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+        def search_danmu(self, name: str, reg_src: str = ""):
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("restore should use cached danmaku xml")
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    assert first_request.playback_loader is not None
+    seeded_item = first_request.playlist[0]
+    first_request.playback_loader(seeded_item)
+    seeded_item.danmaku_search_query = "玄界之门 1集"
+    seeded_item.danmaku_search_query_overridden = True
+    first_controller.refresh_danmaku_sources(seeded_item, query_override="玄界之门 1集", force_refresh=True)
+    first_controller.switch_danmaku_source(seeded_item, "https://v.qq.com/demo")
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+    )
+    player_controller = PlayerController(FakeApiClient())
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="/detail/1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=config,
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_restore_last_player_reloads_cached_direct_parse_danmaku(qtbot, monkeypatch, tmp_path) -> None:
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FakeParserService:
+        def parsers(self):
+            return []
+
+        def resolve(self, _flag, _url, preferred_key=""):
+            return type(
+                "Resolved",
+                (),
+                {"url": "https://media.example/demo.m3u8", "headers": {"Referer": "https://site.example"}},
+            )()
+
+    source_url = "https://v.qq.com/x/cover/mzc00200xxpsogl/h4101bl5ftq.html"
+    detail_payload = {
+        "vod_form": source_url,
+        "vod_title": "剑来 第二季",
+        "vod_episodes": [
+            {"name": "第10话", "url": source_url},
+        ],
+    }
+    xml_payload = {
+        "code": 23,
+        "name": "demo",
+        "danmuku": [
+            [42.741, "right", "#00CD00", "1205421", "666", "03-15 15:47", "25px"],
+        ],
+    }
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(direct_parse_danmaku_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(direct_parse_danmaku_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+
+    seed_window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(preferred_parse_key="jx1"),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=FakeParserService(),
+        direct_parse_detail_loader=lambda _url: detail_payload,
+        direct_parse_danmaku_loader=lambda _url: xml_payload,
+    )
+    first_request = seed_window._build_direct_parse_request(source_url)
+    assert first_request.playback_loader is not None
+    assert first_request.danmaku_controller is not None
+    seeded_item = first_request.playlist[0]
+    first_request.playback_loader(seeded_item)
+    first_request.danmaku_controller.switch_danmaku_source(seeded_item, source_url)
+
+    restore_window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=PlayerController(FakeApiClient()),
+        config=AppConfig(
+            last_active_window="player",
+            last_playback_source="direct_parse",
+            last_playback_mode="parse",
+            last_playback_vod_id=source_url,
+            last_player_paused=True,
+            preferred_parse_key="jx1",
+        ),
+        plugin_manager=FakePluginManager(),
+        playback_parser_service=FakeParserService(),
+        direct_parse_detail_loader=lambda _url: detail_payload,
+        direct_parse_danmaku_loader=lambda _url: (_ for _ in ()).throw(AssertionError("restore should use cached danmaku xml")),
+    )
+    qtbot.addWidget(restore_window)
+
+    restored = restore_window.restore_last_player()
+
+    assert restored is restore_window.player_window
+    qtbot.waitUntil(lambda: len(restore_window.player_window.video.loaded_danmaku_paths) == 1)
+    assert restore_window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_reopen_plugin_item_from_list_reloads_cached_danmaku(qtbot, monkeypatch, tmp_path) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"https://stream.example{id}.m3u8", "header": {"Referer": "https://site.example"}}
+
+        def danmaku(self):
+            return True
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+        def search_danmu(self, name: str, reg_src: str = ""):
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("reopen from list should use cached danmaku xml")
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    assert first_request.playback_loader is not None
+    seeded_item = first_request.playlist[0]
+    first_request.playback_loader(seeded_item)
+    seeded_item.danmaku_search_query = "玄界之门 1集"
+    seeded_item.danmaku_search_query_overridden = True
+    first_controller.refresh_danmaku_sources(seeded_item, query_override="玄界之门 1集", force_refresh=True)
+    first_controller.switch_danmaku_source(seeded_item, "https://v.qq.com/demo")
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+    )
+    player_controller = PlayerController(FakeApiClient())
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    request = second_controller.build_request("/detail/1")
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    window.player_window._return_to_main()
+
+    list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
+    window._open_spider_item(second_controller, "plugin-1", list_item)
+
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) >= 2)
+    assert window.player_window.session is not None
+    assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_reopen_plugin_item_from_list_uses_reg_src_cached_danmaku_without_selected_source_download(
+    qtbot, monkeypatch, tmp_path,
+) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"https://stream.example{id}.m3u8", "header": {"Referer": "https://site.example"}}
+
+        def danmaku(self):
+            return True
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SearchOnlyDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("selected source download should not run when reg_src cache already exists")
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    request = first_controller.build_request("/detail/1")
+    assert request.playback_loader is not None
+    seeded_item = request.playlist[0]
+    request.playback_loader(seeded_item)
+    first_controller.refresh_danmaku_sources(seeded_item, playlist=request.playlist, force_refresh=True)
+    danmaku_cache_module.save_cached_danmaku_xml(seeded_item.danmaku_search_query, seeded_item.vod_id, xml_text)
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SearchOnlyDanmakuService(),
+    )
+
+    player_controller = PlayerController(FakeApiClient())
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    first_request = first_controller.build_request("/detail/1")
+    window.open_player(first_request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    window.player_window._return_to_main()
+
+    list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
+    window._open_spider_item(second_controller, "plugin-1", list_item)
+
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not None
+            and not getattr(window.player_window.session, "is_placeholder", False)
+            and bool(window.player_window.session.playlist)
+        )
+    )
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_reopen_direct_media_plugin_item_from_list_does_not_trigger_selected_source_restore(
+    qtbot, monkeypatch, tmp_path,
+) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$https://stream.example/direct-1.m3u8",
+                    }
+                ]
+            }
+
+        def danmaku(self):
+            return True
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SearchOnlyDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("selected source restore should not run for fresh direct-media open")
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    seeded_item = first_request.playlist[0]
+    first_controller.refresh_danmaku_sources(seeded_item, playlist=first_request.playlist, force_refresh=True)
+    danmaku_cache_module.save_cached_danmaku_xml(seeded_item.danmaku_search_query, seeded_item.url, xml_text)
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SearchOnlyDanmakuService(),
+    )
+    player_controller = PlayerController(FakeApiClient())
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    first_open_request = first_controller.build_request("/detail/1")
+    window.open_player(first_open_request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    window.player_window._return_to_main()
+
+    list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
+    window._open_spider_item(second_controller, "plugin-1", list_item)
+
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not None
+            and not getattr(window.player_window.session, "is_placeholder", False)
+            and bool(window.player_window.session.playlist)
+        )
+    )
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    assert "恢复缓存弹幕失败" not in window.player_window.log_view.toPlainText()
+    assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_reopen_drive_plugin_item_from_list_reloads_cached_danmaku(
+    qtbot, monkeypatch, tmp_path,
+) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "网盘剧集",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "百度",
+                        "vod_play_url": "百度$https://pan.baidu.com/s/fake-share",
+                    }
+                ]
+            }
+
+        def danmaku(self):
+            return True
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.baidu.com/s/fake-share"
+        return {
+            "list": [
+                {
+                    "vod_id": "drive-1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {
+                            "title": "10.mp4(1.31 GB)",
+                            "url": "http://m/10.mp4",
+                            "path": "/网盘剧集/10.mp4",
+                            "size": 1400000000,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FirstDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            return [type("Item", (), {"provider": "tencent", "name": name, "url": "https://v.qq.com/demo"})()]
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            raise AssertionError("drive reopen should hit cached danmaku without re-search")
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("drive reopen should hit cached danmaku without re-download")
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="网盘剧集",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/drive")
+    assert first_request.playback_loader is not None
+    first_result = first_request.playback_loader(first_request.playlists[0][0])
+    assert first_result is not None
+    drive_item = first_result.replacement_playlist[0]
+    first_request.playback_loader(drive_item)
+    qtbot.waitUntil(lambda: drive_item.danmaku_pending is False and bool(drive_item.danmaku_xml))
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="网盘剧集",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=SecondDanmakuService(),
+    )
+    player_controller = PlayerController(FakeApiClient())
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    first_open_request = first_controller.build_request("/detail/drive")
+    window.open_player(first_open_request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    window.player_window._return_to_main()
+
+    list_item = VodItem(vod_id="/detail/drive", vod_name="网盘剧集", vod_pic="poster-list")
+    window._open_spider_item(second_controller, "plugin-1", list_item)
+
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not None
+            and not getattr(window.player_window.session, "is_placeholder", False)
+            and bool(window.player_window.session.playlist)
+        )
+    )
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    assert "弹幕搜索中" not in window.player_window.log_view.toPlainText()
+    assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_main_window_reopen_drive_plugin_item_from_list_after_closing_player_reloads_cached_danmaku(
+    qtbot, monkeypatch, tmp_path,
+) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "网盘剧集",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "百度",
+                        "vod_play_url": "百度$https://pan.baidu.com/s/fake-share",
+                    }
+                ]
+            }
+
+        def danmaku(self):
+            return True
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.baidu.com/s/fake-share"
+        return {
+            "list": [
+                {
+                    "vod_id": "drive-1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {
+                            "title": "10.mp4(1.31 GB)",
+                            "url": "http://m/10.mp4",
+                            "path": "/网盘剧集/10.mp4",
+                            "size": 1400000000,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    class FakeDanmakuVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self):
+            return []
+
+        def audio_tracks(self):
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class RecordingRestorePlayerWindow(PlayerWindow):
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            super().__init__(controller, config, save_config, **kwargs)
+            self.video = FakeDanmakuVideo()
+
+    class FakeApiClient:
+        def get_history(self, key: str):
+            return None
+
+        def save_history(self, payload: dict) -> None:
+            return None
+
+    class FirstDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            return [type("Item", (), {"provider": "tencent", "name": name, "url": "https://v.qq.com/demo"})()]
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            raise AssertionError("drive reopen after close should hit cached danmaku without re-search")
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("drive reopen after close should hit cached danmaku without re-download")
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingRestorePlayerWindow)
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="网盘剧集",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/drive")
+    assert first_request.playback_loader is not None
+    first_result = first_request.playback_loader(first_request.playlists[0][0])
+    assert first_result is not None
+    drive_item = first_result.replacement_playlist[0]
+    first_request.playback_loader(drive_item)
+    qtbot.waitUntil(lambda: drive_item.danmaku_pending is False and bool(drive_item.danmaku_xml))
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="网盘剧集",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=SecondDanmakuService(),
+    )
+    player_controller = PlayerController(FakeApiClient())
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=player_controller,
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": second_controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    first_open_request = first_controller.build_request("/detail/drive")
+    window.open_player(first_open_request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    player_window = window.player_window
+    player_window.close()
+    qtbot.waitUntil(lambda: window.player_window is None)
+
+    list_item = VodItem(vod_id="/detail/drive", vod_name="网盘剧集", vod_pic="poster-list")
+    window._open_spider_item(second_controller, "plugin-1", list_item)
+
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not None
+            and not getattr(window.player_window.session, "is_placeholder", False)
+            and bool(window.player_window.session.playlist)
+        )
+    )
+    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
+    assert "弹幕搜索中" not in window.player_window.log_view.toPlainText()
+    assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
+    assert window.player_window.danmaku_combo.currentText() == "弹幕"
 
 
 def test_main_window_async_restore_without_saved_request_resets_last_active_window(qtbot) -> None:
