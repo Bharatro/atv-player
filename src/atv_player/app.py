@@ -353,6 +353,18 @@ class AppCoordinator(QObject):
         def _normalize_title(value: object) -> str:
             return re.sub(r"\s+", "", str(value or "").strip().lower())
 
+        def _strip_search_season_suffix(value: object) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return ""
+            stripped = re.sub(
+                r"(?:\s*[-:：]\s*)?(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|s\d+)\s*$",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
+            return stripped or text
+
         def _extract_season_number(value: object) -> int | None:
             text = str(value or "")
             for pattern in (
@@ -406,10 +418,13 @@ class AppCoordinator(QObject):
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
                 default_season = _guess_season_number(session_vod)
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
-                search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=year))
+                search_title = _strip_search_season_suffix(session_vod.vod_name)
+                search_results = list(tmdb_client.search_tv(search_title, year=year))
+                if not search_results and search_title != session_vod.vod_name:
+                    search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=year))
                 if not search_results:
                     return None
-                normalized_title = _normalize_title(session_vod.vod_name)
+                normalized_title = _normalize_title(search_title)
                 matched = None
                 for candidate in search_results:
                     candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
