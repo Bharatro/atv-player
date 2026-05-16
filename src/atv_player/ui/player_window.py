@@ -436,6 +436,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
         self._danmaku_settings_dialog: QDialog | None = None
+        self._metadata_scrape_dialog: QDialog | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_search_provider_combo: QComboBox | None = None
@@ -443,6 +444,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
+        self._metadata_scrape_title_edit: QLineEdit | None = None
+        self._metadata_scrape_year_edit: QLineEdit | None = None
+        self._metadata_scrape_provider_combo: QComboBox | None = None
+        self._metadata_scrape_group_list: QListWidget | None = None
+        self._metadata_scrape_result_list: QListWidget | None = None
+        self._metadata_scrape_status_label: QLabel | None = None
+        self._metadata_scrape_rerun_button: QPushButton | None = None
+        self._metadata_scrape_reset_button: QPushButton | None = None
+        self._metadata_scrape_apply_button: QPushButton | None = None
+        self._metadata_scrape_groups: list[object] = []
+        self._metadata_scrape_default_title = ""
+        self._metadata_scrape_default_year = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -565,6 +578,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
+        self.metadata_scrape_button = self._create_icon_button("search.svg", "刮削")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_log_button.setCheckable(True)
@@ -715,6 +729,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
         sidebar_actions.addWidget(self.toggle_log_button)
+        sidebar_actions.addWidget(self.metadata_scrape_button)
 
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(72)
@@ -844,6 +859,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playback_switch_parser_button.clicked.connect(self._switch_parser_after_failure)
         self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
         self.danmaku_settings_button.clicked.connect(self._open_danmaku_settings_dialog)
+        self.metadata_scrape_button.clicked.connect(self._open_metadata_scrape_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
@@ -4392,6 +4408,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
+        menu.addAction("刮削", self._open_metadata_scrape_dialog)
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
@@ -4614,6 +4631,74 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _open_danmaku_settings_dialog(self) -> None:
         dialog = self._ensure_danmaku_settings_dialog()
         self._refresh_danmaku_settings_dialog_controls()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _ensure_metadata_scrape_dialog(self) -> QDialog:
+        if self._metadata_scrape_dialog is not None:
+            return self._metadata_scrape_dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("刮削")
+        dialog.resize(760, 480)
+        layout = QVBoxLayout(dialog)
+
+        search_row = QHBoxLayout()
+        title_column = QVBoxLayout()
+        title_column.addWidget(QLabel("标题", dialog))
+        self._metadata_scrape_title_edit = QLineEdit(dialog)
+        title_column.addWidget(self._metadata_scrape_title_edit)
+
+        year_column = QVBoxLayout()
+        year_column.addWidget(QLabel("年份", dialog))
+        self._metadata_scrape_year_edit = QLineEdit(dialog)
+        year_column.addWidget(self._metadata_scrape_year_edit)
+
+        provider_column = QVBoxLayout()
+        provider_column.addWidget(QLabel("搜索来源", dialog))
+        self._metadata_scrape_provider_combo = QComboBox(dialog)
+        self._metadata_scrape_provider_combo.addItem("全部", "")
+        provider_column.addWidget(self._metadata_scrape_provider_combo)
+
+        search_row.addLayout(title_column, 2)
+        search_row.addLayout(year_column, 1)
+        search_row.addLayout(provider_column, 1)
+        layout.addLayout(search_row)
+
+        columns = QHBoxLayout()
+        self._metadata_scrape_group_list = QListWidget(dialog)
+        self._metadata_scrape_result_list = QListWidget(dialog)
+        columns.addWidget(self._metadata_scrape_group_list, 1)
+        columns.addWidget(self._metadata_scrape_result_list, 2)
+        layout.addLayout(columns)
+
+        self._metadata_scrape_status_label = QLabel("", dialog)
+        layout.addWidget(self._metadata_scrape_status_label)
+
+        actions = QHBoxLayout()
+        self._metadata_scrape_rerun_button = QPushButton("重新搜索", dialog)
+        self._metadata_scrape_reset_button = QPushButton("恢复默认搜索词", dialog)
+        self._metadata_scrape_apply_button = QPushButton("应用结果", dialog)
+        actions.addWidget(self._metadata_scrape_rerun_button)
+        actions.addWidget(self._metadata_scrape_reset_button)
+        actions.addWidget(self._metadata_scrape_apply_button)
+        layout.addLayout(actions)
+
+        self._metadata_scrape_dialog = dialog
+        return dialog
+
+    def _open_metadata_scrape_dialog(self) -> None:
+        if self.session is None or self.session.metadata_scrape_service is None:
+            return
+        self._metadata_scrape_default_title = str(self.session.vod.vod_name or "").strip()
+        self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
+        dialog = self._ensure_metadata_scrape_dialog()
+        if self._metadata_scrape_title_edit is not None:
+            self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
+        if self._metadata_scrape_year_edit is not None:
+            self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
+        if self._metadata_scrape_provider_combo is not None:
+            self._metadata_scrape_provider_combo.setCurrentIndex(0)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

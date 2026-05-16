@@ -304,6 +304,36 @@ def test_player_window_shows_danmaku_settings_button(qtbot) -> None:
     )
 
 
+def test_player_window_shows_metadata_scrape_button_with_search_icon(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.metadata_scrape_button.toolTip() == "刮削"
+    assert window.metadata_scrape_button.isEnabled() is True
+
+
+def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    dialog = window._ensure_metadata_scrape_dialog()
+    window._open_metadata_scrape_dialog()
+
+    assert dialog.windowTitle() == "刮削"
+    assert window._metadata_scrape_title_edit.text() == "深空彼岸"
+    assert window._metadata_scrape_year_edit.text() == "2026"
+    assert window._metadata_scrape_provider_combo.currentData() == ""
+
+
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
     item = PlayItem(
         title="第1集",
