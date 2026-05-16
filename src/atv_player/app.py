@@ -608,7 +608,17 @@ class AppCoordinator(QObject):
                 titles_by_index: dict[int, str] = {}
                 titles_by_season_episode: dict[tuple[int, int], str] = {}
                 for season_number in sorted(requested_seasons):
-                    season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
+                    try:
+                        season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
+                    except Exception:
+                        logger.debug(
+                            "Skip TMDB season episode title enhancement fallback to provider metadata tmdb_id=%s season=%s title=%s",
+                            tmdb_id,
+                            season_number,
+                            str(getattr(session_vod, "vod_name", "") or "").strip(),
+                            exc_info=True,
+                        )
+                        continue
                     episodes = season_detail.get("episodes")
                     if not isinstance(episodes, list):
                         continue

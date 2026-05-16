@@ -1,5 +1,6 @@
 import os
 import httpx
+import logging
 import threading
 import time
 from types import SimpleNamespace
@@ -4645,6 +4646,73 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tm
     assert updated is not None
     assert updated[0].episode_title_source == "iqiyi"
     assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
+def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_404_to_tencent(tmp_path, monkeypatch, caplog) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="tencent",
+                    provider_id="tencent:1",
+                    title=candidate.title,
+                    year=candidate.year,
+                    raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 金银米小圈1"}]}]},
+                )
+            ]
+
+    class EmptyIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 233295, "name": title, "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            request = httpx.Request("GET", f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", FakeTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", EmptyIqiyiProvider)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=app_module.__name__):
+        updated = enhance(
+            SimpleNamespace(
+                vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+                playlist=[PlayItem(title="01.mp4", url="http://m/1.mp4", original_title="01.mp4")],
+            )
+        )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tencent"
+    assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
+    assert "Skip TMDB season episode title enhancement fallback to provider metadata" in caplog.text
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
