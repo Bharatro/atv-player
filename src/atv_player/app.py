@@ -41,10 +41,10 @@ from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.metadata import MetadataBindingRepository, MetadataCache, MetadataContext, MetadataHydrator
-from atv_player.metadata.providers.local_douban import LocalDoubanProvider
+from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
-from atv_player.metadata.providers.remote_douban import RemoteDoubanProvider
+from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
 from atv_player.metadata.scrape import MetadataScrapeService
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
@@ -329,10 +329,10 @@ class AppCoordinator(QObject):
                 providers.append(CustomPluginProvider(plugin_payload))
         if str(config.metadata_douban_cookie or "").strip():
             local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
-            providers.append(LocalDoubanProvider(local_douban_client))
+            providers.append(OfficialDoubanProvider(local_douban_client))
         if str(config.metadata_tmdb_api_key or "").strip():
             providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
-        providers.append(RemoteDoubanProvider(api_client))
+        providers.append(LocalDoubanProvider(api_client))
         return providers
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):

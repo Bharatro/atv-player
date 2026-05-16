@@ -7,7 +7,7 @@ from atv_player.metadata.providers.douban import _split_people, clean_overview_t
 from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
 
 
-class LocalDoubanProvider:
+class OfficialDoubanProvider:
     name = "local_douban"
 
     def __init__(self, local_client) -> None:

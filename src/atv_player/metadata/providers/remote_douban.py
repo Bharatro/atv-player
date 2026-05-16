@@ -6,7 +6,19 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 from atv_player.metadata.providers.douban import _split_people, clean_overview_text
 
 
-class RemoteDoubanProvider:
+def _normalize_search_title(title: object) -> str:
+    text = str(title or "").strip()
+    if not text:
+        return ""
+    return re.sub(
+        r"(?<=\S)(第\s*[0-9零一二两三四五六七八九十百]+\s*季)\s*$",
+        r" \1",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+class LocalDoubanProvider:
     name = "remote_douban"
 
     def __init__(self, api_client) -> None:
@@ -27,7 +39,7 @@ class RemoteDoubanProvider:
             ]
         if not candidate.title:
             return []
-        payload = self._api_client.search_douban_metadata(candidate.title, year=candidate.year)
+        payload = self._api_client.search_douban_metadata(_normalize_search_title(candidate.title), year=candidate.year)
         items = payload.get("items") or payload.get("content") or payload.get("records") or []
         matches: list[MetadataMatch] = []
         for item in items:

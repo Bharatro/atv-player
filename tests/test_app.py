@@ -4391,8 +4391,8 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
     api_client = object()
 
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
-    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingLocalDoubanProvider, raising=False)
-    monkeypatch.setattr(app_module, "RemoteDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "OfficialDoubanProvider", RecordingLocalDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
     monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
@@ -4478,10 +4478,10 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     api_client = object()
 
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
-    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingLocalDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "OfficialDoubanProvider", RecordingLocalDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
     monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
-    monkeypatch.setattr(app_module, "RemoteDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
     factory = coordinator._build_metadata_scrape_service_factory(api_client)

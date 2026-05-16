@@ -1,7 +1,7 @@
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
-from atv_player.metadata.providers.local_douban import LocalDoubanProvider
+from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
-from atv_player.metadata.providers.remote_douban import RemoteDoubanProvider
+from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
 
 
 class FakeLocalClient:
@@ -30,7 +30,11 @@ class FakeLocalClient:
 
 
 class FakeRemoteApi:
+    def __init__(self) -> None:
+        self.search_calls: list[tuple[str, str]] = []
+
     def search_douban_metadata(self, title: str, year: str = "") -> dict:
+        self.search_calls.append((title, year))
         return {"items": [{"id": 35746415, "name": title, "year": year or 2026}]}
 
     def get_douban_metadata_detail(self, dbid: str) -> dict:
@@ -38,13 +42,13 @@ class FakeRemoteApi:
 
 
 def test_local_douban_provider_returns_no_matches_when_blocked() -> None:
-    provider = LocalDoubanProvider(FakeLocalClient(search_error=DoubanBlockedError("blocked")))
+    provider = OfficialDoubanProvider(FakeLocalClient(search_error=DoubanBlockedError("blocked")))
 
     assert provider.search(MetadataQuery(title="深空彼岸", year="2026")) == []
 
 
 def test_remote_douban_provider_maps_search_and_detail_from_api() -> None:
-    provider = RemoteDoubanProvider(FakeRemoteApi())
+    provider = LocalDoubanProvider(FakeRemoteApi())
 
     matches = provider.search(MetadataQuery(title="深空彼岸", year="2026"))
     record = provider.get_detail(matches[0])
@@ -55,3 +59,12 @@ def test_remote_douban_provider_maps_search_and_detail_from_api() -> None:
     assert record.provider == "remote_douban"
     assert record.overview == "远程豆瓣简介"
     assert record.rating == "8.1"
+
+
+def test_local_douban_provider_normalizes_season_title_before_api_search() -> None:
+    api = FakeRemoteApi()
+    provider = LocalDoubanProvider(api)
+
+    provider.search(MetadataQuery(title="黑袍纠察队第五季", year=""))
+
+    assert api.search_calls == [("黑袍纠察队 第五季", "")]
