@@ -92,3 +92,14 @@ def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_m
         )
     ]
     assert client.calls == [("search_tv", "七王国的骑士", "2025")]
+
+
+def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_first_air_date() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [{"id": 42, "name": "掩耳盗邻", "first_air_date": "2025-01-01"}]
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧"))
+
+    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "2026")]

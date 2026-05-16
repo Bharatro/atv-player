@@ -44,6 +44,12 @@ def _extract_year(payload: dict[str, object], *, media_type: str) -> str:
     return raw[:4] if len(raw) >= 4 and raw[:4].isdigit() else ""
 
 
+def _should_reject_year_mismatch(media_type: str, expected_year: str, actual_year: str) -> bool:
+    if media_type != "movie":
+        return False
+    return bool(expected_year and actual_year and actual_year != str(expected_year).strip())
+
+
 def _split_names(values: list[object] | None) -> list[str]:
     return [str(value or "").strip() for value in values or [] if str(value or "").strip()]
 
@@ -81,7 +87,7 @@ class TMDBProvider:
         if normalized_title not in {normalized_item, *aliases}:
             return None
         item_year = _extract_year(item, media_type=media_type)
-        if year and item_year and item_year != str(year).strip():
+        if _should_reject_year_mismatch(media_type, year, item_year):
             return None
         provider_id = str(item.get("id") or "").strip()
         if not provider_id:
@@ -118,7 +124,7 @@ class TMDBProvider:
             if not provider_id or not item_title:
                 continue
             item_year = _extract_year(normalized_item, media_type=media_type)
-            if candidate.year and item_year and item_year != str(candidate.year).strip():
+            if _should_reject_year_mismatch(media_type, candidate.year, item_year):
                 continue
             fallback_matches.append(
                 MetadataMatch(
