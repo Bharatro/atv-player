@@ -14,6 +14,7 @@ class IqiyiMetadataProvider:
     _SEARCH_URL = "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
     _SEARCH_HEADERS = {"user-agent": "Mozilla/5.0", "referer": "https://www.iqiyi.com/"}
     _ALLOWED_TEMPLATES = {101, 102, 103}
+    _NON_NATIVE_SITE_PENALTY = 0.35
 
     def __init__(self, get=httpx.get) -> None:
         self._get = get
@@ -53,15 +54,13 @@ class IqiyiMetadataProvider:
                 raw=dict(album_info),
             )
             match.score = score_match(candidate, match)
+            match.score = self._apply_native_site_penalty(match)
             matches.append(match)
         return sorted(matches, key=lambda item: item.score, reverse=True)
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         payload = dict(match.raw)
         detail_fields: list[dict[str, object]] = []
-        site_name = str(payload.get("siteName") or "").strip()
-        if site_name:
-            detail_fields.append({"label": "来源站点", "value": site_name})
         for key in ("releaseTime", "updateTime", "timeLength"):
             item = payload.get(key)
             if not isinstance(item, dict):
@@ -83,6 +82,12 @@ class IqiyiMetadataProvider:
             language=self._nested_value(payload.get("language")),
             detail_fields=detail_fields,
         )
+
+    def _apply_native_site_penalty(self, match: MetadataMatch) -> float:
+        site_name = str(match.raw.get("siteName") or "").strip()
+        if site_name and site_name != "爱奇艺":
+            return max(0.0, float(match.score or 0.0) - self._NON_NATIVE_SITE_PENALTY)
+        return float(match.score or 0.0)
 
     def _iter_album_infos(self, payload: dict) -> Iterable[dict]:
         data = payload.get("data")
