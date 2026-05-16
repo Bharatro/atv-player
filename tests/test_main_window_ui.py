@@ -3293,6 +3293,37 @@ def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) 
     assert not hasattr(window, "parse_manager_button")
 
 
+def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        metadata_douban_cookie="bid=demo;",
+        metadata_tmdb_api_key="tmdb-demo-key",
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.douban_cookie_edit.toPlainText() == "bid=demo;"
+    assert dialog.tmdb_api_key_edit.text() == "tmdb-demo-key"
+
+
+def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.douban_cookie_edit.setPlainText(" bid=demo; ll=118282 \n")
+    dialog.tmdb_api_key_edit.setText(" tmdb-demo-key ")
+    dialog._save()
+
+    assert config.metadata_douban_cookie == "bid=demo; ll=118282"
+    assert config.metadata_tmdb_api_key == "tmdb-demo-key"
+    assert len(saved) == 1
+
+
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
