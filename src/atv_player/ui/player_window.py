@@ -4918,22 +4918,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _handle_metadata_scrape_apply_succeeded(self, request_id: int, updated_vod: VodItem, candidate) -> None:
         if request_id != self._metadata_scrape_request_id or self.session is None:
             return
+        self._metadata_request_id += 1
+        self._pending_metadata_session = None
         previous_vod = self.session.vod
         self.session.vod = updated_vod
         if 0 <= self.current_index < len(self.session.playlist):
             self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
         bindings = self.session.metadata_binding_repository
         if bindings is not None and hasattr(bindings, "save"):
+            binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
+            binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
             bindings.save(
-                previous_vod.vod_name,
-                previous_vod.vod_year,
+                binding_title,
+                binding_year,
                 provider=candidate.provider,
                 provider_id=candidate.provider_id,
                 matched_title=candidate.title,
                 matched_year=candidate.year,
             )
-            self._metadata_scrape_binding_title = str(previous_vod.vod_name or "").strip()
-            self._metadata_scrape_binding_year = str(previous_vod.vod_year or "").strip()
+            self._metadata_scrape_binding_title = binding_title
+            self._metadata_scrape_binding_year = binding_year
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()

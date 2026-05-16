@@ -552,6 +552,77 @@ def test_player_window_metadata_scrape_apply_still_works_after_metadata_hydratio
     assert "已绑定手动刮削结果" in window.log_view.toPlainText()
 
 
+def test_player_window_metadata_scrape_apply_saves_binding_under_original_query_after_auto_hydration(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.vod = VodItem(
+        vod_id="v1",
+        vod_name="黑袍纠察队",
+        vod_year="2019",
+        vod_content="自动简介",
+    )
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert service.apply_calls == [("黑袍纠察队", "movie:1")]
+    assert bindings.saved == [("黑袍纠察队第五季", "2026", "tmdb", "movie:1", "深空彼岸", "2026")]
+
+
+def test_player_window_metadata_scrape_apply_ignores_inflight_auto_hydration_result(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    ready = threading.Event()
+
+    def hydrate(current_session: PlayerSession) -> VodItem:
+        assert ready.wait(timeout=1)
+        return VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name="自动标题",
+            vod_year="2019",
+            vod_content="自动简介",
+        )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=hydrate,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
+    ready.set()
+    qtbot.wait(100)
+
+    assert "自动简介" not in window.metadata_view.toPlainText()
+    assert "豆瓣简介" in window.metadata_view.toPlainText()
+
+
 def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(
