@@ -2,9 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add local-Douban-first metadata lookup with automatic `alist-tvbox` fallback, plus a new advanced settings dialog for Douban Cookie and TMDB API key persistence.
+**Goal:** Add local-Douban-first metadata lookup with automatic `alist-tvbox` fallback, plus a new advanced settings dialog for Douban Cookie and TMDB API key persistence, under a global media-enhancement switch.
 
-**Architecture:** Extend `AppConfig` and `SettingsRepository` with two metadata credential fields, surface them through a small `AdvancedSettingsDialog`, and wire a local Douban HTTP/parser client into `DoubanProvider`. `DoubanProvider` remains the metadata-facing adapter and orchestrates local-first search/detail with fallback to existing `ApiClient /api/movies` endpoints.
+**Architecture:** Extend `AppConfig` and `SettingsRepository` with metadata credential fields plus `metadata_enhancement_enabled`, surface them through a small `AdvancedSettingsDialog` section titled `媒体增强配置`, and wire a local Douban HTTP/parser client into `DoubanProvider`. `DoubanProvider` remains the metadata-facing adapter and orchestrates local-first search/detail with fallback to existing `ApiClient /api/movies` endpoints. `AppCoordinator` short-circuits metadata hydrator creation when the global switch is off.
+
+## Toggle Follow-up
+
+- Persist `metadata_enhancement_enabled: bool = True` in config and sqlite migration paths.
+- Add a checkbox `启用媒体增强` under `媒体增强配置`.
+- Disable `豆瓣 Cookie` and `TMDB API Key` inputs when unchecked, without clearing stored values.
+- Return `None` from `AppCoordinator._build_metadata_hydrator_factory()` when enhancement is disabled so player detail background enhancement stops completely.
 
 **Tech Stack:** Python 3.14, dataclasses, sqlite migrations, `httpx`, PySide6, pytest
 
@@ -614,4 +621,3 @@ git commit -m "feat: wire local douban settings into metadata hydration"
   - Config keys use `metadata_douban_cookie` and `metadata_tmdb_api_key` consistently
   - Local client type uses `DoubanBlockedError`
   - Provider constructor uses `local_client`
-

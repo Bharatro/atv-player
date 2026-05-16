@@ -4010,6 +4010,23 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
     assert captured["cache_root"] == (tmp_path / "app-cache" / "metadata")
 
 
+def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_path) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=False,
+                metadata_douban_cookie="bid=demo;",
+                metadata_tmdb_api_key="tmdb-key",
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_metadata_hydrator_factory(object())
+
+    hydrate = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert hydrate is None
+
+
 def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:
     class RestoreBrowseController:
         def build_request_from_detail(self, vod_id: str):

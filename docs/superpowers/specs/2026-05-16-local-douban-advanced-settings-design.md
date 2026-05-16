@@ -6,6 +6,7 @@
 
 - 豆瓣 metadata `search(title)` 和 `get_detail(id)` 改为“本地豆瓣优先，`alist-tvbox` API fallback”。
 - 主窗口顶部在“直播源管理”后新增“高级设置”按钮，对话框中可配置 `豆瓣 Cookie` 和 `TMDB API Key`。
+- 高级设置中的媒体增强能力增加全局开关，关闭后播放器详情页不再进行后台 metadata 增强。
 
 本轮目标是先把本地豆瓣抓取接进现有 `DoubanProvider` 链路，并把后续要用到的 metadata 凭据持久化进本地配置。`TMDB API Key` 本轮只提供配置入口，不接入真实 TMDB provider。
 
@@ -15,6 +16,7 @@
 - 本地豆瓣触发风控时，自动回退到现有 `alist-tvbox /api/movies` 能力。
 - 不把本地豆瓣抓取逻辑直接塞进 `MainWindow` 或 `MetadataHydrator`。
 - 为后续接入 TMDB 和更多 provider 预留稳定配置入口。
+- 支持用户全局关闭媒体增强，并在关闭时彻底停用 hydration 链路。
 - 保持现有 metadata 缓存和播放器异步刷新链路不变。
 
 ## Non-Goals
@@ -23,6 +25,7 @@
 - 不新增更多 metadata 设置项，例如 provider 顺序、手动刷新策略、调试开关。
 - 不改造豆瓣首页分类浏览接口；`/tg-db` 仍只服务现有“豆瓣电影”页面。
 - 不在高级设置对话框里加入“测试连接”“立即验证 Cookie”“自动获取 Cookie”。
+- 关闭媒体增强时不清空已保存的 `豆瓣 Cookie` / `TMDB API Key`。
 
 ## Scope
 
@@ -119,8 +122,9 @@
 
 ### 1. AppConfig and persistence
 
-在 `AppConfig` 中新增两个字段：
+在 `AppConfig` 中新增三个字段：
 
+- `metadata_enhancement_enabled: bool = True`
 - `metadata_douban_cookie: str = ""`
 - `metadata_tmdb_api_key: str = ""`
 
@@ -132,6 +136,7 @@
 
 约束：
 
+- `metadata_enhancement_enabled` 默认值为 `True`
 - 不做复杂格式校验
 - 保存时统一 `strip()`
 - 空字符串表示未配置
@@ -143,7 +148,9 @@
 UI：
 
 - 位置：主窗口顶部按钮区，“直播源管理”后新增“高级设置”
+- 独立区域：`媒体增强配置`
 - 字段：
+  - `启用媒体增强`：复选框，全局开关
   - `豆瓣 Cookie`：多行文本框
   - `TMDB API Key`：单行输入框
 - 按钮：
@@ -153,6 +160,7 @@ UI：
 行为：
 
 - 打开时读取当前 `AppConfig`
+- `启用媒体增强` 未勾选时，`豆瓣 Cookie` 和 `TMDB API Key` 输入框置灰，但保留当前值
 - 点击保存时回写配置并调用现有 `save_config`
 - 点击取消时不落盘
 
@@ -243,8 +251,10 @@ UI：
 具体做法：
 
 - 从 `repo.load_config()` 读取：
+  - `metadata_enhancement_enabled`
   - `metadata_douban_cookie`
   - `metadata_tmdb_api_key`
+- 若 `metadata_enhancement_enabled == False`，直接返回 `None`
 - 创建本地豆瓣客户端实例时注入 `metadata_douban_cookie`
 - 创建 `DoubanProvider` 时传入：
   - 本地豆瓣客户端
@@ -271,6 +281,7 @@ UI：
 
 为了避免“对话框里保存了新 Cookie，但当前 metadata factory 仍拿着旧值”，`AppCoordinator` 需要保证：
 
+- 关闭媒体增强后，后续播放器详情不再触发后台增强
 - 保存高级设置后，主窗口内用于 metadata 的配置读取能看到最新值
 - 推荐做法：metadata factory 内部在每次创建 provider 时重新读取当前 `AppConfig`，而不是在应用启动时把 Cookie 固定进闭包常量
 
@@ -304,6 +315,7 @@ UI：
 - `tests/test_main_window_ui.py`
   - 顶部出现“高级设置”按钮，位置在“直播源管理”后
   - 点击后弹对话框
+  - “媒体增强配置”开关控制输入框可用状态
   - 保存后配置对象被更新
 
 ### Regression tests

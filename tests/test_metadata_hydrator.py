@@ -13,20 +13,28 @@ class FakeProvider:
         *,
         matches: list[MetadataMatch] | None = None,
         record: MetadataRecord | None = None,
+        search_error: Exception | None = None,
+        detail_error: Exception | None = None,
     ) -> None:
         self.name = name
         self.matches = matches or []
         self.record = record
+        self.search_error = search_error
+        self.detail_error = detail_error
         self.get_detail_calls: list[MetadataMatch] = []
 
     def can_enrich(self, _context: MetadataContext) -> bool:
         return True
 
     def search(self, _candidate) -> list[MetadataMatch]:
+        if self.search_error is not None:
+            raise self.search_error
         return list(self.matches)
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         self.get_detail_calls.append(match)
+        if self.detail_error is not None:
+            raise self.detail_error
         assert self.record is not None
         return self.record
 
@@ -70,3 +78,22 @@ def test_metadata_hydrator_uses_cached_detail_without_recrawling(tmp_path: Path)
 
     assert updated.vod_content == "缓存简介"
     assert douban_provider.get_detail_calls == []
+
+
+def test_metadata_hydrator_skips_provider_detail_failure_and_keeps_existing_vod(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    douban_provider = FakeProvider(
+        "douban",
+        matches=[MetadataMatch(provider="douban", provider_id="35746415", title="深空彼岸")],
+        detail_error=RuntimeError("metadata补全失败: java.lang.NullPointerException"),
+    )
+    vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_content="原始简介")
+    hydrator = MetadataHydrator(cache=cache, providers=[douban_provider])
+
+    updated = hydrator.hydrate(MetadataContext(vod=vod, source_kind="browse"))
+
+    assert updated.vod_name == "深空彼岸"
+    assert updated.vod_content == "原始简介"
+    assert douban_provider.get_detail_calls == [
+        MetadataMatch(provider="douban", provider_id="35746415", title="深空彼岸")
+    ]

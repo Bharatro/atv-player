@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
@@ -27,8 +29,10 @@ class AdvancedSettingsDialog(QDialog):
         self._config = config
         self._save_config = save_config
         self.setWindowTitle("高级设置")
-        self.resize(640, 320)
+        self.resize(640, 360)
 
+        self.metadata_group = QGroupBox("媒体增强配置")
+        self.metadata_enabled_checkbox = QCheckBox("启用媒体增强")
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过本地豆瓣抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -36,8 +40,15 @@ class AdvancedSettingsDialog(QDialog):
         self.save_button = QPushButton("保存")
         self.cancel_button = QPushButton("取消")
 
+        self.metadata_enabled_checkbox.setChecked(config.metadata_enhancement_enabled)
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
+
+        metadata_layout = QFormLayout()
+        metadata_layout.addRow(self.metadata_enabled_checkbox)
+        metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
+        metadata_layout.addRow("TMDB API Key", self.tmdb_api_key_edit)
+        self.metadata_group.setLayout(metadata_layout)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -45,16 +56,20 @@ class AdvancedSettingsDialog(QDialog):
         button_row.addWidget(self.cancel_button)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("豆瓣 Cookie"))
-        layout.addWidget(self.douban_cookie_edit)
-        layout.addWidget(QLabel("TMDB API Key"))
-        layout.addWidget(self.tmdb_api_key_edit)
+        layout.addWidget(self.metadata_group)
         layout.addLayout(button_row)
 
+        self.metadata_enabled_checkbox.toggled.connect(self._sync_metadata_inputs)
         self.save_button.clicked.connect(self._save)
         self.cancel_button.clicked.connect(self.reject)
+        self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
+
+    def _sync_metadata_inputs(self, enabled: bool) -> None:
+        self.douban_cookie_edit.setEnabled(enabled)
+        self.tmdb_api_key_edit.setEnabled(enabled)
 
     def _save(self) -> None:
+        self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._save_config()

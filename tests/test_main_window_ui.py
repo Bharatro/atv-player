@@ -3350,11 +3350,12 @@ def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
 
 def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeypatch) -> None:
     config = AppConfig()
-    saved: list[tuple[str, str]] = []
+    saved: list[tuple[bool, str, str]] = []
 
     class FakeDialog:
         def __init__(self, config_arg, save_config, parent=None) -> None:
             del parent
+            config_arg.metadata_enhancement_enabled = False
             config_arg.metadata_douban_cookie = "bid=demo;"
             config_arg.metadata_tmdb_api_key = "tmdb-key"
             save_config()
@@ -3373,27 +3374,58 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
         history_controller=FakeStaticController(),
         player_controller=FakePlayerController(),
         config=config,
-        save_config=lambda: saved.append((config.metadata_douban_cookie, config.metadata_tmdb_api_key)),
+        save_config=lambda: saved.append(
+            (
+                config.metadata_enhancement_enabled,
+                config.metadata_douban_cookie,
+                config.metadata_tmdb_api_key,
+            )
+        ),
     )
     qtbot.addWidget(window)
 
     window._open_advanced_settings()
 
-    assert saved == [("bid=demo;", "tmdb-key")]
+    assert saved == [(False, "bid=demo;", "tmdb-key")]
 
 
 def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     config = AppConfig(
+        metadata_enhancement_enabled=False,
         metadata_douban_cookie="bid=demo;",
         metadata_tmdb_api_key="tmdb-demo-key",
     )
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
+    assert dialog.metadata_enabled_checkbox.isChecked() is False
     assert dialog.douban_cookie_edit.toPlainText() == "bid=demo;"
     assert dialog.tmdb_api_key_edit.text() == "tmdb-demo-key"
+    assert dialog.douban_cookie_edit.isEnabled() is False
+    assert dialog.tmdb_api_key_edit.isEnabled() is False
+    assert dialog.douban_cookie_edit.placeholderText() == "填写豆瓣 Cookie；留空时跳过本地豆瓣抓取"
+
+
+def test_advanced_settings_dialog_toggles_input_enabled_state(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.douban_cookie_edit.isEnabled() is True
+    assert dialog.tmdb_api_key_edit.isEnabled() is True
+
+    dialog.metadata_enabled_checkbox.setChecked(False)
+
+    assert dialog.douban_cookie_edit.isEnabled() is False
+    assert dialog.tmdb_api_key_edit.isEnabled() is False
+
+    dialog.metadata_enabled_checkbox.setChecked(True)
+
+    assert dialog.douban_cookie_edit.isEnabled() is True
+    assert dialog.tmdb_api_key_edit.isEnabled() is True
 
 
 def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
@@ -3404,10 +3436,12 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
     qtbot.addWidget(dialog)
 
+    dialog.metadata_enabled_checkbox.setChecked(False)
     dialog.douban_cookie_edit.setPlainText(" bid=demo; ll=118282 \n")
     dialog.tmdb_api_key_edit.setText(" tmdb-demo-key ")
     dialog._save()
 
+    assert config.metadata_enhancement_enabled is False
     assert config.metadata_douban_cookie == "bid=demo; ll=118282"
     assert config.metadata_tmdb_api_key == "tmdb-demo-key"
     assert len(saved) == 1

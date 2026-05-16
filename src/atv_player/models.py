@@ -14,6 +14,7 @@ class AppConfig:
     username: str = ""
     token: str = ""
     vod_token: str = ""
+    metadata_enhancement_enabled: bool = True
     metadata_douban_cookie: str = ""
     metadata_tmdb_api_key: str = ""
     last_path: str = "/"

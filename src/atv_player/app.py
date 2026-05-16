@@ -303,6 +303,8 @@ class AppCoordinator(QObject):
             if vod is None or source_kind not in supported_sources:
                 return None
             config = self.repo.load_config()
+            if not config.metadata_enhancement_enabled:
+                return None
             local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
             providers: list[object] = []
             if source_kind == "plugin":
