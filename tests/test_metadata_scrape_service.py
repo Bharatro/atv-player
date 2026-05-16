@@ -54,6 +54,13 @@ def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: P
     assert groups[1].items[0].provider_id == "35746415"
 
 
+def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("tencent")])
+
+    assert service.provider_options() == [("tencent", "腾讯")]
+
+
 def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     broken = FakeProvider("tmdb", search_error=RuntimeError("tmdb timeout"))

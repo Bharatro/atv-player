@@ -9,6 +9,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import VodItem
 
 _PROVIDER_LABELS = {
+    "tencent": "腾讯",
     "official_douban": "豆瓣官方",
     "local_douban": "本地豆瓣",
     "douban": "豆瓣",

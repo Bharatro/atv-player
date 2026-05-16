@@ -48,6 +48,7 @@ from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
 from atv_player.metadata.scrape import MetadataScrapeService
+from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
@@ -358,6 +359,7 @@ class AppCoordinator(QObject):
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
         providers.append(IqiyiMetadataProvider())
+        providers.append(TencentMetadataProvider())
         if str(config.metadata_douban_cookie or "").strip():
             local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
             providers.append(OfficialDoubanProvider(local_douban_client))
