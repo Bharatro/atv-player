@@ -3991,6 +3991,111 @@ def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb
     assert callable(enhance)
 
 
+def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episode_marker(monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "超能路人甲"
+            assert year == "2026"
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "星门初启"},
+                    {"episode_number": 2, "name": "星火初燃"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+            playlist=[
+                PlayItem(title="S01E02.mkv", url="http://m/2.mp4", original_title="S01E02.mkv"),
+                PlayItem(title="S01E01.mkv", url="http://m/1.mp4", original_title="S01E01.mkv"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == ["第2集 星火初燃", "第1集 星门初启"]
+
+
+def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+            self.requested_seasons: list[int] = []
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            self.requested_seasons.append(season_number)
+            if season_number == 1:
+                return {"episodes": [{"episode_number": 2, "name": "第一季终章"}]}
+            if season_number == 2:
+                return {"episodes": [{"episode_number": 1, "name": "第二季开篇"}]}
+            return {"episodes": []}
+
+    client_holder: dict[str, FakeTMDBClient] = {}
+
+    def build_tmdb_client(api_key: str) -> FakeTMDBClient:
+        client = FakeTMDBClient(api_key)
+        client_holder["client"] = client
+        return client
+
+    monkeypatch.setattr(app_module, "TMDBClient", build_tmdb_client)
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+            playlist=[
+                PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv"),
+                PlayItem(title="S01E02.mkv", url="http://m/102.mp4", original_title="S01E02.mkv"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == ["第1集 第二季开篇", "第2集 第一季终章"]
+    assert client_holder["client"].requested_seasons == [1, 2]
+
+
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

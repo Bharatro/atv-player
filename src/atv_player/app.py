@@ -31,7 +31,12 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
-from atv_player.episode_titles import apply_episode_title_map, playlist_has_title_variants, seed_original_titles
+from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.episode_titles import (
+    apply_episode_title_index_map,
+    playlist_has_title_variants,
+    seed_original_titles,
+)
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
@@ -348,6 +353,24 @@ class AppCoordinator(QObject):
         def _normalize_title(value: object) -> str:
             return re.sub(r"\s+", "", str(value or "").strip().lower())
 
+        def _extract_season_number(value: object) -> int | None:
+            text = str(value or "")
+            for pattern in (
+                r"\bS(?:eason)?\s*0*(\d{1,2})\s*(?:E\d+)?\b",
+                r"第\s*0*(\d{1,2})\s*季",
+                r"(?:^|[\\/])S0*(\d{1,2})(?:[\\/]|$)",
+            ):
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match is None:
+                    continue
+                try:
+                    season_number = int(match.group(1))
+                except (TypeError, ValueError):
+                    continue
+                if season_number > 0:
+                    return season_number
+            return None
+
         def _guess_season_number(vod: VodItem) -> int:
             for value in (vod.vod_name, vod.vod_remarks, vod.category_name):
                 text = str(value or "")
@@ -381,6 +404,7 @@ class AppCoordinator(QObject):
                 if not current_playlist:
                     return None
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
+                default_season = _guess_season_number(session_vod)
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=year))
                 if not search_results:
@@ -403,27 +427,52 @@ class AppCoordinator(QObject):
                 tmdb_id = str(matched.get("id") or "").strip()
                 if not tmdb_id:
                     return None
-                season_detail = tmdb_client.get_tv_season_detail(tmdb_id, _guess_season_number(session_vod))
-                episodes = season_detail.get("episodes")
-                if not isinstance(episodes, list):
+                requested_seasons: set[int] = set()
+                season_episode_pairs: list[tuple[int, int] | None] = []
+                for item in playlist:
+                    season_number = None
+                    for candidate in (item.original_title, item.title, item.path):
+                        season_number = _extract_season_number(candidate)
+                        if season_number is not None:
+                            break
+                    episode_number = infer_playlist_episode_number(item, playlist)
+                    if episode_number is None:
+                        season_episode_pairs.append(None)
+                        continue
+                    resolved_season = season_number or default_season
+                    season_episode_pairs.append((resolved_season, episode_number))
+                    requested_seasons.add(resolved_season)
+                if not requested_seasons:
+                    requested_seasons.add(default_season)
+                titles_by_index: dict[int, str] = {}
+                titles_by_season_episode: dict[tuple[int, int], str] = {}
+                for season_number in sorted(requested_seasons):
+                    season_detail = tmdb_client.get_tv_season_detail(tmdb_id, season_number)
+                    episodes = season_detail.get("episodes")
+                    if not isinstance(episodes, list):
+                        continue
+                    for episode in episodes:
+                        if not isinstance(episode, dict):
+                            continue
+                        try:
+                            episode_number = int(episode.get("episode_number") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        episode_title = str(episode.get("name") or "").strip()
+                        if episode_number <= 0 or not episode_title:
+                            continue
+                        titles_by_season_episode[(season_number, episode_number)] = f"第{episode_number}集 {episode_title}"
+                for index, pair in enumerate(season_episode_pairs):
+                    if pair is None:
+                        continue
+                    candidate = titles_by_season_episode.get(pair)
+                    if candidate:
+                        titles_by_index[index] = candidate
+                if not titles_by_index:
                     return None
-                titles_by_episode: dict[int, str] = {}
-                for episode in episodes:
-                    if not isinstance(episode, dict):
-                        continue
-                    try:
-                        episode_number = int(episode.get("episode_number") or 0)
-                    except (TypeError, ValueError):
-                        continue
-                    episode_title = str(episode.get("name") or "").strip()
-                    if episode_number <= 0 or not episode_title:
-                        continue
-                    titles_by_episode[episode_number] = f"第{episode_number}集 {episode_title}"
-                if not titles_by_episode:
-                    return None
-                apply_episode_title_map(
+                apply_episode_title_index_map(
                     playlist,
-                    titles_by_episode,
+                    titles_by_index,
                     source="tmdb",
                     source_priority=["plugin", "iqiyi", "tencent", "bilibili", "tmdb"],
                 )

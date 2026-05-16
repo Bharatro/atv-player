@@ -44,6 +44,30 @@ def apply_episode_title_map(
     return playlist
 
 
+def apply_episode_title_index_map(
+    playlist: list[PlayItem],
+    titles_by_index: dict[int, str],
+    *,
+    source: str,
+    source_priority: list[str],
+) -> list[PlayItem]:
+    seed_original_titles(playlist)
+    for index, item in enumerate(playlist):
+        candidate = str(titles_by_index.get(index) or "").strip()
+        if not candidate:
+            continue
+        if normalize_episode_title_text(candidate) == normalize_episode_title_text(item.original_title):
+            continue
+        if item.episode_display_title and _source_rank(source, source_priority) > _source_rank(
+            item.episode_title_source,
+            source_priority,
+        ):
+            continue
+        item.episode_display_title = candidate
+        item.episode_title_source = source
+    return playlist
+
+
 def playlist_has_title_variants(playlist: list[PlayItem]) -> bool:
     return any(
         item.original_title.strip()
