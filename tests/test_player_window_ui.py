@@ -313,6 +313,21 @@ def test_player_window_shows_metadata_scrape_button_with_search_icon(qtbot) -> N
     assert window.metadata_scrape_button.isEnabled() is True
 
 
+def test_player_window_uses_dedicated_metadata_scrape_icon(qtbot, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_load_icon(path) -> QIcon:
+        calls.append(str(path))
+        return QIcon()
+
+    monkeypatch.setattr(player_window_module, "load_icon", fake_load_icon)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert str(window._icons_dir / "scrape.svg") in calls
+
+
 def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),

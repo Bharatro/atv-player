@@ -596,7 +596,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
-        self.metadata_scrape_button = self._create_icon_button("search.svg", "刮削")
+        self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_log_button.setCheckable(True)
