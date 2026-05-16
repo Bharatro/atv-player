@@ -111,4 +111,5 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
                 merged.append(PlaybackDetailField(label=label, value=str(item.get("value") or "")))
                 seen_labels.add(label)
         vod.detail_fields = merged
+        _set_field_source(vod, "detail_fields", record.provider)
     return vod

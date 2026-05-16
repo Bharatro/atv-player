@@ -86,6 +86,27 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("mgtv", "芒果"),
 ]
 
+_METADATA_PROVIDER_LABELS: dict[str, str] = {
+    "local_douban": "本地豆瓣",
+    "remote_douban": "alist-tvbox豆瓣",
+    "douban": "豆瓣",
+    "tmdb": "TMDB",
+    "plugin": "插件",
+}
+
+_METADATA_CHANGE_FIELDS: list[tuple[str, str, str]] = [
+    ("poster", "vod_pic", "海报"),
+    ("year", "vod_year", "年份"),
+    ("genres", "type_name", "类型"),
+    ("country", "vod_area", "地区"),
+    ("language", "vod_lang", "语言"),
+    ("directors", "vod_director", "导演"),
+    ("actors", "vod_actor", "演员"),
+    ("overview", "vod_content", "简介"),
+    ("rating", "vod_remarks", "评分"),
+    ("douban_id", "dbid", "豆瓣ID"),
+]
+
 _INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*?)\[/a\]", re.DOTALL)
 logger = logging.getLogger(__name__)
 
@@ -100,6 +121,43 @@ def _summarize_media_url(url: str) -> str:
     if len(path) > 96:
         path = f"...{path[-96:]}"
     return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _metadata_provider_label(provider: str) -> str:
+    normalized = str(provider or "").strip()
+    if not normalized:
+        return "未知来源"
+    return _METADATA_PROVIDER_LABELS.get(normalized, normalized)
+
+
+def _build_metadata_update_log(previous_vod: VodItem, updated_vod: VodItem) -> str:
+    provider_changes: dict[str, list[str]] = {}
+    provider_order: list[str] = []
+
+    def add_change(provider: str, label: str) -> None:
+        normalized_provider = str(provider or "").strip()
+        if normalized_provider not in provider_changes:
+            provider_changes[normalized_provider] = []
+            provider_order.append(normalized_provider)
+        if label not in provider_changes[normalized_provider]:
+            provider_changes[normalized_provider].append(label)
+
+    for field_key, attr_name, label in _METADATA_CHANGE_FIELDS:
+        if getattr(previous_vod, attr_name) == getattr(updated_vod, attr_name):
+            continue
+        add_change(updated_vod.metadata_field_sources.get(field_key, ""), label)
+
+    if previous_vod.detail_fields != updated_vod.detail_fields:
+        add_change(updated_vod.metadata_field_sources.get("detail_fields", ""), "扩展字段")
+
+    if not provider_order:
+        return ""
+
+    parts = [
+        f"{_metadata_provider_label(provider)}({ ' / '.join(provider_changes[provider]) })"
+        for provider in provider_order
+    ]
+    return f"元数据已更新: {', '.join(parts)}"
 
 
 class ClickableSlider(QSlider):
@@ -2288,12 +2346,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         if self.session is not pending_session:
             return
+        previous_vod = self.session.vod
+        metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self.session.vod = updated_vod
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
         self._refresh_window_title()
-        self._append_log("元数据已更新: 简介 / 评分 / 扩展字段")
+        if metadata_log:
+            self._append_log(metadata_log)
 
     def _handle_metadata_hydration_failed(self, request_id: int, message: str) -> None:
         if request_id != self._metadata_request_id:

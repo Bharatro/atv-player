@@ -12435,6 +12435,7 @@ def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloa
             vod_pic="https://img.example/poster.jpg",
             vod_content="豆瓣简介",
             vod_remarks="8.1",
+            metadata_field_sources={"poster": "tmdb", "overview": "local_douban", "rating": "local_douban"},
         ),
     )
 
@@ -12448,6 +12449,47 @@ def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloa
     assert window.video.load_calls == [("https://media.example/1.mp4", False, 0, {})]
     assert "评分: 8.1" in window.metadata_view.toPlainText()
     assert ("detail", "https://img.example/poster.jpg") in poster_sources
+    assert "元数据已更新" in window.log_view.toPlainText()
+    assert "本地豆瓣" in window.log_view.toPlainText()
+    assert "TMDB" in window.log_view.toPlainText()
+
+
+def test_player_window_async_metadata_hydration_skips_update_log_when_metadata_is_unchanged(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", vod_id="ep1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=current_session.vod.vod_name,
+            vod_content=current_session.vod.vod_content,
+            metadata_field_sources=dict(current_session.vod.metadata_field_sources),
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window._pending_metadata_session is None, timeout=1000)
+    assert "元数据已更新" not in window.log_view.toPlainText()
 
 
 def test_player_window_ignores_stale_metadata_hydration_results(qtbot) -> None:
