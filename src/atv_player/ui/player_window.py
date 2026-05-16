@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedLayout,
+    QTabBar,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -67,6 +68,7 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
+from atv_player.episode_titles import playlist_has_title_variants, playlist_item_display_title
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
@@ -266,6 +268,11 @@ class _MetadataHydrationSignals(QObject):
     failed = Signal(int, str)
 
 
+class _EpisodeTitleEnhancementSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
 class _DetailActionSignals(QObject):
     succeeded = Signal(int, object, object)
     failed = Signal(int, str)
@@ -417,12 +424,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._play_item_request_id = 0
         self._playback_loader_request_id = 0
         self._metadata_request_id = 0
+        self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
         self._pending_metadata_session = None
+        self._pending_episode_title_session = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
@@ -477,6 +486,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_hydration_signals = _MetadataHydrationSignals()
         self._connect_async_signal(self._metadata_hydration_signals.succeeded, self._handle_metadata_hydration_succeeded)
         self._connect_async_signal(self._metadata_hydration_signals.failed, self._handle_metadata_hydration_failed)
+        self._episode_title_enhancement_signals = _EpisodeTitleEnhancementSignals()
+        self._connect_async_signal(
+            self._episode_title_enhancement_signals.succeeded,
+            self._handle_episode_title_enhancement_succeeded,
+        )
+        self._connect_async_signal(
+            self._episode_title_enhancement_signals.failed,
+            self._handle_episode_title_enhancement_failed,
+        )
         self._detail_action_signals = _DetailActionSignals()
         self._connect_async_signal(self._detail_action_signals.succeeded, self._handle_detail_action_succeeded)
         self._connect_async_signal(self._detail_action_signals.failed, self._handle_detail_action_failed)
@@ -520,10 +538,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
+        self.playlist_title_mode = "episode"
         self.playlist_group_combo = QComboBox()
         self.playlist_group_combo.setHidden(True)
         self.playlist_source_combo = QComboBox()
         self.playlist_source_combo.setHidden(True)
+        self.playlist_title_tabs = QTabBar()
+        self.playlist_title_tabs.addTab("剧集标题")
+        self.playlist_title_tabs.addTab("原始文件名")
+        self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
@@ -764,6 +787,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.playlist_source_combo)
+        sidebar_layout.addWidget(self.playlist_title_tabs)
         sidebar_layout.addWidget(self.sidebar_splitter)
         self.sidebar_container = QWidget()
         self.sidebar_container.setMinimumWidth(250)
@@ -810,6 +834,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
+        self.playlist_title_tabs.currentChanged.connect(self._change_playlist_title_mode)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -961,13 +986,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_group_combo.blockSignals(False)
         self.playlist_source_combo.blockSignals(False)
 
+    def _change_playlist_title_mode(self, index: int) -> None:
+        self.playlist_title_mode = "original" if index == 1 else "episode"
+        self._render_playlist_items()
+
+    def _render_playlist_title_tabs(self) -> None:
+        playlist = list(self.session.playlist if self.session is not None else [])
+        visible = playlist_has_title_variants(playlist)
+        self.playlist_title_tabs.setHidden(not visible)
+        self.playlist_title_tabs.blockSignals(True)
+        self.playlist_title_tabs.setCurrentIndex(0 if self.playlist_title_mode == "episode" else 1)
+        self.playlist_title_tabs.blockSignals(False)
+
     def _render_playlist_items(self) -> None:
         self.playlist.clear()
         if self.session is None:
             return
         for item in self.session.playlist:
-            widget_item = QListWidgetItem(item.title)
-            widget_item.setToolTip(item.title)
+            display_title = playlist_item_display_title(item, self.playlist_title_mode)
+            widget_item = QListWidgetItem(display_title)
+            widget_item.setToolTip(display_title)
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
 
@@ -1307,6 +1345,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
         self.current_index = session.start_index
+        self.playlist_title_mode = "episode"
         self._install_danmaku_log_handler(session)
         self._render_poster()
         self._render_metadata()
@@ -1329,6 +1368,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_play_button_icon()
         self._refresh_window_title()
         self._render_playlist_source_combos()
+        self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._render_detail_actions()
         self._refresh_danmaku_source_entry_points()
@@ -1349,6 +1389,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
+        self._start_episode_title_enhancement()
         self.report_timer.start()
         self.progress_timer.start()
         self._sync_video_cursor_autohide()
@@ -1404,8 +1445,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             min(load_result.replacement_start_index, len(replacement) - 1),
         )
         self._render_playlist_source_combos()
+        self.playlist_title_mode = "episode"
+        self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._render_detail_actions()
+        self._start_episode_title_enhancement()
 
     def _start_playback_loader(
         self,
@@ -2337,6 +2381,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _start_episode_title_enhancement(self) -> None:
+        if self.session is None or self.session.episode_title_enhancer is None or self.session.episode_titles_hydrated:
+            return
+        self._episode_title_request_id += 1
+        request_id = self._episode_title_request_id
+        session = self.session
+        self._pending_episode_title_session = session
+        session.episode_titles_hydrated = True
+
+        def run() -> None:
+            try:
+                updated_playlist = session.episode_title_enhancer(session)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._episode_title_enhancement_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._episode_title_enhancement_signals.succeeded.emit(request_id, updated_playlist)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _handle_metadata_hydration_succeeded(self, request_id: int, updated_vod: VodItem | None) -> None:
         if request_id != self._metadata_request_id:
             return
@@ -2356,11 +2422,38 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if metadata_log:
             self._append_log(metadata_log)
 
+    def _handle_episode_title_enhancement_succeeded(self, request_id: int, updated_playlist: list[PlayItem] | None) -> None:
+        if request_id != self._episode_title_request_id:
+            return
+        pending_session = self._pending_episode_title_session
+        self._pending_episode_title_session = None
+        if updated_playlist is None or pending_session is None:
+            return
+        if self.session is not pending_session:
+            return
+        self.session.playlist = list(updated_playlist)
+        if 0 <= self.session.playlist_index < len(self.session.playlists):
+            self.session.playlists[self.session.playlist_index] = self.session.playlist
+        source_groups = self._session_source_groups()
+        if 0 <= self.session.source_group_index < len(source_groups):
+            group = source_groups[self.session.source_group_index]
+            if 0 <= self.session.source_index < len(group.sources):
+                group.sources[self.session.source_index].playlist = self.session.playlist
+        self.playlist_title_mode = "episode"
+        self._render_playlist_title_tabs()
+        self._render_playlist_items()
+
     def _handle_metadata_hydration_failed(self, request_id: int, message: str) -> None:
         if request_id != self._metadata_request_id:
             return
         self._pending_metadata_session = None
         self._append_log(f"元数据补全失败: {message}")
+
+    def _handle_episode_title_enhancement_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._episode_title_request_id:
+            return
+        self._pending_episode_title_session = None
+        self._append_log(f"剧集标题增强失败: {message}")
 
     def _handle_detail_action_succeeded(self, request_id: int, item: PlayItem, payload: object) -> None:
         if request_id != self._detail_action_request_id or self.session is None:
@@ -2589,8 +2682,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if callable(reset_prefetch):
             reset_prefetch(self.session)
         self.current_index = target_index
+        self.playlist_title_mode = "episode"
         self._render_playlist_source_combos()
+        self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._start_episode_title_enhancement()
         try:
             self._load_current_item(previous_index=previous_index)
             self._refresh_window_title()

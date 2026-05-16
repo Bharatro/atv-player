@@ -12492,6 +12492,146 @@ def test_player_window_async_metadata_hydration_skips_update_log_when_metadata_i
     assert "元数据已更新" not in window.log_view.toPlainText()
 
 
+def test_player_window_shows_episode_title_tabs_when_playlist_has_title_variants(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="第1集 星门初启",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.playlist_title_tabs.isHidden() is False
+    assert window.playlist_title_tabs.tabText(0) == "剧集标题"
+    assert window.playlist_title_tabs.tabText(1) == "原始文件名"
+    assert window.playlist_title_tabs.currentIndex() == 0
+    assert window.playlist.item(0).text() == "第1集 星门初启"
+
+
+def test_player_window_switches_playlist_labels_without_changing_current_index(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="第1集 星门初启",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+            ),
+            PlayItem(
+                title="第2集 星火初燃",
+                url="https://media.example/2.mp4",
+                vod_id="ep2",
+                original_title="S01E02.mkv",
+                episode_display_title="第2集 星火初燃",
+            ),
+        ],
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.playlist_title_tabs.setCurrentIndex(1)
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert window.playlist.item(0).text() == "S01E01.mkv"
+    assert window.playlist.item(1).text() == "S01E02.mkv"
+
+
+def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=lambda current_session: [
+            PlayItem(
+                title=current_session.playlist[0].title,
+                url=current_session.playlist[0].url,
+                vod_id=current_session.playlist[0].vod_id,
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            )
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.playlist_title_tabs.isHidden() is False, timeout=1000)
+    assert window.playlist.item(0).text() == "第1集 星门初启"
+    assert window.current_index == 0
+
+
 def test_player_window_ignores_stale_metadata_hydration_results(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
