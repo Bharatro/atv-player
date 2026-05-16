@@ -11,6 +11,10 @@ from atv_player.models import VodItem
 
 logger = logging.getLogger(__name__)
 
+_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
+_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
+
 
 class MetadataHydrator:
     def __init__(self, cache: MetadataCache, providers: list[MetadataProvider]) -> None:
@@ -19,17 +23,31 @@ class MetadataHydrator:
 
     def hydrate(self, context: MetadataContext) -> VodItem:
         vod = replace(context.vod)
+        query = context.to_query()
         for provider in self._providers:
             if not provider.can_enrich(context):
                 continue
-            try:
-                matches = provider.search(context.to_query())
-            except Exception as exc:
-                logger.warning("Metadata provider search failed provider=%s", provider.name, exc_info=exc)
-                continue
+            matches = self._cache.load_search(
+                provider.name,
+                query.title,
+                query.year,
+                ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
+                empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+            )
+            if matches is None:
+                try:
+                    matches = provider.search(query)
+                except Exception as exc:
+                    logger.warning("Metadata provider search failed provider=%s", provider.name, exc_info=exc)
+                    continue
+                self._cache.save_search(provider.name, query.title, query.year, matches)
             if not matches:
                 continue
-            cached = self._cache.load_detail(provider.name, str(matches[0].provider_id), ttl_seconds=7 * 24 * 3600)
+            cached = self._cache.load_detail(
+                provider.name,
+                str(matches[0].provider_id),
+                ttl_seconds=_DETAIL_CACHE_TTL_SECONDS,
+            )
             if cached is not None:
                 merge_metadata_record(vod, cached, provider_priority=[item.name for item in self._providers])
                 continue

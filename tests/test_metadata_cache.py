@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import atv_player.metadata.cache as metadata_cache_module
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataRecord
 
@@ -40,3 +41,25 @@ def test_metadata_cache_round_trips_detail_records(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.overview == "豆瓣简介"
     assert loaded.douban_id == 35746415
+
+
+def test_metadata_cache_round_trips_empty_search_results(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+
+    cache.save_search("douban", "查无此片", "2026", [])
+    loaded = cache.load_search("douban", "查无此片", "2026", ttl_seconds=86400, empty_ttl_seconds=3600)
+
+    assert loaded == []
+
+
+def test_metadata_cache_expires_empty_search_results_with_shorter_ttl(tmp_path: Path, monkeypatch) -> None:
+    clock = {"now": 100.0}
+    monkeypatch.setattr(metadata_cache_module, "time", lambda: clock["now"])
+    cache = MetadataCache(tmp_path)
+
+    cache.save_search("douban", "查无此片", "2026", [])
+    assert cache.load_search("douban", "查无此片", "2026", ttl_seconds=86400, empty_ttl_seconds=3600) == []
+
+    clock["now"] += 3601
+
+    assert cache.load_search("douban", "查无此片", "2026", ttl_seconds=86400, empty_ttl_seconds=3600) is None

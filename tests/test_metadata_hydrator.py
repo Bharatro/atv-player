@@ -21,12 +21,14 @@ class FakeProvider:
         self.record = record
         self.search_error = search_error
         self.detail_error = detail_error
+        self.search_calls = 0
         self.get_detail_calls: list[MetadataMatch] = []
 
     def can_enrich(self, _context: MetadataContext) -> bool:
         return True
 
     def search(self, _candidate) -> list[MetadataMatch]:
+        self.search_calls += 1
         if self.search_error is not None:
             raise self.search_error
         return list(self.matches)
@@ -132,3 +134,18 @@ def test_metadata_hydrator_keeps_douban_overview_but_uses_tmdb_visual_fields(tmp
     assert updated.vod_year == "2026"
     assert updated.vod_content == "豆瓣简介"
     assert updated.vod_remarks == "8.1"
+
+
+def test_metadata_hydrator_caches_empty_search_results_and_skips_repeat_search(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider("local_douban", matches=[])
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+    context = MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse")
+
+    first = hydrator.hydrate(context)
+    second = hydrator.hydrate(context)
+
+    assert first.vod_name == "深空彼岸"
+    assert second.vod_name == "深空彼岸"
+    assert provider.search_calls == 1
+    assert provider.get_detail_calls == []

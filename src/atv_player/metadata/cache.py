@@ -13,11 +13,26 @@ class MetadataCache:
     def __init__(self, cache_root: Path) -> None:
         self._root = Path(cache_root)
 
-    def load_search(self, provider: str, title: str, year: str, ttl_seconds: int) -> list[MetadataMatch] | None:
-        payload = self._load_json(self._search_path(provider, title, year), ttl_seconds)
+    def load_search(
+        self,
+        provider: str,
+        title: str,
+        year: str,
+        ttl_seconds: int,
+        *,
+        empty_ttl_seconds: int | None = None,
+    ) -> list[MetadataMatch] | None:
+        payload = self._load_json(self._search_path(provider, title, year))
         if payload is None:
             return None
-        return [MetadataMatch(**item) for item in payload.get("items", [])]
+        items = [MetadataMatch(**item) for item in payload.get("items", [])]
+        updated_at = float(payload.get("_updated_at") or 0.0)
+        effective_ttl_seconds = ttl_seconds
+        if not items and empty_ttl_seconds is not None:
+            effective_ttl_seconds = empty_ttl_seconds
+        if effective_ttl_seconds > 0 and updated_at > 0 and (time() - updated_at) > effective_ttl_seconds:
+            return None
+        return items
 
     def save_search(self, provider: str, title: str, year: str, matches: list[MetadataMatch]) -> None:
         self._save_json(
@@ -26,9 +41,14 @@ class MetadataCache:
         )
 
     def load_detail(self, provider: str, provider_id: str, ttl_seconds: int) -> MetadataRecord | None:
-        payload = self._load_json(self._detail_path(provider, provider_id), ttl_seconds)
+        payload = self._load_json(self._detail_path(provider, provider_id))
         if payload is None:
             return None
+        updated_at = float(payload.get("_updated_at") or 0.0)
+        if ttl_seconds > 0 and updated_at > 0 and (time() - updated_at) > ttl_seconds:
+            return None
+        payload = dict(payload)
+        payload.pop("_updated_at", None)
         return MetadataRecord(**payload)
 
     def save_detail(self, provider: str, provider_id: str, record: MetadataRecord) -> None:
@@ -47,19 +67,13 @@ class MetadataCache:
         payload = "\x1f".join(part.strip() for part in parts)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _load_json(self, path: Path, ttl_seconds: int) -> dict[str, object] | None:
+    def _load_json(self, path: Path) -> dict[str, object] | None:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
         except json.JSONDecodeError:
             return None
-        updated_at = float(payload.get("_updated_at") or 0.0)
-        if ttl_seconds > 0 and updated_at > 0 and (time() - updated_at) > ttl_seconds:
-            return None
-        if "_updated_at" in payload:
-            payload = dict(payload)
-            payload.pop("_updated_at", None)
         return payload
 
     def _save_json(self, path: Path, payload: dict[str, object]) -> None:
