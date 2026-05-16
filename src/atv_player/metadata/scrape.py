@@ -14,6 +14,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import PlayItem, VodItem
 
 _PROVIDER_LABELS = {
+    "bilibili": "B站",
     "tencent": "腾讯",
     "official_douban": "豆瓣官方",
     "local_douban": "本地豆瓣",
@@ -153,7 +154,7 @@ class MetadataScrapeService:
             year=str(vod.vod_year or "").strip(),
             category_name=str(vod.category_name or "").strip(),
         )
-        for provider_name in ("tmdb", "tencent", "iqiyi"):
+        for provider_name in ("bilibili", "tmdb", "tencent", "iqiyi"):
             if preferred_candidate is not None and provider_name == preferred_candidate.provider:
                 continue
             provider = self._providers_by_name.get(provider_name)

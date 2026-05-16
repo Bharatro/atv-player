@@ -49,8 +49,8 @@ class AdvancedSettingsDialog(QDialog):
         metadata_layout = QFormLayout()
         metadata_layout.addRow(self.metadata_enabled_checkbox)
         metadata_layout.addRow(self.episode_title_enhancement_checkbox)
-        metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
         metadata_layout.addRow("TMDB API Key", self.tmdb_api_key_edit)
+        metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
         self.metadata_group.setLayout(metadata_layout)
 
         button_row = QHBoxLayout()

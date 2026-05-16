@@ -4917,6 +4917,7 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     coordinator = AppCoordinator(FakeRepo())
     api_client = object()
 
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", lambda: type("P", (), {"name": "bilibili"})(), raising=False)
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: type("P", (), {"name": "iqiyi"})(), raising=False)
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: type("P", (), {"name": "tencent"})(), raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
@@ -4930,7 +4931,7 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
 
     assert service is not None
-    assert [provider.name for provider in service._providers] == ["iqiyi", "tencent", "remote_douban"]
+    assert [provider.name for provider in service._providers] == ["bilibili", "iqiyi", "tencent", "remote_douban"]
 
 
 def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -> None:
@@ -4988,8 +4989,24 @@ def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -
         def get_detail(self, _match):
             raise AssertionError("not used")
 
+    class RecordingBilibiliProvider:
+        name = "bilibili"
+
+        def __init__(self) -> None:
+            created.append("bilibili")
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
+
     created: list[str] = []
     coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", RecordingBilibiliProvider, raising=False)
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", RecordingIqiyiProvider, raising=False)
     monkeypatch.setattr(app_module, "TencentMetadataProvider", RecordingTencentProvider, raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
@@ -4999,8 +5016,8 @@ def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -
     service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="剑来 第二季"))
 
     assert service is not None
-    assert [provider.name for provider in service._providers] == ["iqiyi", "tencent", "local_douban"]
-    assert created == ["iqiyi", "tencent", "local_douban"]
+    assert [provider.name for provider in service._providers] == ["bilibili", "iqiyi", "tencent", "local_douban"]
+    assert created == ["bilibili", "iqiyi", "tencent", "local_douban"]
 
 
 def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:

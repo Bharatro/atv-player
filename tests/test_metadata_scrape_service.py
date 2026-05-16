@@ -203,11 +203,73 @@ def test_metadata_scrape_service_auto_search_prefers_tmdb_over_tencent_and_iqiyi
     assert updated[0].episode_display_title == "第1集 TMDB标题"
 
 
+def test_metadata_scrape_service_auto_search_prefers_bilibili_over_tmdb_tencent_and_iqiyi(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili = FakeProvider(
+        "bilibili",
+        matches=[
+            MetadataMatch(
+                provider="bilibili",
+                provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+                title="牧神记",
+                year="2024",
+                raw={"eps": [{"title": "1", "index_title": "1", "long_title": "天黑别出门"}]},
+            )
+        ],
+    )
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="牧神记",
+                year="2024",
+                raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 旧标题"}]}]},
+            )
+        ],
+    )
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="牧神记",
+                year="2024",
+                raw={"videos": [{"itemNumber": 1, "itemTitle": "爱奇艺标题"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:42:season:1",
+                title="牧神记",
+                year="2024",
+            )
+        ],
+    )
+    tmdb._client = FakeTMDBClient([{"episode_number": 1, "name": "TMDB标题"}])
+    service = MetadataScrapeService(cache=cache, providers=[bilibili, tencent, iqiyi, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bilibili"
+    assert updated[0].episode_display_title == "第1集 天黑别出门"
+
+
 def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
-    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("tencent")])
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bilibili"), FakeProvider("tencent")])
 
-    assert service.provider_options() == [("tencent", "腾讯")]
+    assert service.provider_options() == [("bilibili", "B站"), ("tencent", "腾讯")]
 
 
 def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_path: Path) -> None:

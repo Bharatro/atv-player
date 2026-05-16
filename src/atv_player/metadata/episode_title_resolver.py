@@ -7,7 +7,7 @@ from atv_player.episode_titles import extract_season_number, playlist_has_title_
 from atv_player.episode_titles import apply_episode_title_index_map
 from atv_player.models import PlayItem, VodItem
 
-METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "tmdb", "tencent", "iqiyi"]
+METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bilibili", "tmdb", "tencent", "iqiyi"]
 
 
 def build_provider_episode_playlist(
@@ -37,6 +37,8 @@ def _titles_by_index_for_provider(
         return _titles_by_index_for_tencent(vod, playlist, raw)
     if provider == "iqiyi":
         return _titles_by_index_for_iqiyi(vod, playlist, raw)
+    if provider == "bilibili":
+        return _titles_by_index_for_bilibili(vod, playlist, raw)
     if provider == "tmdb":
         return _titles_by_index_for_tmdb(vod, playlist, raw)
     return {}
@@ -88,6 +90,21 @@ def _titles_by_index_for_tmdb(vod: VodItem, playlist: list[PlayItem], raw: dict[
         episode_title = str(episode.get("name") or episode.get("title") or "").strip()
         if episode_number > 0 and episode_title:
             titles_by_episode[episode_number] = episode_title
+    if not titles_by_episode:
+        return {}
+    return _map_episode_numbers_to_indices(vod, playlist, titles_by_episode)
+
+
+def _titles_by_index_for_bilibili(vod: VodItem, playlist: list[PlayItem], raw: dict[str, object]) -> dict[int, str]:
+    titles_by_episode: dict[int, str] = {}
+    for episode in raw.get("eps") or []:
+        if not isinstance(episode, dict):
+            continue
+        episode_number = _bilibili_episode_number(episode)
+        episode_title = _bilibili_episode_title(episode)
+        if episode_number is None or episode_number <= 0 or not episode_title:
+            continue
+        titles_by_episode[episode_number] = episode_title
     if not titles_by_episode:
         return {}
     return _map_episode_numbers_to_indices(vod, playlist, titles_by_episode)
@@ -155,6 +172,25 @@ def _guess_default_season(vod: VodItem) -> int:
         if season_number is not None:
             return season_number
     return 1
+
+
+def _bilibili_episode_number(episode: dict[str, object]) -> int | None:
+    for key in ("title", "index_title"):
+        try:
+            value = int(str(episode.get(key) or "").strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _bilibili_episode_title(episode: dict[str, object]) -> str:
+    for key in ("long_title", "share_copy", "show_title", "index_title", "title"):
+        value = str(episode.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _format_episode_title(

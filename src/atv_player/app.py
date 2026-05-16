@@ -49,6 +49,7 @@ from atv_player.metadata import (
     MetadataHydrator,
     build_provider_episode_playlist,
 )
+from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
 from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
 from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
@@ -365,6 +366,7 @@ class AppCoordinator(QObject):
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
+        providers.append(BilibiliMetadataProvider())
         providers.append(IqiyiMetadataProvider())
         providers.append(TencentMetadataProvider())
         if str(config.metadata_douban_cookie or "").strip():

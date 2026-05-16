@@ -91,7 +91,9 @@ def score_match(query: MetadataQuery, match: MetadataMatch) -> float:
     score += _category_score(query.category_name, match.raw)
 
     if _is_full_exact_match(query.title, match.title):
-        if match.provider == "iqiyi":
+        if match.provider == "bilibili":
+            score += 0.3
+        elif match.provider == "iqiyi":
             score += 0.15
         elif match.provider == "tencent":
             score += 0.2

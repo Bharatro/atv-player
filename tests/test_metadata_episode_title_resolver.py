@@ -62,3 +62,36 @@ def test_build_provider_episode_playlist_maps_iqiyi_videos_for_multi_season_play
 
     assert updated is not None
     assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
+def test_build_provider_episode_playlist_maps_bilibili_eps_long_titles() -> None:
+    vod = VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫")
+    playlist = [
+        PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4"),
+        PlayItem(title="02.mp4", original_title="02.mp4", url="http://m/2.mp4"),
+    ]
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        year="2024",
+        raw={
+            "eps": [
+                {"title": "1", "index_title": "1", "long_title": "天黑别出门"},
+                {"title": "2", "index_title": "2", "long_title": "我是霸体"},
+            ]
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1集 天黑别出门",
+        "第2集 我是霸体",
+    ]
