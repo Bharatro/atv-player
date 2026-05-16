@@ -3991,7 +3991,7 @@ def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb
     assert callable(enhance)
 
 
-def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episode_marker(monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episode_marker(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4020,6 +4020,7 @@ def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episod
             }
 
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(
@@ -4041,7 +4042,7 @@ def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episod
     assert [item.episode_display_title for item in updated] == ["第2集 星火初燃", "第1集 星门初启"]
 
 
-def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4074,6 +4075,7 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(monke
         return client
 
     monkeypatch.setattr(app_module, "TMDBClient", build_tmdb_client)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(
@@ -4096,7 +4098,7 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(monke
     assert client_holder["client"].requested_seasons == [1, 2]
 
 
-def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_search(monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_search(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4121,6 +4123,7 @@ def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_s
             return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
 
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(
@@ -4140,7 +4143,7 @@ def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_s
     assert updated[0].episode_display_title == "第1集 第二季首集"
 
 
-def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_first_air_year(monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_first_air_year(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4165,6 +4168,7 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
             return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
 
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(
@@ -4184,7 +4188,7 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
     assert updated[0].episode_display_title == "第1集 第二季首集"
 
 
-def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_title_search(monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_title_search(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4207,6 +4211,7 @@ def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_
             raise AssertionError((tmdb_id, season_number))
 
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(
@@ -4223,6 +4228,51 @@ def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_
 
     assert updated is None
     assert calls == [("掩耳盗邻", "")]
+
+
+def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_across_reopens(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    calls = {"search": 0, "season": 0}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            calls["search"] += 1
+            return [{"id": 42, "name": "掩耳盗邻", "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            calls["season"] += 1
+            return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+
+    for _ in range(2):
+        enhance = factory(
+            source_kind="plugin",
+            vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+        )
+        updated = enhance(
+            SimpleNamespace(
+                vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+                playlist=[PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv")],
+            )
+        )
+        assert updated is not None
+        assert updated[0].episode_display_title == "第1集 第二季首集"
+
+    assert calls == {"search": 1, "season": 1}
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:

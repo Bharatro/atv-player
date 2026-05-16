@@ -63,6 +63,9 @@ from atv_player.ui.icon_cache import load_icon
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _MAIN_THREAD_GC_INTERVAL_MS = 30_000
+_METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
+_METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 logger = logging.getLogger(__name__)
 
 
@@ -349,6 +352,7 @@ class AppCoordinator(QObject):
 
     def _build_episode_title_enhancer_factory(self, api_client: ApiClient):
         del api_client
+        cache = MetadataCache(app_cache_dir() / "metadata")
 
         def _normalize_title(value: object) -> str:
             return re.sub(r"\s+", "", str(value or "").strip().lower())
@@ -401,6 +405,37 @@ class AppCoordinator(QObject):
                     return max(1, int(match.group(1)))
             return 1
 
+        def _search_tv_cached(client: TMDBClient, title: str, year: str = "") -> list[dict[str, object]]:
+            cache_key = f"{title}\x1f{year}"
+            payload = cache.load_payload(
+                "tmdb_episode_search",
+                cache_key,
+                ttl_seconds=_METADATA_SEARCH_CACHE_TTL_SECONDS,
+                empty_ttl_seconds=_METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+            )
+            if isinstance(payload, list):
+                return [dict(item) for item in payload if isinstance(item, Mapping)]
+            results = list(client.search_tv(title, year=year))
+            cache.save_payload("tmdb_episode_search", cache_key, results)
+            return results
+
+        def _get_tv_season_detail_cached(
+            client: TMDBClient,
+            tmdb_id: str,
+            season_number: int,
+        ) -> dict[str, object]:
+            cache_key = f"{tmdb_id}:{season_number}"
+            payload = cache.load_payload(
+                "tmdb_episode_season_detail",
+                cache_key,
+                ttl_seconds=_METADATA_DETAIL_CACHE_TTL_SECONDS,
+            )
+            if isinstance(payload, Mapping):
+                return dict(payload)
+            detail = dict(client.get_tv_season_detail(tmdb_id, season_number))
+            cache.save_payload("tmdb_episode_season_detail", cache_key, detail)
+            return detail
+
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
             if source_kind != "plugin" or vod is None:
@@ -428,9 +463,9 @@ class AppCoordinator(QObject):
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
                 has_season_marker = _title_has_season_marker(session_vod.vod_name)
                 search_year = "" if has_season_marker else year
-                search_results = list(tmdb_client.search_tv(search_title, year=search_year))
+                search_results = _search_tv_cached(tmdb_client, search_title, year=search_year)
                 if not search_results and search_title != session_vod.vod_name and not has_season_marker:
-                    search_results = list(tmdb_client.search_tv(session_vod.vod_name, year=search_year))
+                    search_results = _search_tv_cached(tmdb_client, session_vod.vod_name, year=search_year)
                 if not search_results:
                     return None
                 normalized_title = _normalize_title(search_title)
@@ -469,7 +504,7 @@ class AppCoordinator(QObject):
                 titles_by_index: dict[int, str] = {}
                 titles_by_season_episode: dict[tuple[int, int], str] = {}
                 for season_number in sorted(requested_seasons):
-                    season_detail = tmdb_client.get_tv_season_detail(tmdb_id, season_number)
+                    season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
                     episodes = season_detail.get("episodes")
                     if not isinstance(episodes, list):
                         continue

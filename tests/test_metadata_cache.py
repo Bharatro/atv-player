@@ -63,3 +63,39 @@ def test_metadata_cache_expires_empty_search_results_with_shorter_ttl(tmp_path: 
     clock["now"] += 3601
 
     assert cache.load_search("douban", "查无此片", "2026", ttl_seconds=86400, empty_ttl_seconds=3600) is None
+
+
+def test_metadata_cache_round_trips_generic_payload(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+
+    cache.save_payload("tmdb_episode_search", "掩耳盗邻\x1f", [{"id": 42, "name": "掩耳盗邻"}])
+
+    loaded = cache.load_payload("tmdb_episode_search", "掩耳盗邻\x1f", ttl_seconds=86400)
+
+    assert loaded == [{"id": 42, "name": "掩耳盗邻"}]
+
+
+def test_metadata_cache_expires_empty_generic_payload_with_shorter_ttl(tmp_path: Path, monkeypatch) -> None:
+    clock = {"now": 100.0}
+    monkeypatch.setattr(metadata_cache_module, "time", lambda: clock["now"])
+    cache = MetadataCache(tmp_path)
+
+    cache.save_payload("tmdb_episode_search", "查无此剧\x1f", [])
+    assert cache.load_payload(
+        "tmdb_episode_search",
+        "查无此剧\x1f",
+        ttl_seconds=86400,
+        empty_ttl_seconds=3600,
+    ) == []
+
+    clock["now"] += 3601
+
+    assert (
+        cache.load_payload(
+            "tmdb_episode_search",
+            "查无此剧\x1f",
+            ttl_seconds=86400,
+            empty_ttl_seconds=3600,
+        )
+        is None
+    )

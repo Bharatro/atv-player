@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 from time import time
+from typing import Any
 
 from atv_player.metadata.models import MetadataMatch, MetadataRecord
 
@@ -53,6 +54,29 @@ class MetadataCache:
 
     def save_detail(self, provider: str, provider_id: str, record: MetadataRecord) -> None:
         self._save_json(self._detail_path(provider, provider_id), asdict(record))
+
+    def load_payload(
+        self,
+        namespace: str,
+        key: str,
+        ttl_seconds: int,
+        *,
+        empty_ttl_seconds: int | None = None,
+    ) -> Any | None:
+        wrapper = self._load_json(self._detail_path(namespace, key))
+        if not isinstance(wrapper, dict):
+            return None
+        payload = wrapper.get("payload")
+        updated_at = float(wrapper.get("_updated_at") or 0.0)
+        effective_ttl_seconds = ttl_seconds
+        if payload in (None, [], {}) and empty_ttl_seconds is not None:
+            effective_ttl_seconds = empty_ttl_seconds
+        if effective_ttl_seconds > 0 and updated_at > 0 and (time() - updated_at) > effective_ttl_seconds:
+            return None
+        return payload
+
+    def save_payload(self, namespace: str, key: str, payload: Any) -> None:
+        self._save_json(self._detail_path(namespace, key), {"payload": payload})
 
     def _search_path(self, provider: str, title: str, year: str) -> Path:
         digest = self._hash_key(provider, title, year)
