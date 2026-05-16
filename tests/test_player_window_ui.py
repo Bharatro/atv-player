@@ -14489,6 +14489,45 @@ def test_player_window_escape_closes_danmaku_settings_dialog_without_returning_t
     assert config.last_active_window == "player"
 
 
+def test_player_window_escape_closes_metadata_scrape_dialog_without_returning_to_main(qtbot) -> None:
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+    emitted = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+        def position_seconds(self) -> int:
+            return 0
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    session = make_player_session()
+    session.metadata_scrape_service = object()
+    window.video = FakeVideo()
+    window.open_session(session)
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    window._open_metadata_scrape_dialog()
+    qtbot.waitUntil(lambda: len(visible_metadata_scrape_dialogs()) == 1)
+    dialog = visible_metadata_scrape_dialogs()[0]
+
+    window.escape_shortcut.activated.emit()
+
+    qtbot.waitUntil(lambda: not dialog.isVisible())
+    assert window.isVisible() is True
+    assert pauses["count"] == 0
+    assert emitted["count"] == 0
+    assert config.last_active_window == "player"
+
+
 def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> None:
     config = AppConfig(last_active_window="player", last_player_paused=False)
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
