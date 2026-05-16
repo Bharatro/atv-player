@@ -525,7 +525,9 @@ class AppCoordinator(QObject):
         ) -> list[PlayItem] | None:
             if not playlist_has_title_variants(playlist):
                 return None
-            if len(playlist) > 1:
+            resolved_pairs = [pair for pair in season_episode_pairs if pair is not None]
+            has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
+            if len(playlist) > 1 and not has_multi_version_pairs:
                 indexed_playlist = list(enumerate(playlist))
                 indexed_playlist.sort(
                     key=lambda entry: season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL)

@@ -4444,7 +4444,7 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     ]
 
 
-def test_app_coordinator_episode_title_enhancer_reorders_multi_version_playlist_by_episode_number(
+def test_app_coordinator_episode_title_enhancer_preserves_grouped_multi_version_playlist_order(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -4499,14 +4499,14 @@ def test_app_coordinator_episode_title_enhancer_reorders_multi_version_playlist_
     assert updated is not None
     assert [item.original_title for item in updated] == [
         "1-4K.mp4",
-        "1-1080P.mp4",
         "2-4K.mp4",
+        "1-1080P.mp4",
         "2-1080P.mp4",
     ]
     assert [item.episode_display_title for item in updated] == [
         "第1集 星门初启",
-        "第1集 星门初启",
         "第2集 星火初燃",
+        "第1集 星门初启",
         "第2集 星火初燃",
     ]
     assert [item.index for item in updated] == [0, 1, 2, 3]
