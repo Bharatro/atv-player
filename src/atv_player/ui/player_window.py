@@ -1444,8 +1444,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
-        self._append_log(f"当前: {current_item.title}")
-        self._append_log(f"URL: {current_item.url}")
+        self._append_log(f"当前播放: {current_item.title}")
+        self._append_log(f"播放地址: {current_item.url}")
         if start_position_seconds > self.opening_spin.value():
             effective_start_seconds = start_position_seconds
         else:
