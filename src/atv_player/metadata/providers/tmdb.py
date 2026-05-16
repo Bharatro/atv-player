@@ -18,6 +18,19 @@ def _normalize_title(value: object) -> str:
     return re.sub(r"\s+", "", str(value or "").strip().lower())
 
 
+def _strip_search_season_suffix(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    stripped = re.sub(
+        r"(?:\s*[-:：]\s*)?(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|s\d+)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    return stripped or text
+
+
 def _extract_year(payload: dict[str, object], *, media_type: str) -> str:
     raw = str(
         payload.get("year")
@@ -76,10 +89,13 @@ class TMDBProvider:
 
     def _search_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
         search_fn = self._client.search_movie if media_type == "movie" else self._client.search_tv
-        payload = search_fn(candidate.title, year=candidate.year)
+        search_title = _strip_search_season_suffix(candidate.title) if media_type == "tv" else candidate.title
+        payload = search_fn(search_title, year=candidate.year)
+        if not payload and search_title != candidate.title:
+            payload = search_fn(candidate.title, year=candidate.year)
         matches: list[MetadataMatch] = []
         for item in payload:
-            match = self._match_from_payload(media_type, dict(item), candidate.title, candidate.year)
+            match = self._match_from_payload(media_type, dict(item), search_title, candidate.year)
             if match is not None:
                 matches.append(match)
         return matches

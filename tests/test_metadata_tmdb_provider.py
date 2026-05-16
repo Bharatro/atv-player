@@ -57,3 +57,14 @@ def test_tmdb_provider_falls_back_from_movie_to_tv_when_category_name_is_ambiguo
         ("search_movie", "深空彼岸", "2026"),
         ("search_tv", "深空彼岸", "2026"),
     ]
+
+
+def test_tmdb_provider_strips_season_suffix_from_tv_search_title() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [{"id": 42, "name": "掩耳盗邻", "first_air_date": "2025-01-01"}]
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="掩耳盗邻第二季", year="2025", category_name="电视剧"))
+
+    assert matches == [MetadataMatch(provider="tmdb", provider_id="tv:42", title="掩耳盗邻", year="2025")]
+    assert client.calls == [("search_tv", "掩耳盗邻", "2025")]
