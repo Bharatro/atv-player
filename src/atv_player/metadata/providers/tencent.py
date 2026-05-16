@@ -12,6 +12,7 @@ class TencentMetadataProvider:
     name = "tencent"
     _SEARCH_URL = "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
     _SEARCH_PARAMS = {"vversion_platform": "2"}
+    _NON_NATIVE_SITE_PENALTY = 0.35
     _SEARCH_HEADERS = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -61,13 +62,12 @@ class TencentMetadataProvider:
                 raw=normalized,
             )
             match.score = score_match(candidate, match)
+            match.score = self._apply_native_site_penalty(match)
             matches.append(match)
         return sorted(matches, key=lambda item: item.score, reverse=True)
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         payload = dict(match.raw)
-        site_name = str(payload.get("site_name") or "").strip()
-        detail_fields = [{"label": "来源站点", "value": site_name}] if site_name else []
         return MetadataRecord(
             provider=self.name,
             provider_id=str(match.provider_id or "").strip(),
@@ -79,8 +79,14 @@ class TencentMetadataProvider:
             genres=list(payload.get("genres") or []),
             country=str(payload.get("country") or "").strip(),
             language=str(payload.get("language") or "").strip(),
-            detail_fields=detail_fields,
+            detail_fields=[],
         )
+
+    def _apply_native_site_penalty(self, match: MetadataMatch) -> float:
+        site_name = str(match.raw.get("site_name") or "").strip()
+        if site_name and site_name != "腾讯视频":
+            return max(0.0, float(match.score or 0.0) - self._NON_NATIVE_SITE_PENALTY)
+        return float(match.score or 0.0)
 
     def _build_search_payload(self, title: str) -> dict[str, object]:
         return {

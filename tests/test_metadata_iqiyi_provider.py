@@ -129,7 +129,6 @@ def test_iqiyi_metadata_provider_maps_movie_people_and_detail_fields() -> None:
     assert record.actors == ["金妮弗·古德温", "杰森·贝特曼"]
     assert record.genres == ["冒险", "动画", "喜剧"]
     assert record.detail_fields == [
-        {"label": "来源站点", "value": "爱奇艺"},
         {"label": "上映时间", "value": "2025-11-26"},
         {"label": "片长", "value": "01:43:26"},
     ]
@@ -198,3 +197,78 @@ def test_iqiyi_metadata_provider_search_preserves_album_videos_in_raw() -> None:
     match = provider.search(MetadataQuery(title="黑袍纠察队第五季"))[0]
 
     assert match.raw["videos"][0]["itemTitle"] == "终局开篇"
+
+
+def test_iqiyi_metadata_provider_search_penalizes_non_native_site_results() -> None:
+    def fake_get(url: str, **kwargs):
+        assert url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
+        return JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "剑来 第二季",
+                                "siteId": "qq",
+                                "siteName": "腾讯视频",
+                                "pageUrl": "https://www.iqiyi.com/v_third_party.html",
+                                "year": {"value": "2025"},
+                            },
+                        },
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "剑来 第二季",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "pageUrl": "https://www.iqiyi.com/v_native.html",
+                                "year": {"value": "2025"},
+                            },
+                        },
+                    ]
+                }
+            }
+        )
+
+    provider = IqiyiMetadataProvider(get=fake_get)
+
+    matches = provider.search(MetadataQuery(title="剑来 第二季", year="2025", category_name="动漫"))
+
+    assert [(match.title, match.provider_id) for match in matches] == [
+        ("剑来 第二季", "https://www.iqiyi.com/v_native.html"),
+        ("剑来 第二季", "https://www.iqiyi.com/v_third_party.html"),
+    ]
+    assert matches[0].score > matches[1].score
+
+
+def test_iqiyi_metadata_provider_detail_omits_source_site_field() -> None:
+    payload = {
+        "data": {
+            "templates": [
+                {
+                    "template": 103,
+                    "albumInfo": {
+                        "title": "疯狂动物城2",
+                        "siteId": "iqiyi",
+                        "siteName": "爱奇艺",
+                        "pageUrl": "https://www.iqiyi.com/v_demo.html",
+                        "year": {"value": "2025"},
+                        "brief": {"value": "兔子朱迪与狐狸尼克正式组成搭档。"},
+                        "releaseTime": {"key": "上映时间", "value": "2025-11-26"},
+                        "timeLength": {"key": "片长", "value": "01:43:26"},
+                        "baseTags": [{"value": "冒险"}, {"value": "动画"}, {"value": "喜剧"}],
+                    }
+                }
+            ]
+        }
+    }
+    provider = IqiyiMetadataProvider(get=lambda url, **kwargs: JsonResponse(payload))
+
+    match = provider.search(MetadataQuery(title="疯狂动物城2", year="2025", category_name="电影"))[0]
+    record = provider.get_detail(match)
+
+    assert record.detail_fields == [
+        {"label": "上映时间", "value": "2025-11-26"},
+        {"label": "片长", "value": "01:43:26"},
+    ]
