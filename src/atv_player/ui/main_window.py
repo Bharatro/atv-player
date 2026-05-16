@@ -3323,7 +3323,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None
-            and request.source_kind in {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_hydrator = self._metadata_hydrator_factory(
                 request=request,

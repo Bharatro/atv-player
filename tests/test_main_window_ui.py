@@ -4401,3 +4401,32 @@ def test_main_window_prepares_metadata_hydrator_for_browse_request(qtbot) -> Non
     prepared = window._prepare_request_for_open(request)
 
     assert prepared.metadata_hydrator is marker
+
+
+def test_main_window_does_not_backfill_plugin_metadata_hydrator_but_keeps_scrape_service(qtbot) -> None:
+    hydrator = object()
+    scrape_service = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **_: hydrator,
+        metadata_scrape_service_factory=lambda **_: scrape_service,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="v1", vod_name="Plugin Movie"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        clicked_index=0,
+        source_kind="plugin",
+        source_key="plugin.demo",
+        source_mode="detail",
+        source_vod_id="v1",
+    )
+
+    prepared = window._prepare_request_for_open(request)
+
+    assert prepared.metadata_hydrator is None
+    assert prepared.metadata_scrape_service is scrape_service
