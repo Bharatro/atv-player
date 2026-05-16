@@ -115,3 +115,23 @@ def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_official_douban_ove
         ("IMDb ID", "tt123"),
         ("TMDB ID", "42"),
     ]
+
+
+def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:
+    vod = VodItem(vod_id="v1", vod_name="旧标题", vod_pic="https://img.tmdb/poster.jpg")
+    vod.metadata_field_sources["poster"] = "tmdb"
+    bangumi = MetadataRecord(
+        provider="bangumi",
+        provider_id="subject:1",
+        overview="Bangumi简介",
+        actors=["种崎敦美"],
+        genres=["动画", "奇幻"],
+        poster="https://img.bgm/poster.jpg",
+    )
+
+    merge_metadata_record(vod, bangumi, provider_priority=["bangumi", "tmdb"])
+
+    assert vod.vod_content == "Bangumi简介"
+    assert vod.vod_actor == "种崎敦美"
+    assert vod.type_name == "动画 / 奇幻"
+    assert vod.vod_pic == "https://img.tmdb/poster.jpg"
