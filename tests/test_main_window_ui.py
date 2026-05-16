@@ -3398,6 +3398,7 @@ def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
         metadata_enhancement_enabled=False,
         metadata_douban_cookie="bid=demo;",
         metadata_tmdb_api_key="tmdb-demo-key",
+        metadata_bangumi_access_token="bgm-demo-token",
     )
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
@@ -3405,8 +3406,10 @@ def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     assert dialog.metadata_enabled_checkbox.isChecked() is False
     assert dialog.douban_cookie_edit.toPlainText() == "bid=demo;"
     assert dialog.tmdb_api_key_edit.text() == "tmdb-demo-key"
+    assert dialog.bangumi_access_token_edit.text() == "bgm-demo-token"
     assert dialog.douban_cookie_edit.isEnabled() is False
     assert dialog.tmdb_api_key_edit.isEnabled() is False
+    assert dialog.bangumi_access_token_edit.isEnabled() is False
     assert dialog.douban_cookie_edit.placeholderText() == "填写豆瓣 Cookie；留空时跳过本地豆瓣抓取"
 
 
@@ -3418,16 +3421,19 @@ def test_advanced_settings_dialog_toggles_input_enabled_state(qtbot) -> None:
 
     assert dialog.douban_cookie_edit.isEnabled() is True
     assert dialog.tmdb_api_key_edit.isEnabled() is True
+    assert dialog.bangumi_access_token_edit.isEnabled() is True
 
     dialog.metadata_enabled_checkbox.setChecked(False)
 
     assert dialog.douban_cookie_edit.isEnabled() is False
     assert dialog.tmdb_api_key_edit.isEnabled() is False
+    assert dialog.bangumi_access_token_edit.isEnabled() is False
 
     dialog.metadata_enabled_checkbox.setChecked(True)
 
     assert dialog.douban_cookie_edit.isEnabled() is True
     assert dialog.tmdb_api_key_edit.isEnabled() is True
+    assert dialog.bangumi_access_token_edit.isEnabled() is True
 
 
 def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
@@ -3441,11 +3447,13 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     dialog.metadata_enabled_checkbox.setChecked(False)
     dialog.douban_cookie_edit.setPlainText(" bid=demo; ll=118282 \n")
     dialog.tmdb_api_key_edit.setText(" tmdb-demo-key ")
+    dialog.bangumi_access_token_edit.setText(" bgm-demo-token ")
     dialog._save()
 
     assert config.metadata_enhancement_enabled is False
     assert config.metadata_douban_cookie == "bid=demo; ll=118282"
     assert config.metadata_tmdb_api_key == "tmdb-demo-key"
+    assert config.metadata_bangumi_access_token == "bgm-demo-token"
     assert len(saved) == 1
 
 

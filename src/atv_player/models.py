@@ -17,6 +17,7 @@ class AppConfig:
     metadata_enhancement_enabled: bool = True
     metadata_douban_cookie: str = ""
     metadata_tmdb_api_key: str = ""
+    metadata_bangumi_access_token: str = ""
     episode_title_enhancement_enabled: bool = True
     last_path: str = "/"
     last_active_window: str = "main"
