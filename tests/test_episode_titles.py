@@ -1,5 +1,6 @@
 from atv_player.episode_titles import (
     apply_episode_title_map,
+    extract_season_number,
     playlist_has_title_variants,
     playlist_item_display_title,
     seed_original_titles,
@@ -60,3 +61,9 @@ def test_playlist_item_display_title_switches_between_modes() -> None:
 
     assert playlist_item_display_title(item, "episode") == "第1集 星门初启"
     assert playlist_item_display_title(item, "original") == "S01E01.mkv"
+
+
+def test_extract_season_number_supports_common_formats() -> None:
+    assert extract_season_number("黑袍纠察队第五季") == 5
+    assert extract_season_number("Season 2") == 2
+    assert extract_season_number("S02E01.mkv") == 2

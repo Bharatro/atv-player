@@ -196,13 +196,52 @@ def _looks_like_quality_only_media_filename(name: str) -> bool:
     return all(token in _QUALITY_ONLY_FILENAME_TOKENS for token in tokens)
 
 
+def _path_basename(value: str) -> str:
+    text = str(value or "").strip().rstrip("/\\")
+    if not text:
+        return ""
+    return re.split(r"[\\/]", text)[-1]
+
+
+def _episode_number_from_candidate(name: str) -> int | None:
+    technical_filename = _looks_like_technical_media_filename(name)
+    direct = extract_episode_number(name)
+    if direct is not None and (not technical_filename or has_explicit_episode_marker(name)):
+        return direct
+    return None
+
+
+def _play_item_episode_number(item: PlayItem) -> int | None:
+    candidates: list[str] = []
+    for value in (item.original_title, item.title, _path_basename(item.path)):
+        candidate = str(value or "").strip()
+        if not candidate or candidate in candidates:
+            continue
+        candidates.append(candidate)
+    for candidate in candidates:
+        if (episode_number := _episode_number_from_candidate(candidate)) is not None:
+            return episode_number
+    return None
+
+
+def _play_item_has_technical_filename(item: PlayItem) -> bool:
+    seen: list[str] = []
+    for value in (item.original_title, item.title, _path_basename(item.path)):
+        candidate = str(value or "").strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.append(candidate)
+        if _looks_like_technical_media_filename(candidate):
+            return True
+    return False
+
+
 def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int | None:
     current_title = current_item.title or ""
-    technical_filename = _looks_like_technical_media_filename(current_title)
-    direct = extract_episode_number(current_item.title)
-    if direct is not None and (not technical_filename or has_explicit_episode_marker(current_title)):
+    direct = _play_item_episode_number(current_item)
+    if direct is not None:
         return direct
-    if technical_filename:
+    if _play_item_has_technical_filename(current_item):
         return None
     if _looks_like_quality_only_media_filename(current_title) and (
         (playlist is None and current_item.index <= 0)
@@ -213,13 +252,13 @@ def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[Pla
     if not playlist:
         return current_index + 1 if current_index >= 0 else None
     if 0 <= current_index < len(playlist):
-        indexed = extract_episode_number(playlist[current_index].title)
+        indexed = _play_item_episode_number(playlist[current_index])
         if indexed is not None:
             return indexed
     aligned = [
         (item.index, episode)
         for item in playlist
-        if (episode := extract_episode_number(item.title)) is not None
+        if (episode := _play_item_episode_number(item)) is not None
     ]
     if aligned:
         seq_like = sum(1 for index, episode in aligned if episode == index + 1)

@@ -132,6 +132,25 @@ def test_infer_playlist_episode_number_ignores_year_prefixed_media_filename() ->
     assert infer_playlist_episode_number(playlist[0], playlist) is None
 
 
+def test_infer_playlist_episode_number_falls_back_to_path_when_display_title_hides_numeric_filename() -> None:
+    playlist = [
+        PlayItem(
+            title="The.Boys.S05E06(8.5 GB)",
+            url="http://m/6.mp4",
+            path="/show/Season5/S05E06.2160p.AMZN.WEB-DL.DDP5.1.Atmos.HDR10P.H.265.mkv",
+            index=0,
+        ),
+        PlayItem(
+            title="4K内嵌中英双语 - 1.mp4(3.46 GB)",
+            url="http://m/1.mp4",
+            path="/show/Season5/4K内嵌中英双语/1.mp4",
+            index=1,
+        ),
+    ]
+
+    assert infer_playlist_episode_number(playlist[1], playlist) == 1
+
+
 def test_build_xml_escapes_content_and_keeps_expected_shape() -> None:
     xml = build_xml(
         [

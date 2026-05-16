@@ -34,6 +34,7 @@ from atv_player.controllers.telegram_search_controller import TelegramSearchCont
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import (
     apply_episode_title_index_map,
+    extract_season_number,
     playlist_has_title_variants,
     seed_original_titles,
 )
@@ -424,33 +425,11 @@ class AppCoordinator(QObject):
                 re.IGNORECASE,
             ) is not None
 
-        def _extract_season_number(value: object) -> int | None:
-            text = str(value or "")
-            for pattern in (
-                r"\bS(?:eason)?\s*0*(\d{1,2})\s*(?:E\d+)?\b",
-                r"第\s*0*(\d{1,2})\s*季",
-                r"(?:^|[\\/])S0*(\d{1,2})(?:[\\/]|$)",
-            ):
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match is None:
-                    continue
-                try:
-                    season_number = int(match.group(1))
-                except (TypeError, ValueError):
-                    continue
-                if season_number > 0:
-                    return season_number
-            return None
-
         def _guess_season_number(vod: VodItem) -> int:
             for value in (vod.vod_name, vod.vod_remarks, vod.category_name):
-                text = str(value or "")
-                match = re.search(r"第\s*0*(\d{1,2})\s*季", text, re.IGNORECASE)
-                if match is not None:
-                    return max(1, int(match.group(1)))
-                match = re.search(r"\bS(?:eason)?\s*0*(\d{1,2})\b", text, re.IGNORECASE)
-                if match is not None:
-                    return max(1, int(match.group(1)))
+                season_number = extract_season_number(value)
+                if season_number is not None:
+                    return season_number
             return 1
 
         def _search_tv_cached(client: TMDBClient, title: str, year: str = "") -> list[dict[str, object]]:
@@ -536,7 +515,7 @@ class AppCoordinator(QObject):
                 for item in playlist:
                     season_number = None
                     for candidate in (item.original_title, item.title, item.path):
-                        season_number = _extract_season_number(candidate)
+                        season_number = extract_season_number(candidate)
                         if season_number is not None:
                             break
                     episode_number = infer_playlist_episode_number(item, playlist)

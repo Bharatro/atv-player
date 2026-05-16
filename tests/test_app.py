@@ -4275,6 +4275,168 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_acros
     assert calls == {"search": 1, "season": 1}
 
 
+def test_app_coordinator_episode_title_enhancer_falls_back_to_vod_name_season_when_filename_has_no_season(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: dict[str, object] = {}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            seen["title"] = title
+            seen["year"] = year
+            return [{"id": 42, "name": "黑袍纠察队", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            seen["season_number"] = season_number
+            return {"episodes": [{"episode_number": 1, "name": "终局开篇"}]}
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+            playlist=[PlayItem(title="01x.mp4", url="http://m/501.mp4", original_title="01x.mp4")],
+        )
+    )
+
+    assert updated is not None
+    assert seen == {"title": "黑袍纠察队", "year": "", "season_number": 5}
+    assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
+def test_app_coordinator_episode_title_enhancer_prefers_filename_season_over_vod_name_season(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: dict[str, object] = {}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            seen["title"] = title
+            seen["year"] = year
+            return [{"id": 42, "name": "黑袍纠察队", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            seen["season_number"] = season_number
+            return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+            playlist=[PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv")],
+        )
+    )
+
+    assert updated is not None
+    assert seen == {"title": "黑袍纠察队", "year": "", "season_number": 2}
+    assert updated[0].episode_display_title == "第1集 第二季首集"
+
+
+def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_playlist_episode_matching(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: dict[str, object] = {}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            seen["title"] = title
+            seen["year"] = year
+            return [{"id": 42, "name": "黑袍纠察队", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            seen["season_number"] = season_number
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "终局开篇"},
+                    {"episode_number": 6, "name": "第六集标题"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="黑袍纠察队第五季", vod_year="2026", category_name="电视剧"),
+            playlist=[
+                PlayItem(
+                    title="The.Boys.S05E06(8.5 GB)",
+                    original_title="The.Boys.S05E06(8.5 GB)",
+                    path="/show/Season5/S05E06.2160p.AMZN.WEB-DL.DDP5.1.Atmos.HDR10P.H.265.mkv",
+                    url="http://m/6.mp4",
+                ),
+                PlayItem(
+                    title="4K内嵌中英双语 - 1.mp4(3.46 GB)",
+                    original_title="4K内嵌中英双语 - 1.mp4(3.46 GB)",
+                    path="/show/Season5/4K内嵌中英双语/1.mp4",
+                    url="http://m/1.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert seen == {"title": "黑袍纠察队", "year": "", "season_number": 5}
+    assert [item.episode_display_title for item in updated] == ["第6集 第六集标题", "第1集 终局开篇"]
+
+
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
