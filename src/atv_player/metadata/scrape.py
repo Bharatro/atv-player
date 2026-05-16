@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+import re
 
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.cache import MetadataCache
@@ -23,6 +24,14 @@ _PROVIDER_LABELS = {
     "tmdb": "TMDB",
     "plugin": "插件",
 }
+
+
+def normalize_metadata_scrape_title(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = re.sub(r"^[#＃]+\s*", "", text).strip()
+    return normalized or text
 
 
 @dataclass(slots=True)
@@ -118,6 +127,7 @@ class MetadataScrapeService:
         return candidate
 
     def search(self, query: MetadataQuery, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+        query = replace(query, title=normalize_metadata_scrape_title(query.title))
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
 
         def run(provider: object) -> MetadataScrapeGroup:

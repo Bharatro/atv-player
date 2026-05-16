@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.scrape import normalize_metadata_scrape_title
 from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
@@ -4786,7 +4787,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _open_metadata_scrape_dialog(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
             return
-        self._metadata_scrape_default_title = str(self.session.vod.vod_name or "").strip()
+        self._metadata_scrape_default_title = normalize_metadata_scrape_title(self.session.vod.vod_name)
         self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
         if not self._metadata_scrape_binding_title:
             self._metadata_scrape_binding_title = self._metadata_scrape_default_title
@@ -4847,6 +4848,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         ):
             return
         title = self._metadata_scrape_title_edit.text().strip()
+        normalized_title = normalize_metadata_scrape_title(title)
+        if normalized_title != title:
+            self._metadata_scrape_title_edit.setText(normalized_title)
+            title = normalized_title
         year = self._metadata_scrape_year_edit.text().strip()
         if not title:
             self._metadata_scrape_status_label.setText("当前条目缺少标题")

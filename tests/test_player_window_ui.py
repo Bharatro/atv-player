@@ -358,6 +358,30 @@ def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(q
     assert window._metadata_scrape_provider_combo.currentData() == ""
 
 
+def test_player_window_metadata_scrape_dialog_normalizes_leading_topic_marker_in_title(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="# 牧神记 年番2", vod_year="2024"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "牧神记 年番2"
+
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_calls == [("牧神记 年番2", "2024", "")]
+
+
 class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
