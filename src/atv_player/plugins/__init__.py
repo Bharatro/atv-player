@@ -105,6 +105,7 @@ class SpiderPluginManager:
         self._danmaku_service = None
         self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
         self._metadata_hydrator_factory = None
+        self._metadata_scrape_service_factory = None
         self._episode_title_enhancer_factory = None
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
@@ -290,6 +291,7 @@ class SpiderPluginManager:
             preferred_parse_key_loader=self._preferred_parse_key_loader,
             base_url_loader=self._base_url_loader,
             metadata_hydrator_factory=self._metadata_hydrator_factory,
+            metadata_scrape_service_factory=self._metadata_scrape_service_factory,
             episode_title_enhancer_factory=self._episode_title_enhancer_factory,
             danmaku_service=self._danmaku_service,
             danmaku_preference_store=self._danmaku_preference_store,

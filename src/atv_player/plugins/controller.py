@@ -576,6 +576,7 @@ class SpiderPluginController:
         danmaku_preference_store=None,
         base_url_loader: Callable[[], str] | None = None,
         metadata_hydrator_factory: Callable[..., object] | None = None,
+        metadata_scrape_service_factory: Callable[..., object] | None = None,
         episode_title_enhancer_factory: Callable[..., object] | None = None,
     ) -> None:
         self.uses_result_length_for_pagination = True
@@ -591,6 +592,7 @@ class SpiderPluginController:
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._base_url_loader = base_url_loader
         self._metadata_hydrator_factory = metadata_hydrator_factory
+        self._metadata_scrape_service_factory = metadata_scrape_service_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
@@ -1903,6 +1905,14 @@ class SpiderPluginController:
                 vod=detail,
                 raw_detail=raw_detail,
             )
+        metadata_scrape_service = None
+        if self._metadata_scrape_service_factory is not None and self._danmaku_enabled:
+            metadata_scrape_service = self._metadata_scrape_service_factory(
+                source_kind="plugin",
+                source_key=self._plugin_name,
+                vod=detail,
+                raw_detail=raw_detail,
+            )
         episode_title_enhancer = None
         if self._episode_title_enhancer_factory is not None and self._danmaku_enabled:
             episode_title_enhancer = self._episode_title_enhancer_factory(
@@ -1929,6 +1939,7 @@ class SpiderPluginController:
             async_playback_loader=True,
             detail_action_runner=detail_action_runner,
             metadata_hydrator=metadata_hydrator,
+            metadata_scrape_service=metadata_scrape_service,
             episode_title_enhancer=episode_title_enhancer,
             danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,

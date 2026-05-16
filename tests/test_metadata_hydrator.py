@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
@@ -176,3 +177,43 @@ def test_metadata_hydrator_uses_provider_specific_search_cache_key(tmp_path: Pat
 
     assert updated.vod_pic == "https://img.example/poster.jpg"
     assert provider.search_calls == 1
+
+
+def test_metadata_hydrator_prefers_manual_binding_before_provider_search(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("深空彼岸", "2026", provider="tmdb", provider_id="tv:42")
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:99", title="错误结果")],
+        record=MetadataRecord(provider="tmdb", provider_id="tv:42", poster="https://img.example/poster.jpg"),
+    )
+    douban = FakeProvider("local_douban", matches=[])
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, douban], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"), source_kind="browse")
+    )
+
+    assert updated.vod_pic == "https://img.example/poster.jpg"
+    assert tmdb.search_calls == 0
+
+
+def test_metadata_hydrator_deletes_invalid_manual_binding_and_falls_back_to_search(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("深空彼岸", "2026", provider="tmdb", provider_id="tv:42")
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:99", title="深空彼岸")],
+        record=MetadataRecord(provider="tmdb", provider_id="tv:99", poster="https://img.example/recovered.jpg"),
+        detail_error=RuntimeError("detail missing"),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"), source_kind="browse")
+    )
+
+    assert bindings.load("深空彼岸", "2026") is None
+    assert updated.vod_name == "深空彼岸"

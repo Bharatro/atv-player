@@ -1064,6 +1064,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             playback_parser_service=None,
             yt_dlp_service=None,
             metadata_hydrator_factory=None,
+            metadata_scrape_service_factory=None,
+            metadata_binding_repository=None,
     ) -> None:
         super().__init__()
         self._init_async_guard()
@@ -1072,6 +1074,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
         self._metadata_hydrator_factory = metadata_hydrator_factory
+        self._metadata_scrape_service_factory = metadata_scrape_service_factory
+        self._metadata_binding_repository = metadata_binding_repository
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
@@ -3288,6 +3292,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             detail_action_runner=request.detail_action_runner,
             detail_field_runner=request.detail_field_runner,
             metadata_hydrator=request.metadata_hydrator,
+            metadata_scrape_service=request.metadata_scrape_service,
+            metadata_binding_repository=request.metadata_binding_repository,
             episode_title_enhancer=request.episode_title_enhancer,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
@@ -3325,6 +3331,19 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 source_key=request.source_key,
                 vod=request.vod,
             )
+        if (
+            request.metadata_scrape_service is None
+            and self._metadata_scrape_service_factory is not None
+            and request.source_kind in {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        ):
+            request.metadata_scrape_service = self._metadata_scrape_service_factory(
+                request=request,
+                source_kind=request.source_kind,
+                source_key=request.source_key,
+                vod=request.vod,
+            )
+        if request.metadata_binding_repository is None:
+            request.metadata_binding_repository = self._metadata_binding_repository
         if request.detail_field_runner is not None:
             return request
         if request.source_kind == "plugin" and request.source_key:

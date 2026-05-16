@@ -44,6 +44,8 @@ class PlayerSession:
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
+    metadata_scrape_service: object | None = None
+    metadata_binding_repository: object | None = None
     metadata_hydrated: bool = False
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     episode_titles_hydrated: bool = False
@@ -212,6 +214,8 @@ class PlayerController:
         detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None,
         detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None,
         metadata_hydrator: Callable[[object], VodItem | None] | None = None,
+        metadata_scrape_service: object | None = None,
+        metadata_binding_repository: object | None = None,
         episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None,
         danmaku_controller: object | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
@@ -278,6 +282,8 @@ class PlayerController:
             detail_action_runner=detail_action_runner,
             detail_field_runner=detail_field_runner,
             metadata_hydrator=metadata_hydrator,
+            metadata_scrape_service=metadata_scrape_service,
+            metadata_binding_repository=metadata_binding_repository,
             episode_title_enhancer=episode_title_enhancer,
             danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,

@@ -40,11 +40,12 @@ from atv_player.episode_titles import (
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
-from atv_player.metadata import MetadataCache, MetadataContext, MetadataHydrator
+from atv_player.metadata import MetadataBindingRepository, MetadataCache, MetadataContext, MetadataHydrator
 from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.metadata.providers.remote_douban import RemoteDoubanProvider
+from atv_player.metadata.scrape import MetadataScrapeService
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.models import AppConfig, LiveEpgConfig, VodItem
@@ -215,6 +216,11 @@ class AppCoordinator(QObject):
             self._playback_history_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
+        self._metadata_binding_repository = (
+            MetadataBindingRepository(repo.database_path)
+            if hasattr(repo, "database_path")
+            else None
+        )
 
     def _close_api_client(self) -> None:
         if self._api_client is None:
@@ -308,6 +314,26 @@ class AppCoordinator(QObject):
             return None
         return payload
 
+    def _build_metadata_providers(
+        self,
+        *,
+        api_client: ApiClient,
+        config: AppConfig,
+        source_kind: str,
+        raw_detail=None,
+    ) -> list[object]:
+        local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
+        providers: list[object] = []
+        if source_kind == "plugin":
+            plugin_payload = self._build_plugin_metadata_payload(raw_detail)
+            if plugin_payload is not None:
+                providers.append(CustomPluginProvider(plugin_payload))
+        providers.append(LocalDoubanProvider(local_douban_client))
+        if config.metadata_tmdb_api_key:
+            providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
+        providers.append(RemoteDoubanProvider(api_client))
+        return providers
+
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
         supported_sources = {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
@@ -319,17 +345,17 @@ class AppCoordinator(QObject):
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
                 return None
-            local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
-            providers: list[object] = []
-            if source_kind == "plugin":
-                plugin_payload = self._build_plugin_metadata_payload(raw_detail)
-                if plugin_payload is not None:
-                    providers.append(CustomPluginProvider(plugin_payload))
-            providers.append(LocalDoubanProvider(local_douban_client))
-            if config.metadata_tmdb_api_key:
-                providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
-            providers.append(RemoteDoubanProvider(api_client))
-            hydrator = MetadataHydrator(cache=cache, providers=providers)
+            providers = self._build_metadata_providers(
+                api_client=api_client,
+                config=config,
+                source_kind=source_kind,
+                raw_detail=raw_detail,
+            )
+            hydrator = MetadataHydrator(
+                cache=cache,
+                providers=providers,
+                binding_repository=self._metadata_binding_repository,
+            )
 
             def hydrate(session) -> object:
                 session_vod = getattr(session, "vod", None) or vod
@@ -347,6 +373,27 @@ class AppCoordinator(QObject):
                 )
 
             return hydrate
+
+        return factory
+
+    def _build_metadata_scrape_service_factory(self, api_client: ApiClient):
+        cache = MetadataCache(app_cache_dir() / "metadata")
+        supported_sources = {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+
+        def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
+            del request, source_key, vod
+            if source_kind not in supported_sources:
+                return None
+            config = self.repo.load_config()
+            if not config.metadata_enhancement_enabled:
+                return None
+            providers = self._build_metadata_providers(
+                api_client=api_client,
+                config=config,
+                source_kind=source_kind,
+                raw_detail=raw_detail,
+            )
+            return MetadataScrapeService(cache=cache, providers=providers)
 
         return factory
 
@@ -619,8 +666,10 @@ class AppCoordinator(QObject):
         self._close_api_client()
         self._api_client = self._build_api_client()
         metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
+        metadata_scrape_service_factory = self._build_metadata_scrape_service_factory(self._api_client)
         episode_title_enhancer_factory = self._build_episode_title_enhancer_factory(self._api_client)
         setattr(self._plugin_manager, "_metadata_hydrator_factory", metadata_hydrator_factory)
+        setattr(self._plugin_manager, "_metadata_scrape_service_factory", metadata_scrape_service_factory)
         setattr(self._plugin_manager, "_episode_title_enhancer_factory", episode_title_enhancer_factory)
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
@@ -758,6 +807,8 @@ class AppCoordinator(QObject):
             playback_parser_service=self._playback_parser_service,
             yt_dlp_service=self._yt_dlp_service,
             metadata_hydrator_factory=metadata_hydrator_factory,
+            metadata_scrape_service_factory=metadata_scrape_service_factory,
+            metadata_binding_repository=self._metadata_binding_repository,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:
