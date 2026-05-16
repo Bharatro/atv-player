@@ -69,7 +69,7 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
-from atv_player.episode_titles import playlist_has_title_variants, playlist_item_display_title
+from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
@@ -91,6 +91,7 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
 
 _METADATA_PROVIDER_LABELS: dict[str, str] = {
     "tencent": "腾讯",
+    "iqiyi": "爱奇艺",
     "official_douban": "豆瓣官方",
     "local_douban": "本地豆瓣",
     "remote_douban": "本地豆瓣",
@@ -1054,7 +1055,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         for item in self.session.playlist:
             display_title = playlist_item_display_title(item, self.playlist_title_mode)
             widget_item = QListWidgetItem(display_title)
-            widget_item.setToolTip(display_title)
+            tooltip = display_title
+            original_title = str(item.original_title or "").strip()
+            episode_title = str(item.episode_display_title or "").strip()
+            if (
+                self.playlist_title_mode == "episode"
+                and original_title
+                and episode_title
+                and normalize_episode_title_text(original_title) != normalize_episode_title_text(episode_title)
+            ):
+                tooltip = original_title
+            widget_item.setToolTip(tooltip)
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
 

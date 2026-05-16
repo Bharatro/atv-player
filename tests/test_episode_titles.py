@@ -28,17 +28,17 @@ def test_apply_episode_title_map_uses_higher_priority_source() -> None:
         playlist,
         {1: "第1集 原始站点标题"},
         source="tencent",
-        source_priority=["plugin", "tencent", "tmdb"],
+        source_priority=["plugin", "tmdb", "tencent"],
     )
     apply_episode_title_map(
         playlist,
         {1: "第1集 TMDB标题"},
         source="tmdb",
-        source_priority=["plugin", "tencent", "tmdb"],
+        source_priority=["plugin", "tmdb", "tencent"],
     )
 
-    assert playlist[0].episode_display_title == "第1集 原始站点标题"
-    assert playlist[0].episode_title_source == "tencent"
+    assert playlist[0].episode_display_title == "第1集 TMDB标题"
+    assert playlist[0].episode_title_source == "tmdb"
 
 
 def test_playlist_has_title_variants_requires_different_original_and_enhanced_titles() -> None:

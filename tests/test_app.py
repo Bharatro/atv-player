@@ -4512,7 +4512,7 @@ def test_app_coordinator_episode_title_enhancer_reorders_multi_version_playlist_
     assert [item.index for item in updated] == [0, 1, 2, 3]
 
 
-def test_app_coordinator_episode_title_enhancer_prefers_tencent_over_iqiyi_and_tmdb(tmp_path, monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iqiyi(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4572,11 +4572,11 @@ def test_app_coordinator_episode_title_enhancer_prefers_tencent_over_iqiyi_and_t
     )
 
     assert updated is not None
-    assert updated[0].episode_title_source == "tencent"
-    assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
+    assert updated[0].episode_title_source == "tmdb"
+    assert updated[0].episode_display_title == "第1集 TMDB标题"
 
 
-def test_app_coordinator_episode_title_enhancer_falls_back_from_tencent_to_iqiyi(tmp_path, monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -4621,7 +4621,7 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tencent_to_iqiyi
             return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
 
         def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
-            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+            return {"episodes": []}
 
     monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)

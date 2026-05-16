@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
+from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
@@ -42,6 +43,23 @@ class MetadataScrapeGroup:
     error_text: str = ""
 
 
+def _parse_tmdb_provider_id(provider_id: str) -> tuple[str, int | None]:
+    text = str(provider_id or "").strip()
+    if not text.startswith("tv:"):
+        return "", None
+    segments = text.split(":")
+    if len(segments) < 2:
+        return "", None
+    tmdb_id = segments[1].strip()
+    season_number = None
+    if len(segments) >= 4 and segments[2] == "season":
+        try:
+            season_number = int(segments[3])
+        except (TypeError, ValueError):
+            season_number = None
+    return tmdb_id, season_number
+
+
 class MetadataScrapeService:
     def __init__(self, cache: MetadataCache, providers: list[object]) -> None:
         self._cache = cache
@@ -64,6 +82,39 @@ class MetadataScrapeService:
             subtitle=str(match.raw.get("subtitle") or ""),
             raw=dict(match.raw),
         )
+
+    def _hydrate_tmdb_episode_candidate(self, vod: VodItem, candidate: object) -> object:
+        provider = str(getattr(candidate, "provider", "") or "").strip()
+        if provider != "tmdb":
+            return candidate
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        if isinstance(raw.get("episodes"), list):
+            return candidate
+        tmdb_provider = self._providers_by_name.get("tmdb")
+        client = getattr(tmdb_provider, "_client", None)
+        if client is None or not hasattr(client, "get_tv_season_detail"):
+            return candidate
+        provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+        tmdb_id, season_number = _parse_tmdb_provider_id(provider_id)
+        if not tmdb_id:
+            return candidate
+        if season_number is None:
+            for value in (raw.get("season_number"), getattr(candidate, "title", ""), vod.vod_name):
+                parsed = extract_season_number(value)
+                if parsed is not None:
+                    season_number = parsed
+                    break
+        if season_number is None:
+            return candidate
+        season_detail = client.get_tv_season_detail(tmdb_id, season_number) or {}
+        episodes = season_detail.get("episodes")
+        if not isinstance(episodes, list) or not episodes:
+            return candidate
+        raw["season_number"] = season_number
+        raw["episodes"] = episodes
+        if isinstance(candidate, MetadataScrapeCandidate | MetadataMatch):
+            return replace(candidate, raw=raw)
+        return candidate
 
     def search(self, query: MetadataQuery, provider_filter: str = "") -> list[MetadataScrapeGroup]:
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
@@ -96,13 +147,13 @@ class MetadataScrapeService:
     ) -> list[PlayItem] | None:
         ordered_candidates: list[object] = []
         if preferred_candidate is not None:
-            ordered_candidates.append(preferred_candidate)
+            ordered_candidates.append(self._hydrate_tmdb_episode_candidate(vod, preferred_candidate))
         query = MetadataQuery(
             title=str(vod.vod_name or "").strip(),
             year=str(vod.vod_year or "").strip(),
             category_name=str(vod.category_name or "").strip(),
         )
-        for provider_name in ("tencent", "iqiyi", "tmdb"):
+        for provider_name in ("tmdb", "tencent", "iqiyi"):
             if preferred_candidate is not None and provider_name == preferred_candidate.provider:
                 continue
             provider = self._providers_by_name.get(provider_name)
@@ -113,7 +164,7 @@ class MetadataScrapeService:
             except Exception:
                 continue
             if matches:
-                ordered_candidates.append(matches[0])
+                ordered_candidates.append(self._hydrate_tmdb_episode_candidate(vod, matches[0]))
         for candidate in ordered_candidates:
             updated = build_provider_episode_playlist(
                 vod,

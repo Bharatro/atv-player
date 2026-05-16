@@ -2753,6 +2753,32 @@ def test_player_window_playlist_items_show_full_title_in_tooltip(qtbot) -> None:
     assert window.playlist.item(0).toolTip() == long_title
 
 
+def test_player_window_rewritten_episode_title_uses_original_filename_for_tooltip(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv",
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+                url="http://b/1.m3u8",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.playlist.item(0).text() == "第1集 星门初启"
+    assert window.playlist.item(0).toolTip() == "S01E01.mkv"
+
+
 def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -12952,6 +12978,44 @@ def test_player_window_async_metadata_hydration_skips_update_log_when_metadata_i
 
     qtbot.waitUntil(lambda: window._pending_metadata_session is None, timeout=1000)
     assert "元数据已更新" not in window.log_view.toPlainText()
+
+
+def test_player_window_async_metadata_hydration_logs_iqiyi_with_localized_label(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", vod_id="ep1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=current_session.vod.vod_name,
+            vod_content="爱奇艺简介",
+            metadata_field_sources={"overview": "iqiyi"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "爱奇艺简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert "元数据已更新: 爱奇艺(简介)" in window.log_view.toPlainText()
 
 
 def test_player_window_shows_episode_title_tabs_when_playlist_has_title_variants(qtbot) -> None:

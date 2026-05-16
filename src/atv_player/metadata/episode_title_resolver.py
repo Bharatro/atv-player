@@ -7,7 +7,7 @@ from atv_player.episode_titles import extract_season_number, playlist_has_title_
 from atv_player.episode_titles import apply_episode_title_index_map
 from atv_player.models import PlayItem, VodItem
 
-METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "tencent", "iqiyi", "tmdb"]
+METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "tmdb", "tencent", "iqiyi"]
 
 
 def build_provider_episode_playlist(
@@ -37,6 +37,8 @@ def _titles_by_index_for_provider(
         return _titles_by_index_for_tencent(vod, playlist, raw)
     if provider == "iqiyi":
         return _titles_by_index_for_iqiyi(vod, playlist, raw)
+    if provider == "tmdb":
+        return _titles_by_index_for_tmdb(vod, playlist, raw)
     return {}
 
 
@@ -67,6 +69,23 @@ def _titles_by_index_for_iqiyi(vod: VodItem, playlist: list[PlayItem], raw: dict
         except (TypeError, ValueError):
             continue
         episode_title = str(video.get("itemTitle") or video.get("title") or "").strip()
+        if episode_number > 0 and episode_title:
+            titles_by_episode[episode_number] = episode_title
+    if not titles_by_episode:
+        return {}
+    return _map_episode_numbers_to_indices(vod, playlist, titles_by_episode)
+
+
+def _titles_by_index_for_tmdb(vod: VodItem, playlist: list[PlayItem], raw: dict[str, object]) -> dict[int, str]:
+    titles_by_episode: dict[int, str] = {}
+    for episode in raw.get("episodes") or []:
+        if not isinstance(episode, dict):
+            continue
+        try:
+            episode_number = int(episode.get("episode_number") or episode.get("episodeNumber") or 0)
+        except (TypeError, ValueError):
+            continue
+        episode_title = str(episode.get("name") or episode.get("title") or "").strip()
         if episode_number > 0 and episode_title:
             titles_by_episode[episode_number] = episode_title
     if not titles_by_episode:

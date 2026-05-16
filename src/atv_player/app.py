@@ -571,18 +571,6 @@ class AppCoordinator(QObject):
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
                 default_season = _guess_season_number(session_vod)
                 season_episode_pairs = _season_episode_pairs(playlist, default_season)
-                for candidate in _search_metadata_candidates(session_vod, source_kind):
-                    updated_playlist = build_provider_episode_playlist(
-                        session_vod,
-                        playlist,
-                        candidate,
-                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
-                    )
-                    if updated_playlist is not None:
-                        updated_pairs = _season_episode_pairs(updated_playlist, default_season)
-                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
-                        if finalized is not None:
-                            return finalized
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
                 has_season_marker = _title_has_season_marker(session_vod.vod_name)
@@ -643,15 +631,30 @@ class AppCoordinator(QObject):
                     if candidate:
                         titles_by_index[index] = candidate
                 if not titles_by_index:
-                    return None
-                apply_episode_title_index_map(
-                    playlist,
-                    titles_by_index,
-                    source="tmdb",
-                    source_priority=["plugin", "tencent", "iqiyi", "bilibili", "tmdb"],
-                )
-                return _finalize_episode_playlist(playlist, season_episode_pairs)
-
+                    titles_by_index = {}
+                if titles_by_index:
+                    apply_episode_title_index_map(
+                        playlist,
+                        titles_by_index,
+                        source="tmdb",
+                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                    )
+                    finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
+                    if finalized is not None:
+                        return finalized
+                for candidate in _search_metadata_candidates(session_vod, source_kind):
+                    updated_playlist = build_provider_episode_playlist(
+                        session_vod,
+                        playlist,
+                        candidate,
+                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                    )
+                    if updated_playlist is not None:
+                        updated_pairs = _season_episode_pairs(updated_playlist, default_season)
+                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                        if finalized is not None:
+                            return finalized
+                return None
             return enhance
 
         return factory

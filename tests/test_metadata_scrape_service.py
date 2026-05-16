@@ -35,6 +35,16 @@ class FakeProvider:
         return self.cache_key
 
 
+class FakeTMDBClient:
+    def __init__(self, episodes: list[dict[str, object]]) -> None:
+        self.episodes = episodes
+
+    def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+        assert str(tmdb_id) == "42"
+        assert season_number == 1
+        return {"episodes": list(self.episodes)}
+
+
 def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(
@@ -95,6 +105,102 @@ def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_c
     assert updated is not None
     assert updated[0].episode_title_source == "tencent"
     assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
+
+
+def test_metadata_scrape_service_prefers_selected_candidate_over_auto_priority(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="米小圈上学记4",
+                year="2026",
+                raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 金银米小圈1"}]}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:42:season:1",
+                title="米小圈上学记4",
+                year="2026",
+                raw={"episodes": [{"episode_number": 1, "name": "TMDB标题"}]},
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[tencent, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+        preferred_candidate=MetadataScrapeCandidate(
+            provider="tencent",
+            provider_label="腾讯",
+            provider_id="tx:1",
+            title="米小圈上学记4",
+            year="2026",
+            raw=tencent.matches[0].raw,
+        ),
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tencent"
+    assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
+
+
+def test_metadata_scrape_service_auto_search_prefers_tmdb_over_tencent_and_iqiyi(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="米小圈上学记4",
+                year="2026",
+                raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 金银米小圈1"}]}]},
+            )
+        ],
+    )
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="米小圈上学记4",
+                year="2026",
+                raw={"videos": [{"itemNumber": 1, "itemTitle": "终局开篇"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:42:season:1",
+                title="米小圈上学记4",
+                year="2026",
+            )
+        ],
+    )
+    tmdb._client = FakeTMDBClient([{"episode_number": 1, "name": "TMDB标题"}])
+    service = MetadataScrapeService(cache=cache, providers=[tencent, iqiyi, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tmdb"
+    assert updated[0].episode_display_title == "第1集 TMDB标题"
 
 
 def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path: Path) -> None:
