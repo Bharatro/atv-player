@@ -309,7 +309,7 @@ def test_player_window_shows_metadata_scrape_button_with_search_icon(qtbot) -> N
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window.metadata_scrape_button.toolTip() == "刮削"
+    assert window.metadata_scrape_button.toolTip() == "刮削 (S)"
     assert window.metadata_scrape_button.isEnabled() is True
 
 
@@ -359,9 +359,19 @@ def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(q
 
 
 class FakeMetadataScrapeService:
-    def __init__(self) -> None:
+    def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
+        self._provider_options = list(
+            provider_options
+            or [
+                ("local_douban", "豆瓣官方"),
+                ("tmdb", "TMDB"),
+                ("remote_douban", "alist-tvbox豆瓣"),
+                ("douban", "豆瓣"),
+                ("plugin", "插件"),
+            ]
+        )
         self.groups = [
             MetadataScrapeGroup(
                 provider="tmdb",
@@ -376,8 +386,11 @@ class FakeMetadataScrapeService:
                     )
                 ],
             ),
-            MetadataScrapeGroup(provider="local_douban", provider_label="本地豆瓣", items=[]),
+            MetadataScrapeGroup(provider="local_douban", provider_label="豆瓣官方", items=[]),
         ]
+
+    def provider_options(self) -> list[tuple[str, str]]:
+        return list(self._provider_options)
 
     def search(self, query, provider_filter: str = "") -> list[MetadataScrapeGroup]:
         self.search_calls.append((query.title, query.year, provider_filter))
@@ -402,6 +415,34 @@ class FakeMetadataBindingRepository:
 
     def save(self, title, year, *, provider, provider_id, matched_title="", matched_year="") -> None:
         self.saved.append((title, year, provider, provider_id, matched_title, matched_year))
+
+
+def test_player_window_metadata_scrape_dialog_hides_providers_missing_from_service(qtbot) -> None:
+    service = FakeMetadataScrapeService(
+        provider_options=[
+            ("remote_douban", "alist-tvbox豆瓣"),
+            ("plugin", "插件"),
+        ]
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert [window._metadata_scrape_provider_combo.itemData(index) for index in range(window._metadata_scrape_provider_combo.count())] == [
+        "",
+        "remote_douban",
+        "plugin",
+    ]
 
 
 def test_player_window_metadata_scrape_search_selects_first_result_without_auto_apply(qtbot) -> None:
@@ -453,6 +494,71 @@ def test_player_window_metadata_scrape_apply_refreshes_metadata_and_saves_bindin
     assert bindings.saved == [("深空彼岸", "2026", "tmdb", "movie:1", "深空彼岸", "2026")]
     assert "元数据已更新" in window.log_view.toPlainText()
     assert "已绑定手动刮削结果" in window.log_view.toPlainText()
+
+
+def test_player_window_metadata_scrape_apply_still_works_after_metadata_hydration_request_started(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=current_session.vod.vod_name,
+            vod_year=current_session.vod.vod_year,
+            vod_content=current_session.vod.vod_content,
+            metadata_field_sources=dict(current_session.vod.metadata_field_sources),
+        ),
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert service.apply_calls == [("深空彼岸", "movie:1")]
+    assert bindings.saved == [("深空彼岸", "2026", "tmdb", "movie:1", "深空彼岸", "2026")]
+    assert "已绑定手动刮削结果" in window.log_view.toPlainText()
+
+
+def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://media.example/1.mp4",
+                detail_fields=[PlaybackDetailField(label="站内热度", value="99")],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    assert "站内热度: 99" in window.metadata_view.toPlainText()
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
+    assert "站内热度: 99" not in window.metadata_view.toPlainText()
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
@@ -14000,6 +14106,16 @@ def visible_danmaku_settings_dialogs() -> list[QDialog]:
     ]
 
 
+def visible_metadata_scrape_dialogs() -> list[QDialog]:
+    return [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, QDialog)
+        and widget.windowTitle() == "刮削"
+        and widget.isVisible()
+    ]
+
+
 def shortcut_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
     table = dialog.findChild(QTableWidget, "shortcutHelpTable")
     assert table is not None
@@ -14031,8 +14147,33 @@ def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("Enter", "切换全屏") in rows
     assert ("W", "切换宽屏") in rows
     assert ("D", "打开弹幕源") in rows
+    assert ("S", "打开刮削") in rows
     assert ("Ctrl+D", "打开弹幕设置") in rows
     assert ("I", "显示视频信息") in rows
+
+
+def test_player_window_s_shortcut_opens_metadata_scrape_dialog(qtbot) -> None:
+    session = make_player_session()
+    session.metadata_scrape_service = object()
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    shortcuts = [
+        shortcut
+        for shortcut in window._shortcut_bindings
+        if shortcut.key().toString(QKeySequence.SequenceFormat.PortableText) == "S"
+    ]
+
+    assert len(shortcuts) == 1
+
+    shortcuts[0].activated.emit()
+
+    qtbot.waitUntil(lambda: len(visible_metadata_scrape_dialogs()) == 1)
 
 
 def test_player_window_ctrl_d_shortcut_opens_danmaku_settings_dialog(qtbot) -> None:

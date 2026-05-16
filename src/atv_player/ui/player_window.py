@@ -90,12 +90,20 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _METADATA_PROVIDER_LABELS: dict[str, str] = {
-    "local_douban": "本地豆瓣",
+    "local_douban": "豆瓣官方",
     "remote_douban": "alist-tvbox豆瓣",
     "douban": "豆瓣",
     "tmdb": "TMDB",
     "plugin": "插件",
 }
+
+_METADATA_PROVIDER_OPTIONS: list[tuple[str, str]] = [
+    ("local_douban", "豆瓣官方"),
+    ("tmdb", "TMDB"),
+    ("remote_douban", "alist-tvbox豆瓣"),
+    ("douban", "豆瓣"),
+    ("plugin", "插件"),
+]
 
 _METADATA_CHANGE_FIELDS: list[tuple[str, str, str]] = [
     ("poster", "vod_pic", "海报"),
@@ -596,7 +604,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
-        self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削")
+        self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削", "S")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_log_button.setCheckable(True)
@@ -4675,12 +4683,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         provider_column = QVBoxLayout()
         provider_column.addWidget(QLabel("搜索来源", dialog))
         self._metadata_scrape_provider_combo = QComboBox(dialog)
-        self._metadata_scrape_provider_combo.addItem("全部", "")
-        self._metadata_scrape_provider_combo.addItem("本地豆瓣", "local_douban")
-        self._metadata_scrape_provider_combo.addItem("TMDB", "tmdb")
-        self._metadata_scrape_provider_combo.addItem("alist-tvbox豆瓣", "remote_douban")
-        self._metadata_scrape_provider_combo.addItem("豆瓣", "douban")
-        self._metadata_scrape_provider_combo.addItem("插件", "plugin")
         provider_column.addWidget(self._metadata_scrape_provider_combo)
 
         search_row.addLayout(title_column, 2)
@@ -4715,12 +4717,27 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_dialog = dialog
         return dialog
 
+    def _populate_metadata_scrape_provider_options(self) -> None:
+        if self._metadata_scrape_provider_combo is None:
+            return
+        options = list(_METADATA_PROVIDER_OPTIONS)
+        service = self.session.metadata_scrape_service if self.session is not None else None
+        provider_options = getattr(service, "provider_options", None)
+        if callable(provider_options):
+            options = [(str(key or "").strip(), str(label or "").strip()) for key, label in provider_options()]
+            options = [(key, label) for key, label in options if key and label]
+        self._metadata_scrape_provider_combo.clear()
+        self._metadata_scrape_provider_combo.addItem("全部", "")
+        for provider_key, provider_label in options:
+            self._metadata_scrape_provider_combo.addItem(provider_label, provider_key)
+
     def _open_metadata_scrape_dialog(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
             return
         self._metadata_scrape_default_title = str(self.session.vod.vod_name or "").strip()
         self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
         dialog = self._ensure_metadata_scrape_dialog()
+        self._populate_metadata_scrape_provider_options()
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
         if self._metadata_scrape_year_edit is not None:
@@ -4819,8 +4836,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         candidate = self._selected_metadata_scrape_candidate()
         if candidate is None:
             return
-        self._metadata_request_id += 1
-        request_id = self._metadata_request_id
+        self._metadata_scrape_request_id += 1
+        request_id = self._metadata_scrape_request_id
         service = self.session.metadata_scrape_service
         current_vod = self.session.vod
 
@@ -4850,6 +4867,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         previous_vod = self.session.vod
         self.session.vod = updated_vod
+        if 0 <= self.current_index < len(self.session.playlist):
+            self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
         bindings = self.session.metadata_binding_repository
         if bindings is not None and hasattr(bindings, "save"):
             bindings.save(
@@ -5610,6 +5629,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
             (QKeySequence("W"), self.wide_button.click),
             (QKeySequence("D"), self._open_danmaku_source_dialog),
+            (QKeySequence("S"), self._open_metadata_scrape_dialog),
             (QKeySequence("Ctrl+D"), self._open_danmaku_settings_dialog),
             (QKeySequence("I"), self._toggle_video_info_from_menu),
             (QKeySequence("M"), self._toggle_mute),

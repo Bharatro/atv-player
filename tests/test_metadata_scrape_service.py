@@ -3,7 +3,7 @@ from pathlib import Path
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeService
-from atv_player.models import VodItem
+from atv_player.models import PlaybackDetailField, VodItem
 
 
 class FakeProvider:
@@ -91,3 +91,73 @@ def test_metadata_scrape_service_apply_uses_cached_detail_before_fetching_provid
 
     assert updated.vod_pic == "https://img.example/poster.jpg"
     assert provider.detail_calls == []
+
+
+def test_metadata_scrape_service_apply_replaces_all_metadata_fields_from_selected_result(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:1",
+            title="新标题",
+            year="2026",
+            poster="https://img.example/poster.jpg",
+            overview="新简介",
+            genres=["动画"],
+            detail_fields=[{"label": "TMDB ID", "value": "1"}],
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+    candidate = MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id="movie:1",
+        title="新标题",
+        year="2026",
+    )
+
+    updated = service.apply(
+        VodItem(
+            vod_id="v1",
+            vod_name="旧标题",
+            vod_pic="https://img.example/old.jpg",
+            vod_content="旧简介",
+            vod_year="2024",
+            vod_area="中国大陆",
+            vod_lang="汉语普通话",
+            vod_director="旧导演",
+            vod_actor="旧演员",
+            vod_remarks="9.9",
+            type_name="剧情",
+            dbid=12345,
+            detail_fields=[PlaybackDetailField(label="旧字段", value="旧值")],
+            metadata_field_sources={
+                "poster": "local_douban",
+                "overview": "local_douban",
+                "year": "local_douban",
+                "country": "local_douban",
+                "language": "local_douban",
+                "directors": "local_douban",
+                "actors": "local_douban",
+                "rating": "local_douban",
+                "genres": "local_douban",
+                "detail_fields": "local_douban",
+                "douban_id": "local_douban",
+            },
+        ),
+        candidate,
+    )
+
+    assert updated.vod_name == "新标题"
+    assert updated.vod_pic == "https://img.example/poster.jpg"
+    assert updated.vod_content == "新简介"
+    assert updated.vod_year == "2026"
+    assert updated.type_name == "动画"
+    assert updated.vod_area == ""
+    assert updated.vod_lang == ""
+    assert updated.vod_director == ""
+    assert updated.vod_actor == ""
+    assert updated.vod_remarks == ""
+    assert updated.dbid == 0
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("TMDB ID", "1")]

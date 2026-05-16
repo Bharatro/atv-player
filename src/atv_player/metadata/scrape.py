@@ -4,13 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from atv_player.metadata.cache import MetadataCache
-from atv_player.metadata.merge import merge_metadata_record
+from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import VodItem
 
 _PROVIDER_LABELS = {
-    "local_douban": "本地豆瓣",
-    "remote_douban": "alist-tvbox豆瓣",
+    "local_douban": "豆瓣官方",
+    "remote_douban": "本地豆瓣",
     "douban": "豆瓣",
     "tmdb": "TMDB",
     "plugin": "插件",
@@ -44,6 +44,9 @@ class MetadataScrapeService:
 
     def _provider_label(self, provider_name: str) -> str:
         return _PROVIDER_LABELS.get(provider_name, provider_name)
+
+    def provider_options(self) -> list[tuple[str, str]]:
+        return [(provider.name, self._provider_label(provider.name)) for provider in self._providers]
 
     def _candidate_from_match(self, match: MetadataMatch) -> MetadataScrapeCandidate:
         return MetadataScrapeCandidate(
@@ -92,5 +95,5 @@ class MetadataScrapeService:
             record = provider.get_detail(match)
             self._cache.save_detail(candidate.provider, candidate.provider_id, record)
         updated = replace(vod)
-        merge_metadata_record(updated, record, provider_priority=[item.name for item in self._providers])
+        replace_metadata_record(updated, record)
         return updated

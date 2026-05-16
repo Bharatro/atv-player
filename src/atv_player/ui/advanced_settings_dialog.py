@@ -35,7 +35,7 @@ class AdvancedSettingsDialog(QDialog):
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.douban_cookie_edit = QPlainTextEdit()
-        self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过本地豆瓣抓取")
+        self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
         self.tmdb_api_key_edit.setPlaceholderText("填写 TMDB API Key")
         self.save_button = QPushButton("保存")

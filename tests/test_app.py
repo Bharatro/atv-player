@@ -4428,6 +4428,69 @@ def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_pat
     assert hydrate is None
 
 
+def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_required_config(monkeypatch, tmp_path) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_douban_cookie="",
+                metadata_tmdb_api_key="",
+            )
+
+    class RecordingLocalDoubanClient:
+        def __init__(self, cookie: str = "", transport=None) -> None:
+            del cookie, transport
+            raise AssertionError("local douban client should not be created without cookie")
+
+    class RecordingLocalDoubanProvider:
+        name = "local_douban"
+
+        def __init__(self, local_client) -> None:
+            raise AssertionError(f"unexpected local douban provider: {local_client!r}")
+
+    class RecordingTMDBClient:
+        def __init__(self, api_key: str, transport=None) -> None:
+            del api_key, transport
+            raise AssertionError("tmdb client should not be created without api key")
+
+    class RecordingTMDBProvider:
+        name = "tmdb"
+
+        def __init__(self, client) -> None:
+            raise AssertionError(f"unexpected tmdb provider: {client!r}")
+
+    class RecordingRemoteDoubanProvider:
+        name = "remote_douban"
+
+        def __init__(self, api_client) -> None:
+            self.api_client = api_client
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
+
+    coordinator = AppCoordinator(FakeRepo())
+    api_client = object()
+
+    monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
+    monkeypatch.setattr(app_module, "LocalDoubanProvider", RecordingLocalDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
+    monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
+    monkeypatch.setattr(app_module, "RemoteDoubanProvider", RecordingRemoteDoubanProvider, raising=False)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_metadata_scrape_service_factory(api_client)
+    service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert service is not None
+    assert [provider.name for provider in service._providers] == ["remote_douban"]
+
+
 def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_controller(qtbot, monkeypatch) -> None:
     class RestoreBrowseController:
         def build_request_from_detail(self, vod_id: str):

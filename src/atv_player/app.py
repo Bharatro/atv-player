@@ -322,14 +322,15 @@ class AppCoordinator(QObject):
         source_kind: str,
         raw_detail=None,
     ) -> list[object]:
-        local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
         providers: list[object] = []
         if source_kind == "plugin":
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
-        providers.append(LocalDoubanProvider(local_douban_client))
-        if config.metadata_tmdb_api_key:
+        if str(config.metadata_douban_cookie or "").strip():
+            local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
+            providers.append(LocalDoubanProvider(local_douban_client))
+        if str(config.metadata_tmdb_api_key or "").strip():
             providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
         providers.append(RemoteDoubanProvider(api_client))
         return providers

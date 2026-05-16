@@ -120,6 +120,7 @@ uv run src/atv_player/main.py
 | `Enter` | 切换全屏 |
 | `W` | 切换宽屏 |
 | `D` | 打开弹幕源 |
+| `S` | 打开刮削 |
 | `Ctrl+D` | 打开弹幕设置 |
 | `I` | 显示视频信息 |
 | `Ctrl+P` | 返回主窗口 |

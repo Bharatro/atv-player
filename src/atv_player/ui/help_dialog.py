@@ -37,6 +37,7 @@ _PLAYER_WINDOW_SHORTCUTS: tuple[ShortcutEntry, ...] = (
     ShortcutEntry("Enter", "切换全屏"),
     ShortcutEntry("W", "切换宽屏"),
     ShortcutEntry("D", "打开弹幕源"),
+    ShortcutEntry("S", "打开刮削"),
     ShortcutEntry("Ctrl+D", "打开弹幕设置"),
     ShortcutEntry("I", "显示视频信息"),
     ShortcutEntry("Ctrl+P", "返回主窗口"),

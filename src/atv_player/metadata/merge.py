@@ -113,3 +113,42 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         vod.detail_fields = merged
         _set_field_source(vod, "detail_fields", record.provider)
     return vod
+
+
+def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
+    cleaned_overview = clean_overview_text(record.overview)
+    detail_fields = _record_detail_fields(record)
+
+    if record.title:
+        vod.vod_name = record.title
+    vod.vod_pic = record.poster
+    vod.vod_year = record.year
+    vod.type_name = " / ".join(record.genres)
+    vod.vod_area = record.country
+    vod.vod_lang = record.language
+    vod.vod_director = ",".join(record.directors)
+    vod.vod_actor = ",".join(record.actors)
+    vod.vod_content = cleaned_overview
+    vod.vod_remarks = record.rating
+    vod.dbid = record.douban_id
+    vod.detail_fields = [
+        PlaybackDetailField(label=str(item.get("label") or ""), value=str(item.get("value") or ""))
+        for item in detail_fields
+        if str(item.get("label") or "").strip() and str(item.get("value") or "").strip()
+    ]
+
+    for field_name in (
+        "poster",
+        "year",
+        "genres",
+        "country",
+        "language",
+        "directors",
+        "actors",
+        "overview",
+        "rating",
+        "douban_id",
+        "detail_fields",
+    ):
+        _set_field_source(vod, field_name, record.provider)
+    return vod
