@@ -220,6 +220,7 @@ class VodItem:
     dbid: int = 0
     type: int = 0
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
+    metadata_field_sources: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
     items: list[PlayItem] = field(default_factory=list)
 
 

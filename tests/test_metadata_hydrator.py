@@ -97,3 +97,38 @@ def test_metadata_hydrator_skips_provider_detail_failure_and_keeps_existing_vod(
     assert douban_provider.get_detail_calls == [
         MetadataMatch(provider="douban", provider_id="35746415", title="深空彼岸")
     ]
+
+
+def test_metadata_hydrator_keeps_douban_overview_but_uses_tmdb_visual_fields(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="35746415", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="35746415",
+            overview="豆瓣简介",
+            rating="8.1",
+            douban_id=35746415,
+        ),
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="movie:42", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:42",
+            poster="https://img.example/tmdb-poster.jpg",
+            year="2026",
+            overview="TMDB简介",
+            rating="7.2",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[local_douban, tmdb])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse"))
+
+    assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert updated.vod_year == "2026"
+    assert updated.vod_content == "豆瓣简介"
+    assert updated.vod_remarks == "8.1"

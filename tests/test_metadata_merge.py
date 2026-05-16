@@ -72,3 +72,46 @@ def test_merge_metadata_fills_core_detail_rows_from_douban_record() -> None:
     assert vod.vod_area == "中国大陆"
     assert vod.vod_lang == "汉语普通话"
     assert vod.vod_director == "周琛"
+
+
+def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_douban_overview_and_rating() -> None:
+    vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_content="原始简介")
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="movie:42",
+        poster="https://img.example/tmdb-poster.jpg",
+        backdrop="https://img.example/tmdb-backdrop.jpg",
+        year="2026",
+        actors=["梁达伟"],
+        directors=["周琛"],
+        genres=["动画"],
+        aliases=["The First Sequence"],
+        imdb_id="tt123",
+        tmdb_id="42",
+        overview="TMDB简介",
+        rating="7.2",
+    )
+    douban_record = MetadataRecord(
+        provider="local_douban",
+        provider_id="35746415",
+        overview="豆瓣简介",
+        rating="8.1",
+        douban_id=35746415,
+    )
+
+    merge_metadata_record(vod, tmdb_record, provider_priority=["tmdb"])
+    merge_metadata_record(vod, douban_record, provider_priority=["local_douban", "tmdb"])
+
+    assert vod.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert vod.vod_content == "豆瓣简介"
+    assert vod.vod_remarks == "8.1"
+    assert vod.vod_year == "2026"
+    assert vod.vod_actor == "梁达伟"
+    assert vod.vod_director == "周琛"
+    assert vod.type_name == "动画"
+    assert vod.dbid == 35746415
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("别名", "The First Sequence"),
+        ("IMDb ID", "tt123"),
+        ("TMDB ID", "42"),
+    ]
