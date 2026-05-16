@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
+
+from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.merge import merge_metadata_record
+from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.models import VodItem
+
+_PROVIDER_LABELS = {
+    "local_douban": "本地豆瓣",
+    "remote_douban": "alist-tvbox豆瓣",
+    "douban": "豆瓣",
+    "tmdb": "TMDB",
+    "plugin": "插件",
+}
+
+
+@dataclass(slots=True)
+class MetadataScrapeCandidate:
+    provider: str
+    provider_label: str
+    provider_id: str
+    title: str
+    year: str = ""
+    subtitle: str = ""
+    raw: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MetadataScrapeGroup:
+    provider: str
+    provider_label: str
+    items: list[MetadataScrapeCandidate] = field(default_factory=list)
+    error_text: str = ""
+
+
+class MetadataScrapeService:
+    def __init__(self, cache: MetadataCache, providers: list[object]) -> None:
+        self._cache = cache
+        self._providers = list(providers)
+        self._providers_by_name = {provider.name: provider for provider in self._providers}
+
+    def _provider_label(self, provider_name: str) -> str:
+        return _PROVIDER_LABELS.get(provider_name, provider_name)
+
+    def _candidate_from_match(self, match: MetadataMatch) -> MetadataScrapeCandidate:
+        return MetadataScrapeCandidate(
+            provider=match.provider,
+            provider_label=self._provider_label(match.provider),
+            provider_id=str(match.provider_id),
+            title=match.title,
+            year=match.year,
+            subtitle=str(match.raw.get("subtitle") or ""),
+            raw=dict(match.raw),
+        )
+
+    def search(self, query: MetadataQuery, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+        providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
+
+        def run(provider: object) -> MetadataScrapeGroup:
+            try:
+                matches = provider.search(query)
+            except Exception as exc:
+                return MetadataScrapeGroup(
+                    provider=provider.name,
+                    provider_label=self._provider_label(provider.name),
+                    error_text=str(exc),
+                )
+            return MetadataScrapeGroup(
+                provider=provider.name,
+                provider_label=self._provider_label(provider.name),
+                items=[self._candidate_from_match(match) for match in matches],
+            )
+
+        with ThreadPoolExecutor(max_workers=max(1, len(providers))) as executor:
+            futures = [executor.submit(run, provider) for provider in providers]
+        return [future.result() for future in futures]
+
+    def apply(self, vod: VodItem, candidate: MetadataScrapeCandidate) -> VodItem:
+        provider = self._providers_by_name[candidate.provider]
+        record = self._cache.load_detail(candidate.provider, candidate.provider_id, ttl_seconds=7 * 24 * 3600)
+        if record is None:
+            match = MetadataMatch(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                raw=dict(candidate.raw),
+            )
+            record = provider.get_detail(match)
+            self._cache.save_detail(candidate.provider, candidate.provider_id, record)
+        updated = replace(vod)
+        merge_metadata_record(updated, record, provider_priority=[item.name for item in self._providers])
+        return updated
