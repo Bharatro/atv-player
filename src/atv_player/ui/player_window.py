@@ -4955,6 +4955,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.session.vod = updated_vod
         if 0 <= self.current_index < len(self.session.playlist):
             self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
+        updated_playlist = None
+        build_playlist = getattr(self.session.metadata_scrape_service, "build_episode_title_playlist", None)
+        if callable(build_playlist):
+            try:
+                updated_playlist = build_playlist(updated_vod, self.session.playlist, preferred_candidate=candidate)
+            except Exception as exc:
+                self._append_log(f"剧集标题增强失败: {exc}")
+        if updated_playlist is not None:
+            self._episode_title_request_id += 1
+            self._pending_episode_title_session = self.session
+            self._handle_episode_title_enhancement_succeeded(self._episode_title_request_id, updated_playlist)
         bindings = self.session.metadata_binding_repository
         if bindings is not None and hasattr(bindings, "save"):
             binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()

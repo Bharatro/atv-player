@@ -362,6 +362,7 @@ class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
+        self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
         self._provider_options = list(
             provider_options
@@ -408,6 +409,22 @@ class FakeMetadataScrapeService:
             detail_fields=[PlaybackDetailField(label="TMDB ID", value="1")],
             metadata_field_sources={"poster": "tmdb", "overview": "tmdb", "detail_fields": "tmdb"},
         )
+
+    def build_episode_title_playlist(self, vod: VodItem, playlist: list[PlayItem], *, preferred_candidate=None):
+        self.build_episode_title_playlist_calls.append((vod.vod_name, getattr(preferred_candidate, "provider", "")))
+        return [
+            PlayItem(
+                title=item.title,
+                original_title=item.original_title or item.title,
+                episode_display_title="第1集 第01话 金银米小圈1",
+                episode_title_source="tencent",
+                url=item.url,
+                path=item.path,
+                index=item.index,
+                detail_fields=list(item.detail_fields),
+            )
+            for item in playlist
+        ]
 
     def reset(
         self,
@@ -652,6 +669,51 @@ def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields
 
     qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
     assert "站内热度: 99" not in window.metadata_view.toPlainText()
+
+
+def test_player_window_metadata_scrape_apply_refreshes_playlist_titles_from_selected_provider(qtbot) -> None:
+    service = FakeMetadataScrapeService(
+        provider_options=[
+            ("tencent", "腾讯"),
+            ("tmdb", "TMDB"),
+        ]
+    )
+    service.groups = [
+        MetadataScrapeGroup(
+            provider="tencent",
+            provider_label="腾讯",
+            items=[
+                MetadataScrapeCandidate(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    provider_id="tx:1",
+                    title="米小圈上学记4",
+                    year="2026",
+                    raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 金银米小圈1"}]}]},
+                )
+            ],
+        )
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="01.mp4", original_title="01.mp4", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: window.session.playlist[0].episode_display_title == "第1集 第01话 金银米小圈1", timeout=1000)
+    assert window.playlist_title_mode == "episode"
+    assert service.build_episode_title_playlist_calls == [("米小圈上学记4", "tencent")]
 
 
 def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_search(qtbot) -> None:

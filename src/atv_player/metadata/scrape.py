@@ -4,9 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.episode_title_resolver import (
+    METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    build_provider_episode_playlist,
+)
 from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
-from atv_player.models import VodItem
+from atv_player.models import PlayItem, VodItem
 
 _PROVIDER_LABELS = {
     "tencent": "腾讯",
@@ -82,6 +86,44 @@ class MetadataScrapeService:
         with ThreadPoolExecutor(max_workers=max(1, len(providers))) as executor:
             futures = [executor.submit(run, provider) for provider in providers]
         return [future.result() for future in futures]
+
+    def build_episode_title_playlist(
+        self,
+        vod: VodItem,
+        playlist: list[PlayItem],
+        *,
+        preferred_candidate: MetadataScrapeCandidate | None = None,
+    ) -> list[PlayItem] | None:
+        ordered_candidates: list[object] = []
+        if preferred_candidate is not None:
+            ordered_candidates.append(preferred_candidate)
+        query = MetadataQuery(
+            title=str(vod.vod_name or "").strip(),
+            year=str(vod.vod_year or "").strip(),
+            category_name=str(vod.category_name or "").strip(),
+        )
+        for provider_name in ("tencent", "iqiyi", "tmdb"):
+            if preferred_candidate is not None and provider_name == preferred_candidate.provider:
+                continue
+            provider = self._providers_by_name.get(provider_name)
+            if provider is None:
+                continue
+            try:
+                matches = provider.search(query)
+            except Exception:
+                continue
+            if matches:
+                ordered_candidates.append(matches[0])
+        for candidate in ordered_candidates:
+            updated = build_provider_episode_playlist(
+                vod,
+                playlist,
+                candidate,
+                source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+            )
+            if updated is not None:
+                return updated
+        return None
 
     def reset(
         self,

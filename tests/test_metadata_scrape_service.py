@@ -3,7 +3,7 @@ from pathlib import Path
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeService
-from atv_player.models import PlaybackDetailField, VodItem
+from atv_player.models import PlayItem, PlaybackDetailField, VodItem
 
 
 class FakeProvider:
@@ -52,6 +52,49 @@ def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: P
     assert [group.provider for group in groups] == ["tmdb", "local_douban"]
     assert groups[0].items[0].provider_id == "movie:1"
     assert groups[1].items[0].provider_id == "35746415"
+
+
+def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_candidate(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="米小圈上学记4",
+                year="2026",
+                raw={
+                    "episode_sites": [
+                        {
+                            "episodeInfoList": [
+                                {"title": "第01话 金银米小圈1"},
+                                {"title": "第02话 金银米小圈2"},
+                            ]
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+        preferred_candidate=MetadataScrapeCandidate(
+            provider="tencent",
+            provider_label="腾讯",
+            provider_id="tx:1",
+            title="米小圈上学记4",
+            year="2026",
+            raw=provider.matches[0].raw,
+        ),
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tencent"
+    assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
 
 
 def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path: Path) -> None:
