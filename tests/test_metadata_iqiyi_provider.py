@@ -170,3 +170,31 @@ def test_iqiyi_metadata_provider_ignores_templates_outside_101_102_103() -> None
     assert [(match.title, match.provider_id) for match in matches] == [
         ("应该命中", "https://www.iqiyi.com/v_keep.html")
     ]
+
+
+def test_iqiyi_metadata_provider_search_preserves_album_videos_in_raw() -> None:
+    provider = IqiyiMetadataProvider(
+        get=lambda url, **kwargs: JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "黑袍纠察队 第五季",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "pageUrl": "https://www.iqiyi.com/v_demo.html",
+                                "year": {"value": "2026"},
+                                "videos": [{"itemNumber": 1, "itemTitle": "终局开篇"}],
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    match = provider.search(MetadataQuery(title="黑袍纠察队第五季"))[0]
+
+    assert match.raw["videos"][0]["itemTitle"] == "终局开篇"

@@ -107,6 +107,44 @@ def test_tencent_metadata_provider_search_keeps_only_datatype_2_and_omits_rating
     assert record.detail_fields == [{"label": "来源站点", "value": "腾讯视频"}]
 
 
+def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "mzc002008bgugk0"},
+                                "videoInfo": {
+                                    "title": "米小圈上学记4",
+                                    "year": 2026,
+                                    "episodeSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {"title": "第01话 金银米小圈1"},
+                                                {"title": "第02话 金银米小圈2"},
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="米小圈上学记4"))[0]
+
+    assert "episode_sites" in match.raw
+    assert match.raw["episode_sites"][0]["episodeInfoList"][0]["title"] == "第01话 金银米小圈1"
+
+
 def test_tencent_exact_match_bonus_is_point_two() -> None:
     query = MetadataQuery(title="剑来 第二季")
 
