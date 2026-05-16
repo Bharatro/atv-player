@@ -31,8 +31,8 @@ class AdvancedSettingsDialog(QDialog):
         self.setWindowTitle("高级设置")
         self.resize(640, 360)
 
-        self.metadata_group = QGroupBox("媒体增强配置")
-        self.metadata_enabled_checkbox = QCheckBox("启用媒体增强")
+        self.metadata_group = QGroupBox("元数据增强配置")
+        self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过本地豆瓣抓取")
         self.tmdb_api_key_edit = QLineEdit()
