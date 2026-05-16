@@ -94,6 +94,7 @@ _METADATA_PROVIDER_LABELS: dict[str, str] = {
     "remote_douban": "本地豆瓣",
     "douban": "豆瓣",
     "tmdb": "TMDB",
+    "tmdb_season": "TMDB",
     "plugin": "插件",
 }
 

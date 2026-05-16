@@ -17,10 +17,32 @@ _FIELD_PROVIDER_PRIORITY = {
     "douban_id": ["official_douban", "local_douban", "douban", "plugin"],
 }
 
+_OVERVIEW_PROVIDER_PRIORITY = {
+    "local_douban": 0,
+    "tmdb_season": 1,
+    "douban": 2,
+    "tmdb": 3,
+    "remote_douban": 4,
+    "plugin": 5,
+}
+
 
 def _provider_rank(field_name: str, provider: str) -> int:
     order = _FIELD_PROVIDER_PRIORITY.get(field_name, [])
     return order.index(provider) if provider in order else len(order) + 100
+
+
+def _overview_source_key(provider: str, provider_id: object = "") -> str:
+    if provider == "tmdb" and ":season:" in str(provider_id or "").strip():
+        return "tmdb_season"
+    return provider
+
+
+def _overview_rank(provider: str, provider_id: object = "") -> int:
+    return _OVERVIEW_PROVIDER_PRIORITY.get(
+        _overview_source_key(provider, provider_id),
+        len(_OVERVIEW_PROVIDER_PRIORITY) + 100,
+    )
 
 
 def _can_override(vod: VodItem, field_name: str, provider: str) -> bool:
@@ -28,6 +50,13 @@ def _can_override(vod: VodItem, field_name: str, provider: str) -> bool:
     if not current:
         return True
     return _provider_rank(field_name, provider) <= _provider_rank(field_name, current)
+
+
+def _can_override_overview(vod: VodItem, record: MetadataRecord) -> bool:
+    current = vod.metadata_field_sources.get("overview", "")
+    if not current:
+        return True
+    return _overview_rank(record.provider, record.provider_id) <= _overview_rank(current)
 
 
 def _set_field_source(vod: VodItem, field_name: str, provider: str) -> None:
@@ -84,9 +113,9 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         vod.vod_actor = ",".join(record.actors)
         _set_field_source(vod, "actors", record.provider)
     cleaned_overview = clean_overview_text(record.overview)
-    if cleaned_overview and (not vod.vod_content or _can_override(vod, "overview", record.provider)):
+    if cleaned_overview and (not vod.vod_content or _can_override_overview(vod, record)):
         vod.vod_content = cleaned_overview
-        _set_field_source(vod, "overview", record.provider)
+        _set_field_source(vod, "overview", _overview_source_key(record.provider, record.provider_id))
     if record.rating and (not vod.vod_remarks or _can_override(vod, "rating", record.provider)):
         vod.vod_remarks = record.rating
         _set_field_source(vod, "rating", record.provider)
@@ -150,5 +179,9 @@ def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
         "douban_id",
         "detail_fields",
     ):
-        _set_field_source(vod, field_name, record.provider)
+        _set_field_source(
+            vod,
+            field_name,
+            _overview_source_key(record.provider, record.provider_id) if field_name == "overview" else record.provider,
+        )
     return vod
