@@ -595,16 +595,20 @@ class DanmakuService:
     ) -> DanmakuSourceOption | None:
         preferred_option = None
         best_query_match = (0, 0)
+        best_query_option = None
         if query_name:
             for group in groups:
                 for option in group.options:
                     match_priority = _source_option_query_match_priority(query_name, option)
                     if match_priority > best_query_match:
                         best_query_match = match_priority
+                        best_query_option = option
                     if preferred_page_url and option.url == preferred_page_url:
                         preferred_option = option
             if preferred_option is not None and _source_option_query_match_priority(query_name, preferred_option) >= best_query_match:
                 return preferred_option
+            if best_query_option is not None and best_query_match > (0, 0):
+                return best_query_option
         elif preferred_page_url:
             for group in groups:
                 for option in group.options:

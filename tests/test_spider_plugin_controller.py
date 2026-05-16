@@ -11,7 +11,13 @@ from atv_player.api import ApiError
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.errors import DanmakuEmptyResultError
 from atv_player.danmaku.providers.iqiyi import IqiyiDanmakuProvider
-from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.models import (
+    DanmakuSearchItem,
+    DanmakuSeriesPreference,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
 from atv_player.metadata.providers.plugin import CustomPluginProvider
@@ -2007,6 +2013,94 @@ def test_controller_refresh_danmaku_sources_retries_title_only_for_auto_inferred
     assert item.selected_danmaku_url == "https://www.iqiyi.com/v_demo.html"
 
 
+def test_controller_resolve_danmaku_sync_reranks_title_only_retry_results_back_to_requested_episode(
+    tmp_path,
+) -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.resolve_calls: list[str] = []
+            self._reranker = DanmakuService({}, provider_order=[])
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append((name, preferred_page_url))
+            if name == "低智商犯罪 9集":
+                return DanmakuSourceSearchResult(groups=[])
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="iqiyi",
+                        provider_label="爱奇艺",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="iqiyi",
+                                name="低智商犯罪第1集",
+                                url="https://www.iqiyi.com/v_ep1.html",
+                            ),
+                            DanmakuSourceOption(
+                                provider="iqiyi",
+                                name="低智商犯罪第9集",
+                                url="https://www.iqiyi.com/v_ep9.html",
+                            ),
+                        ],
+                    )
+                ],
+                default_option_url="https://www.iqiyi.com/v_ep1.html",
+                default_provider="iqiyi",
+            )
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return self._reranker.rerank_danmaku_source_search_result(result, **kwargs)
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            return f'<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">{page_url}</d></i>'
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key=build_danmaku_series_key("低智商犯罪"),
+            provider="iqiyi",
+            page_url="https://www.iqiyi.com/v_ep1.html",
+            title="低智商犯罪第1集",
+            search_title="低智商犯罪",
+            updated_at=0,
+        )
+    )
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="低智商犯罪",
+        search_enabled=True,
+        danmaku_service=service,
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="09.mp4",
+        url="http://m/09.mp4",
+        media_title="低智商犯罪",
+        vod_id="episode-09",
+    )
+
+    controller._resolve_danmaku_sync(item, item.url, [item])
+
+    assert service.calls == [
+        ("低智商犯罪 9集", "https://www.iqiyi.com/v_ep1.html"),
+        ("低智商犯罪", "https://www.iqiyi.com/v_ep1.html"),
+    ]
+    assert item.selected_danmaku_provider == "iqiyi"
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep9.html"
+    assert item.selected_danmaku_title == "低智商犯罪第9集"
+    assert service.resolve_calls == ["https://www.iqiyi.com/v_ep9.html"]
+
+
 def test_controller_refresh_danmaku_sources_omits_episode_for_movie_like_title() -> None:
     class FakeDanmakuService:
         def __init__(self) -> None:
@@ -2890,6 +2984,61 @@ def test_controller_reranks_cached_danmaku_source_results_by_media_duration(monk
         "https://v.qq.com/best",
         "https://v.qq.com/long",
     ]
+
+
+def test_controller_load_cached_danmaku_sources_prefers_matching_episode_over_historical_page_url(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(provider="iqiyi", name="低智商犯罪第1集", url="https://www.iqiyi.com/v_ep1.html"),
+                    DanmakuSourceOption(provider="iqiyi", name="低智商犯罪第8集", url="https://www.iqiyi.com/v_ep8.html"),
+                ],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_ep1.html",
+        default_provider="iqiyi",
+    )
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self._reranker = DanmakuService({}, provider_order=[])
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            assert result == cached_result
+            assert kwargs["query_name"] == "低智商犯罪 8集"
+            return self._reranker.rerank_danmaku_source_search_result(result, **kwargs)
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key=build_danmaku_series_key("低智商犯罪"),
+            provider="iqiyi",
+            page_url="https://www.iqiyi.com/v_ep1.html",
+            title="低智商犯罪第1集",
+            search_title="低智商犯罪",
+            updated_at=0,
+        )
+    )
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: cached_result)
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="低智商犯罪",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(title="08.mp4", url="http://m/08.mp4", media_title="低智商犯罪", vod_id="episode-08")
+
+    assert controller.load_cached_danmaku_sources(item, playlist=[item]) is True
+    assert item.selected_danmaku_provider == "iqiyi"
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep8.html"
 
 
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:

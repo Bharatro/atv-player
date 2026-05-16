@@ -407,6 +407,42 @@ def test_rerank_danmaku_source_search_result_prefers_exact_variety_part_over_his
     assert reranked.default_option_url == "https://www.iqiyi.com/v_ep6a.html"
 
 
+def test_rerank_danmaku_source_search_result_prefers_matching_episode_over_historical_page_url_when_duration_unknown() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="低智商犯罪第1集",
+                        url="https://www.iqiyi.com/v_ep1.html",
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="低智商犯罪第8集",
+                        url="https://www.iqiyi.com/v_ep8.html",
+                    ),
+                ],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_ep1.html",
+        default_provider="iqiyi",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="低智商犯罪 8集",
+        preferred_provider="iqiyi",
+        preferred_page_url="https://www.iqiyi.com/v_ep1.html",
+    )
+
+    assert reranked.default_option_url == "https://www.iqiyi.com/v_ep8.html"
+
+
 def test_rerank_danmaku_source_search_result_drops_promotional_no_episode_items_for_explicit_episode_query() -> None:
     service = DanmakuService({}, provider_order=[])
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import inspect
 import json
@@ -24,7 +25,13 @@ from atv_player.danmaku.cache import (
 )
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.service import build_danmaku_series_key
-from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist_episode_number, normalize_name
+from atv_player.danmaku.utils import (
+    episode_title_matches,
+    extract_episode_number,
+    has_explicit_episode_marker,
+    infer_playlist_episode_number,
+    normalize_name,
+)
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -274,6 +281,41 @@ def _count_danmaku_entries(xml_text: str) -> int:
     if not xml_text:
         return 0
     return len(re.findall(r"<d\b", xml_text))
+
+
+def _prioritize_requested_episode_in_source_search_result(query_name: str, result):
+    normalized_query = normalize_name(query_name)
+    if not normalized_query or not has_explicit_episode_marker(normalized_query):
+        return result
+    requested_episode = extract_episode_number(normalized_query)
+    if requested_episode is None:
+        return result
+    reordered_groups: list[DanmakuSourceGroup] = []
+    matched_default: DanmakuSourceOption | None = None
+    matched_any = False
+    for group in result.groups:
+        matching = [
+            option
+            for option in group.options
+            if extract_episode_number(option.name) == requested_episode
+            and episode_title_matches(normalized_query, option.name)
+        ]
+        if not matching:
+            reordered_groups.append(group)
+            continue
+        matched_any = True
+        reordered = [*matching, *[option for option in group.options if option not in matching]]
+        reordered_groups.append(replace(group, options=reordered))
+        if matched_default is None:
+            matched_default = reordered[0]
+    if not matched_any:
+        return result
+    return replace(
+        result,
+        groups=reordered_groups,
+        default_option_url=matched_default.url if matched_default is not None else result.default_option_url,
+        default_provider=matched_default.provider if matched_default is not None else result.default_provider,
+    )
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -1266,7 +1308,8 @@ class SpiderPluginController:
             and self.load_cached_danmaku_sources(item, media_duration_seconds=target_duration, playlist=playlist)
         ):
             return item.selected_danmaku_url
-        result = execute_source_search(query_name)
+        requested_query_name = query_name
+        result = execute_source_search(requested_query_name)
         fallback_query_name = item.danmaku_search_title.strip()
         if (
             hasattr(self._danmaku_service, "search_danmu_sources")
@@ -1274,12 +1317,23 @@ class SpiderPluginController:
             not provider_filter
             and not result.groups
             and fallback_query_name
-            and fallback_query_name != query_name
+            and fallback_query_name != requested_query_name
             and _should_retry_danmaku_search_title_only(item)
         ):
             result = execute_source_search(fallback_query_name)
+            rerank_result = getattr(self._danmaku_service, "rerank_danmaku_source_search_result", None)
+            if callable(rerank_result):
+                result = rerank_result(
+                    result,
+                    query_name=requested_query_name,
+                    reg_src=reg_src,
+                    preferred_provider=preference.provider if preference is not None else "",
+                    preferred_page_url=preference.page_url if preference is not None else "",
+                    media_duration_seconds=target_duration,
+                )
+            result = _prioritize_requested_episode_in_source_search_result(requested_query_name, result)
         if not provider_filter:
-            for cache_query_name in _danmaku_cache_query_names(item, query_name, playlist):
+            for cache_query_name in _danmaku_cache_query_names(item, requested_query_name, playlist):
                 _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)
         self._apply_danmaku_source_search_result(item, result)
         if result.groups and item.danmaku_search_title:
