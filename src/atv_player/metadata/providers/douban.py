@@ -4,6 +4,7 @@ import re
 
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
+from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
 
 
 def clean_overview_text(value: str) -> str:
@@ -36,12 +37,26 @@ def _split_people(value: object) -> list[str]:
 class DoubanProvider:
     name = "douban"
 
-    def __init__(self, api_client, cache: MetadataCache | None = None) -> None:
+    def __init__(self, api_client, cache: MetadataCache | None = None, local_client=None) -> None:
         self._api_client = api_client
         self._cache = cache
+        self._local_client = local_client
 
     def can_enrich(self, _context) -> bool:
         return True
+
+    def _match_from_payload(self, item: dict[str, object]) -> MetadataMatch | None:
+        provider_id = str(item.get("id") or item.get("dbid") or "").strip()
+        if not provider_id:
+            return None
+        return MetadataMatch(
+            provider=self.name,
+            provider_id=provider_id,
+            title=str(item.get("name") or item.get("title") or "").strip(),
+            year=str(item.get("year") or "").strip(),
+            score=0.0,
+            raw=dict(item),
+        )
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         if candidate.vod_dbid:
@@ -55,27 +70,38 @@ class DoubanProvider:
             ]
         if not candidate.title:
             return []
+        local_items: list[dict[str, object]] = []
+        if self._local_client is not None:
+            try:
+                local_items = self._local_client.search(candidate.title, year=candidate.year)
+            except DoubanBlockedError:
+                local_items = []
+        if local_items:
+            matches = [
+                match
+                for match in (self._match_from_payload(item) for item in local_items)
+                if match is not None
+            ]
+            if matches:
+                return matches
         payload = self._api_client.search_douban_metadata(candidate.title, year=candidate.year)
         items = payload.get("items") or payload.get("content") or payload.get("records") or []
         matches: list[MetadataMatch] = []
         for item in items:
-            provider_id = str(item.get("id") or item.get("dbid") or "").strip()
-            if not provider_id:
-                continue
-            matches.append(
-                MetadataMatch(
-                    provider=self.name,
-                    provider_id=provider_id,
-                    title=str(item.get("name") or item.get("title") or "").strip(),
-                    year=str(item.get("year") or "").strip(),
-                    score=0.0,
-                    raw=dict(item),
-                )
-            )
+            match = self._match_from_payload(item)
+            if match is not None:
+                matches.append(match)
         return matches
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
-        payload = self._api_client.get_douban_metadata_detail(match.provider_id)
+        payload = None
+        if self._local_client is not None:
+            try:
+                payload = self._local_client.get_detail(match.provider_id)
+            except DoubanBlockedError:
+                payload = None
+        if payload is None:
+            payload = self._api_client.get_douban_metadata_detail(match.provider_id)
         return MetadataRecord(
             provider=self.name,
             provider_id=str(payload.get("id") or payload.get("dbid") or match.provider_id),
