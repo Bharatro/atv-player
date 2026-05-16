@@ -13739,7 +13739,14 @@ def test_player_window_route_replacement_resets_danmaku_prefetch_state(qtbot) ->
 
 def test_player_window_async_loader_plays_replacement_item_after_route_replacement(qtbot) -> None:
     ready = threading.Event()
-    controller = FakePlayerController()
+    class StartedRecordingPlayerController(FakePlayerController):
+        def __init__(self) -> None:
+            self.started_calls: list[tuple[int, str]] = []
+
+        def on_item_started(self, session, current_index: int) -> None:
+            self.started_calls.append((current_index, session.playlist[current_index].title))
+
+    controller = StartedRecordingPlayerController()
     replacement = [
         PlayItem(title="离线A1.mp4", url="http://resolved/offline-a1.mp4", vod_id="1@107920@0@0", play_source="磁力线"),
         PlayItem(title="第2集", url="", vod_id="magnet:?xt=urn:btih:bbbb6396e03acb19d72eb2d779a22b2dc00f66bb", play_source="磁力线"),
@@ -13781,6 +13788,7 @@ def test_player_window_async_loader_plays_replacement_item_after_route_replaceme
     assert window.session is not None
     assert [item.title for item in window.session.playlist] == ["离线A1.mp4", "第2集"]
     assert window.current_index == 0
+    assert controller.started_calls == [(0, "离线A1.mp4")]
 
 
 def test_player_window_route_replacement_keeps_other_route_groups_unchanged(qtbot) -> None:

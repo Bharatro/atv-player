@@ -1647,6 +1647,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_audio_state()
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
+        if self.session is not None:
+            self.controller.on_item_started(self.session, self.current_index)
 
     def _schedule_followup_subtitle_refresh_if_needed(
         self,
@@ -1844,8 +1846,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 preserve_primary_external_subtitle_selection=preserve_primary_external_subtitle_selection,
             )
             self._refresh_window_title()
-            if self.session is not None:
-                self.controller.on_item_started(self.session, self.current_index)
         except Exception:
             self._restore_or_keep_current_index_after_failure(previous_index)
             raise
