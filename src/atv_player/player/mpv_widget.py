@@ -12,6 +12,7 @@ from PySide6.QtCore import QCoreApplication, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from atv_player.models import AppConfig
 from atv_player.player.ytdlp_runtime import (
     resolve_mpv_ytdl_raw_options,
     resolve_mpv_ytdlp_path,
@@ -102,8 +103,9 @@ class MpvWidget(QWidget):
     context_menu_requested = Signal()
     context_menu_dismiss_requested = Signal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, config: AppConfig | None = None) -> None:
         super().__init__(parent)
+        self._config = config or AppConfig()
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._player: Any | None = None
         self._video_picture_state = "idle"
@@ -129,12 +131,10 @@ class MpvWidget(QWidget):
         self._playback_finished_emitted = True
         self.playback_finished.emit()
 
-    def _create_player(self):
-        import mpv
-
-        common = dict(
+    def _base_player_options(self) -> dict[str, object]:
+        return dict(
             wid=str(int(self.winId())),
-            hwdec="auto-safe",
+            hwdec=str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe"),
             force_window="yes",
             audio_spdif="no",
             ad="ffmpeg",
@@ -143,16 +143,23 @@ class MpvWidget(QWidget):
             cache=True,
             cache_pause_initial=True,
             cache_pause_wait=3,
-            demuxer_max_bytes="512M",
+            demuxer_max_bytes=f"{int(getattr(self._config, 'mpv_cache_size_mb', 512) or 512)}M",
             demuxer_max_back_bytes="128M",
-            demuxer_readahead_secs=20,
+            demuxer_readahead_secs=int(getattr(self._config, "mpv_default_readahead_secs", 20) or 20),
             stream_buffer_size="4M",
-            network_timeout=15,
+            network_timeout=int(getattr(self._config, "mpv_network_timeout_seconds", 15) or 15),
         )
+
+    def _create_player(self):
+        import mpv
+
+        common = self._base_player_options()
         ytdlp_path = resolve_mpv_ytdlp_path()
         if ytdlp_path:
             common["script_opts"] = f"ytdl_hook-ytdl_path={ytdlp_path}"
-        ytdl_raw_options = resolve_mpv_ytdl_raw_options()
+        ytdl_raw_options = resolve_mpv_ytdl_raw_options(
+            cookie_browser=str(getattr(self._config, "youtube_cookie_browser", "") or "")
+        )
         if ytdl_raw_options:
             common["ytdl_raw_options"] = ytdl_raw_options
         if os.getenv("ATV_MPV_DEBUG"):
@@ -301,6 +308,10 @@ class MpvWidget(QWidget):
         audio_files: str = "",
         ytdl_format: str = "",
     ) -> str:
+        default_profile = dict(_DEFAULT_STREAM_PROFILE)
+        default_profile["demuxer-readahead-secs"] = int(
+            getattr(self._config, "mpv_default_readahead_secs", 20) or 20
+        )
         if self._is_local_iso_proxy_url(url):
             profile = _ISO_PROXY_STREAM_PROFILE
             profile_name = "iso-proxy"
@@ -318,11 +329,27 @@ class MpvWidget(QWidget):
             profile = _LOW_LATENCY_STREAM_PROFILE
             profile_name = "low-latency-external-audio"
         else:
-            profile = _DEFAULT_STREAM_PROFILE
+            profile = default_profile
             profile_name = "default"
         for key, value in profile.items():
             self._set_player_property(key, value)
         return profile_name
+
+    def _apply_extra_mpv_options(self, player: Any) -> None:
+        raw = str(getattr(self._config, "mpv_extra_options", "") or "").strip()
+        if not raw:
+            return
+        previous_player = self._player
+        self._player = player
+        try:
+            for line in raw.splitlines():
+                normalized = line.strip()
+                if not normalized:
+                    continue
+                key, value = normalized.split("=", 1)
+                self._set_player_property(key.strip(), value.strip())
+        finally:
+            self._player = previous_player
 
     def _loadfile_options(self, url: str) -> dict[str, str]:
         lowered_path = urlparse(url).path.lower()
@@ -463,6 +490,7 @@ class MpvWidget(QWidget):
                 audio_files=audio_files,
                 ytdl_format=ytdl_format,
             )
+            self._apply_extra_mpv_options(player)
             logger.info(
                 "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                 self._summarize_media_url(url),
@@ -508,6 +536,7 @@ class MpvWidget(QWidget):
                     audio_files=audio_files,
                     ytdl_format=ytdl_format,
                 )
+                self._apply_extra_mpv_options(player)
                 logger.info(
                     "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),

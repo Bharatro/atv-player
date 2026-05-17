@@ -319,7 +319,10 @@ class AppCoordinator(QObject):
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),
         )
-        self._yt_dlp_service = YtdlpPlaybackService(proxy_decider=self._build_proxy_decider())
+        self._yt_dlp_service = YtdlpPlaybackService(
+            proxy_decider=self._build_proxy_decider(),
+            config_loader=self.repo.load_config,
+        )
         self._danmaku_service = create_default_danmaku_service(
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),

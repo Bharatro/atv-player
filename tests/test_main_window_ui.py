@@ -3602,6 +3602,76 @@ def test_advanced_settings_dialog_rejects_invalid_proxy_url(qtbot, monkeypatch) 
     assert saved == []
 
 
+def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_values(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_cookie_browser="firefox",
+        mpv_cache_size_mb=1024,
+        mpv_hwdec_mode="no",
+        mpv_network_timeout_seconds=20,
+        mpv_default_readahead_secs=35,
+        mpv_extra_options="cache-pause-wait=9\nstream-buffer-size=8M",
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings_tabs.tabText(2) == "播放设置"
+    assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
+    assert dialog.mpv_cache_size_edit.text() == "1024"
+    assert dialog.mpv_hwdec_mode_combo.currentData() == "no"
+    assert dialog.mpv_network_timeout_edit.text() == "20"
+    assert dialog.mpv_default_readahead_edit.text() == "35"
+    assert dialog.mpv_extra_options_edit.toPlainText() == "cache-pause-wait=9\nstream-buffer-size=8M"
+
+
+def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.youtube_cookie_browser_combo.setCurrentIndex(dialog.youtube_cookie_browser_combo.findData("chrome"))
+    dialog.mpv_cache_size_edit.setText(" 768 ")
+    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("no"))
+    dialog.mpv_network_timeout_edit.setText(" 22 ")
+    dialog.mpv_default_readahead_edit.setText(" 40 ")
+    dialog.mpv_extra_options_edit.setPlainText(" cache-pause-wait=8 \nstream-buffer-size=6M ")
+    dialog._save()
+
+    assert config.youtube_cookie_browser == "chrome"
+    assert config.mpv_cache_size_mb == 768
+    assert config.mpv_hwdec_mode == "no"
+    assert config.mpv_network_timeout_seconds == 22
+    assert config.mpv_default_readahead_secs == 40
+    assert config.mpv_extra_options == "cache-pause-wait=8\nstream-buffer-size=6M"
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_rejects_invalid_extra_mpv_options(qtbot, monkeypatch) -> None:
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    messages: list[str] = []
+
+    def fake_warning(_parent, _title: str, text: str) -> int:
+        messages.append(text)
+        return 0
+
+    monkeypatch.setattr(module.QMessageBox, "warning", fake_warning)
+    saved: list[AppConfig] = []
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: saved.append(dialog._config))
+    qtbot.addWidget(dialog)
+
+    dialog.mpv_extra_options_edit.setPlainText("cache-pause-wait\n=broken")
+    dialog._save()
+
+    assert messages == ["更多 MPV 配置第 1 行必须是 key=value 格式"]
+    assert saved == []
+
+
 def test_advanced_settings_dialog_loads_episode_title_enhancement_checkbox(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

@@ -3,6 +3,7 @@ import types
 
 import pytest
 
+from atv_player.models import AppConfig
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 
 
@@ -69,12 +70,44 @@ def test_mpv_widget_create_player_passes_ytdlp_raw_cookie_options(qtbot, monkeyp
     )
     monkeypatch.setattr(
         "atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options",
-        lambda: "cookies-from-browser=chrome",
+        lambda **_kwargs: "cookies-from-browser=chrome",
     )
 
     widget._create_player()
 
     assert recorded["ytdl_raw_options"] == "cookies-from-browser=chrome"
+
+
+def test_mpv_widget_uses_configured_base_playback_settings(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget(
+        config=AppConfig(
+            youtube_cookie_browser="edge",
+            mpv_cache_size_mb=768,
+            mpv_hwdec_mode="no",
+            mpv_network_timeout_seconds=22,
+            mpv_default_readahead_secs=45,
+        )
+    )
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdlp_path",
+        lambda: "/tmp/tools/linux/yt-dlp",
+    )
+
+    widget._create_player()
+
+    assert captured["hwdec"] == "no"
+    assert captured["demuxer_max_bytes"] == "768M"
+    assert captured["network_timeout"] == 22
+    assert captured["demuxer_readahead_secs"] == 45
+    assert captured["ytdl_raw_options"] == "cookies-from-browser=edge,remote-components=ejs:github"
 
 
 def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -> None:
@@ -607,6 +640,41 @@ def test_mpv_widget_disables_initial_cache_pause_for_local_iso_proxy_and_restore
     assert widget._player.options["cache-pause-initial"] == "yes"
     assert widget._player.options["cache-pause-wait"] == 3
     assert widget._player.options["demuxer-readahead-secs"] == 20
+
+
+def test_mpv_widget_keeps_special_readahead_profiles_for_ytdlp_sources(qtbot) -> None:
+    widget = MpvWidget(config=AppConfig(mpv_default_readahead_secs=33))
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+
+    profile_name = widget._apply_stream_profile(
+        player,
+        "https://www.youtube.com/watch?v=test123",
+        ytdl_format="bestvideo+bestaudio/best",
+    )
+
+    assert profile_name == "hybrid-ytdl"
+    assert player.options["demuxer-readahead-secs"] == 120
+
+
+def test_mpv_widget_extra_options_override_profile_values(qtbot) -> None:
+    widget = MpvWidget(
+        config=AppConfig(mpv_extra_options="demuxer-readahead-secs=9\ncache-pause-wait=1")
+    )
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+
+    widget._apply_stream_profile(
+        player,
+        "https://www.youtube.com/watch?v=test123",
+        ytdl_format="best",
+    )
+    widget._apply_extra_mpv_options(player)
+
+    assert player.options["demuxer-readahead-secs"] == "9"
+    assert player.options["cache-pause-wait"] == "1"
 
 
 def test_mpv_widget_load_uses_cover_art_file_when_poster_path_is_provided(qtbot) -> None:

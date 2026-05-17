@@ -8,6 +8,8 @@ _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
+_VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
+_VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
     "localhost",
     "127.0.0.1",
@@ -114,6 +116,44 @@ def _normalize_network_proxy_bypass_rules(value: object) -> list[str]:
     return rules
 
 
+def _normalize_youtube_cookie_browser(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_YOUTUBE_COOKIE_BROWSERS else ""
+
+
+def _normalize_mpv_cache_size_mb(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 512
+    return max(16, min(normalized, 4096))
+
+
+def _normalize_mpv_hwdec_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_MPV_HWDEC_MODES else "auto-safe"
+
+
+def _normalize_mpv_network_timeout_seconds(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 15
+    return max(1, min(normalized, 300))
+
+
+def _normalize_mpv_default_readahead_secs(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 20
+    return max(1, min(normalized, 600))
+
+
+def _normalize_mpv_extra_options(value: object) -> str:
+    return str(value or "").strip()
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -145,6 +185,12 @@ class SettingsRepository:
                     network_proxy_mode TEXT NOT NULL DEFAULT 'direct',
                     network_proxy_url TEXT NOT NULL DEFAULT '',
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
+                    youtube_cookie_browser TEXT NOT NULL DEFAULT '',
+                    mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
+                    mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
+                    mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
+                    mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
+                    mpv_extra_options TEXT NOT NULL DEFAULT '',
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -218,6 +264,30 @@ class SettingsRepository:
             if "network_proxy_bypass_rules" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN network_proxy_bypass_rules TEXT NOT NULL DEFAULT '[\"localhost\",\"127.0.0.1\",\"::1\",\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\",\".local\"]'"
+                )
+            if "youtube_cookie_browser" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_cookie_browser TEXT NOT NULL DEFAULT ''"
+                )
+            if "mpv_cache_size_mb" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512"
+                )
+            if "mpv_hwdec_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe'"
+                )
+            if "mpv_network_timeout_seconds" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15"
+                )
+            if "mpv_default_readahead_secs" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20"
+                )
+            if "mpv_extra_options" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_extra_options TEXT NOT NULL DEFAULT ''"
                 )
             if "last_active_window" not in columns:
                 conn.execute(
@@ -355,6 +425,12 @@ class SettingsRepository:
                     network_proxy_mode,
                     network_proxy_url,
                     network_proxy_bypass_rules,
+                    youtube_cookie_browser,
+                    mpv_cache_size_mb,
+                    mpv_hwdec_mode,
+                    mpv_network_timeout_seconds,
+                    mpv_default_readahead_secs,
+                    mpv_extra_options,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -388,7 +464,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -413,6 +489,12 @@ class SettingsRepository:
                     network_proxy_mode,
                     network_proxy_url,
                     network_proxy_bypass_rules,
+                    youtube_cookie_browser,
+                    mpv_cache_size_mb,
+                    mpv_hwdec_mode,
+                    mpv_network_timeout_seconds,
+                    mpv_default_readahead_secs,
+                    mpv_extra_options,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -462,6 +544,12 @@ class SettingsRepository:
             network_proxy_mode,
             network_proxy_url,
             network_proxy_bypass_rules,
+            youtube_cookie_browser,
+            mpv_cache_size_mb,
+            mpv_hwdec_mode,
+            mpv_network_timeout_seconds,
+            mpv_default_readahead_secs,
+            mpv_extra_options,
             last_path,
             last_active_window,
             last_playback_source,
@@ -507,6 +595,12 @@ class SettingsRepository:
             network_proxy_mode=_normalize_network_proxy_mode(network_proxy_mode),
             network_proxy_url=_normalize_network_proxy_url(network_proxy_url),
             network_proxy_bypass_rules=_normalize_network_proxy_bypass_rules(network_proxy_bypass_rules),
+            youtube_cookie_browser=_normalize_youtube_cookie_browser(youtube_cookie_browser),
+            mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
+            mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
+            mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
+            mpv_default_readahead_secs=_normalize_mpv_default_readahead_secs(mpv_default_readahead_secs),
+            mpv_extra_options=_normalize_mpv_extra_options(mpv_extra_options),
             last_path=last_path,
             last_active_window=last_active_window,
             last_playback_source=last_playback_source,
@@ -558,6 +652,12 @@ class SettingsRepository:
                     network_proxy_mode = ?,
                     network_proxy_url = ?,
                     network_proxy_bypass_rules = ?,
+                    youtube_cookie_browser = ?,
+                    mpv_cache_size_mb = ?,
+                    mpv_hwdec_mode = ?,
+                    mpv_network_timeout_seconds = ?,
+                    mpv_default_readahead_secs = ?,
+                    mpv_extra_options = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -604,6 +704,12 @@ class SettingsRepository:
                     _normalize_network_proxy_mode(config.network_proxy_mode),
                     _normalize_network_proxy_url(config.network_proxy_url),
                     json.dumps(_normalize_network_proxy_bypass_rules(config.network_proxy_bypass_rules), ensure_ascii=False),
+                    _normalize_youtube_cookie_browser(config.youtube_cookie_browser),
+                    _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
+                    _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
+                    _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),
+                    _normalize_mpv_default_readahead_secs(config.mpv_default_readahead_secs),
+                    _normalize_mpv_extra_options(config.mpv_extra_options),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

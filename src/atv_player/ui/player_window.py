@@ -583,7 +583,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.setMinimumSize(1000, 700)
         self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
 
-        self.video_widget = MpvWidget(self)
+        self.video_widget = MpvWidget(self, config=self.config)
         self._configure_video_surface_widgets()
         self.video_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
