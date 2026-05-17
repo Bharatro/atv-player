@@ -8,6 +8,18 @@ if TYPE_CHECKING:
     from atv_player.danmaku.models import DanmakuSourceGroup
 
 
+def _default_network_proxy_bypass_rules() -> list[str]:
+    return [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        ".local",
+    ]
+
+
 @dataclass(slots=True)
 class AppConfig:
     base_url: str = "http://127.0.0.1:4567"
@@ -18,6 +30,9 @@ class AppConfig:
     metadata_douban_cookie: str = ""
     metadata_tmdb_api_key: str = ""
     metadata_bangumi_access_token: str = ""
+    network_proxy_mode: str = "direct"
+    network_proxy_url: str = ""
+    network_proxy_bypass_rules: list[str] = field(default_factory=_default_network_proxy_bypass_rules)
     episode_title_enhancement_enabled: bool = True
     last_path: str = "/"
     last_active_window: str = "main"

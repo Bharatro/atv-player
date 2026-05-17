@@ -386,6 +386,24 @@ def test_settings_repository_round_trip_persists_metadata_enhancement_toggle(tmp
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_network_proxy_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        network_proxy_mode="socks5",
+        network_proxy_url="socks5://user:pass@127.0.0.1:1080",
+        network_proxy_bypass_rules=["localhost", "127.0.0.1", "10.0.0.0/8"],
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.network_proxy_mode == "socks5"
+    assert saved.network_proxy_url == "socks5://user:pass@127.0.0.1:1080"
+    assert saved.network_proxy_bypass_rules == ["localhost", "127.0.0.1", "10.0.0.0/8"]
+
+
 def test_settings_repository_round_trip_persists_episode_title_enhancement_toggle(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)
@@ -637,6 +655,52 @@ def test_settings_repository_migrates_missing_episode_title_enhancement_column(t
     config = repo.load_config()
 
     assert config.episode_title_enhancement_enabled is True
+
+
+def test_settings_repository_migrates_missing_network_proxy_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                last_path TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, metadata_enhancement_enabled,
+                episode_title_enhancement_enabled, metadata_douban_cookie,
+                metadata_tmdb_api_key, metadata_bangumi_access_token, last_path
+            )
+            VALUES (1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', '/')
+            """
+        )
+
+    config = SettingsRepository(db_path).load_config()
+
+    assert config.network_proxy_mode == "direct"
+    assert config.network_proxy_url == ""
+    assert config.network_proxy_bypass_rules == [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        ".local",
+    ]
 
 
 def test_settings_repository_migrates_missing_global_search_hot_source_column(tmp_path: Path) -> None:
