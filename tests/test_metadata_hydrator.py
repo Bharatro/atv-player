@@ -189,6 +189,70 @@ def test_metadata_hydrator_keeps_official_douban_overview_but_uses_tmdb_visual_f
     assert updated.vod_remarks == "8.1"
 
 
+def test_metadata_hydrator_later_tmdb_overrides_existing_official_douban_poster(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    official_douban = FakeProvider(
+        "official_douban",
+        matches=[MetadataMatch(provider="official_douban", provider_id="35746415", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="official_douban",
+            provider_id="35746415",
+            poster="https://img.example/douban-poster.jpg",
+            overview="豆瓣简介",
+            rating="8.1",
+        ),
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="movie:42", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:42",
+            poster="https://img.example/tmdb-hd-poster.jpg",
+            overview="TMDB简介",
+            rating="7.2",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[official_douban, tmdb])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse"))
+
+    assert updated.vod_pic == "https://img.example/tmdb-hd-poster.jpg"
+    assert updated.vod_content == "豆瓣简介"
+    assert updated.vod_remarks == "8.1"
+    assert updated.metadata_field_sources["poster"] == "tmdb"
+
+
+def test_metadata_hydrator_later_lower_priority_provider_does_not_override_tmdb_poster(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="movie:42", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:42",
+            poster="https://img.example/tmdb-hd-poster.jpg",
+            overview="TMDB简介",
+        ),
+    )
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="35746415", title="深空彼岸")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="35746415",
+            poster="https://img.example/douban-small-poster.jpg",
+            overview="豆瓣简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse"))
+
+    assert updated.vod_pic == "https://img.example/tmdb-hd-poster.jpg"
+    assert updated.metadata_field_sources["poster"] == "tmdb"
+
+
 def test_metadata_hydrator_prefers_tmdb_season_over_local_douban_overview(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(
