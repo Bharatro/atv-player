@@ -10,6 +10,7 @@ import time
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
@@ -706,6 +707,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self._last_log_message: str | None = None
         self.playback_startup_widget = QWidget(self)
         self.playback_startup_widget.setObjectName("playbackStartupWidget")
         self.playback_retry_button = QPushButton("重试", self.playback_startup_widget)
@@ -2297,18 +2299,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _reset_log(self) -> None:
         self.log_view.clear()
+        self._last_log_message = None
+
+    def _format_log_line(self, message: str) -> str:
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        return f"[{timestamp}] {message}"
 
     def _append_log(self, message: str, *, dedupe: bool = False) -> None:
         if not message:
             return
+        if dedupe and self._last_log_message == message:
+            return
+        formatted_message = self._format_log_line(message)
         existing_text = self.log_view.toPlainText()
-        existing_lines = existing_text.splitlines()
-        if dedupe and existing_lines and existing_lines[-1] == message:
-            return
         if existing_text:
-            self.log_view.append(message)
-            return
-        self.log_view.setPlainText(message)
+            self.log_view.append(formatted_message)
+        else:
+            self.log_view.setPlainText(formatted_message)
+        self._last_log_message = message
 
     def append_status_log(self, message: str) -> None:
         self._append_log(message)
