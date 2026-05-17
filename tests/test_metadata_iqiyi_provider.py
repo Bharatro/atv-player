@@ -318,3 +318,58 @@ def test_iqiyi_metadata_provider_search_prefers_category_matched_result_for_same
         ("仙剑奇侠传三", "https://www.iqiyi.com/v_drama.html"),
     ]
     assert matches[0].score > matches[1].score
+
+
+def test_iqiyi_metadata_provider_search_reads_template_112_intent_album_infos() -> None:
+    provider = IqiyiMetadataProvider(
+        get=lambda url, **kwargs: JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "template": 112,
+                            "intentAlbumInfos": [
+                                {
+                                    "title": "成何体统",
+                                    "channel": "电视剧,2",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "pageUrl": "http://www.iqiyi.com/v_live_action.html",
+                                    "superscript": "2026",
+                                    "promptDesc": "戏精联欢 胡闹开演",
+                                    "metaTags": [
+                                        {"name": "热度破9000", "style": "special"},
+                                        {"name": "古装爱情", "style": ""},
+                                        {"name": "喜剧", "style": ""},
+                                    ],
+                                },
+                                {
+                                    "title": "成何体统 第2季",
+                                    "channel": "动漫,4",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "pageUrl": "http://www.iqiyi.com/v_anime_s2.html",
+                                    "superscript": "2026",
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    matches = provider.search(MetadataQuery(title="成何体统", year="2026", category_name="电视剧"))
+
+    assert [(match.title, match.provider_id, match.year) for match in matches] == [
+        ("成何体统", "http://www.iqiyi.com/v_live_action.html", "2026"),
+        ("成何体统 第2季", "http://www.iqiyi.com/v_anime_s2.html", "2026"),
+    ]
+    assert matches[0].score > matches[1].score
+
+    record = provider.get_detail(matches[0])
+
+    assert record.title == "成何体统"
+    assert record.year == "2026"
+    assert record.overview == "戏精联欢 胡闹开演"
+    assert record.genres == ["电视剧", "古装爱情", "喜剧"]

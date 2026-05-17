@@ -37,6 +37,7 @@ from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.douban_controller import _coerce_category_id
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.episode_titles import seed_original_titles
+from atv_player.episode_titles import extract_season_number
 from atv_player.models import (
     CategoryFilter,
     CategoryFilterOption,
@@ -90,6 +91,25 @@ def _strip_trailing_title_year_suffix(value: str) -> str:
 
 def _normalize_default_danmaku_search_title(value: str) -> str:
     return _strip_trailing_title_year_suffix(_strip_trailing_title_size_suffix(value))
+
+
+def _should_prefer_default_danmaku_search_title(default_title: str, preferred_title: str) -> bool:
+    normalized_default = _normalize_default_danmaku_search_title(default_title)
+    normalized_preferred = _normalize_default_danmaku_search_title(preferred_title)
+    if not normalized_default or not normalized_preferred:
+        return False
+    default_season = extract_season_number(normalized_default)
+    preferred_season = extract_season_number(normalized_preferred)
+    if default_season is None or preferred_season is not None:
+        return False
+    default_base = re.sub(
+        r"(?:\s*[-:：]\s*)?(?:第\s*[0-9零一二两三四五六七八九十百千]+\s*季|season\s*\d+|s\d+)\s*$",
+        "",
+        normalize_name(normalized_default),
+        flags=re.IGNORECASE,
+    ).strip()
+    preferred_base = normalize_name(normalized_preferred)
+    return bool(default_base and default_base == preferred_base)
 
 
 def _looks_like_offline_download_link(value: str) -> bool:
@@ -1125,12 +1145,15 @@ class SpiderPluginController:
     ) -> str:
         if item.danmaku_search_title.strip():
             return item.danmaku_search_title.strip()
-        if preference is not None and preference.search_title.strip():
-            return preference.search_title.strip()
-        return (
+        default_title = (
             _normalize_default_danmaku_search_title(item.media_title)
             or _normalize_default_danmaku_search_title(item.title)
         )
+        if preference is not None and preference.search_title.strip():
+            preferred_title = preference.search_title.strip()
+            if not _should_prefer_default_danmaku_search_title(default_title, preferred_title):
+                return preferred_title
+        return default_title
 
     def _resolve_danmaku_search_episode(
         self,

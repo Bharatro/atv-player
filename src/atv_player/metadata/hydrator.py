@@ -8,7 +8,7 @@ from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.merge import fill_missing_metadata_record, merge_metadata_record
-from atv_player.metadata.models import MetadataContext, MetadataMatch
+from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.models import VodItem
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,84 @@ logger = logging.getLogger(__name__)
 _SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
+_LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
+_MOVIE_MARKERS = ("电影", "影片", "movie")
+
+
+def _iter_category_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return _iter_category_values(value.get("value"))
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_iter_category_values(item))
+        return values
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _classify_media_kind(*values: object) -> str:
+    tokens = " ".join(
+        token.strip().lower()
+        for value in values
+        for token in _iter_category_values(value)
+        if token and token.strip()
+    )
+    if not tokens:
+        return ""
+    if any(marker in tokens for marker in _ANIME_MARKERS):
+        return "anime"
+    if any(marker in tokens for marker in _MOVIE_MARKERS):
+        return "movie"
+    if any(marker in tokens for marker in _LIVE_ACTION_MARKERS):
+        return "live_action"
+    return ""
+
+
+def _match_media_kind(match: MetadataMatch) -> str:
+    if match.provider == "bangumi":
+        return "anime"
+    if match.provider == "tmdb":
+        provider_id = str(match.provider_id or "").strip()
+        if provider_id.startswith("movie:"):
+            return "movie"
+    raw = dict(match.raw or {})
+    return _classify_media_kind(
+        raw.get("typeName"),
+        raw.get("channel"),
+        raw.get("genres"),
+        raw.get("categories"),
+        raw.get("baseTags"),
+        raw.get("category"),
+        match.title,
+    )
+
+
+def _record_media_kind(record: MetadataRecord) -> str:
+    if record.provider == "bangumi":
+        return "anime"
+    if record.provider == "tmdb":
+        provider_id = str(record.provider_id or "").strip()
+        if provider_id.startswith("movie:"):
+            return "movie"
+    return _classify_media_kind(
+        record.genres,
+        record.title,
+        record.original_title,
+        record.country,
+        record.detail_fields,
+    )
+
+
+def _vod_media_kind(vod: VodItem) -> str:
+    return _classify_media_kind(vod.type_name, vod.category_name)
+
+
+def _media_kinds_compatible(current_kind: str, candidate_kind: str) -> bool:
+    if not current_kind or not candidate_kind:
+        return True
+    return current_kind == candidate_kind
 
 
 class MetadataHydrator:
@@ -127,14 +205,36 @@ class MetadataHydrator:
             ranked_candidates.append((order, provider, best_match))
 
         primary_applied = False
+        primary_kind = ""
         for order, provider, match in sorted(ranked_candidates, key=lambda item: (-item[2].score, item[0])):
             del order
+            current_kind = primary_kind or _vod_media_kind(vod)
+            if primary_applied and not _media_kinds_compatible(current_kind, _match_media_kind(match)):
+                logger.info(
+                    "Skip incompatible metadata candidate provider=%s title=%s current_kind=%s candidate_kind=%s",
+                    provider.name,
+                    match.title,
+                    current_kind,
+                    _match_media_kind(match),
+                )
+                continue
             record = self._load_detail_record(provider, match)
             if record is None:
                 continue
             if not primary_applied:
                 merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
                 primary_applied = True
+                primary_kind = _record_media_kind(record) or _match_media_kind(match) or _vod_media_kind(vod)
+                continue
+            current_kind = primary_kind or _vod_media_kind(vod)
+            if not _media_kinds_compatible(current_kind, _record_media_kind(record)):
+                logger.info(
+                    "Skip incompatible metadata record provider=%s title=%s current_kind=%s candidate_kind=%s",
+                    provider.name,
+                    record.title,
+                    current_kind,
+                    _record_media_kind(record),
+                )
                 continue
             fill_missing_metadata_record(vod, record)
         return vod

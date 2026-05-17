@@ -13,7 +13,7 @@ class IqiyiMetadataProvider:
     name = "iqiyi"
     _SEARCH_URL = "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
     _SEARCH_HEADERS = {"user-agent": "Mozilla/5.0", "referer": "https://www.iqiyi.com/"}
-    _ALLOWED_TEMPLATES = {101, 102, 103}
+    _ALLOWED_TEMPLATES = {101, 102, 103, 112}
     _NON_NATIVE_SITE_PENALTY = 0.35
 
     def __init__(self, get=httpx.get) -> None:
@@ -96,14 +96,20 @@ class IqiyiMetadataProvider:
         templates = data.get("templates")
         if not isinstance(templates, list):
             return []
-        return [
-            album_info
-            for template in templates
-            if isinstance(template, dict)
-            if int(template.get("template") or 0) in self._ALLOWED_TEMPLATES
-            for album_info in [template.get("albumInfo")]
-            if isinstance(album_info, dict)
-        ]
+        album_infos: list[dict] = []
+        for template in templates:
+            if not isinstance(template, dict):
+                continue
+            template_id = int(template.get("template") or 0)
+            if template_id not in self._ALLOWED_TEMPLATES:
+                continue
+            album_info = template.get("albumInfo")
+            if isinstance(album_info, dict):
+                album_infos.append(album_info)
+            intent_album_infos = template.get("intentAlbumInfos")
+            if isinstance(intent_album_infos, list):
+                album_infos.extend(item for item in intent_album_infos if isinstance(item, dict))
+        return album_infos
 
     def _provider_id(self, payload: dict) -> str:
         page_url = str(payload.get("pageUrl") or "").strip()
@@ -118,11 +124,18 @@ class IqiyiMetadataProvider:
         year = self._nested_value(payload.get("year"))
         if year:
             return year
-        subtitle = str(payload.get("subtitle") or "").strip()
-        return subtitle if subtitle.isdigit() and len(subtitle) == 4 else ""
+        for key in ("subtitle", "superscript"):
+            value = str(payload.get(key) or "").strip()
+            if value.isdigit() and len(value) == 4:
+                return value
+        return ""
 
     def _overview_value(self, payload: dict) -> str:
-        for value in (self._nested_value(payload.get("brief")), str(payload.get("introduction") or "").strip()):
+        for value in (
+            self._nested_value(payload.get("brief")),
+            str(payload.get("introduction") or "").strip(),
+            str(payload.get("promptDesc") or "").strip(),
+        ):
             if value:
                 return re.sub(r"\s+", " ", value).strip()
         return ""
@@ -141,6 +154,15 @@ class IqiyiMetadataProvider:
     def _genres(self, payload: dict) -> list[str]:
         ordered: list[str] = []
         seen: set[str] = set()
+
+        channel = payload.get("channel")
+        if not payload.get("baseTags") and not payload.get("category"):
+            channel_value = str(channel or "").strip()
+            channel_name = channel_value.split(",", 1)[0].strip()
+            if channel_name and channel_name not in seen:
+                ordered.append(channel_name)
+                seen.add(channel_name)
+
         for value in payload.get("baseTags") or []:
             genre = str((value or {}).get("value") or "").strip() if isinstance(value, dict) else str(value or "").strip()
             if genre and genre not in seen:
@@ -153,6 +175,16 @@ class IqiyiMetadataProvider:
             if normalized and normalized not in seen:
                 ordered.append(normalized)
                 seen.add(normalized)
+        if not payload.get("baseTags"):
+            for item in payload.get("metaTags") or []:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("style") or "").strip().lower() == "special":
+                    continue
+                normalized = str(item.get("name") or "").strip()
+                if normalized and normalized not in seen:
+                    ordered.append(normalized)
+                    seen.add(normalized)
         return ordered
 
     def _nested_value(self, payload: object) -> str:

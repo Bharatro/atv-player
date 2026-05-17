@@ -1816,6 +1816,63 @@ def test_controller_refresh_danmaku_sources_uses_saved_search_title_for_same_ser
     assert item.danmaku_search_query == "玄界之门 特别版 2集"
 
 
+def test_controller_refresh_danmaku_sources_ignores_saved_search_title_when_default_title_has_season_but_saved_title_does_not(
+    tmp_path,
+) -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="iqiyi",
+                        provider_label="爱奇艺",
+                        options=[DanmakuSourceOption(provider="iqiyi", name="候选", url="https://www.iqiyi.com/v_demo.html")],
+                    )
+                ],
+                default_option_url="https://www.iqiyi.com/v_demo.html",
+                default_provider="iqiyi",
+            )
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("成何体统第二季")
+    store.save(
+        controller_module.DanmakuSeriesPreference(
+            series_key=series_key,
+            provider="iqiyi",
+            page_url="https://www.iqiyi.com/v_old.html",
+            title="旧标题",
+            search_title="成何体统",
+            updated_at=1,
+        )
+    )
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="成何体统第二季",
+        search_enabled=True,
+        danmaku_service=service,
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(title="01-4K.mp4", url="https://stream.example/1.m3u8", media_title="成何体统第二季", vod_id="1")
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == ["成何体统第二季 1集"]
+    assert item.danmaku_search_title == "成何体统第二季"
+    assert item.danmaku_search_query == "成何体统第二季 1集"
+
+
 def test_controller_refresh_danmaku_sources_strips_trailing_year_from_default_media_title() -> None:
     class FakeDanmakuService:
         def __init__(self) -> None:

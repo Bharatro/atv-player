@@ -2796,7 +2796,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             original = str(item.original_title or "").strip()
             display = str(item.episode_display_title or "").strip()
             if display and normalize_episode_title_text(original) != normalize_episode_title_text(display):
-                lines.append(f"{original} → {display}")
+                source = str(item.episode_title_source or "").strip()
+                source_suffix = f" [来源: {source}]" if source else ""
+                lines.append(f"{original} → {display}{source_suffix}")
                 has_mapping = True
             else:
                 lines.append(original)

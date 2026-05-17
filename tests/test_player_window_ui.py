@@ -13946,6 +13946,62 @@ def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late
     assert window.current_index == 0
 
 
+def test_player_window_logs_episode_title_mapping_with_source(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    captured: list[str] = []
+
+    def record_info(message: str, *args) -> None:
+        captured.append(message % args if args else message)
+
+    monkeypatch.setattr(player_window_module.logger, "info", record_info)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=lambda current_session: [
+            PlayItem(
+                title=current_session.playlist[0].title,
+                url=current_session.playlist[0].url,
+                vod_id=current_session.playlist[0].vod_id,
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            )
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: any("剧集标题改写" in message for message in captured), timeout=1000)
+
+    assert any("S01E01.mkv → 第1集 星门初启 [来源: tmdb]" in message for message in captured)
+
+
 def test_player_window_async_episode_title_enhancer_preserves_existing_play_item_object(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:

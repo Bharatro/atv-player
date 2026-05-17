@@ -271,6 +271,95 @@ def test_metadata_hydrator_tmdb_season_overview_beats_douban(tmp_path: Path) -> 
     assert updated.vod_content == "第五季简介"
 
 
+def test_metadata_hydrator_skips_incompatible_secondary_anime_record_after_live_action_primary(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    tencent = FakeProvider(
+        "tencent",
+        matches=[MetadataMatch(provider="tencent", provider_id="tx:1", title="成何体统", score=1.0)],
+        record=MetadataRecord(
+            provider="tencent",
+            provider_id="tx:1",
+            title="成何体统",
+            genres=["电视剧", "古装"],
+            overview="真人版简介",
+        ),
+    )
+    bangumi = FakeProvider(
+        "bangumi",
+        matches=[MetadataMatch(provider="bangumi", provider_id="subject:1", title="成何体统 第二季", score=0.99)],
+        record=MetadataRecord(
+            provider="bangumi",
+            provider_id="subject:1",
+            title="成何体统 第二季",
+            genres=["动漫"],
+            rating="8.8",
+            overview="动漫版简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tencent, bangumi])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="成何体统"),
+            source_kind="browse",
+        )
+    )
+
+    assert updated.type_name == "电视剧 / 古装"
+    assert updated.vod_content == "真人版简介"
+    assert updated.vod_remarks == ""
+    assert bangumi.get_detail_calls == []
+
+
+def test_metadata_hydrator_uses_primary_match_kind_when_primary_record_lacks_genres(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="成何体统",
+                score=1.0,
+                raw={"channel": "电视剧,2"},
+            )
+        ],
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="iqiyi:1",
+            title="成何体统",
+            overview="真人版简介",
+        ),
+    )
+    bangumi = FakeProvider(
+        "bangumi",
+        matches=[MetadataMatch(provider="bangumi", provider_id="subject:1", title="成何体统 第二季", score=0.99)],
+        record=MetadataRecord(
+            provider="bangumi",
+            provider_id="subject:1",
+            title="成何体统 第二季",
+            genres=["动漫"],
+            rating="8.8",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[iqiyi, bangumi])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="成何体统"),
+            source_kind="browse",
+        )
+    )
+
+    assert updated.vod_content == "真人版简介"
+    assert updated.vod_remarks == ""
+    assert bangumi.get_detail_calls == []
+
+
 def test_metadata_hydrator_caches_empty_search_results_and_skips_repeat_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider("local_douban", matches=[])
