@@ -33,13 +33,13 @@ class ShortcutEntry:
 
 
 _MAIN_WINDOW_SHORTCUTS: tuple[ShortcutEntry, ...] = (
-    ShortcutEntry("F1", "打开快捷键帮助"),
+    ShortcutEntry("F1", "打开帮助"),
     ShortcutEntry("Ctrl+P", "显示或返回播放器"),
     ShortcutEntry("Esc", "显示或返回播放器"),
 )
 
 _PLAYER_WINDOW_SHORTCUTS: tuple[ShortcutEntry, ...] = (
-    ShortcutEntry("F1", "打开快捷键帮助"),
+    ShortcutEntry("F1", "打开帮助"),
     ShortcutEntry("Space", "播放/暂停"),
     ShortcutEntry("Enter", "切换全屏"),
     ShortcutEntry("W", "切换宽屏"),
@@ -81,7 +81,7 @@ class ShortcutHelpDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setModal(True)
-        self.setWindowTitle("快捷键帮助")
+        self.setWindowTitle("帮助")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._diagnostics_text = diagnostics_text
         if system_info_rows is not None:

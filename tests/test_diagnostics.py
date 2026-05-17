@@ -12,6 +12,9 @@ def test_resolve_app_version_prefers_running_application_version(monkeypatch) ->
         def applicationVersion(self) -> str:
             return "0.8.2"
 
+        def processEvents(self) -> None:
+            return None
+
     monkeypatch.setattr(diagnostics.QApplication, "instance", lambda: FakeApp())
     monkeypatch.setattr(diagnostics.importlib.metadata, "version", lambda name: "0.1.0")
 

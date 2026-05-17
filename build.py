@@ -23,6 +23,9 @@ SPIDER_PLUGIN_RUNTIME_HIDDEN_IMPORTS = (
     "bs4",
     "pyquery",
 )
+SPIDER_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
+    "Crypto",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +257,8 @@ def build_pyinstaller_command(target_platform: str, runtime_version_file: Path |
     ]
     for module_name in SPIDER_PLUGIN_RUNTIME_HIDDEN_IMPORTS:
         command.extend(["--hidden-import", module_name])
+    for package_name in SPIDER_PLUGIN_RUNTIME_COLLECT_SUBMODULES:
+        command.extend(["--collect-submodules", package_name])
     command.extend(
         [
             "--add-data",

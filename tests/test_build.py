@@ -160,6 +160,20 @@ def test_build_pyinstaller_command_includes_spider_plugin_runtime_deps(
     assert "bs4" in hidden_imports
 
 
+@pytest.mark.parametrize("target_platform", ["linux", "windows", "macos"])
+def test_build_pyinstaller_command_collects_crypto_submodules_for_secspider_plugins(
+    monkeypatch, tmp_path, target_platform: str
+) -> None:
+    runtime_path = tmp_path / "runtime-lib"
+    runtime_path.write_bytes(b"lib")
+    monkeypatch.setattr(build, "find_libmpv", lambda platform: [(runtime_path, ".")])
+
+    command = build.build_pyinstaller_command(target_platform)
+
+    assert "--collect-submodules" in command
+    assert command[command.index("--collect-submodules") + 1] == "Crypto"
+
+
 def test_build_pyinstaller_command_macos_uses_native_app_icon(monkeypatch, tmp_path) -> None:
     dylib_path = tmp_path / "libmpv.dylib"
     dylib_path.write_bytes(b"dylib")
