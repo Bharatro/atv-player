@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import platform
 import re
 import subprocess
@@ -41,6 +42,9 @@ def collect_system_info_entries() -> tuple[SystemInfoEntry, ...]:
 
 
 def resolve_app_version() -> str:
+    env_version = os.environ.get("ATV_BUILD_VERSION", "").strip()
+    if env_version:
+        return env_version
     app = QApplication.instance()
     if app is not None:
         runtime_version = app.applicationVersion().strip()

@@ -76,6 +76,16 @@ def prepare_runtime_version_file(version: str | None = None) -> Path:
     return path
 
 
+def prepare_runtime_version_hook(version: str | None = None) -> Path:
+    path = BUILD_DIR / "runtime" / "_version_hook.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'import os\nos.environ["ATV_BUILD_VERSION"] = {resolve_artifact_version(version)!r}\n',
+        encoding="utf-8",
+    )
+    return path
+
+
 def build_target(value: str | None) -> BuildTarget:
     platform_id = normalize_target_platform(value)
     if platform_id == "linux":
@@ -239,7 +249,11 @@ def build_linux_appimage(appdir_path: Path, output_path: Path, arch: str | None 
     return output_path
 
 
-def build_pyinstaller_command(target_platform: str, runtime_version_file: Path | None = None) -> list[str]:
+def build_pyinstaller_command(
+    target_platform: str,
+    runtime_version_file: Path | None = None,
+    runtime_version_hook: Path | None = None,
+) -> list[str]:
     target = build_target(target_platform)
     command = [
         sys.executable,
@@ -274,6 +288,8 @@ def build_pyinstaller_command(target_platform: str, runtime_version_file: Path |
                 data_mapping(runtime_version_file, f"atv_player/{RUNTIME_VERSION_FILENAME}", target.platform_id),
             ]
         )
+    if runtime_version_hook is not None:
+        command.extend(["--runtime-hook", str(runtime_version_hook)])
     icon_path = pyinstaller_icon_path(target.platform_id)
     if icon_path is not None:
         command.extend(["--icon", str(icon_path)])
@@ -303,7 +319,12 @@ def build(target_platform: str) -> Path:
         raise FileNotFoundError(f"Missing PyInstaller icon: {icon_path}")
 
     runtime_version_file = prepare_runtime_version_file(artifact_version)
-    command = build_pyinstaller_command(target_platform, runtime_version_file=runtime_version_file)
+    runtime_version_hook = prepare_runtime_version_hook(artifact_version)
+    command = build_pyinstaller_command(
+        target_platform,
+        runtime_version_file=runtime_version_file,
+        runtime_version_hook=runtime_version_hook,
+    )
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)
 
     bundle_path = bundle_path_for_target(target_platform)
