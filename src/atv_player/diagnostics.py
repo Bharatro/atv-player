@@ -4,6 +4,7 @@ import importlib.metadata
 import platform
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,10 +56,22 @@ def resolve_app_version() -> str:
 
 
 def _read_bundled_version() -> str:
-    try:
-        return _BUNDLED_VERSION_PATH.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates = [
+            Path(meipass) / "atv_player" / "_build_version.txt",
+            Path(meipass) / "_build_version.txt",
+        ]
+    else:
+        candidates = [_BUNDLED_VERSION_PATH]
+    for path in candidates:
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+        except OSError:
+            continue
+    return ""
 
 
 def _read_pyproject_version() -> str:
