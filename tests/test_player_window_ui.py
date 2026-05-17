@@ -2904,6 +2904,143 @@ def test_player_window_switching_leaf_source_resets_danmaku_prefetch_state(qtbot
     assert controller.reset_calls == [session]
 
 
+def test_player_window_auto_switches_to_next_source_when_first_open_fails(qtbot) -> None:
+    first = [PlayItem(title="第1集", url="", vod_id="line-1", play_source="线路1")]
+    second = [PlayItem(title="第1集", url="http://line2/1.m3u8", play_source="线路2")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-1", vod_name="短剧"),
+        playlist=first,
+        playlists=[first, second],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="默认组",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=first),
+                    PlaybackSource(label="线路2", playlist=second),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.source_index == 1
+    assert window.video.load_calls[-1][0] == "http://line2/1.m3u8"
+    assert "播放失败，自动切换线路" in window.log_view.toPlainText()
+
+
+def test_player_window_auto_switches_to_first_source_of_next_group_when_current_group_is_exhausted(qtbot) -> None:
+    first = [PlayItem(title="第1集", url="", vod_id="line-1", play_source="组1线路1")]
+    second = [PlayItem(title="第1集", url="http://group2/1.m3u8", play_source="组2线路1")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-2", vod_name="剧集"),
+        playlist=first,
+        playlists=[first, second],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(label="组1", sources=[PlaybackSource(label="组1线路1", playlist=first)]),
+            PlaybackSourceGroup(label="组2", sources=[PlaybackSource(label="组2线路1", playlist=second)]),
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.source_group_index == 1
+    assert window.session.source_index == 0
+    assert window.video.load_calls[-1][0] == "http://group2/1.m3u8"
+
+
+def test_player_window_stops_on_failed_startup_when_auto_switch_has_no_remaining_sources(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-3", vod_name="单线路"),
+        playlist=[PlayItem(title="第1集", url="", vod_id="line-1", play_source="线路1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.source_index == 0
+    assert window.video.load_calls == []
+    assert window._startup_state.stage.value == "failed"
+
+
+def test_player_window_does_not_auto_switch_when_playback_has_already_started(qtbot) -> None:
+    first = [PlayItem(title="第1集", url="http://line1/1.m3u8", play_source="线路1")]
+    second = [PlayItem(title="第1集", url="http://line2/1.m3u8", play_source="线路2")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-4", vod_name="已开播"),
+        playlist=first,
+        playlists=[first, second],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="默认组",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=first),
+                    PlaybackSource(label="线路2", playlist=second),
+                ],
+            )
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._handle_video_picture_state_changed("visible")
+    window._handle_playback_failed("播放失败: HTTP 403 Forbidden")
+
+    assert window.session is not None
+    assert window.session.source_index == 0
+    assert "播放失败: HTTP 403 Forbidden" in window.log_view.toPlainText()
+
+
 def test_player_window_next_and_previous_stay_within_active_group(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

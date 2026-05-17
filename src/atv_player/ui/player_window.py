@@ -501,6 +501,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._video_surface_ready = False
         self._video_picture_state = "idle"
         self._auto_advance_locked = False
+        self._auto_switched_failure_sources: set[tuple[int, int]] = set()
         self._danmaku_track_id: int | None = None
         self._danmaku_temp_path: Path | None = None
         self._danmaku_active = False
@@ -1187,19 +1188,55 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
         )
 
+    def _reset_auto_switched_failure_sources(self) -> None:
+        self._auto_switched_failure_sources.clear()
+
+    def _current_source_attempt_key(self) -> tuple[int, int] | None:
+        if self.session is None:
+            return None
+        return (self.session.source_group_index, self.session.source_index)
+
+    def _next_source_after_failure(self) -> tuple[int, int] | None:
+        if self.session is None:
+            return None
+        source_groups = self._session_source_groups()
+        if not source_groups:
+            return None
+        active_group = source_groups[self.session.source_group_index]
+        if self.session.source_index + 1 < len(active_group.sources):
+            return (self.session.source_group_index, self.session.source_index + 1)
+        if self.session.source_group_index + 1 < len(source_groups):
+            return (self.session.source_group_index + 1, 0)
+        return None
+
+    def _should_auto_switch_source_after_failure(self) -> bool:
+        return bool(getattr(self.config, "playback_auto_switch_source_on_failure", False))
+
+    def _try_auto_switch_source_after_failure(self) -> bool:
+        if self.session is None or not self._should_auto_switch_source_after_failure():
+            return False
+        if self._startup_state.stage is PlaybackStartupStage.PLAYING:
+            return False
+        current_key = self._current_source_attempt_key()
+        next_key = self._next_source_after_failure()
+        if current_key is None or next_key is None:
+            return False
+        if current_key in self._auto_switched_failure_sources:
+            return False
+        self._auto_switched_failure_sources.add(current_key)
+        self._append_log("播放失败，自动切换线路")
+        self._switch_active_source(*next_key, reset_auto_switch_state=False)
+        return True
+
     def _retry_failed_startup(self) -> None:
+        self._reset_auto_switched_failure_sources()
         self._replay_current_item()
 
     def _switch_line_after_failure(self) -> None:
-        if self.session is None:
+        next_source = self._next_source_after_failure()
+        if next_source is None:
             return
-        source_groups = self._session_source_groups()
-        active_group = source_groups[self.session.source_group_index]
-        if self.session.source_index + 1 < len(active_group.sources):
-            self._switch_active_source(self.session.source_group_index, self.session.source_index + 1)
-            return
-        if self.session.source_group_index + 1 < len(source_groups):
-            self._switch_active_source(self.session.source_group_index + 1, 0)
+        self._switch_active_source(*next_source)
 
     def _switch_parser_after_failure(self) -> None:
         if not self._current_item_requires_parse():
@@ -1493,6 +1530,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._restore_video_cursor()
 
     def open_session(self, session, start_paused: bool = False) -> None:
+        self._reset_auto_switched_failure_sources()
         self._invalidate_play_item_resolution()
         if session.source_groups:
             session.playlists, mapping = self._flatten_source_groups(session.source_groups)
@@ -1911,6 +1949,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
+            if self._try_auto_switch_source_after_failure():
+                return
+            self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         self._maybe_restore_cached_danmaku_for_current_item()
@@ -2277,6 +2318,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._set_startup_state(self._startup_coordinator.buffering())
         elif state in {"visible", "audio-cover"}:
             self._set_startup_state(self._startup_coordinator.playing())
+            self._reset_auto_switched_failure_sources()
         if state in {"visible", "audio-cover"}:
             self._video_surface_ready = True
             self.video_poster_overlay.hide()
@@ -2290,6 +2332,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._show_video_poster_overlay(pixmap)
 
     def _handle_playback_failed(self, message: str) -> None:
+        if self._try_auto_switch_source_after_failure():
+            return
         self._show_failed_startup_state(message)
         self._append_log(message)
         self._video_surface_ready = False
@@ -2556,6 +2600,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
+            if self._try_auto_switch_source_after_failure():
+                return
+            self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
@@ -2580,6 +2627,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pending_load = self._pending_play_item_load
         self._pending_play_item_load = None
         if pending_load is not None and pending_load.wait_for_load:
+            if self._try_auto_switch_source_after_failure():
+                return
             self._show_failed_startup_state(f"播放失败: {message}")
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: {message}")
@@ -2622,6 +2671,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
         if not current_item.url:
+            if self._try_auto_switch_source_after_failure():
+                return
+            self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
@@ -2649,6 +2701,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         if pending_loader.hydrate_only:
             self._append_log(f"详情加载失败: {message}")
+            return
+        if self._try_auto_switch_source_after_failure():
             return
         self._show_failed_startup_state(f"播放失败: {message}")
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
@@ -2897,11 +2951,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._restore_failed_spider_quality_switch(current_item, pending_prepare):
             self._append_log(f"清晰度切换失败: {message}")
             return
-        self._show_failed_startup_state(f"播放失败: {message}")
         if self._requires_prepared_media_url(pending_prepare.source_url):
+            if self._try_auto_switch_source_after_failure():
+                return
+            self._show_failed_startup_state(f"播放失败: {message}")
             self._append_log(f"播放失败: {message}")
             self._restore_current_index(pending_prepare.previous_index)
             return
+        self._show_failed_startup_state(f"播放失败: {message}")
         current_item.dash_video_id = pending_prepare.previous_dash_video_id
         self._refresh_video_quality_state(current_item.url)
         self._append_log(f"播放代理失败，继续播放原地址: {message}")
@@ -3026,7 +3083,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._save_config()
         self._apply_visibility_state()
 
-    def _switch_active_source(self, source_group_index: int, source_index: int) -> None:
+    def _switch_active_source(
+        self,
+        source_group_index: int,
+        source_index: int,
+        *,
+        reset_auto_switch_state: bool = True,
+    ) -> None:
         if self.session is None:
             return
         source_groups = self._session_source_groups()
@@ -3053,6 +3116,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self._invalidate_play_item_resolution()
+        if reset_auto_switch_state:
+            self._reset_auto_switched_failure_sources()
         self.session.source_group_index = source_group_index
         self.session.source_index = source_index
         self.session.playlist_index = mapping[(source_group_index, source_index)]
