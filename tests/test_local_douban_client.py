@@ -2,6 +2,31 @@ import httpx
 import pytest
 
 from atv_player.metadata.providers.local_douban_client import DoubanBlockedError, LocalDoubanClient
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
+
+
+def test_local_douban_client_builds_direct_httpx_client_for_bypass() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_client_factory(**kwargs):
+        captured.update(kwargs)
+        return httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, text="[]")))
+
+    client = LocalDoubanClient(
+        cookie="bid=demo;",
+        proxy_decider=ProxyDecider(
+            ProxyConfig(
+                mode="socks5",
+                proxy_url="socks5://127.0.0.1:1080",
+                bypass_rules=["movie.douban.com"],
+            )
+        ),
+        client_factory=fake_client_factory,
+    )
+
+    assert captured["trust_env"] is False
+    assert "proxy" not in captured
+    client._client.close()
 
 
 def test_local_douban_client_raises_when_html_matches_block_markers() -> None:

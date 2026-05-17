@@ -63,6 +63,7 @@ from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
@@ -348,6 +349,16 @@ class AppCoordinator(QObject):
             close_client()
         self._api_client = None
 
+    def _build_proxy_decider(self) -> ProxyDecider:
+        config = self.repo.load_config()
+        return ProxyDecider(
+            ProxyConfig(
+                mode=config.network_proxy_mode,
+                proxy_url=config.network_proxy_url,
+                bypass_rules=list(config.network_proxy_bypass_rules),
+            )
+        )
+
     def start(self) -> QWidget:
         config = self.repo.load_config()
         logger.info("App start view=%s", decide_start_view(config))
@@ -356,6 +367,7 @@ class AppCoordinator(QObject):
                 config.base_url,
                 token=config.token,
                 vod_token=config.vod_token,
+                proxy_decider=self._build_proxy_decider(),
             )
             try:
                 self._ensure_vod_token(self._api_client)
@@ -375,6 +387,7 @@ class AppCoordinator(QObject):
             config.base_url,
             token=config.token,
             vod_token=config.vod_token,
+            proxy_decider=self._build_proxy_decider(),
         )
         self._ensure_vod_token(api_client)
         return api_client
@@ -441,19 +454,37 @@ class AppCoordinator(QObject):
         raw_detail=None,
     ) -> list[object]:
         providers: list[object] = []
+        proxy_decider = self._build_proxy_decider()
         if source_kind == "plugin":
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
-        providers.append(BangumiMetadataProvider(BangumiClient(access_token=config.metadata_bangumi_access_token)))
+        providers.append(
+            BangumiMetadataProvider(
+                BangumiClient(
+                    access_token=config.metadata_bangumi_access_token,
+                    proxy_decider=proxy_decider,
+                )
+            )
+        )
         providers.append(BilibiliMetadataProvider())
         providers.append(IqiyiMetadataProvider())
         providers.append(TencentMetadataProvider())
         if str(config.metadata_douban_cookie or "").strip():
-            local_douban_client = LocalDoubanClient(cookie=config.metadata_douban_cookie)
+            local_douban_client = LocalDoubanClient(
+                cookie=config.metadata_douban_cookie,
+                proxy_decider=proxy_decider,
+            )
             providers.append(OfficialDoubanProvider(local_douban_client))
         if str(config.metadata_tmdb_api_key or "").strip():
-            providers.append(TMDBProvider(TMDBClient(api_key=config.metadata_tmdb_api_key)))
+            providers.append(
+                TMDBProvider(
+                    TMDBClient(
+                        api_key=config.metadata_tmdb_api_key,
+                        proxy_decider=proxy_decider,
+                    )
+                )
+            )
         providers.append(LocalDoubanProvider(api_client))
         return providers
 
@@ -789,7 +820,10 @@ class AppCoordinator(QObject):
             query = MetadataContext(vod=vod, source_kind=source_kind).to_query()
             if infer_tmdb_media_type(query) == "movie":
                 return None
-            tmdb_client = TMDBClient(api_key=config.metadata_tmdb_api_key)
+            tmdb_client = TMDBClient(
+                api_key=config.metadata_tmdb_api_key,
+                proxy_decider=self._build_proxy_decider(),
+            )
 
             def enhance(session) -> list | None:
                 session_vod = getattr(session, "vod", None) or vod
@@ -953,7 +987,7 @@ class AppCoordinator(QObject):
         self._close_api_client()
         login_controller = LoginController(
             self.repo,
-            lambda base_url: ApiClient(base_url),
+            lambda base_url: ApiClient(base_url, proxy_decider=self._build_proxy_decider()),
         )
         self.login_window = LoginWindow(login_controller)
         if error_message and hasattr(self.login_window, "set_error_message"):

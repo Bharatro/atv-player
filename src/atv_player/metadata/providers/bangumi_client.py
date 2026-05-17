@@ -1,17 +1,32 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
+
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
 class BangumiClient:
     _BASE_URL = "https://api.bgm.tv"
     _USER_AGENT = "ATVPlayer/1.0 (metadata integration)"
 
-    def __init__(self, access_token: str = "", transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        access_token: str = "",
+        transport: httpx.BaseTransport | None = None,
+        proxy_decider: ProxyDecider | None = None,
+        client_factory: Callable[..., httpx.Client] = httpx.Client,
+    ) -> None:
         self._access_token = str(access_token or "").strip()
-        self._client = httpx.Client(base_url=self._BASE_URL, transport=transport, timeout=10.0)
+        client_kwargs: dict[str, Any] = dict(
+            base_url=self._BASE_URL,
+            transport=transport,
+            timeout=10.0,
+        )
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._BASE_URL))
+        self._client = client_factory(**client_kwargs)
 
     def _headers(self) -> dict[str, str]:
         headers = {"User-Agent": self._USER_AGENT}
