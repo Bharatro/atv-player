@@ -183,29 +183,85 @@ def _filter_too_short_duration_candidates(items: list[DanmakuSearchItem]) -> lis
 def _filter_search_items_by_media_duration_gap(
     items: list[DanmakuSearchItem],
     media_duration_seconds: int,
+    query_name: str = "",
 ) -> list[DanmakuSearchItem]:
     if media_duration_seconds <= 0:
         return items
-    return [
+    filtered = [
         item
         for item in items
         if item.duration_seconds <= 0
         or abs(item.duration_seconds - media_duration_seconds) <= _MAX_MEDIA_DURATION_GAP_SECONDS
     ]
+    normalized_query = normalize_name(query_name)
+    requested_episode = extract_episode_number(normalized_query) if normalized_query else None
+    explicit_episode_request = has_explicit_episode_marker(normalized_query) if normalized_query else False
+    if not explicit_episode_request or requested_episode is None:
+        return filtered
+    preserved_exact_matches = [
+        item
+        for item in items
+        if extract_episode_number(item.name) == requested_episode
+        and episode_title_matches(normalized_query, item.name)
+    ]
+    if not preserved_exact_matches:
+        return filtered
+    if any(
+        extract_episode_number(item.name) == requested_episode
+        and episode_title_matches(normalized_query, item.name)
+        for item in filtered
+    ):
+        return filtered
+    preserved_urls = {item.url for item in filtered}
+    merged = list(filtered)
+    for item in preserved_exact_matches:
+        if item.url in preserved_urls:
+            continue
+        merged.append(item)
+        preserved_urls.add(item.url)
+    return merged
 
 
 def _filter_source_options_by_media_duration_gap(
     options: list[DanmakuSourceOption],
     media_duration_seconds: int,
+    query_name: str = "",
 ) -> list[DanmakuSourceOption]:
     if media_duration_seconds <= 0:
         return options
-    return [
+    filtered = [
         option
         for option in options
         if option.duration_seconds <= 0
         or abs(option.duration_seconds - media_duration_seconds) <= _MAX_MEDIA_DURATION_GAP_SECONDS
     ]
+    normalized_query = normalize_name(query_name)
+    requested_episode = extract_episode_number(normalized_query) if normalized_query else None
+    explicit_episode_request = has_explicit_episode_marker(normalized_query) if normalized_query else False
+    if not explicit_episode_request or requested_episode is None:
+        return filtered
+    preserved_exact_matches = [
+        option
+        for option in options
+        if extract_episode_number(option.name) == requested_episode
+        and episode_title_matches(normalized_query, option.name)
+    ]
+    if not preserved_exact_matches:
+        return filtered
+    if any(
+        extract_episode_number(option.name) == requested_episode
+        and episode_title_matches(normalized_query, option.name)
+        for option in filtered
+    ):
+        return filtered
+    preserved_urls = {option.url for option in filtered}
+    merged = list(filtered)
+    for option in preserved_exact_matches:
+        if option.url in preserved_urls:
+            continue
+        merged.append(option)
+        preserved_urls.add(option.url)
+    return merged
 
 
 def _is_likely_variety_search(query_name: str, items: list[DanmakuSearchItem]) -> bool:
@@ -275,7 +331,7 @@ class DanmakuService:
         provider_filter: str = "",
     ) -> DanmakuSourceSearchResult:
         flat_results = self.search_danmu(name, reg_src, provider_filter=provider_filter)
-        flat_results = _filter_search_items_by_media_duration_gap(flat_results, media_duration_seconds)
+        flat_results = _filter_search_items_by_media_duration_gap(flat_results, media_duration_seconds, name)
         requested_episode = extract_episode_number(normalize_name(name))
         grouped: dict[str, list[DanmakuSourceOption]] = {}
         for item in flat_results:
@@ -326,7 +382,7 @@ class DanmakuService:
         ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]] = []
         stable_index = 0
         for group in result.groups:
-            options = _filter_source_options_by_media_duration_gap(group.options, media_duration_seconds)
+            options = _filter_source_options_by_media_duration_gap(group.options, media_duration_seconds, query_name)
             if explicit_episode_request and requested_episode is not None:
                 has_matching_episode = any(
                     extract_episode_number(option.name) == requested_episode

@@ -13,7 +13,13 @@ import httpx
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
-from atv_player.danmaku.utils import normalize_name, similarity_score
+from atv_player.danmaku.utils import (
+    episode_title_matches,
+    extract_episode_number,
+    has_explicit_episode_marker,
+    normalize_name,
+    similarity_score,
+)
 
 
 class IqiyiDanmakuProvider:
@@ -35,7 +41,57 @@ class IqiyiDanmakuProvider:
         return "iqiyi.com" in page_url
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
-        return self._search_mesh_items(name)
+        original_query = normalize_name(original_name or name)
+        explicit_episode_query = has_explicit_episode_marker(original_query) if original_query else False
+        requested_episode = extract_episode_number(original_query) if original_query else None
+        mesh_error: DanmakuSearchError | None = None
+        mesh_queries: list[str] = []
+        if explicit_episode_query and original_name:
+            mesh_queries.append(original_name)
+        if name not in mesh_queries:
+            mesh_queries.append(name)
+        mesh_items: list[DanmakuSearchItem] = []
+        for mesh_query in mesh_queries:
+            try:
+                mesh_items = self._search_mesh_items(
+                    mesh_query,
+                    explicit_episode_query=explicit_episode_query,
+                    requested_episode=requested_episode,
+                )
+            except DanmakuSearchError as exc:
+                if mesh_error is None:
+                    mesh_error = exc
+                continue
+            if mesh_items:
+                break
+        if mesh_items and (
+            not explicit_episode_query or self._has_exact_episode_match(mesh_items, original_query)
+        ):
+            return mesh_items
+        try:
+            legacy_items = self._search_legacy_items(name)
+        except DanmakuSearchError:
+            if mesh_error is not None:
+                legacy_items = []
+            else:
+                return []
+        merged_items = self._merge_search_items(mesh_items, legacy_items)
+        if merged_items:
+            return merged_items
+        if mesh_error is not None:
+            raise mesh_error
+        return []
+
+    def _has_exact_episode_match(self, items: list[DanmakuSearchItem], query_name: str) -> bool:
+        normalized_query = normalize_name(query_name)
+        requested_episode = extract_episode_number(normalized_query)
+        if requested_episode is None:
+            return False
+        return any(
+            extract_episode_number(item.name) == requested_episode
+            and episode_title_matches(normalized_query, item.name)
+            for item in items
+        )
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         page_url = self._normalize_iqiyi_url(page_url)
@@ -154,17 +210,44 @@ class IqiyiDanmakuProvider:
         data = payload.get("data")
         return isinstance(data, str) and "search result is empty" in data
 
-    def _search_mesh_items(self, query_name: str) -> list[DanmakuSearchItem]:
+    def _search_legacy_items(self, query_name: str) -> list[DanmakuSearchItem]:
         response = self._get(
-            self._MESH_SEARCH_URL,
+            self._SEARCH_URL,
             params={
                 "key": normalize_name(query_name),
                 "pageNum": 1,
                 "pageSize": 25,
-                "site": "iqiyi",
-                "mode": 1,
-                "current_page": 1,
             },
+            headers=dict(self._SEARCH_HEADERS),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败") from exc
+        if self._legacy_search_is_empty(payload):
+            return []
+        return self._extract_search_items(payload, query_name)
+
+    def _mesh_search_params(self, query_name: str, *, include_site_filter: bool) -> dict[str, object]:
+        params: dict[str, object] = {
+            "key": normalize_name(query_name),
+            "pageNum": 1,
+            "pageSize": 25,
+            "source": "input",
+            "suggest": "",
+            "mode": 1,
+            "current_page": 1,
+        }
+        if include_site_filter:
+            params["site"] = "iqiyi"
+        return params
+
+    def _mesh_search_payload(self, query_name: str, *, include_site_filter: bool) -> dict:
+        response = self._get(
+            self._MESH_SEARCH_URL,
+            params=self._mesh_search_params(query_name, include_site_filter=include_site_filter),
             headers=dict(self._SEARCH_HEADERS),
             follow_redirects=True,
             timeout=10.0,
@@ -176,12 +259,49 @@ class IqiyiDanmakuProvider:
         data = payload.get("data")
         if not isinstance(data, dict) or not isinstance(data.get("templates"), list):
             raise DanmakuSearchError("爱奇艺弹幕搜索结果解析失败")
+        return payload
+
+    def _search_mesh_items(
+        self,
+        query_name: str,
+        *,
+        explicit_episode_query: bool = False,
+        requested_episode: int | None = None,
+    ) -> list[DanmakuSearchItem]:
+        payloads = [self._mesh_search_payload(query_name, include_site_filter=True)]
+        for payload in payloads:
+            items = self._extract_mesh_search_items_from_payload(
+                payload,
+                query_name,
+                explicit_episode_query=explicit_episode_query,
+                requested_episode=requested_episode,
+            )
+            if items:
+                return items
+            if len(payloads) == 1:
+                payloads.append(self._mesh_search_payload(query_name, include_site_filter=False))
+        return []
+
+    def _extract_mesh_search_items_from_payload(
+        self,
+        payload: dict,
+        query_name: str,
+        *,
+        explicit_episode_query: bool = False,
+        requested_episode: int | None = None,
+    ) -> list[DanmakuSearchItem]:
         results_by_url: dict[str, DanmakuSearchItem] = {}
         for album_info in self._iter_mesh_album_infos(payload):
             if self._should_drop_mesh_album_info(album_info):
                 continue
             album_title = normalize_name(str(album_info.get("title") or ""))
-            for video in album_info.get("videos") or []:
+            videos = list(album_info.get("videos") or [])
+            if not videos:
+                try:
+                    videos = self._expand_mesh_album_page_videos(album_info)
+                except httpx.HTTPError:
+                    videos = []
+            for video in videos:
                 subtitle = str(video.get("subtitle") or "").strip()
                 raw_title = str(video.get("title") or "").strip()
                 title = raw_title
@@ -214,6 +334,20 @@ class IqiyiDanmakuProvider:
                 if existing is None or self._search_item_rank(candidate) > self._search_item_rank(existing):
                     results_by_url[url] = candidate
                 self._remember_metadata(url, metadata)
+            if videos:
+                continue
+            fallback = self._album_level_episode_candidate(
+                album_info,
+                query_name,
+                explicit_episode_query=explicit_episode_query,
+                requested_episode=requested_episode,
+            )
+            if fallback is None:
+                continue
+            existing = results_by_url.get(fallback.url)
+            if existing is None or self._search_item_rank(fallback) > self._search_item_rank(existing):
+                results_by_url[fallback.url] = fallback
+            self._remember_metadata(fallback.url, dict(fallback.resolve_context))
         return list(results_by_url.values())
 
     def _should_drop_mesh_album_info(self, album_info: dict) -> bool:
@@ -273,56 +407,80 @@ class IqiyiDanmakuProvider:
         return bool(videos) and any(album_info.get(key) not in ("", None) for key in ("albumId", "albumTitle"))
 
     def _expand_mesh_videos(self, query_name: str, album_info: dict) -> list[dict]:
-        response = self._get(
-            self._MESH_SEARCH_URL,
-            params={
-                "key": normalize_name(query_name),
-                "pageNum": 1,
-                "pageSize": 25,
-                "site": "iqiyi",
-                "mode": 1,
-                "current_page": 1,
-            },
-            headers=dict(self._SEARCH_HEADERS),
-            follow_redirects=True,
-            timeout=10.0,
-        )
-        payload = response.json()
         target_album_id = self._to_int(album_info.get("albumId"))
         target_title = normalize_name(str(album_info.get("albumTitle") or ""))
-        for matched_album_info in self._iter_mesh_album_infos(payload):
-            matched_album_id = self._to_int(matched_album_info.get("qipuId"))
-            matched_title = normalize_name(str(matched_album_info.get("title") or ""))
-            if target_album_id is not None and matched_album_id != target_album_id:
-                continue
-            if target_album_id is None and target_title and matched_title != target_title:
-                continue
-            videos: list[dict] = []
-            for video in matched_album_info.get("videos") or []:
-                subtitle = str(video.get("subtitle") or "").strip()
-                raw_title = str(video.get("title") or "").strip()
-                album_title = normalize_name(str(matched_album_info.get("title") or album_info.get("albumTitle") or ""))
-                title = raw_title
-                if subtitle and album_title and album_title not in normalize_name(raw_title):
-                    title = f"{album_title} {subtitle}".strip()
-                page_url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
-                if not title or not page_url:
+        payloads = [self._mesh_search_payload(query_name, include_site_filter=True)]
+        for payload in payloads:
+            for matched_album_info in self._iter_mesh_album_infos(payload):
+                matched_album_id = self._to_int(matched_album_info.get("qipuId"))
+                matched_title = normalize_name(str(matched_album_info.get("title") or ""))
+                if target_album_id is not None and matched_album_id != target_album_id:
                     continue
-                videos.append(
-                    {
-                        "itemTitle": title,
-                        "itemLink": page_url,
-                        "itemNumber": self._to_int(video.get("number")),
-                        "tvId": self._to_int(video.get("qipuId")),
-                        "albumId": matched_album_id or target_album_id,
-                        "timeLength": self._mesh_duration_seconds(video.get("duration")),
-                        "year": self._to_int(video.get("year")),
-                        "subtitle": subtitle,
-                    }
-                )
-            if videos:
-                return videos
+                if target_album_id is None and target_title and matched_title != target_title:
+                    continue
+                videos: list[dict] = []
+                for video in matched_album_info.get("videos") or []:
+                    subtitle = str(video.get("subtitle") or "").strip()
+                    raw_title = str(video.get("title") or "").strip()
+                    album_title = normalize_name(str(matched_album_info.get("title") or album_info.get("albumTitle") or ""))
+                    title = raw_title
+                    if subtitle and album_title and album_title not in normalize_name(raw_title):
+                        title = f"{album_title} {subtitle}".strip()
+                    page_url = self._normalize_iqiyi_url(str(video.get("pageUrl") or "").strip())
+                    if not title or not page_url:
+                        continue
+                    videos.append(
+                        {
+                            "itemTitle": title,
+                            "itemLink": page_url,
+                            "itemNumber": self._to_int(video.get("number")),
+                            "tvId": self._to_int(video.get("qipuId")),
+                            "albumId": matched_album_id or target_album_id,
+                            "timeLength": self._mesh_duration_seconds(video.get("duration")),
+                            "year": self._to_int(video.get("year")),
+                            "subtitle": subtitle,
+                        }
+                    )
+                if videos:
+                    return videos
+            if len(payloads) == 1:
+                payloads.append(self._mesh_search_payload(query_name, include_site_filter=False))
         return []
+
+    def _album_level_episode_candidate(
+        self,
+        album_info: dict,
+        query_name: str,
+        *,
+        explicit_episode_query: bool,
+        requested_episode: int | None,
+    ) -> DanmakuSearchItem | None:
+        if not explicit_episode_query or requested_episode != 1:
+            return None
+        title = str(album_info.get("title") or "").strip()
+        url = self._normalize_iqiyi_url(str(album_info.get("pageUrl") or "").strip())
+        tv_id = self._to_int(album_info.get("playQipuId"))
+        album_id = self._to_int(album_info.get("qipuId") or album_info.get("albumId"))
+        category_id = self._extract_category_id(album_info)
+        if not title or not url or tv_id is None or album_id is None or category_id is None:
+            return None
+        candidate_name = f"{title} 第1集".strip()
+        metadata = {
+            "tv_id": tv_id,
+            "album_id": album_id,
+            "category_id": category_id,
+            "duration_seconds": 0,
+            "variety_year": self._to_int(album_info.get("year")) or 0,
+        }
+        return DanmakuSearchItem(
+            provider=self.key,
+            name=candidate_name,
+            url=url,
+            ratio=similarity_score(query_name, candidate_name),
+            simi=similarity_score(query_name, candidate_name),
+            duration_seconds=0,
+            resolve_context=dict(metadata),
+        )
 
     def _iter_mesh_album_infos(self, payload: dict) -> list[dict]:
         data = payload.get("data")
@@ -335,17 +493,46 @@ class IqiyiDanmakuProvider:
         for template in templates:
             if not isinstance(template, dict):
                 continue
+            album_candidates: list[dict] = []
             album_info = template.get("albumInfo")
-            if not isinstance(album_info, dict):
-                continue
-            site_id = str(album_info.get("siteId") or "").strip().lower()
-            site_name = str(album_info.get("siteName") or "").strip()
-            if site_id not in self._ALLOWED_SITE_IDS or site_name not in self._ALLOWED_SITE_NAMES:
-                continue
-            if not isinstance(album_info.get("videos"), list):
-                continue
-            albums.append(album_info)
+            if isinstance(album_info, dict):
+                album_candidates.append(album_info)
+            intent_album_infos = template.get("intentAlbumInfos")
+            if isinstance(intent_album_infos, list):
+                album_candidates.extend(item for item in intent_album_infos if isinstance(item, dict))
+            for album_candidate in album_candidates:
+                site_id = str(album_candidate.get("siteId") or "").strip().lower()
+                site_name = str(album_candidate.get("siteName") or "").strip()
+                if site_id not in self._ALLOWED_SITE_IDS or site_name not in self._ALLOWED_SITE_NAMES:
+                    continue
+                albums.append(album_candidate)
         return albums
+
+    def _expand_mesh_album_page_videos(self, album_info: dict) -> list[dict]:
+        page_url = self._normalize_iqiyi_url(str(album_info.get("pageUrl") or "").strip())
+        if not page_url:
+            return []
+        expanded = self._expand_album_videos(
+            {
+                "albumLink": page_url,
+                "albumId": album_info.get("qipuId") or album_info.get("albumId"),
+                "channel": album_info.get("channel"),
+            }
+        )
+        videos: list[dict] = []
+        for video in expanded:
+            duration_seconds = self._to_int(video.get("timeLength")) or 0
+            videos.append(
+                {
+                    "title": str(video.get("itemTitle") or "").strip(),
+                    "subtitle": "",
+                    "number": video.get("itemNumber"),
+                    "qipuId": video.get("tvId"),
+                    "pageUrl": video.get("itemLink"),
+                    "duration": duration_seconds * 1000 if duration_seconds > 0 else 0,
+                }
+            )
+        return videos
 
     def _should_expand_album_videos(self, videos: list[dict], album_info: dict) -> bool:
         item_total = self._to_int(album_info.get("itemTotalNumber"))
@@ -374,11 +561,18 @@ class IqiyiDanmakuProvider:
             follow_redirects=True,
             timeout=10.0,
         )
-        match = re.search(r'id="album-avlist-data"\s+value=\'([^\']+)\'', response.text, re.S)
-        if match is None:
+        element_match = re.search(
+            r"<input\b[^>]*\bid=[\"']album-avlist-data[\"'][^>]*>",
+            response.text,
+            re.S | re.IGNORECASE,
+        )
+        if element_match is None:
+            return []
+        value_match = re.search(r"\bvalue=(['\"])(?P<payload>.*?)\1", element_match.group(0), re.S | re.IGNORECASE)
+        if value_match is None:
             return []
         try:
-            payload = json.loads(html.unescape(match.group(1)))
+            payload = json.loads(html.unescape(value_match.group("payload")))
         except json.JSONDecodeError:
             return []
         episodes = payload.get("epsodelist") or []
@@ -461,6 +655,18 @@ class IqiyiDanmakuProvider:
             context_score,
             len(item.name),
         )
+
+    def _merge_search_items(
+        self,
+        primary: list[DanmakuSearchItem],
+        secondary: list[DanmakuSearchItem],
+    ) -> list[DanmakuSearchItem]:
+        results_by_url: dict[str, DanmakuSearchItem] = {}
+        for item in [*primary, *secondary]:
+            existing = results_by_url.get(item.url)
+            if existing is None or self._search_item_rank(item) > self._search_item_rank(existing):
+                results_by_url[item.url] = item
+        return list(results_by_url.values())
 
     def _should_drop_search_item(self, item: dict) -> bool:
         album_info = item.get("albumDocInfo") or {}
@@ -584,8 +790,9 @@ class IqiyiDanmakuProvider:
         return duration
 
     def _parse_segment_records(self, xml_text: str, duration_seconds: int) -> list[DanmakuRecord]:
+        sanitized_xml = self._sanitize_segment_xml(xml_text)
         try:
-            root = ET.fromstring(xml_text)
+            root = ET.fromstring(sanitized_xml)
         except ET.ParseError as exc:
             raise DanmakuResolveError("爱奇艺弹幕 XML 解析失败") from exc
         records: list[DanmakuRecord] = []
@@ -599,6 +806,30 @@ class IqiyiDanmakuProvider:
             color = self._normalize_color(bullet.findtext("color"))
             records.append(DanmakuRecord(time_offset=time_offset, pos=1, color=color, content=content))
         return records
+
+    def _sanitize_segment_xml(self, xml_text: str) -> str:
+        sanitized = re.sub(r"&#(x?[0-9A-Fa-f]+);", self._sanitize_numeric_character_reference, xml_text)
+        return "".join(ch for ch in sanitized if self._is_valid_xml_char(ord(ch)))
+
+    def _sanitize_numeric_character_reference(self, match: re.Match[str]) -> str:
+        raw_value = match.group(1)
+        base = 16 if raw_value.lower().startswith("x") else 10
+        value_text = raw_value[1:] if base == 16 else raw_value
+        try:
+            codepoint = int(value_text, base)
+        except ValueError:
+            return ""
+        if not self._is_valid_xml_char(codepoint):
+            return ""
+        return match.group(0)
+
+    def _is_valid_xml_char(self, codepoint: int) -> bool:
+        return (
+            codepoint in (0x9, 0xA, 0xD)
+            or 0x20 <= codepoint <= 0xD7FF
+            or 0xE000 <= codepoint <= 0xFFFD
+            or 0x10000 <= codepoint <= 0x10FFFF
+        )
 
     def _parse_show_time_seconds(self, raw_show_time, duration_seconds: int) -> float | None:
         try:

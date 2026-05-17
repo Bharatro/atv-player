@@ -31,6 +31,7 @@ from atv_player.danmaku.utils import (
     has_explicit_episode_marker,
     infer_playlist_episode_number,
     normalize_name,
+    strip_episode_suffix,
 )
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
@@ -247,10 +248,14 @@ def _compose_danmaku_search_query(title: str, episode: str) -> str:
 
 
 def _should_retry_danmaku_search_title_only(item: PlayItem) -> bool:
+    search_title = item.danmaku_search_title.strip()
+    search_episode = item.danmaku_search_episode.strip()
+    if not search_episode:
+        return False
     if item.danmaku_search_query_overridden:
-        return False
-    if not item.danmaku_search_episode.strip():
-        return False
+        query_name = item.danmaku_search_query.strip()
+        if not query_name or query_name != _compose_danmaku_search_query(search_title, search_episode):
+            return False
     if has_explicit_episode_marker(item.title):
         return False
     if _looks_like_calendar_episode_title(item.title):
@@ -344,6 +349,37 @@ def _prioritize_requested_episode_in_source_search_result(query_name: str, resul
         default_option_url=matched_default.url if matched_default is not None else result.default_option_url,
         default_provider=matched_default.provider if matched_default is not None else result.default_provider,
     )
+
+
+def _compact_danmaku_title(value: str) -> str:
+    return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(value).casefold())
+
+
+def _cached_danmaku_source_result_matches_query(query_name: str, result) -> bool:
+    normalized_query = normalize_name(query_name)
+    if not normalized_query:
+        return True
+    if not getattr(result, "groups", None):
+        return False
+    if not has_explicit_episode_marker(normalized_query):
+        return True
+    requested_episode = extract_episode_number(normalized_query)
+    if requested_episode is None:
+        return True
+    query_title_key = _compact_danmaku_title(strip_episode_suffix(normalized_query))
+    has_related_candidate = False
+    for group in result.groups:
+        for option in group.options:
+            candidate_title_key = _compact_danmaku_title(strip_episode_suffix(option.name))
+            if query_title_key and (not candidate_title_key or query_title_key not in candidate_title_key):
+                continue
+            has_related_candidate = True
+            if (
+                extract_episode_number(option.name) == requested_episode
+                and episode_title_matches(normalized_query, option.name)
+            ):
+                return True
+    return not has_related_candidate
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -1404,8 +1440,6 @@ class SpiderPluginController:
         fallback_query_name = item.danmaku_search_title.strip()
         if (
             hasattr(self._danmaku_service, "search_danmu_sources")
-            and
-            not provider_filter
             and not result.groups
             and fallback_query_name
             and fallback_query_name != requested_query_name
@@ -1484,6 +1518,18 @@ class SpiderPluginController:
             cached_result is not None,
         )
         if cached_result is None:
+            return False
+        if not _cached_danmaku_source_result_matches_query(query_name, cached_result):
+            logger.info(
+                (
+                    "Spider plugin ignore stale cached danmaku sources plugin=%s title=%s query=%s reg_src=%s "
+                    "reason=no_matching_episode"
+                ),
+                self._plugin_name,
+                item.title,
+                query_name,
+                reg_src,
+            )
             return False
         target_duration = media_duration_seconds if media_duration_seconds > 0 else int(item.duration_seconds or 0)
         if hasattr(self._danmaku_service, "rerank_danmaku_source_search_result"):

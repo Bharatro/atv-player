@@ -78,6 +78,435 @@ def test_iqiyi_search_filters_noise_and_returns_episode_candidates() -> None:
     ]
 
 
+def test_iqiyi_search_expands_template_112_intent_album_infos_without_videos() -> None:
+    album_payload = {
+        "albumId": 4222300210214001,
+        "epsodelist": [
+            {
+                "order": 1,
+                "shortTitle": "第1集",
+                "subtitle": "认亲了",
+                "playUrl": "http://www.iqiyi.com/v_ep1.html",
+                "tvId": 7171864034925401,
+                "duration": "00:45:21",
+            },
+            {
+                "order": 2,
+                "shortTitle": "第2集",
+                "subtitle": "开会了",
+                "playUrl": "http://www.iqiyi.com/v_ep2.html",
+                "tvId": 7171864034925402,
+                "duration": "00:44:58",
+            },
+        ],
+    }
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 112,
+                                "intentAlbumInfos": [
+                                    {
+                                        "title": "成何体统",
+                                        "channel": "电视剧,2",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "pageUrl": "http://www.iqiyi.com/v_1xghiumsit0.html",
+                                        "qipuId": 4222300210214001,
+                                        "playQipuId": 7171864034925400,
+                                        "subscriptContent": "32集全",
+                                        "superscript": "2026",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/v_1xghiumsit0.html?jump=0":
+            return JsonResponse(
+                text=(
+                    "<html>"
+                    f"<input id=\"album-avlist-data\" value='{json.dumps(album_payload, ensure_ascii=False)}' />"
+                    "</html>"
+                )
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统 第1集", "https://www.iqiyi.com/v_ep1.html", 2721),
+        ("成何体统 第2集", "https://www.iqiyi.com/v_ep2.html", 2698),
+    ]
+
+
+def test_iqiyi_search_expands_album_page_when_album_avlist_data_uses_double_quoted_value() -> None:
+    album_payload = {
+        "albumId": 4222300210214001,
+        "epsodelist": [
+            {
+                "order": 1,
+                "shortTitle": "第1集",
+                "subtitle": "认亲了",
+                "playUrl": "http://www.iqiyi.com/v_ep1.html",
+                "tvId": 7171864034925401,
+                "duration": "00:45:21",
+            }
+        ],
+    }
+    escaped_payload = json.dumps(album_payload, ensure_ascii=False).replace('"', "&quot;")
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 112,
+                                "intentAlbumInfos": [
+                                    {
+                                        "title": "成何体统",
+                                        "channel": "电视剧,2",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "pageUrl": "http://www.iqiyi.com/v_1xghiumsit0.html",
+                                        "qipuId": 4222300210214001,
+                                        "playQipuId": 7171864034925400,
+                                        "subscriptContent": "32集全",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/v_1xghiumsit0.html?jump=0":
+            return JsonResponse(
+                text=(
+                    "<html>"
+                    f'<input value="{escaped_payload}" id="album-avlist-data" />'
+                    "</html>"
+                )
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统 第1集", "https://www.iqiyi.com/v_ep1.html", 2721),
+    ]
+
+
+def test_iqiyi_search_falls_back_to_legacy_search_when_mesh_returns_no_items() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse({"data": {"templates": []}})
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4222300210214001,
+                                    "channel": "电视剧,2",
+                                    "albumTitle": "成何体统",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "videoinfos": [
+                                        {
+                                            "itemTitle": "成何体统 第1集",
+                                            "itemLink": "http://www.iqiyi.com/v_ep1.html",
+                                            "tvId": 7171864034925401,
+                                            "timeLength": 2721,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统 第1集", "https://www.iqiyi.com/v_ep1.html", 2721),
+    ]
+
+
+def test_iqiyi_search_retries_mesh_without_site_filter_when_site_filtered_search_is_empty() -> None:
+    album_payload = {
+        "albumId": 4222300210214001,
+        "epsodelist": [
+            {
+                "order": 1,
+                "shortTitle": "第1集",
+                "subtitle": "认亲了",
+                "playUrl": "http://www.iqiyi.com/v_ep1.html",
+                "tvId": 7171864034925401,
+                "duration": "00:45:21",
+            }
+        ],
+    }
+    mesh_calls: list[dict[str, object]] = []
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            mesh_calls.append(dict(kwargs["params"]))
+            if kwargs["params"].get("site") == "iqiyi":
+                return JsonResponse({"data": {"templates": []}})
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 112,
+                                "intentAlbumInfos": [
+                                    {
+                                        "title": "成何体统",
+                                        "channel": "电视剧,2",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "pageUrl": "http://www.iqiyi.com/v_1xghiumsit0.html",
+                                        "qipuId": 4222300210214001,
+                                        "playQipuId": 7171864034925400,
+                                        "subscriptContent": "24集全",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/v_1xghiumsit0.html?jump=0":
+            return JsonResponse(
+                text=(
+                    "<html>"
+                    f"<input id=\"album-avlist-data\" value='{json.dumps(album_payload, ensure_ascii=False)}' />"
+                    "</html>"
+                )
+            )
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse({"data": "search result is empty"})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统 第1集", "https://www.iqiyi.com/v_ep1.html", 2721),
+    ]
+    assert mesh_calls == [
+        {
+            "key": "成何体统 1集",
+            "pageNum": 1,
+            "pageSize": 25,
+            "source": "input",
+            "suggest": "",
+            "site": "iqiyi",
+            "mode": 1,
+            "current_page": 1,
+        },
+        {
+            "key": "成何体统 1集",
+            "pageNum": 1,
+            "pageSize": 25,
+            "source": "input",
+            "suggest": "",
+            "mode": 1,
+            "current_page": 1,
+        },
+    ]
+
+
+def test_iqiyi_search_builds_first_episode_candidate_from_intent_album_info_when_episode_list_unavailable() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 112,
+                                "intentAlbumInfos": [
+                                    {
+                                        "title": "成何体统",
+                                        "channel": "电视剧,2",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "pageUrl": "http://www.iqiyi.com/v_1xghiumsit0.html",
+                                        "qipuId": 4222300210214001,
+                                        "playQipuId": 7171864034925400,
+                                        "subscriptContent": "32集全",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/v_1xghiumsit0.html?jump=0":
+            return JsonResponse(text="<html><body>shell only</body></html>")
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse({"data": "search result is empty"})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds, item.resolve_context) for item in items] == [
+        (
+            "成何体统 第1集",
+            "https://www.iqiyi.com/v_1xghiumsit0.html",
+            0,
+            {
+                "tv_id": 7171864034925400,
+                "album_id": 4222300210214001,
+                "category_id": 2,
+                "duration_seconds": 0,
+                "variety_year": 0,
+            },
+        )
+    ]
+
+
+def test_iqiyi_search_prefers_explicit_episode_query_for_mesh_results() -> None:
+    mesh_keys: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            key = str(kwargs["params"]["key"])
+            mesh_keys.append(key)
+            if "2集" in key and "成何体统" in key:
+                return JsonResponse(
+                    {
+                        "data": {
+                            "templates": [
+                                {
+                                    "template": 101,
+                                    "albumInfo": {
+                                        "title": "成何体统",
+                                        "channel": "电视剧,2",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "qipuId": 4222300210214001,
+                                        "videos": [
+                                            {
+                                                "title": "成何体统第2集",
+                                                "number": "2",
+                                                "qipuId": 7355560014051900,
+                                                "pageUrl": "https://www.iqiyi.com/v_20z4r9g9yz4.html",
+                                                "subtitle": "开会了",
+                                                "duration": 2787000,
+                                            }
+                                        ],
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                )
+            return JsonResponse({"data": {"templates": []}})
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse({"data": "search result is empty"})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 2集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统第2集", "https://www.iqiyi.com/v_20z4r9g9yz4.html", 2787),
+    ]
+    assert len(mesh_keys) == 1
+    assert "成何体统" in mesh_keys[0]
+    assert "2集" in mesh_keys[0]
+
+
+def test_iqiyi_search_merges_mesh_and_legacy_results_when_both_have_candidates() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3":
+            return JsonResponse(
+                {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 112,
+                                "intentAlbumInfos": [
+                                    {
+                                        "title": "成何体统 第2季",
+                                        "channel": "动漫,4",
+                                        "siteId": "iqiyi",
+                                        "siteName": "爱奇艺",
+                                        "videos": [
+                                            {
+                                                "title": "成何体统 第2季 第2集 与君同行",
+                                                "pageUrl": "http://www.iqiyi.com/v_s2e2.html",
+                                                "qipuId": 7531234334704000,
+                                                "duration": 1521000,
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 4222300210214001,
+                                    "channel": "电视剧,2",
+                                    "albumTitle": "成何体统",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "videoinfos": [
+                                        {
+                                            "itemTitle": "成何体统 第1集",
+                                            "itemLink": "http://www.iqiyi.com/v_ep1.html",
+                                            "tvId": 7171864034925401,
+                                            "timeLength": 2721,
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("成何体统", original_name="成何体统 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("成何体统 第2季 第2集 与君同行", "https://www.iqiyi.com/v_s2e2.html", 1521),
+        ("成何体统 第1集", "https://www.iqiyi.com/v_ep1.html", 2721),
+    ]
+
+
 def test_iqiyi_search_raises_for_invalid_payload() -> None:
     provider = IqiyiDanmakuProvider(get=lambda url, **kwargs: JsonResponse({"oops": 1}))
 
@@ -909,6 +1338,40 @@ def test_iqiyi_resolve_parses_hex_color_values() -> None:
     assert [(record.content, record.color) for record in records] == [
         ("红色", "16711680"),
         ("绿色", "65280"),
+    ]
+
+
+def test_iqiyi_resolve_sanitizes_invalid_numeric_character_references() -> None:
+    page_info = {
+        "duration": "00:05:00",
+        "tvName": "异常字符弹幕",
+        "albumId": 6421036798758301,
+        "tvId": 3831645445180500,
+        "cid": 2,
+    }
+    segment = zlib.compress(
+        (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<danmu><data><entry><list>"
+            "<bulletInfo><showTime>1000</showTime><content>正常弹幕</content><color>ffffff</color>"
+            "<userInfo><name>檀翊次恋爱&#0;\u200d^</name></userInfo></bulletInfo>"
+            "</list></entry></data></danmu>"
+        ).encode("utf-8")
+    )
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://www.iqiyi.com/v_demo_invalid_ref.html":
+            return JsonResponse(
+                text=f'<html><script>window.Q.PageInfo.playPageInfo={json.dumps(page_info)};</script></html>'
+            )
+        return JsonResponse(content=segment)
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.iqiyi.com/v_demo_invalid_ref.html")
+
+    assert [(record.content, record.color) for record in records] == [
+        ("正常弹幕", "16777215")
     ]
 
 

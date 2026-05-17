@@ -89,6 +89,52 @@ def test_metadata_hydrator_uses_cached_detail_without_recrawling(tmp_path: Path)
     assert douban_provider.get_detail_calls == []
 
 
+def test_metadata_hydrator_refetches_stale_iqiyi_empty_detail_cache(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cache.save_detail(
+        "iqiyi",
+        "http://www.iqiyi.com/v_live_action.html",
+        MetadataRecord(
+            provider="iqiyi",
+            provider_id="http://www.iqiyi.com/v_live_action.html",
+            title="成何体统",
+            year="2026",
+        ),
+    )
+    iqiyi_provider = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="http://www.iqiyi.com/v_live_action.html",
+                title="成何体统",
+                raw={
+                    "channel": "电视剧,2",
+                    "promptDesc": "戏精联欢 胡闹开演",
+                    "metaTags": [{"name": "古装爱情", "style": ""}],
+                },
+            )
+        ],
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="http://www.iqiyi.com/v_live_action.html",
+            title="成何体统",
+            year="2026",
+            overview="戏精联欢 胡闹开演",
+            genres=["电视剧", "古装爱情"],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[iqiyi_provider])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="成何体统"), source_kind="browse"))
+
+    assert updated.vod_content == "戏精联欢 胡闹开演"
+    assert updated.type_name == "电视剧 / 古装爱情"
+    assert [(item.provider, item.provider_id, item.title) for item in iqiyi_provider.get_detail_calls] == [
+        ("iqiyi", "http://www.iqiyi.com/v_live_action.html", "成何体统")
+    ]
+
+
 def test_metadata_hydrator_skips_provider_detail_failure_and_keeps_existing_vod(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     douban_provider = FakeProvider(

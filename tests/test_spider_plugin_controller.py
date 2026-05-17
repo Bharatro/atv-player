@@ -1760,6 +1760,70 @@ def test_controller_refresh_danmaku_sources_passes_temporary_provider_filter_onl
     assert item.danmaku_search_provider == "youku"
 
 
+def test_controller_refresh_danmaku_sources_retries_title_only_for_manual_episode_search_with_provider_filter() -> None:
+    calls: list[tuple[str, str]] = []
+    title_only_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="成何体统 第1集 认亲了",
+                        url="https://www.iqiyi.com/v_ep1.html",
+                    )
+                ],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_ep1.html",
+        default_provider="iqiyi",
+    )
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            calls.append((name, provider_filter))
+            if name == "成何体统 1集":
+                return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+            if name == "成何体统":
+                return title_only_result
+            raise AssertionError(f"Unexpected query: {name}")
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            assert kwargs["query_name"] == "成何体统 1集"
+            assert kwargs["reg_src"] == "http://m/1.mp4"
+            return result
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="成何体统",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="01-4K.mp4", url="http://m/1.mp4", media_title="成何体统")
+
+    controller.refresh_danmaku_sources(
+        item,
+        search_title_override="成何体统",
+        search_episode_override="1集",
+        force_refresh=True,
+        provider_filter="iqiyi",
+    )
+
+    assert calls == [("成何体统 1集", "iqiyi"), ("成何体统", "iqiyi")]
+    assert item.selected_danmaku_provider == "iqiyi"
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep1.html"
+    assert item.danmaku_search_provider == "iqiyi"
+
+
 def test_controller_refresh_danmaku_sources_uses_saved_search_title_for_same_series(tmp_path) -> None:
     class FakeDanmakuService:
         def __init__(self) -> None:
@@ -2663,6 +2727,66 @@ def test_controller_refresh_danmaku_sources_can_bypass_cached_search_result(monk
     assert calls == ["红果短剧 1集"]
     assert item.selected_danmaku_provider == "bilibili"
     assert item.selected_danmaku_url == "https://www.bilibili.com/video/BV1x"
+    assert item.danmaku_candidates == fresh_result.groups
+
+
+def test_controller_refresh_danmaku_sources_ignores_stale_cached_search_result_without_matching_episode(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="youku",
+                provider_label="优酷",
+                options=[DanmakuSourceOption(provider="youku", name="《成何体统》剧情揭秘 第6集", url="https://v.youku.com/v_show/id_noise.html")],
+            )
+        ],
+        default_option_url="https://v.youku.com/v_show/id_noise.html",
+        default_provider="youku",
+    )
+    fresh_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[DanmakuSourceOption(provider="iqiyi", name="成何体统 第1集", url="https://www.iqiyi.com/v_real_ep1.html")],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_real_ep1.html",
+        default_provider="iqiyi",
+    )
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            calls.append(name)
+            return fresh_result
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return result
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: cached_result)
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="成何体统",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="01-4K.mp4", url="https://stream.example/1.m3u8", media_title="成何体统")
+
+    controller.refresh_danmaku_sources(item)
+
+    assert calls == ["成何体统 1集"]
+    assert item.selected_danmaku_provider == "iqiyi"
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_real_ep1.html"
     assert item.danmaku_candidates == fresh_result.groups
 
 

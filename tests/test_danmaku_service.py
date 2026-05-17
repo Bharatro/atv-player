@@ -269,6 +269,39 @@ def test_search_danmu_sources_filters_out_candidates_with_duration_gap_over_five
     assert result.default_option_url == "https://v.qq.com/x/cover/ep88-keep.html"
 
 
+def test_search_danmu_sources_preserves_exact_episode_match_despite_large_duration_gap() -> None:
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="成何体统 第23集",
+                url="https://www.iqiyi.com/v_ep23.html",
+                ratio=0.99,
+                simi=0.99,
+                duration_seconds=2402,
+            ),
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="成何体统 第1集",
+                url="https://www.iqiyi.com/v_ep1.html",
+                ratio=0.92,
+                simi=0.92,
+                duration_seconds=2774,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"iqiyi": iqiyi}, provider_order=["iqiyi"])
+
+    result = service.search_danmu_sources("成何体统 1集", media_duration_seconds=2400)
+
+    assert [option.url for option in result.groups[0].options] == [
+        "https://www.iqiyi.com/v_ep1.html",
+    ]
+    assert result.default_option_url == "https://www.iqiyi.com/v_ep1.html"
+
+
 def test_rerank_danmaku_source_search_result_filters_cached_candidates_with_duration_gap_over_five_minutes() -> None:
     service = DanmakuService({}, provider_order=[])
 
@@ -308,6 +341,45 @@ def test_rerank_danmaku_source_search_result_filters_cached_candidates_with_dura
         "https://v.qq.com/x/cover/ep88-unknown.html",
     ]
     assert reranked.default_option_url == "https://v.qq.com/x/cover/ep88-keep.html"
+
+
+def test_rerank_danmaku_source_search_result_preserves_exact_episode_match_despite_large_duration_gap() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="成何体统 第23集",
+                        url="https://www.iqiyi.com/v_ep23.html",
+                        duration_seconds=2402,
+                    ),
+                    DanmakuSourceOption(
+                        provider="iqiyi",
+                        name="成何体统 第1集",
+                        url="https://www.iqiyi.com/v_ep1.html",
+                        duration_seconds=2774,
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="成何体统 1集",
+        media_duration_seconds=2400,
+    )
+
+    assert [option.url for option in reranked.groups[0].options] == [
+        "https://www.iqiyi.com/v_ep1.html",
+        "https://www.iqiyi.com/v_ep23.html",
+    ]
+    assert reranked.default_option_url == "https://www.iqiyi.com/v_ep1.html"
 
 
 def test_rerank_danmaku_source_search_result_dedupes_cached_duplicate_options_by_provider_and_url() -> None:

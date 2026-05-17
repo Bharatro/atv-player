@@ -96,6 +96,53 @@ def _media_kinds_compatible(current_kind: str, candidate_kind: str) -> bool:
     return current_kind == candidate_kind
 
 
+def _record_has_enrichment_data(record: MetadataRecord) -> bool:
+    return any(
+        (
+            str(record.poster or "").strip(),
+            str(record.backdrop or "").strip(),
+            str(record.overview or "").strip(),
+            str(record.rating or "").strip(),
+            list(record.actors or []),
+            list(record.directors or []),
+            list(record.genres or []),
+            str(record.country or "").strip(),
+            str(record.language or "").strip(),
+            list(record.aliases or []),
+            str(record.imdb_id or "").strip(),
+            str(record.tmdb_id or "").strip(),
+            int(record.douban_id or 0),
+            list(record.detail_fields or []),
+        )
+    )
+
+
+def _iqiyi_match_raw_has_detail(match: MetadataMatch) -> bool:
+    raw = dict(match.raw or {})
+    return any(
+        (
+            str(raw.get("promptDesc") or "").strip(),
+            str(raw.get("introduction") or "").strip(),
+            str(raw.get("channel") or "").strip(),
+            list(raw.get("metaTags") or []),
+            list(raw.get("baseTags") or []),
+            raw.get("category"),
+            raw.get("region"),
+            raw.get("language"),
+            raw.get("directors"),
+            raw.get("actors"),
+        )
+    )
+
+
+def _should_refresh_cached_detail(provider_name: str, cached: MetadataRecord, match: MetadataMatch) -> bool:
+    if provider_name != "iqiyi":
+        return False
+    if _record_has_enrichment_data(cached):
+        return False
+    return _iqiyi_match_raw_has_detail(match)
+
+
 class MetadataHydrator:
     def __init__(
         self,
@@ -170,7 +217,7 @@ class MetadataHydrator:
             str(match.provider_id),
             ttl_seconds=_DETAIL_CACHE_TTL_SECONDS,
         )
-        if cached is not None:
+        if cached is not None and not _should_refresh_cached_detail(provider.name, cached, match):
             return cached
         try:
             record = provider.get_detail(match)
