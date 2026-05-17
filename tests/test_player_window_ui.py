@@ -4960,6 +4960,7 @@ def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> N
     assert "https://www.imdb.com/title/tt28489780" in html
     assert "font-weight:600" in html
     assert "color:#8f5a32" in html
+    assert "text-decoration: underline" not in html
 
 
 def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:
@@ -5021,6 +5022,7 @@ def test_player_window_renders_link_action_id_as_external_url(qtbot, target: str
     assert expected_url in html
     assert "font-weight:600" in html
     assert "color:#8f5a32" in html
+    assert "text-decoration: underline" not in html
 
 
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:
