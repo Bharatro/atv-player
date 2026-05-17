@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from atv_player.models import HistoryRecord
 
 
@@ -27,11 +29,33 @@ class HistoryController:
             for item in payload.get("content", [])
         ]
 
-    def load_page(self, page: int, size: int) -> tuple[list[HistoryRecord], int]:
+    def load_page(
+        self,
+        page: int,
+        size: int,
+        *,
+        keyword: str = "",
+        source_kind: str = "",
+        time_range: str = "",
+        continue_watching: bool = False,
+    ) -> tuple[list[HistoryRecord], int]:
         records = self._load_remote_records()
         if self._playback_history_repository is not None:
             records.extend(self._playback_history_repository.list_histories())
         records.sort(key=lambda item: item.create_time, reverse=True)
+        if keyword:
+            kw = keyword.lower()
+            records = [r for r in records if kw in r.vod_name.lower()]
+        if source_kind:
+            records = [r for r in records if r.source_kind == source_kind]
+        if time_range:
+            now_ms = int(datetime.now().timestamp() * 1000)
+            days = {"7d": 7, "30d": 30}.get(time_range, 0)
+            if days:
+                cutoff = now_ms - days * 86400 * 1000
+                records = [r for r in records if r.create_time >= cutoff]
+        if continue_watching:
+            records = [r for r in records if r.position > 0]
         total = len(records)
         start = max(page - 1, 0) * size
         end = start + size

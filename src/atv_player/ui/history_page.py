@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 import threading
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -63,6 +64,10 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.total_items = 0
         self._load_request_id = 0
         self._mutation_request_id = 0
+        self._keyword = ""
+        self._source_kind = ""
+        self._time_range = ""
+        self._continue_watching = False
         self._load_signals = _HistoryLoadSignals()
         self._connect_async_signal(self._load_signals.succeeded, self._handle_load_succeeded)
         self._connect_async_signal(self._load_signals.failed, self._handle_load_failed)
@@ -74,6 +79,68 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         for size in ("20", "30", "50", "100"):
             self.page_size_combo.addItem(size, int(size))
         self.page_size_combo.setCurrentText(str(self.page_size))
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("搜索标题...")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setStyleSheet(
+            """
+            QLineEdit {
+                min-height: 30px;
+                padding: 0 10px;
+                border: 1px solid #d0d7de;
+                border-radius: 15px;
+                background: #ffffff;
+            }
+            QLineEdit:focus {
+                border: 1px solid #409eff;
+            }
+            """
+        )
+
+        self.source_combo = QComboBox()
+        for label, value in (
+            ("全部来源", ""),
+            ("远程", "remote"),
+            ("插件", "spider_plugin"),
+            ("Emby", "emby"),
+            ("B站", "bilibili"),
+            ("Jellyfin", "jellyfin"),
+            ("飞牛影视", "feiniu"),
+            ("全局解析", "direct_parse"),
+        ):
+            self.source_combo.addItem(label, value)
+
+        self.time_combo = QComboBox()
+        self.time_combo.addItem("全部时间", "")
+        self.time_combo.addItem("最近7天", "7d")
+        self.time_combo.addItem("最近30天", "30d")
+
+        self.continue_button = QPushButton("继续观看")
+        self.continue_button.setCheckable(True)
+        self.continue_button.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #ffffff;
+                color: #1a1a1a;
+                border: 1px solid #d0d0d0;
+                border-radius: 14px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background-color: #e8e8e8;
+            }
+            QPushButton:checked {
+                background-color: #ffffff;
+                color: #0066cc;
+                border: 1px solid #0066cc;
+            }
+            """
+        )
+
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
 
         actions = QHBoxLayout()
         actions.addWidget(self.delete_button)
@@ -94,6 +161,14 @@ class HistoryPage(QWidget, AsyncGuardMixin):
 
         content_layout = QVBoxLayout(self.content_container)
         content_layout.setContentsMargins(0, 0, 0, 0)
+
+        filters = QHBoxLayout()
+        filters.addWidget(self.search_edit, 3)
+        filters.addWidget(self.source_combo)
+        filters.addWidget(self.time_combo)
+        filters.addWidget(self.continue_button)
+        content_layout.addLayout(filters)
+
         content_layout.addLayout(actions)
         content_layout.addWidget(self.table)
 
@@ -110,6 +185,11 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
+        self._search_timer.timeout.connect(self._apply_search)
+        self.search_edit.textChanged.connect(self._on_search_text_changed)
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        self.time_combo.currentIndexChanged.connect(self._on_time_changed)
+        self.continue_button.toggled.connect(self._on_continue_watching_toggled)
         self._update_pagination_controls()
         self._sync_action_state()
 
@@ -125,10 +205,21 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         request_id = self._load_request_id
         page = self.current_page
         size = self.page_size
+        keyword = self._keyword
+        source_kind = self._source_kind
+        time_range = self._time_range
+        continue_watching = self._continue_watching
 
         def run() -> None:
             try:
-                records, total = self.controller.load_page(page=page, size=size)
+                records, total = self.controller.load_page(
+                    page=page,
+                    size=size,
+                    keyword=keyword,
+                    source_kind=source_kind,
+                    time_range=time_range,
+                    continue_watching=continue_watching,
+                )
             except UnauthorizedError:
                 if not self._can_deliver_worker_result():
                     return
@@ -203,6 +294,32 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         if not (0 <= row < len(self.records)):
             return
         self.open_detail_requested.emit(self.records[row])
+
+    def _on_search_text_changed(self) -> None:
+        self._search_timer.start()
+
+    def _apply_search(self) -> None:
+        keyword = self.search_edit.text().strip()
+        if keyword == self._keyword:
+            return
+        self._keyword = keyword
+        self.current_page = 1
+        self.load_history()
+
+    def _on_source_changed(self) -> None:
+        self._source_kind = self.source_combo.currentData() or ""
+        self.current_page = 1
+        self.load_history()
+
+    def _on_time_changed(self) -> None:
+        self._time_range = self.time_combo.currentData() or ""
+        self.current_page = 1
+        self.load_history()
+
+    def _on_continue_watching_toggled(self, checked: bool) -> None:
+        self._continue_watching = checked
+        self.current_page = 1
+        self.load_history()
 
     def _source_label(self, record: HistoryRecord) -> str:
         if record.source_kind == "spider_plugin":

@@ -1052,9 +1052,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_mode = "original" if index == 1 else "episode"
         self._render_playlist_items()
 
+    def _playlist_panel_visible(self) -> bool:
+        return (
+            not self.isFullScreen()
+            and not self.wide_button.isChecked()
+            and self.toggle_playlist_button.isChecked()
+        )
+
     def _render_playlist_title_tabs(self) -> None:
         playlist = list(self.session.playlist if self.session is not None else [])
-        visible = playlist_has_title_variants(playlist)
+        visible = self._playlist_panel_visible() and playlist_has_title_variants(playlist)
         self.playlist_title_tabs.setHidden(not visible)
         self.playlist_title_tabs.blockSignals(True)
         self.playlist_title_tabs.setCurrentIndex(0 if self.playlist_title_mode == "episode" else 1)
@@ -6151,7 +6158,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.bottom_area.setHidden(is_fullscreen)
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
-        self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
+        self.playlist.setHidden(not self._playlist_panel_visible())
+        self._render_playlist_title_tabs()
         self.details.setHidden(is_fullscreen or not metadata_visible)
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)

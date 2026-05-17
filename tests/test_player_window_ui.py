@@ -13848,6 +13848,56 @@ def test_player_window_shows_episode_title_tabs_when_playlist_has_title_variants
     assert window.playlist.item(0).text() == "第1集 星门初启"
 
 
+def test_player_window_hides_playlist_title_tabs_when_playlist_panel_is_closed(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="第1集 星门初启",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.show()
+
+    assert window.playlist.isHidden() is False
+    assert window.playlist_title_tabs.isHidden() is False
+
+    window.toggle_playlist_button.click()
+
+    assert window.playlist.isHidden() is True
+    assert window.playlist_title_tabs.isHidden() is True
+
+    window.toggle_playlist_button.click()
+
+    assert window.playlist.isHidden() is False
+    assert window.playlist_title_tabs.isHidden() is False
+
+
 def test_player_window_switches_playlist_labels_without_changing_current_index(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
