@@ -34,6 +34,7 @@ from atv_player.danmaku.utils import (
 )
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
+from atv_player.controllers.douban_controller import _coerce_category_id
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.episode_titles import seed_original_titles
 from atv_player.models import (
@@ -678,9 +679,9 @@ class SpiderPluginController:
         raw_filters = payload.get("filters") or {}
         categories = [
             DoubanCategory(
-                type_id=str(item.get("type_id") or ""),
+                type_id=_coerce_category_id(item.get("type_id")),
                 type_name=str(item.get("type_name") or ""),
-                filters=_map_category_filters(raw_filters.get(str(item.get("type_id") or ""))),
+                filters=_map_category_filters(raw_filters.get(_coerce_category_id(item.get("type_id")))),
             )
             for item in payload.get("class", [])
         ]

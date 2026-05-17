@@ -1098,6 +1098,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._startup_plugin_load_request_id = 0
         self._startup_plugin_load_state = "loading" if callable(plugin_loader_task) else "idle"
         self._startup_plugin_load_error = ""
+        self._startup_selected_category_id = str(getattr(config, "last_selected_category_id", "") or "").strip()
         selected_tab = str(getattr(config, "last_selected_tab", "") or "")
         self._startup_plugin_pending_tab_restore_key = (
             selected_tab if callable(plugin_loader_task) and selected_tab.startswith("plugin:") else ""
@@ -1131,13 +1132,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(
             douban_controller or _EmptyDoubanController(),
-            initial_category_id=self._initial_category_id_for_tab(config, "douban"),
+            initial_category_id=self._initial_category_id_for_tab("douban"),
         )
         self.telegram_page = PosterGridPage(
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
-            initial_category_id=self._initial_category_id_for_tab(config, "telegram"),
+            initial_category_id=self._initial_category_id_for_tab("telegram"),
         )
         self.bilibili_page = None
         if show_bilibili_tab:
@@ -1146,13 +1147,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
-                initial_category_id=self._initial_category_id_for_tab(config, "bilibili"),
+                initial_category_id=self._initial_category_id_for_tab("bilibili"),
             )
         self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
             folder_navigation_enabled=True,
-            initial_category_id=self._initial_category_id_for_tab(config, "live"),
+            initial_category_id=self._initial_category_id_for_tab("live"),
         )
         self.emby_page = None
         if show_emby_tab:
@@ -1161,7 +1162,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
-                initial_category_id=self._initial_category_id_for_tab(config, "emby"),
+                initial_category_id=self._initial_category_id_for_tab("emby"),
             )
         self.jellyfin_page = None
         if show_jellyfin_tab:
@@ -1170,7 +1171,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
-                initial_category_id=self._initial_category_id_for_tab(config, "jellyfin"),
+                initial_category_id=self._initial_category_id_for_tab("jellyfin"),
             )
         self.feiniu_page = None
         if show_feiniu_tab:
@@ -1179,7 +1180,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 folder_navigation_enabled=True,
-                initial_category_id=self._initial_category_id_for_tab(config, "feiniu"),
+                initial_category_id=self._initial_category_id_for_tab("feiniu"),
             )
         self.history_page = HistoryPage(history_controller)
         self.pansou_page = None
@@ -1187,7 +1188,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.pansou_page = PosterGridPage(
                 pansou_controller,
                 click_action="open",
-                initial_category_id=self._initial_category_id_for_tab(config, "pansou"),
+                initial_category_id=self._initial_category_id_for_tab("pansou"),
             )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
@@ -1549,14 +1550,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         title = "插件加载中" if self._startup_plugin_load_state == "loading" else "插件加载失败"
         return _TabDefinition("plugin:startup-placeholder", title, self._startup_plugin_placeholder_page)
 
-    @staticmethod
-    def _initial_category_id_for_tab(config: Any, tab_key: str) -> str:
-        if (
-            getattr(config, "last_selected_tab", "") == tab_key
-            and getattr(config, "last_selected_category_tab", "") == tab_key
-        ):
-            return getattr(config, "last_selected_category_id", "")
-        return ""
+    def _initial_category_id_for_tab(self, tab_key: str) -> str:
+        del tab_key
+        return self._startup_selected_category_id
 
     def _visible_tab_definitions(self) -> list[_TabDefinition]:
         if not self._global_search_active:
@@ -2790,7 +2786,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             controller,
             click_action="open",
             search_enabled=bool(_plugin_value(definition, "search_enabled")),
-            initial_category_id=self._initial_category_id_for_tab(self.config, f"plugin:{plugin_id}"),
+            initial_category_id=self._initial_category_id_for_tab(f"plugin:{plugin_id}"),
         )
         page.item_open_requested.connect(
             lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(

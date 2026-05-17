@@ -639,6 +639,146 @@ def test_main_window_restores_last_selected_category_for_selected_main_tab_on_st
     assert douban_controller.item_calls == []
 
 
+def test_main_window_restores_saved_category_when_returning_to_tab_after_startup(qtbot) -> None:
+    douban_controller = FakeDoubanController()
+    telegram_controller = FakeTelegramController()
+    douban_controller.categories = [
+        DoubanCategory(type_id="suggestion", type_name="推荐"),
+        DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+    telegram_controller.categories = [
+        DoubanCategory(type_id="suggestion", type_name="推荐"),
+        DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+    window = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=telegram_controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(
+            last_selected_tab="history",
+            last_selected_category_tab="telegram",
+            last_selected_category_id="movie",
+        ),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.nav_tabs.currentWidget() is window.history_page
+    window.nav_tabs.setCurrentWidget(window.douban_page)
+    qtbot.waitUntil(lambda: window.douban_page.selected_category_id == "movie")
+    assert douban_controller.item_calls == [("movie", 1)]
+    window.nav_tabs.setCurrentWidget(window.telegram_page)
+    qtbot.waitUntil(lambda: window.telegram_page.selected_category_id == "movie")
+    assert telegram_controller.item_calls == [("movie", 1)]
+    assert douban_controller.item_calls == [("movie", 1)]
+
+
+def test_main_window_persists_and_restores_global_category_across_restart(qtbot, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    douban_controller = FakeDoubanController()
+    douban_controller.categories = [
+        DoubanCategory(type_id="suggestion", type_name="推荐"),
+        DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+    window = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: repo.save_config(config),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(lambda: window.douban_page.selected_category_id == "suggestion")
+    window.douban_page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: config.last_selected_category_id == "movie")
+    window.close()
+
+    restored = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=repo.load_config(),
+    )
+
+    qtbot.addWidget(restored)
+    restored.show()
+
+    qtbot.waitUntil(lambda: restored.douban_page.selected_category_id == "movie")
+
+
+def test_main_window_delayed_plugin_tabs_restore_startup_global_category(qtbot) -> None:
+    load_started = threading.Event()
+    release_load = threading.Event()
+    plugin_controller = FakeDoubanController()
+    plugin_controller.categories = [
+        DoubanCategory(type_id="suggestion", type_name="推荐"),
+        DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+    douban_controller = FakeDoubanController()
+    douban_controller.categories = [
+        DoubanCategory(type_id="suggestion", type_name="推荐"),
+        DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+
+    def plugin_loader_task():
+        load_started.set()
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return [{"id": "plugin-1", "title": "红果短剧", "controller": plugin_controller, "search_enabled": True}]
+
+    window = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(last_selected_tab="history", last_selected_category_id="movie"),
+        plugin_loader_task=plugin_loader_task,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert load_started.wait(timeout=1)
+
+    window.nav_tabs.setCurrentWidget(window.douban_page)
+    qtbot.waitUntil(lambda: window.douban_page.selected_category_id == "movie")
+    window.douban_page.category_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.config.last_selected_category_id == "suggestion")
+    window.nav_tabs.setCurrentWidget(window.history_page)
+
+    release_load.set()
+    qtbot.waitUntil(lambda: any(plugin_id == "plugin-1" for _page, _controller, plugin_id in window._plugin_pages))
+
+    plugin_page = next(page for page, _controller, plugin_id in window._plugin_pages if plugin_id == "plugin-1")
+    window.nav_tabs.setCurrentWidget(plugin_page)
+
+    qtbot.waitUntil(lambda: plugin_page.selected_category_id == "movie")
+    assert plugin_controller.item_calls == [("movie", 1)]
+
+
 def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(

@@ -40,6 +40,24 @@ def test_load_categories_maps_backend_class_payload() -> None:
     ]
 
 
+def test_load_categories_preserves_numeric_zero_category_id() -> None:
+    api = FakeApiClient()
+    api.category_payload = {
+        "class": [
+            {"type_id": 0, "type_name": "推荐"},
+            {"type_id": 3, "type_name": "电影"},
+        ]
+    }
+    controller = DoubanController(api)
+
+    categories = controller.load_categories()
+
+    assert categories == [
+        DoubanCategory(type_id="0", type_name="推荐"),
+        DoubanCategory(type_id="3", type_name="电影"),
+    ]
+
+
 def test_load_categories_maps_filter_groups() -> None:
     api = FakeApiClient()
     api.category_payload = {

@@ -3,6 +3,13 @@ from __future__ import annotations
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 
 
+def _coerce_category_id(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
 def _map_filter_option(payload: object) -> CategoryFilterOption | None:
     if not isinstance(payload, dict):
         return None
@@ -39,9 +46,9 @@ def _map_categories(payload: dict) -> list[DoubanCategory]:
     raw_filters = payload.get("filters") or {}
     return [
         DoubanCategory(
-            type_id=str(item.get("type_id") or ""),
+            type_id=_coerce_category_id(item.get("type_id")),
             type_name=str(item.get("type_name") or ""),
-            filters=_map_category_filters(raw_filters.get(str(item.get("type_id") or ""))),
+            filters=_map_category_filters(raw_filters.get(_coerce_category_id(item.get("type_id")))),
         )
         for item in payload.get("class", [])
     ]
@@ -49,7 +56,7 @@ def _map_categories(payload: dict) -> list[DoubanCategory]:
 
 def _map_category(payload: dict) -> DoubanCategory:
     return DoubanCategory(
-        type_id=str(payload.get("type_id") or ""),
+        type_id=_coerce_category_id(payload.get("type_id")),
         type_name=str(payload.get("type_name") or ""),
     )
 
