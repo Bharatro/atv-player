@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import httpx
 import logging
 import re
 
@@ -728,12 +729,12 @@ class DanmakuService:
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
 
-def create_default_danmaku_service() -> DanmakuService:
+def create_default_danmaku_service(get=httpx.get, post=httpx.post) -> DanmakuService:
     providers = {
-        "tencent": TencentDanmakuProvider(),
-        "youku": YoukuDanmakuProvider(),
-        "bilibili": BilibiliDanmakuProvider(),
-        "iqiyi": IqiyiDanmakuProvider(),
-        "mgtv": MgtvDanmakuProvider(),
+        "tencent": TencentDanmakuProvider(get=get, post=post),
+        "youku": YoukuDanmakuProvider(get=get, post=post),
+        "bilibili": BilibiliDanmakuProvider(get=get),
+        "iqiyi": IqiyiDanmakuProvider(get=get),
+        "mgtv": MgtvDanmakuProvider(get=get),
     }
     return DanmakuService(providers, provider_order=["tencent", "youku", "bilibili", "iqiyi", "mgtv"])

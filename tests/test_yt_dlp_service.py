@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from atv_player.models import PlayItem, VodItem
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +123,44 @@ class TestIsAvailable:
         command = run_calls[0]
         assert "--cookies-from-browser" in command
         assert command[command.index("--cookies-from-browser") + 1] == "chrome"
+
+    def test_extract_info_via_command_includes_proxy_when_manual_proxy_is_selected(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(_sample_info()), stderr="")
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service._proxy_decider = ProxyDecider(
+            ProxyConfig(mode="socks5", proxy_url="socks5://127.0.0.1:1080", bypass_rules=[])
+        )
+
+        service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        command = run_calls[0]
+        assert "--proxy" in command
+        assert command[command.index("--proxy") + 1] == "socks5://127.0.0.1:1080"
+
+    def test_extract_info_via_command_skips_proxy_for_bypass_target(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(_sample_info()), stderr="")
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service._proxy_decider = ProxyDecider(
+            ProxyConfig(
+                mode="socks5",
+                proxy_url="socks5://127.0.0.1:1080",
+                bypass_rules=["www.youtube.com"],
+            )
+        )
+
+        service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        assert "--proxy" not in run_calls[0]
 
 
 class TestCanResolve:

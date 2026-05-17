@@ -15,6 +15,7 @@ from atv_player.models import (
     VideoQualityOption,
     VodItem,
 )
+from atv_player.network_proxy import ProxyDecider, build_ytdlp_proxy_args
 from atv_player.player.ytdlp_runtime import (
     build_ytdlp_command_args,
     resolve_system_ytdlp_path,
@@ -432,12 +433,14 @@ class YtdlpPlaybackService:
         self,
         ttl_seconds: float = 300.0,
         now: Callable[[], float] = monotonic,
+        proxy_decider: ProxyDecider | None = None,
     ) -> None:
         self._ytdlp_path: str | None = None
         self._supported_domains: frozenset[str] | None = None
         self._ttl_seconds = float(ttl_seconds)
         self._now = now
         self._cache: dict[str, _YtdlpCacheEntry] = {}
+        self._proxy_decider = proxy_decider
 
     def _cache_key(self, url: str, max_height: int | None) -> str:
         key = url.strip()
@@ -484,7 +487,7 @@ class YtdlpPlaybackService:
             "--all-subs",
             "--format",
             _build_format_selector(max_height),
-            *build_ytdlp_command_args(),
+            *build_ytdlp_command_args(build_ytdlp_proxy_args(self._proxy_decider, url)),
             "--",
             url,
         ]

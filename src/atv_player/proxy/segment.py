@@ -5,6 +5,7 @@ import threading
 
 import httpx
 
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.proxy.cache import ProxyCache
 from atv_player.proxy.session import ProxySessionRegistry
 from atv_player.proxy.stripper import repair_segment_bytes
@@ -18,10 +19,12 @@ class SegmentProxy:
         session_registry: ProxySessionRegistry,
         get=httpx.get,
         cache: ProxyCache | None = None,
+        proxy_decider: ProxyDecider | None = None,
     ) -> None:
         self._session_registry = session_registry
         self._get = get
         self._cache = cache or ProxyCache()
+        self._proxy_decider = proxy_decider
 
     def fetch_segment(self, token: str, index: int, *, prefetch: bool = False) -> bytes:
         session = self._session_registry.get(token)
@@ -44,6 +47,7 @@ class SegmentProxy:
                     headers=dict(session.headers),
                     timeout=10.0,
                     follow_redirects=True,
+                    **build_httpx_kwargs_for_url(self._proxy_decider, segment.url),
                 )
                 response.raise_for_status()
                 repaired = repair_segment_bytes(bytes(response.content))
@@ -68,6 +72,7 @@ class SegmentProxy:
             headers=dict(session.headers),
             timeout=10.0,
             follow_redirects=True,
+            **build_httpx_kwargs_for_url(self._proxy_decider, session.playlist_url),
         )
         response.raise_for_status()
         repaired = repair_segment_bytes(bytes(response.content))
@@ -83,6 +88,7 @@ class SegmentProxy:
             headers=dict(session.headers),
             timeout=10.0,
             follow_redirects=True,
+            **build_httpx_kwargs_for_url(self._proxy_decider, url),
         )
         response.raise_for_status()
         return bytes(response.content)

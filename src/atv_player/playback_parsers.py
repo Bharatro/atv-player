@@ -13,6 +13,7 @@ import httpx
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.player.resolve_cache import PlaybackResolveCache, ResolveCacheValue
 
 
@@ -75,10 +76,12 @@ class BuiltInPlaybackParserService:
         get: Callable[..., httpx.Response] = httpx.get,
         post: Callable[..., httpx.Response] = httpx.post,
         resolve_cache: PlaybackResolveCache | None = None,
+        proxy_decider: ProxyDecider | None = None,
     ) -> None:
         self._get = get
         self._post = post
         self._resolve_cache = resolve_cache or PlaybackResolveCache()
+        self._proxy_decider = proxy_decider
         self._parsers = [
             BuiltInPlaybackParser(
                 key="xm",
@@ -184,6 +187,7 @@ class BuiltInPlaybackParserService:
             headers=dict(parser.headers),
             timeout=15.0,
             follow_redirects=True,
+            **build_httpx_kwargs_for_url(self._proxy_decider, parser.api),
         )
         payload = response.json()
         media_url = _normalize_media_url(str(payload.get("url") or ""))
@@ -216,6 +220,7 @@ class BuiltInPlaybackParserService:
             headers=headers,
             timeout=15.0,
             follow_redirects=True,
+            **build_httpx_kwargs_for_url(self._proxy_decider, "https://api.hls.one:4433/Api"),
         )
         payload = response.json()
         encrypted = str(payload.get("data") or "").strip()
