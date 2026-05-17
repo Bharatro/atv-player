@@ -380,6 +380,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
     _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
     _POSTER_SIZE = QSize(180, 260)
+    _VIDEO_POSTER_LOAD_FALLBACK_SIZE = QSize(960, 540)
     _DETAIL_LOG_MAX_HEIGHT_DIVISOR = 4
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _AUDIO_ONLY_SUFFIXES = {
@@ -2140,15 +2141,37 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             Qt.TransformationMode.SmoothTransformation,
         )
 
+    def _load_video_poster_pixmap(self, source: str) -> QPixmap:
+        if not source:
+            return QPixmap()
+        source_path = Path(source)
+        if not source_path.is_file():
+            return QPixmap()
+        pixmap = QPixmap(str(source_path))
+        if pixmap.isNull():
+            return QPixmap()
+        return pixmap
+
+    def _video_poster_load_size(self) -> QSize:
+        candidates = [self.video_stack.size(), self.size()]
+        video_size = getattr(self.video, "size", None)
+        if callable(video_size):
+            candidates.insert(1, video_size())
+        for candidate in candidates:
+            if candidate.width() > self._POSTER_SIZE.width() and candidate.height() > self._POSTER_SIZE.height():
+                return candidate
+        return self._VIDEO_POSTER_LOAD_FALLBACK_SIZE
+
     def _start_poster_load(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
         image_url = normalize_poster_url(source)
         if not image_url:
             return
+        target_size = self._POSTER_SIZE if target != "video" else self._video_poster_load_size()
 
         def load() -> None:
             image = load_remote_poster_image(
                 image_url,
-                self._POSTER_SIZE,
+                target_size,
                 timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
                 get=httpx.get,
             )
@@ -2171,8 +2194,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pixmap = QPixmap.fromImage(image)
         self.poster_label.setText("")
         self.poster_label.setPixmap(pixmap)
-        if self._preferred_video_poster_source() == self._preferred_detail_poster_source():
+        video_source = self._preferred_video_poster_source()
+        if video_source == self._preferred_detail_poster_source() and Path(video_source).is_file():
             self._show_video_poster_overlay(pixmap)
+        if video_source == self._preferred_detail_poster_source():
             self._attach_audio_cover_if_available()
 
     def _handle_video_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
@@ -2293,6 +2318,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not source:
             self._clear_video_poster_overlay()
             return
+        pixmap = self._load_video_poster_pixmap(source)
+        if not pixmap.isNull():
+            self._show_video_poster_overlay(pixmap)
+            return
         detail_source = self._preferred_detail_poster_source()
         if source == detail_source:
             pixmap = self.poster_label.pixmap()
@@ -2300,6 +2329,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._show_video_poster_overlay(pixmap)
             else:
                 self._clear_video_poster_overlay()
+            self._start_poster_load(source, self._video_poster_request_id, target="video")
             return
         pixmap = self._load_poster_pixmap(source)
         if not pixmap.isNull():

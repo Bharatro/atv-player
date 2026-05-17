@@ -3632,10 +3632,10 @@ def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text
 
 
 def test_player_window_starts_remote_poster_load_without_blocking_open_session(qtbot, monkeypatch) -> None:
-    started: list[str] = []
+    started: list[tuple[str, str]] = []
 
     def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
-        started.append(source)
+        started.append((target, source))
 
     monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
 
@@ -3669,9 +3669,41 @@ def test_player_window_starts_remote_poster_load_without_blocking_open_session(q
     window.open_session(session)
 
     rendered = window.poster_label.pixmap()
-    assert started == ["https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"]
+    assert started == [
+        ("detail", "https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"),
+        ("video", "https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"),
+    ]
     assert rendered is None or rendered.isNull() is True
     assert window.video.load_calls == [("http://m/1.m3u8", False, 0)]
+
+
+def test_player_window_uses_larger_remote_load_size_for_video_poster_than_detail_poster(qtbot, monkeypatch) -> None:
+    requests: list[tuple[str, int, int]] = []
+
+    def fake_load_remote_poster_image(source: str, target_size, timeout=0, get=None):
+        del timeout, get
+        requests.append((source, target_size.width(), target_size.height()))
+        image = QImage(40, 60, QImage.Format.Format_RGB32)
+        image.fill(QColor("blue"))
+        return image
+
+    monkeypatch.setattr(player_window_module, "load_remote_poster_image", fake_load_remote_poster_image)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.resize(1280, 800)
+    window.show()
+    qtbot.wait(50)
+
+    window._start_poster_load("https://img.example/poster.jpg", 1, target="detail")
+    window._start_poster_load("https://img.example/poster.jpg", 2, target="video")
+
+    qtbot.waitUntil(lambda: len(requests) == 2, timeout=1000)
+
+    assert requests[0] == ("https://img.example/poster.jpg", PlayerWindow._POSTER_SIZE.width(), PlayerWindow._POSTER_SIZE.height())
+    assert requests[1][0] == "https://img.example/poster.jpg"
+    assert requests[1][1] > PlayerWindow._POSTER_SIZE.width()
+    assert requests[1][2] > PlayerWindow._POSTER_SIZE.height()
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
@@ -3913,7 +3945,7 @@ def test_player_window_hides_video_poster_overlay_after_visible_picture_signal(q
             speed=1.0,
         )
     )
-    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_poster_load_finished(window._video_poster_request_id, image)
     window._handle_video_picture_state_changed("loading")
 
     assert window.video_poster_overlay.isHidden() is False
@@ -3939,7 +3971,7 @@ def test_player_window_hides_video_poster_overlay_after_audio_cover_signal(qtbot
             speed=1.0,
         )
     )
-    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_poster_load_finished(window._video_poster_request_id, image)
     window._handle_video_picture_state_changed("loading")
 
     assert window.video_poster_overlay.isHidden() is False
@@ -3965,7 +3997,7 @@ def test_player_window_shows_video_poster_overlay_again_after_playback_failure(q
             speed=1.0,
         )
     )
-    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_poster_load_finished(window._video_poster_request_id, image)
     window._handle_video_picture_state_changed("visible")
 
     assert window.video_poster_overlay.isHidden() is True
@@ -3992,7 +4024,7 @@ def test_player_window_shows_video_poster_overlay_when_picture_becomes_unavailab
             speed=1.0,
         )
     )
-    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_poster_load_finished(window._video_poster_request_id, image)
 
     window._handle_video_picture_state_changed("unavailable")
 
@@ -4031,7 +4063,7 @@ def test_player_window_hides_video_poster_overlay_when_picture_is_unavailable_bu
     window.open_session(session)
     window._primary_external_subtitle_selection = ExternalSubtitleSelection(source="spider", option_url="http://sub/1.srt")
     window._primary_external_subtitle_track_id = 91
-    window._handle_poster_load_finished(window._poster_request_id, image)
+    window._handle_video_poster_load_finished(window._video_poster_request_id, image)
 
     window._handle_video_picture_state_changed("unavailable")
 
@@ -4132,22 +4164,21 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: len(requests) == 1)
+    qtbot.waitUntil(lambda: len(requests) >= 1)
     qtbot.waitUntil(lambda: (window.poster_label.pixmap() is not None and not window.poster_label.pixmap().isNull()))
 
     rendered = window.poster_label.pixmap()
     assert rendered is not None
     assert rendered.isNull() is False
-    assert requests == [
-        (
-            "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
-            {
-                "Referer": "https://movie.douban.com/",
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-            },
-            10.0,
-        )
-    ]
+    assert requests[0] == (
+        "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
+        {
+            "Referer": "https://movie.douban.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        },
+        10.0,
+    )
+    assert len(requests) in {1, 2}
 
 
 def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monkeypatch, tmp_path) -> None:
