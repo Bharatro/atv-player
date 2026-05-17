@@ -7,7 +7,7 @@ import logging
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.matching import is_confident_match, score_match
-from atv_player.metadata.merge import fill_missing_metadata_record, merge_metadata_record
+from atv_player.metadata.merge import fill_missing_metadata_record, merge_metadata_record, override_visual_metadata_record
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.models import VodItem
 
@@ -284,4 +284,5 @@ class MetadataHydrator:
                 )
                 continue
             fill_missing_metadata_record(vod, record)
+            override_visual_metadata_record(vod, record)
         return vod

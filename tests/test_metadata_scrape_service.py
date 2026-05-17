@@ -475,6 +475,51 @@ def test_metadata_scrape_service_apply_replaces_all_metadata_fields_from_selecte
     assert [(field.label, field.value) for field in updated.detail_fields] == [("TMDB ID", "1")]
 
 
+def test_metadata_scrape_service_apply_still_replaces_poster_even_after_hydration_override_change(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="movie:1",
+            title="新标题",
+            poster="https://img.example/tmdb-poster.jpg",
+            overview="新简介",
+            rating="7.8",
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    updated = service.apply(
+        VodItem(
+            vod_id="v1",
+            vod_name="旧标题",
+            vod_pic="https://img.example/old-poster.jpg",
+            vod_content="旧简介",
+            vod_remarks="9.9",
+            metadata_field_sources={
+                "poster": "local_douban",
+                "overview": "local_douban",
+                "rating": "local_douban",
+            },
+        ),
+        MetadataScrapeCandidate(
+            provider="tmdb",
+            provider_label="TMDB",
+            provider_id="movie:1",
+            title="新标题",
+            year="2026",
+        ),
+    )
+
+    assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert updated.vod_content == "新简介"
+    assert updated.vod_remarks == "7.8"
+    assert updated.metadata_field_sources["poster"] == "tmdb"
+    assert updated.metadata_field_sources["overview"] == "tmdb"
+    assert updated.metadata_field_sources["rating"] == "tmdb"
+
+
 def test_metadata_scrape_service_apply_uses_distinct_tmdb_tv_season_cache_keys(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(
