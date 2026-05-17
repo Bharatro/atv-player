@@ -10,6 +10,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from atv_player.models import (
+    AppConfig,
     ExternalSubtitleOption,
     PlayItem,
     VideoQualityOption,
@@ -434,6 +435,7 @@ class YtdlpPlaybackService:
         ttl_seconds: float = 300.0,
         now: Callable[[], float] = monotonic,
         proxy_decider: ProxyDecider | None = None,
+        config_loader: Callable[[], AppConfig] | None = None,
     ) -> None:
         self._ytdlp_path: str | None = None
         self._supported_domains: frozenset[str] | None = None
@@ -441,6 +443,7 @@ class YtdlpPlaybackService:
         self._now = now
         self._cache: dict[str, _YtdlpCacheEntry] = {}
         self._proxy_decider = proxy_decider
+        self._config_loader = config_loader
 
     def _cache_key(self, url: str, max_height: int | None) -> str:
         key = url.strip()
@@ -470,6 +473,12 @@ class YtdlpPlaybackService:
             self._ytdlp_path = resolve_system_ytdlp_path()
         return bool(self._ytdlp_path)
 
+    def _configured_cookie_browser(self) -> str:
+        if self._config_loader is None:
+            return ""
+        config = self._config_loader()
+        return str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower()
+
     def _extract_info_via_command(self, url: str, max_height: int | None) -> dict:
         if self._ytdlp_path is None:
             self._ytdlp_path = resolve_system_ytdlp_path()
@@ -487,7 +496,10 @@ class YtdlpPlaybackService:
             "--all-subs",
             "--format",
             _build_format_selector(max_height),
-            *build_ytdlp_command_args(build_ytdlp_proxy_args(self._proxy_decider, url)),
+            *build_ytdlp_command_args(
+                build_ytdlp_proxy_args(self._proxy_decider, url),
+                cookie_browser=self._configured_cookie_browser(),
+            ),
             "--",
             url,
         ]

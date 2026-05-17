@@ -32,7 +32,10 @@ def _escaped_mpv_list_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace(",", "\\,")
 
 
-def _resolved_cookie_browser() -> str:
+def _resolved_cookie_browser(cookie_browser: str = "") -> str:
+    explicit = str(cookie_browser or "").strip().lower()
+    if explicit in {"chrome", "edge", "firefox"}:
+        return explicit
     raw_value = _normalized_env("ATV_YTDLP_COOKIES_FROM_BROWSER")
     if raw_value.lower() in {"0", "false", "no", "none", "off"}:
         return ""
@@ -40,11 +43,11 @@ def _resolved_cookie_browser() -> str:
         return raw_value
     if _resolved_cookie_file():
         return ""
-    return "chrome"
+    return ""
 
 
-def _default_remote_components() -> str:
-    if _resolved_cookie_browser() or _resolved_cookie_file():
+def _default_remote_components(cookie_browser: str = "") -> str:
+    if _resolved_cookie_browser(cookie_browser) or _resolved_cookie_file():
         return "ejs:github"
     return ""
 
@@ -90,33 +93,37 @@ def resolve_mpv_ytdlp_path() -> str:
     return resolve_system_ytdlp_path()
 
 
-def build_ytdlp_command_args(proxy_args: list[str] | None = None) -> list[str]:
+def build_ytdlp_command_args(
+    proxy_args: list[str] | None = None,
+    *,
+    cookie_browser: str = "",
+) -> list[str]:
     args: list[str] = []
     if proxy_args:
         args.extend(proxy_args)
-    browser = _resolved_cookie_browser()
+    browser = _resolved_cookie_browser(cookie_browser)
     if browser:
         args.extend(["--cookies-from-browser", browser])
     else:
         cookie_file = _resolved_cookie_file()
         if cookie_file:
             args.extend(["--cookies", cookie_file])
-    remote_components = _default_remote_components()
+    remote_components = _default_remote_components(cookie_browser)
     if remote_components:
         args.extend(["--remote-components", remote_components])
     return args
 
 
-def resolve_mpv_ytdl_raw_options() -> str:
+def resolve_mpv_ytdl_raw_options(*, cookie_browser: str = "") -> str:
     options: list[str] = []
-    browser = _resolved_cookie_browser()
+    browser = _resolved_cookie_browser(cookie_browser)
     if browser:
         options.append(f"cookies-from-browser={_escaped_mpv_list_value(browser)}")
     else:
         cookie_file = _resolved_cookie_file()
         if cookie_file:
             options.append(f"cookies={_escaped_mpv_list_value(cookie_file)}")
-    remote_components = _default_remote_components()
+    remote_components = _default_remote_components(cookie_browser)
     if remote_components:
         options.append(f"remote-components={_escaped_mpv_list_value(remote_components)}")
     return ",".join(options)

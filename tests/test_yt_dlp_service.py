@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import AppConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
@@ -123,6 +123,30 @@ class TestIsAvailable:
         command = run_calls[0]
         assert "--cookies-from-browser" in command
         assert command[command.index("--cookies-from-browser") + 1] == "chrome"
+
+    def test_extract_info_via_command_prefers_configured_cookie_browser(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_sample_info()),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_cookie_browser="firefox")
+        )
+
+        service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        command = run_calls[0]
+        assert "--cookies-from-browser" in command
+        assert command[command.index("--cookies-from-browser") + 1] == "firefox"
 
     def test_extract_info_via_command_includes_proxy_when_manual_proxy_is_selected(self, monkeypatch, service):
         run_calls: list[list[str]] = []
