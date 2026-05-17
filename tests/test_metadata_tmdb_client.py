@@ -1,6 +1,27 @@
 import httpx
 
 from atv_player.metadata.providers.tmdb_client import TMDBClient
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
+
+
+def test_tmdb_client_builds_manual_proxy_httpx_client() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_client_factory(**kwargs):
+        captured.update(kwargs)
+        return httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"results": []})))
+
+    client = TMDBClient(
+        api_key="tmdb-key",
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="http", proxy_url="http://127.0.0.1:7890", bypass_rules=[])
+        ),
+        client_factory=fake_client_factory,
+    )
+
+    assert captured["proxy"] == "http://127.0.0.1:7890"
+    assert captured["trust_env"] is False
+    client._client.close()
 
 
 def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
+
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
 class TMDBClient:
@@ -12,13 +15,17 @@ class TMDBClient:
         self,
         api_key: str,
         transport: httpx.BaseTransport | None = None,
+        proxy_decider: ProxyDecider | None = None,
+        client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         self._api_key = str(api_key or "").strip()
-        self._client = httpx.Client(
+        client_kwargs: dict[str, Any] = dict(
             base_url=self._BASE_URL,
             transport=transport,
             timeout=20.0,
         )
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._BASE_URL))
+        self._client = client_factory(**client_kwargs)
         self._image_config: dict[str, Any] | None = None
 
     def _request(self, path: str, **params: object) -> dict[str, Any]:

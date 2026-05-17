@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import re
 from html import unescape
 
 import httpx
+
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
 class DoubanBlockedError(RuntimeError):
@@ -23,13 +26,17 @@ class LocalDoubanClient:
         self,
         cookie: str = "",
         transport: httpx.BaseTransport | None = None,
+        proxy_decider: ProxyDecider | None = None,
+        client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         self._cookie = cookie.strip()
-        self._client = httpx.Client(
+        client_kwargs = dict(
             transport=transport,
             timeout=15.0,
             follow_redirects=True,
         )
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._SEARCH_URL))
+        self._client = client_factory(**client_kwargs)
 
     def _headers(self) -> dict[str, str]:
         headers = {
