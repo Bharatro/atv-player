@@ -576,7 +576,7 @@ class AppCoordinator(QObject):
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
-            if source_kind != "plugin" or vod is None:
+            if source_kind not in {"plugin", "browse"} or vod is None:
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
@@ -913,6 +913,7 @@ class AppCoordinator(QObject):
             yt_dlp_service=self._yt_dlp_service,
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
+            episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)

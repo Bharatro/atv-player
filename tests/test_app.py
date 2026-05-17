@@ -4112,6 +4112,7 @@ def test_app_coordinator_show_main_wires_episode_title_enhancer_factory(monkeypa
 
     coordinator._show_main()
 
+    assert captured["window_kwargs"]["episode_title_enhancer_factory"] is marker
     assert plugin_manager._episode_title_enhancer_factory is marker
 
 
@@ -4129,6 +4130,24 @@ def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb
 
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(source_kind="plugin", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert callable(enhance)
+
+
+def test_app_coordinator_builds_episode_title_enhancer_for_browse_when_enabled(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
 
     assert callable(enhance)
 

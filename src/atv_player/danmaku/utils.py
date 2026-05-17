@@ -161,6 +161,8 @@ def extract_episode_number(name: str) -> int | None:
             continue
         if _looks_like_episode_range_part(value, match):
             continue
+        if _looks_like_date_fragment_part(value, match):
+            continue
         raw = match.group(1)
         episode = int(raw) if raw.isdigit() else _cn_to_int(raw)
         if episode is not None and 1 <= episode <= 10000:
@@ -174,6 +176,20 @@ def _looks_like_episode_range_part(value: str, match: re.Match[str]) -> bool:
     return bool(
         re.search(r"\d{1,4}\s*-\s*$", prefix)
         or re.match(r"^\s*-\s*\d{1,4}", suffix)
+    )
+
+
+def _looks_like_date_fragment_part(value: str, match: re.Match[str]) -> bool:
+    prefix = value[: match.start()]
+    raw = match.group(1)
+    if not raw.isdigit():
+        return False
+    fragment = int(raw)
+    return bool(
+        fragment <= 12
+        and re.search(r"(?:19|20)\d{2}\s*$", prefix)
+        or fragment <= 31
+        and re.search(r"(?:19|20)\d{2}[-./]\d{1,2}\s*$", prefix)
     )
 
 

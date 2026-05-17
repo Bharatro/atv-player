@@ -1065,6 +1065,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             yt_dlp_service=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
+            episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
     ) -> None:
         super().__init__()
@@ -1075,6 +1076,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._yt_dlp_service = yt_dlp_service
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
+        self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
@@ -3335,6 +3337,17 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             and request.source_kind in {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_scrape_service = self._metadata_scrape_service_factory(
+                request=request,
+                source_kind=request.source_kind,
+                source_key=request.source_key,
+                vod=request.vod,
+            )
+        if (
+            request.episode_title_enhancer is None
+            and self._episode_title_enhancer_factory is not None
+            and request.source_kind == "browse"
+        ):
+            request.episode_title_enhancer = self._episode_title_enhancer_factory(
                 request=request,
                 source_kind=request.source_kind,
                 source_key=request.source_key,
