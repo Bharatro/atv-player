@@ -231,6 +231,13 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
     return vod
 
 
+def override_visual_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
+    if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
+        vod.vod_pic = record.poster
+        _set_field_source(vod, "poster", record.provider)
+    return vod
+
+
 def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
     cleaned_overview = clean_overview_text(record.overview)
     detail_fields = _record_detail_fields(record)
