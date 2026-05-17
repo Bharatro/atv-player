@@ -33,6 +33,12 @@ class AppConfig:
     network_proxy_mode: str = "direct"
     network_proxy_url: str = ""
     network_proxy_bypass_rules: list[str] = field(default_factory=_default_network_proxy_bypass_rules)
+    youtube_cookie_browser: str = ""
+    mpv_cache_size_mb: int = 512
+    mpv_hwdec_mode: str = "auto-safe"
+    mpv_network_timeout_seconds: int = 15
+    mpv_default_readahead_secs: int = 20
+    mpv_extra_options: str = ""
     episode_title_enhancement_enabled: bool = True
     last_path: str = "/"
     last_active_window: str = "main"

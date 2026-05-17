@@ -340,6 +340,69 @@ def test_settings_repository_round_trip_persists_global_search_hot_source(tmp_pa
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        base_url="http://127.0.0.1:4567",
+        username="alice",
+        token="token-123",
+        vod_token="vod-123",
+        youtube_cookie_browser="edge",
+        mpv_cache_size_mb=768,
+        mpv_hwdec_mode="no",
+        mpv_network_timeout_seconds=25,
+        mpv_default_readahead_secs=45,
+        mpv_extra_options="demuxer-max-back-bytes=256M\ncache-pause-wait=8",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.youtube_cookie_browser == "edge"
+    assert saved.mpv_cache_size_mb == 768
+    assert saved.mpv_hwdec_mode == "no"
+    assert saved.mpv_network_timeout_seconds == 25
+    assert saved.mpv_default_readahead_secs == 45
+    assert saved.mpv_extra_options == "demuxer-max-back-bytes=256M\ncache-pause-wait=8"
+    assert saved == config
+
+
+def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                last_path TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO app_config (id, base_url, username, token, vod_token, last_path) VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/')"
+        )
+
+    config = SettingsRepository(db_path).load_config()
+
+    assert config.youtube_cookie_browser == ""
+    assert config.mpv_cache_size_mb == 512
+    assert config.mpv_hwdec_mode == "auto-safe"
+    assert config.mpv_network_timeout_seconds == 15
+    assert config.mpv_default_readahead_secs == 20
+    assert config.mpv_extra_options == ""
+
+
 def test_settings_repository_round_trip_persists_metadata_credentials(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)
