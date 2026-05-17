@@ -452,7 +452,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
-        self._last_logged_source_address = ""
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
@@ -602,6 +601,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_tabs.addTab("原始文件名")
         self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
+        self.playlist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.playlist.customContextMenuRequested.connect(lambda pos: self._show_playlist_context_menu(pos))
+        self.playlist.viewport().installEventFilter(self)
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
         self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn")
@@ -706,14 +708,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.log_view.setReadOnly(True)
         self.playback_startup_widget = QWidget(self)
         self.playback_startup_widget.setObjectName("playbackStartupWidget")
-        self.playback_startup_status_label = QLabel("")
         self.playback_retry_button = QPushButton("重试", self.playback_startup_widget)
         self.playback_switch_line_button = QPushButton("换线路", self.playback_startup_widget)
         self.playback_switch_parser_button = QPushButton("换解析器", self.playback_startup_widget)
         startup_layout = QHBoxLayout(self.playback_startup_widget)
         startup_layout.setContentsMargins(0, 0, 0, 0)
         startup_layout.setSpacing(6)
-        startup_layout.addWidget(self.playback_startup_status_label, 1)
         startup_layout.addWidget(self.playback_retry_button)
         startup_layout.addWidget(self.playback_switch_line_button)
         startup_layout.addWidget(self.playback_switch_parser_button)
@@ -1130,7 +1130,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _set_startup_state(self, state: PlaybackStartupState) -> None:
         self._startup_state = state
-        self.playback_startup_status_label.setText(state.message)
         self._append_startup_state_log(state)
         action_keys = {action.key for action in state.actions}
         self.playback_retry_button.setVisible("retry" in action_keys)
@@ -1142,6 +1141,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if state.stage is not PlaybackStartupStage.RESOLVING:
             return
         self._append_log(state.message, dedupe=True)
+
+    def _resolving_startup_message(self, current_item: PlayItem) -> str:
+        source_url = self._current_item_source_address(current_item)
+        if source_url:
+            return f"正在解析播放地址: {source_url}"
+        return "正在解析播放地址"
 
     def _current_item_source_address(self, current_item: PlayItem) -> str:
         for candidate in (
@@ -1158,13 +1163,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if source.startswith("/"):
                 return source
         return ""
-
-    def _append_current_item_source_log(self, current_item: PlayItem) -> None:
-        source_url = self._current_item_source_address(current_item)
-        if not source_url or source_url == self._last_logged_source_address:
-            return
-        self._last_logged_source_address = source_url
-        self._append_log(f"原始来源地址: {source_url}")
 
     def _has_multiple_playback_sources(self) -> bool:
         if self.session is None:
@@ -1724,7 +1722,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         if not hydrate_only:
-            self._set_startup_state(self._startup_coordinator.resolving())
+            self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
         playback_loader = self.session.playback_loader
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")
@@ -1808,7 +1806,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前播放: {current_item.title}")
-        self._append_current_item_source_log(current_item)
         self._append_log(f"播放地址: {current_item.url}")
         if start_position_seconds > self.opening_spin.value():
             effective_start_seconds = start_position_seconds
@@ -2325,7 +2322,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_loader = None
         self._playback_prepare_request_id += 1
         self._pending_playback_prepare = None
-        self._last_logged_source_address = ""
 
     def _run_controller_task_queue(self) -> None:
         while True:
@@ -2381,7 +2377,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         session = self.session
         current_item = session.playlist[self.current_index]
-        self._set_startup_state(self._startup_coordinator.resolving())
+        self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
         if wait_for_load:
             self._append_log(f"正在加载播放地址: {current_item.title}")
         self._play_item_request_id += 1

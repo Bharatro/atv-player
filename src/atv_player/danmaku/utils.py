@@ -37,6 +37,7 @@ _EPISODE_PATTERNS = (
     r"\bS\d+\s*E0*([0-9]+)\b",
     r"\bEP\s*0*([0-9]+)\b",
     r"\bE\s*0*([0-9]+)\b",
+    r"^\s*0*(\d{1,3})\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
     r"(?:-|—|–)\s*0*([0-9]{1,4})\s*(?:[（(][^()（）]*[)）])?\s*$",
     r"^\s*0*([0-9]{1,4})(?=\s*[丨｜|])",
     r"^\s*0*([0-9]{1,4})\b",
@@ -158,11 +159,22 @@ def extract_episode_number(name: str) -> int | None:
         match = re.search(pattern, value, re.IGNORECASE)
         if match is None:
             continue
+        if _looks_like_episode_range_part(value, match):
+            continue
         raw = match.group(1)
         episode = int(raw) if raw.isdigit() else _cn_to_int(raw)
         if episode is not None and 1 <= episode <= 10000:
             return episode
     return None
+
+
+def _looks_like_episode_range_part(value: str, match: re.Match[str]) -> bool:
+    prefix = value[: match.start()]
+    suffix = value[match.end() :]
+    return bool(
+        re.search(r"\d{1,4}\s*-\s*$", prefix)
+        or re.match(r"^\s*-\s*\d{1,4}", suffix)
+    )
 
 
 def has_explicit_episode_marker(name: str) -> bool:

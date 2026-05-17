@@ -73,6 +73,18 @@ def test_extract_episode_number_supports_cjk_bar_separated_prefix_titles() -> No
     assert extract_episode_number("01丨4K.mp4") == 1
 
 
+def test_extract_episode_number_prefers_trailing_episode_over_range_prefix() -> None:
+    assert extract_episode_number("01-99集 - 39(147.67 MB)") == 39
+
+
+def test_extract_episode_number_ignores_range_only_prefix_titles() -> None:
+    assert extract_episode_number("01-99集") is None
+
+
+def test_extract_episode_number_supports_quality_variant_prefix_titles() -> None:
+    assert extract_episode_number("160-4K.mp4(471.43 MB)") == 160
+
+
 def test_infer_playlist_episode_number_prefers_current_title() -> None:
     playlist = [
         PlayItem(title="0001 剑来-总管坐镇剑气长城", url="http://m/1.mp4", index=0),

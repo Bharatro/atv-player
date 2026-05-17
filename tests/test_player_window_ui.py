@@ -5667,7 +5667,7 @@ def test_player_window_renders_failed_startup_actions_for_parse_item_with_multip
     window.open_session(session)
     window._show_failed_startup_state("当前线路响应超时")
 
-    assert window.playback_startup_status_label.text() == "当前线路响应超时"
+    assert window._startup_state.message == "当前线路响应超时"
     assert window.playback_retry_button.isHidden() is False
     assert window.playback_switch_line_button.isHidden() is False
     assert window.playback_switch_parser_button.isHidden() is False
@@ -5695,7 +5695,7 @@ def test_player_window_hides_failure_actions_when_video_becomes_visible(qtbot) -
 
     window._handle_video_picture_state_changed("visible")
 
-    assert window.playback_startup_status_label.text() == "播放中"
+    assert window._startup_state.message == "播放中"
     assert window.playback_retry_button.isHidden() is True
     assert window.playback_switch_line_button.isHidden() is True
     assert window.playback_switch_parser_button.isHidden() is True
@@ -13181,13 +13181,9 @@ def test_player_window_keeps_resolving_state_plain_and_logs_source_address_in_pl
 
     window.open_session(session)
 
-    assert window.log_view.toPlainText().splitlines()[0] == "正在解析播放地址"
+    assert window.log_view.toPlainText().splitlines()[0] == "正在解析播放地址: https://pan.baidu.com/s/demo"
     assert "正在加载播放地址: 网盘剧集" in window.log_view.toPlainText()
-
     ready.set()
-
-    qtbot.waitUntil(lambda: "原始来源地址: https://pan.baidu.com/s/demo" in window.log_view.toPlainText(), timeout=1000)
-    assert "正在解析播放地址: https://pan.baidu.com/s/demo" not in window.log_view.toPlainText()
 
 
 def test_player_window_logs_resolving_startup_message(qtbot) -> None:
