@@ -112,9 +112,9 @@ class BilibiliDanmakuProvider:
         for search_type in ("media_bangumi", "media_ft"):
             payload = self._search_payload(normalized, search_type)
             items.extend(self._parse_search_results(payload, normalized, search_type))
-        if not items:
-            payload = self._search_payload(normalized, "video")
-            items.extend(self._parse_search_results(payload, normalized, "video"))
+        # if not items:
+        #     payload = self._search_payload(normalized, "video")
+        #     items.extend(self._parse_search_results(payload, normalized, "video"))
         items = self._expand_season_search_items(items, normalized)
         items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY.get(item.search_type, 99), -item.ratio, -item.simi))
         for item in items:

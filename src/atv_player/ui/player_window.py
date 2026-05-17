@@ -4109,7 +4109,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_track_id = track_id
         self._danmaku_active = True
         self._danmaku_line_count = line_count
-        self._append_log(f"已加载弹幕文件: {subtitle_path}")
+        # self._append_log(f"已加载弹幕文件: {subtitle_path}")
 
     def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
         self._danmaku_loading_slot = "primary"
