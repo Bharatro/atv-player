@@ -18,6 +18,7 @@ def _write_fake_git(fake_bin: Path) -> None:
               "rev-parse --abbrev-ref HEAD") printf '%s\\n' "${FAKE_BRANCH:-master}" ;;
               "rev-parse HEAD") printf '%s\\n' "${FAKE_HEAD_SHA:-abc123}" ;;
               "status --porcelain") printf '%s' "${FAKE_STATUS_PORCELAIN:-}" ;;
+              "remote get-url origin") printf '%s\\n' "${FAKE_REMOTE_URL:-https://github.com/power721/atv-player.git}" ;;
               "fetch origin master --tags") ;;
               "rev-list --left-right --count origin/master...HEAD") printf '%s\\n' "${FAKE_REV_LIST:-0\t0}" ;;
               "tag --list v0.49.0") printf '%s' "${FAKE_LOCAL_TAG:-}" ;;
@@ -44,10 +45,12 @@ def _write_fake_gh(fake_bin: Path) -> None:
             set -euo pipefail
             printf 'gh:%s\\n' "$*" >> "${FAKE_LOG}"
             case "$*" in
-              "run list --workflow Build Packages --limit 20 --json databaseId,url,headSha,event --jq .[] | select(.event == \\"push\\" and .headSha == \\"abc123\\") | .databaseId") printf '12345\\n' ;;
-              "run view 12345 --json url --jq .url") printf 'https://github.com/power721/atv-player/actions/runs/12345\\n' ;;
-              "run watch 12345 --exit-status") ;;
-              "release view v0.49.0 --json url --jq .url") printf 'https://github.com/power721/atv-player/releases/tag/v0.49.0\\n' ;;
+              "release view v0.49.0 --json url --jq .url")
+                if [[ "${FAKE_RELEASE_VIEW_FAIL:-0}" == "1" ]]; then
+                  exit 1
+                fi
+                printf 'https://github.com/power721/atv-player/releases/tag/v0.49.0\\n'
+                ;;
               *) printf 'unexpected gh call: %s\\n' "$*" >&2; exit 1 ;;
             esac
             """
@@ -123,7 +126,17 @@ def test_release_script_rejects_existing_remote_tag(tmp_path) -> None:
     assert "远端已存在 tag: v0.49.0" in result.stderr
 
 
-def test_release_script_pushes_branch_before_tag_and_prints_release_url(tmp_path) -> None:
+def test_release_script_allows_untracked_docs_when_releasing(tmp_path) -> None:
+    result = _run_release_script(
+        tmp_path,
+        status_porcelain=" M RELEASE_NOTES.md\n?? docs/superpowers/plans/plan.md\n",
+    )
+
+    assert result.returncode == 0
+    assert "https://github.com/power721/atv-player/releases/tag/v0.49.0" in result.stdout
+
+
+def test_release_script_pushes_branch_before_tag_and_does_not_wait_for_actions(tmp_path) -> None:
     result = _run_release_script(tmp_path, status_porcelain=" M RELEASE_NOTES.md\n")
 
     assert result.returncode == 0
@@ -131,3 +144,15 @@ def test_release_script_pushes_branch_before_tag_and_prints_release_url(tmp_path
     log_lines = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
     assert log_lines.index("git:push origin master") < log_lines.index("git:tag v0.49.0")
     assert log_lines.index("git:tag v0.49.0") < log_lines.index("git:push origin v0.49.0")
+    assert all(not line.startswith("gh:run ") for line in log_lines)
+
+
+def test_release_script_prints_release_page_when_release_is_not_ready(tmp_path) -> None:
+    result = _run_release_script(
+        tmp_path,
+        status_porcelain=" M RELEASE_NOTES.md\n",
+        extra_env={"FAKE_RELEASE_VIEW_FAIL": "1"},
+    )
+
+    assert result.returncode == 0
+    assert "https://github.com/power721/atv-player/releases/tag/v0.49.0" in result.stdout

@@ -12,6 +12,8 @@ description: Use when publishing a new atv-player version after feature commits 
 1. 生成或改写 `RELEASE_NOTES.md`
 2. 调用 `scripts/release.sh <version>` 完成发布
 
+其它发布相关事情全部交给发布脚本完成。
+
 不要再使用本地 `gh release create`、`gh release edit` 或手工 `git tag` 作为主流程。正式 release 由仓库脚本和 GitHub Actions 负责。
 
 ## 触发示例
@@ -37,20 +39,6 @@ script: scripts/release.sh 0.50.0
 ```
 
 ## 执行流程
-
-### 0. 先检查当前分支
-
-先执行：
-
-```bash
-git branch --show-current
-```
-
-要求：
-
-- 当前分支必须是 `master`
-- 如果不是 `master`，停止发布流程并明确提示用户先切回 `master`
-- 不要在错误分支上继续生成 `RELEASE_NOTES.md` 或调用发布脚本
 
 ### 1. 获取最近 tag 以来的提交
 
@@ -116,18 +104,32 @@ RELEASE_NOTES.md
 scripts/release.sh 0.50.0
 ```
 
+AI 到这里为止只允许做这一步调用，不允许额外接管发布过程。除了 `RELEASE_NOTES.md` 之外，其它事情全部交给发布脚本。
+
 脚本会负责：
 
 - 校验当前分支和工作区状态
+- 允许保留未跟踪的 `docs/` 文档，不阻塞发布
 - 自动提交 `RELEASE_NOTES.md`
 - 推送当前分支
 - 创建并推送 `v0.50.0` tag
-- 等待 GitHub Actions 完成
-- 输出 release URL
+- 输出 release URL；如果 GitHub Release 尚未生成，则输出对应的 release 页面地址供后续查看
 
-如果脚本失败，直接报告脚本输出的阻塞原因，不要回退到本地手工创建 release。
+如果脚本失败，直接报告脚本输出的阻塞原因并停止，不要扩展处理。
 
-脚本本身也会再次校验当前分支是否为 `master`，但 skill 应该在调用脚本前就先做这层检查。
+## 禁止事项
+
+除了生成 `RELEASE_NOTES.md` 和调用 `scripts/release.sh <version>` 之外，AI 不要做任何额外发布修复动作，包括但不限于：
+
+- 不要手工 `git tag`
+- 不要手工 `git push`
+- 不要手工 `gh release create` / `gh release edit`
+- 不要等待或轮询 GitHub Actions
+- 不要 `stash`、移动、删除工作区文件来“帮助发布”
+- 不要删除或改写本地 / 远端 tag
+- 不要修改 git remote、认证方式或凭据配置
+
+如果仓库状态、tag、权限、认证或网络环境有问题，让脚本报错，然后把阻塞点原样告诉用户。
 
 ## 最终输出
 

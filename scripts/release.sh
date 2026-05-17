@@ -7,15 +7,46 @@ die() {
 }
 
 require_clean_release_notes_only() {
-  local line path normalized
+  local line status path normalized
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
+    status="${line:0:2}"
     path="${line:3}"
     normalized="${path#./}"
-    if [[ "$normalized" != "RELEASE_NOTES.md" ]]; then
-      die "RELEASE_NOTES.md 之外存在未提交改动: $normalized"
-    fi
+    [[ "$normalized" == "RELEASE_NOTES.md" ]] && continue
+    [[ "$status" == "??" && "$normalized" == docs/* ]] && continue
+    die "RELEASE_NOTES.md 之外存在未提交改动: $normalized"
   done < <(git status --porcelain)
+}
+
+release_page_url() {
+  local tag="$1" remote_url repo
+
+  remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  case "$remote_url" in
+    git@github.com:*)
+      repo="${remote_url#git@github.com:}"
+      repo="${repo%.git}"
+      ;;
+    https://github.com/*)
+      repo="${remote_url#https://github.com/}"
+      repo="${repo%.git}"
+      ;;
+    ssh://git@github.com/*)
+      repo="${remote_url#ssh://git@github.com/}"
+      repo="${repo%.git}"
+      ;;
+    *)
+      repo=""
+      ;;
+  esac
+
+  if [[ -n "$repo" ]]; then
+    printf 'https://github.com/%s/releases/tag/%s\n' "$repo" "$tag"
+    return
+  fi
+
+  printf '%s\n' "$tag"
 }
 
 version="${1:-}"
@@ -44,20 +75,6 @@ git push origin "$branch"
 git tag "$tag"
 git push origin "$tag"
 
-run_id="$(
-  gh run list \
-    --workflow "Build Packages" \
-    --limit 20 \
-    --json databaseId,url,headSha,event \
-    --jq ".[] | select(.event == \"push\" and .headSha == \"$head_sha\") | .databaseId" \
-    | head -n 1
-)"
-[[ -n "$run_id" ]] || die "未找到 tag 对应的 GitHub Actions run"
-
-run_url="$(gh run view "$run_id" --json url --jq .url)"
-if ! gh run watch "$run_id" --exit-status; then
-  die "发布 workflow 失败: $run_url"
-fi
-
-release_url="$(gh release view "$tag" --json url --jq .url)"
+release_url="$(gh release view "$tag" --json url --jq .url 2>/dev/null || true)"
+[[ -n "$release_url" ]] || release_url="$(release_page_url "$tag")"
 printf '%s\n' "$release_url"
