@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import httpx
 
 from atv_player.models import HistoryRecord
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
 class ApiError(RuntimeError):
@@ -26,15 +28,19 @@ class ApiClient:
         token: str = "",
         vod_token: str = "",
         transport: httpx.BaseTransport | None = None,
+        proxy_decider: ProxyDecider | None = None,
+        client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         headers = {"Authorization": token} if token else {}
         self._vod_token = vod_token
-        self._client = httpx.Client(
+        client_kwargs: dict[str, Any] = dict(
             base_url=base_url.rstrip("/"),
             headers=headers,
             transport=transport,
             timeout=30.0,
         )
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, base_url))
+        self._client = client_factory(**client_kwargs)
 
     def set_token(self, token: str) -> None:
         if token:

@@ -6,6 +6,7 @@ import atv_player.ui.poster_loader as poster_loader_module
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
 
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.ui.poster_loader import (
     build_poster_request_headers,
     load_remote_poster_image,
@@ -114,6 +115,35 @@ def test_load_remote_poster_image_follows_redirects(monkeypatch, tmp_path) -> No
     assert loaded is not None
     assert loaded.isNull() is False
     assert calls == [True]
+
+
+def test_load_remote_poster_image_passes_proxy_kwargs(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    seen: dict[str, object] = {}
+
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+        **kwargs,
+    ) -> FakeResponse:
+        seen.update({key: value for key, value in kwargs.items() if key in {"proxy", "trust_env"}})
+        return FakeResponse(_png_bytes())
+
+    loaded = load_remote_poster_image(
+        "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
+        QSize(90, 130),
+        get=fake_get,
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="http", proxy_url="http://127.0.0.1:7890", bypass_rules=[])
+        ),
+    )
+
+    assert loaded is not None
+    assert seen["proxy"] == "http://127.0.0.1:7890"
+    assert seen["trust_env"] is False
 
 
 def test_load_remote_poster_image_reuses_cached_file(monkeypatch, tmp_path) -> None:

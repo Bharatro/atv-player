@@ -5,6 +5,7 @@ import pytest
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
 class RaisingTransport(httpx.BaseTransport):
@@ -13,6 +14,54 @@ class RaisingTransport(httpx.BaseTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         raise self.exc
+
+
+def test_api_client_builds_direct_httpx_client_for_local_base_url() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_client_factory(**kwargs):
+        captured.update(kwargs)
+        return httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        proxy_decider=ProxyDecider(
+            ProxyConfig(
+                mode="socks5",
+                proxy_url="socks5://127.0.0.1:1080",
+                bypass_rules=["127.0.0.1"],
+            )
+        ),
+        client_factory=fake_client_factory,
+    )
+
+    assert captured["trust_env"] is False
+    assert "proxy" not in captured
+    client.close()
+
+
+def test_api_client_builds_manual_proxy_httpx_client_for_remote_base_url() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_client_factory(**kwargs):
+        captured.update(kwargs)
+        return httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+
+    client = ApiClient(
+        base_url="https://demo.remote.example",
+        proxy_decider=ProxyDecider(
+            ProxyConfig(
+                mode="http",
+                proxy_url="http://127.0.0.1:7890",
+                bypass_rules=[],
+            )
+        ),
+        client_factory=fake_client_factory,
+    )
+
+    assert captured["proxy"] == "http://127.0.0.1:7890"
+    assert captured["trust_env"] is False
+    client.close()
 
 
 def test_api_client_attaches_authorization_header() -> None:

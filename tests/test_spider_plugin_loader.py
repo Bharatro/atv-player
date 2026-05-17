@@ -5,7 +5,9 @@ import httpx
 import pytest
 
 from atv_player.models import SpiderPluginConfig
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.plugins.loader import SpiderPluginLoader
+from atv_player.plugins.compat.base.spider import Spider, set_proxy_decider_loader
 from tests.secspider_fixtures import build_secspider_package
 
 PLUGIN_SOURCE = """
@@ -105,6 +107,105 @@ def test_loader_resolves_one_indirect_remote_url_before_loading_plugin(tmp_path:
         "https://cdn.example.com/real-plugin.py",
     ]
     assert "class Spider(Spider):" in Path(loaded.config.cached_file_path).read_text(encoding="utf-8")
+
+
+def test_loader_fetch_remote_text_passes_proxy_kwargs(tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_get(url: str, **kwargs) -> httpx.Response:
+        seen.update({key: value for key, value in kwargs.items() if key in {"proxy", "trust_env"}})
+        return httpx.Response(200, text=PLUGIN_SOURCE, request=httpx.Request("GET", url))
+
+    loader = SpiderPluginLoader(
+        cache_dir=tmp_path / "cache",
+        get=fake_get,
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="http", proxy_url="http://127.0.0.1:7890", bypass_rules=[])
+        ),
+    )
+    config = SpiderPluginConfig(
+        id=43,
+        source_type="remote",
+        source_value="https://example.com/plugin.py",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "红果短剧"
+    assert seen["proxy"] == "http://127.0.0.1:7890"
+    assert seen["trust_env"] is False
+
+
+def test_compat_spider_fetch_uses_dynamic_proxy_loader(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        content = b"ok"
+        encoding = ""
+
+        def close(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        seen["url"] = url
+        seen["proxies"] = kwargs.get("proxies")
+        return FakeResponse()
+
+    monkeypatch.setattr("atv_player.plugins.compat.base.spider.requests.get", fake_get)
+    set_proxy_decider_loader(
+        lambda: ProxyDecider(
+            ProxyConfig(mode="http", proxy_url="http://127.0.0.1:7890", bypass_rules=[])
+        )
+    )
+    try:
+        response = Spider().fetch("https://example.com/data.json")
+    finally:
+        set_proxy_decider_loader(None)
+
+    assert response.content == b"ok"
+    assert seen["url"] == "https://example.com/data.json"
+    assert seen["proxies"] == {
+        "http": "http://127.0.0.1:7890",
+        "https": "http://127.0.0.1:7890",
+    }
+
+
+def test_compat_spider_post_bypasses_proxy_when_rule_matches(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        content = b"ok"
+        encoding = ""
+
+        def close(self) -> None:
+            return None
+
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        seen["url"] = url
+        seen["proxies"] = kwargs.get("proxies")
+        return FakeResponse()
+
+    monkeypatch.setattr("atv_player.plugins.compat.base.spider.requests.post", fake_post)
+    set_proxy_decider_loader(
+        lambda: ProxyDecider(
+            ProxyConfig(
+                mode="socks5",
+                proxy_url="socks5://127.0.0.1:1080",
+                bypass_rules=["api.example.com"],
+            )
+        )
+    )
+    try:
+        response = Spider().post("https://api.example.com/update", json={"ok": True})
+    finally:
+        set_proxy_decider_loader(None)
+
+    assert response.content == b"ok"
+    assert seen["url"] == "https://api.example.com/update"
+    assert seen["proxies"] == {"http": None, "https": None}
 
 
 def test_loader_treats_python_text_as_source_instead_of_indirect_url(tmp_path: Path) -> None:

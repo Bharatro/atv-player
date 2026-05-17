@@ -3516,6 +3516,92 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        network_proxy_mode="socks5",
+        network_proxy_url="socks5://user:pass@127.0.0.1:1080",
+        network_proxy_bypass_rules=["localhost", "127.0.0.1"],
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings_tabs.tabText(0) == "元数据"
+    assert dialog.settings_tabs.tabText(1) == "网络代理"
+    assert dialog.network_proxy_mode_combo.currentData() == "socks5"
+    assert dialog.network_proxy_url_edit.text() == "socks5://user:pass@127.0.0.1:1080"
+    assert dialog.network_proxy_bypass_rules_edit.toPlainText() == "localhost\n127.0.0.1"
+
+
+def test_advanced_settings_dialog_disables_proxy_url_for_system_mode(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(network_proxy_mode="system"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.network_proxy_url_edit.isEnabled() is False
+
+
+def test_advanced_settings_dialog_toggles_proxy_url_enabled_state(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(network_proxy_mode="direct"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.network_proxy_url_edit.isEnabled() is False
+
+    dialog.network_proxy_mode_combo.setCurrentIndex(dialog.network_proxy_mode_combo.findData("http"))
+
+    assert dialog.network_proxy_url_edit.isEnabled() is True
+
+    dialog.network_proxy_mode_combo.setCurrentIndex(dialog.network_proxy_mode_combo.findData("system"))
+
+    assert dialog.network_proxy_url_edit.isEnabled() is False
+
+
+def test_advanced_settings_dialog_saves_trimmed_network_proxy_values(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.network_proxy_mode_combo.setCurrentIndex(dialog.network_proxy_mode_combo.findData("socks5"))
+    dialog.network_proxy_url_edit.setText(" socks5://user:pass@127.0.0.1:1080 ")
+    dialog.network_proxy_bypass_rules_edit.setPlainText(" localhost \n127.0.0.1\n\n")
+    dialog._save()
+
+    assert config.network_proxy_mode == "socks5"
+    assert config.network_proxy_url == "socks5://user:pass@127.0.0.1:1080"
+    assert config.network_proxy_bypass_rules == ["localhost", "127.0.0.1"]
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_rejects_invalid_proxy_url(qtbot, monkeypatch) -> None:
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    messages: list[str] = []
+
+    def fake_warning(_parent, _title: str, text: str) -> int:
+        messages.append(text)
+        return 0
+
+    monkeypatch.setattr(module.QMessageBox, "warning", fake_warning)
+    saved: list[AppConfig] = []
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: saved.append(dialog._config))
+    qtbot.addWidget(dialog)
+
+    dialog.network_proxy_mode_combo.setCurrentIndex(dialog.network_proxy_mode_combo.findData("socks5"))
+    dialog.network_proxy_url_edit.setText("http://127.0.0.1:7890")
+    dialog._save()
+
+    assert messages == ["SOCKS5 模式要求 socks5:// 代理地址"]
+    assert saved == []
+
+
 def test_advanced_settings_dialog_loads_episode_title_enhancement_checkbox(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

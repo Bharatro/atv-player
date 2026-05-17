@@ -7,6 +7,16 @@ from atv_player.sqlite_utils import managed_connection
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
+_VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
+_DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    ".local",
+]
 
 
 def _normalize_danmaku_line_count(value: object) -> int:
@@ -74,6 +84,36 @@ def _normalize_global_search_history(value: object) -> list[str]:
     return history[:10]
 
 
+def _normalize_network_proxy_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_NETWORK_PROXY_MODES else "direct"
+
+
+def _normalize_network_proxy_url(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_network_proxy_bypass_rules(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return list(_DEFAULT_NETWORK_PROXY_BYPASS_RULES)
+    if value is None:
+        return list(_DEFAULT_NETWORK_PROXY_BYPASS_RULES)
+    if not isinstance(value, list):
+        return list(_DEFAULT_NETWORK_PROXY_BYPASS_RULES)
+    rules: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        rules.append(text)
+        seen.add(text)
+    return rules
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -102,6 +142,9 @@ class SettingsRepository:
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
                     metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                    network_proxy_mode TEXT NOT NULL DEFAULT 'direct',
+                    network_proxy_url TEXT NOT NULL DEFAULT '',
+                    network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -163,6 +206,18 @@ class SettingsRepository:
             if "metadata_bangumi_access_token" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN metadata_bangumi_access_token TEXT NOT NULL DEFAULT ''"
+                )
+            if "network_proxy_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN network_proxy_mode TEXT NOT NULL DEFAULT 'direct'"
+                )
+            if "network_proxy_url" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN network_proxy_url TEXT NOT NULL DEFAULT ''"
+                )
+            if "network_proxy_bypass_rules" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN network_proxy_bypass_rules TEXT NOT NULL DEFAULT '[\"localhost\",\"127.0.0.1\",\"::1\",\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\",\".local\"]'"
                 )
             if "last_active_window" not in columns:
                 conn.execute(
@@ -248,6 +303,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32"
                 )
+            if "main_window_geometry" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN main_window_geometry BLOB"
+                )
+            if "player_window_geometry" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_window_geometry BLOB"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
@@ -289,6 +352,9 @@ class SettingsRepository:
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
                     metadata_bangumi_access_token,
+                    network_proxy_mode,
+                    network_proxy_url,
+                    network_proxy_bypass_rules,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -322,7 +388,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -344,6 +410,9 @@ class SettingsRepository:
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
                     metadata_bangumi_access_token,
+                    network_proxy_mode,
+                    network_proxy_url,
+                    network_proxy_bypass_rules,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -390,6 +459,9 @@ class SettingsRepository:
             metadata_douban_cookie,
             metadata_tmdb_api_key,
             metadata_bangumi_access_token,
+            network_proxy_mode,
+            network_proxy_url,
+            network_proxy_bypass_rules,
             last_path,
             last_active_window,
             last_playback_source,
@@ -432,6 +504,9 @@ class SettingsRepository:
             metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
             metadata_tmdb_api_key=str(metadata_tmdb_api_key or "").strip(),
             metadata_bangumi_access_token=str(metadata_bangumi_access_token or "").strip(),
+            network_proxy_mode=_normalize_network_proxy_mode(network_proxy_mode),
+            network_proxy_url=_normalize_network_proxy_url(network_proxy_url),
+            network_proxy_bypass_rules=_normalize_network_proxy_bypass_rules(network_proxy_bypass_rules),
             last_path=last_path,
             last_active_window=last_active_window,
             last_playback_source=last_playback_source,
@@ -480,6 +555,9 @@ class SettingsRepository:
                     metadata_douban_cookie = ?,
                     metadata_tmdb_api_key = ?,
                     metadata_bangumi_access_token = ?,
+                    network_proxy_mode = ?,
+                    network_proxy_url = ?,
+                    network_proxy_bypass_rules = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -523,6 +601,9 @@ class SettingsRepository:
                     str(config.metadata_douban_cookie or "").strip(),
                     str(config.metadata_tmdb_api_key or "").strip(),
                     str(config.metadata_bangumi_access_token or "").strip(),
+                    _normalize_network_proxy_mode(config.network_proxy_mode),
+                    _normalize_network_proxy_url(config.network_proxy_url),
+                    json.dumps(_normalize_network_proxy_bypass_rules(config.network_proxy_bypass_rules), ensure_ascii=False),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

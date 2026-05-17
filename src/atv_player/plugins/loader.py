@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 
 from atv_player.models import SpiderPluginConfig
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider as CompatSpider
 from atv_player.plugins.spider_crypto.errors import (
@@ -36,12 +37,19 @@ class LoadedSpiderPlugin:
 
 
 class SpiderPluginLoader:
-    def __init__(self, cache_dir: Path, get=httpx.get, keyring=None) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        get=httpx.get,
+        keyring=None,
+        proxy_decider: ProxyDecider | None = None,
+    ) -> None:
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._get = get
         self._keyring = keyring
         self._runtime = SecSpiderRuntime(keyring) if keyring is not None else None
+        self._proxy_decider = proxy_decider
 
     def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
         compat_spider_module.set_cache_root(self._cache_dir / "spider-cache")
@@ -134,7 +142,12 @@ class SpiderPluginLoader:
         return module
 
     def _fetch_remote_text(self, url: str) -> str:
-        response = self._get(url, timeout=15.0, follow_redirects=True)
+        response = self._get(
+            url,
+            timeout=15.0,
+            follow_redirects=True,
+            **build_httpx_kwargs_for_url(self._proxy_decider, url),
+        )
         if response.status_code >= 300:
             raise httpx.HTTPStatusError(
                 f"Error response {response.status_code} while requesting {url}",
