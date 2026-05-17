@@ -3527,8 +3527,9 @@ def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "元数据"
-    assert dialog.settings_tabs.tabText(1) == "网络代理"
+    assert dialog.settings_tabs.tabText(0) == "播放设置"
+    assert dialog.settings_tabs.tabText(1) == "元数据"
+    assert dialog.settings_tabs.tabText(2) == "网络代理"
     assert dialog.network_proxy_mode_combo.currentData() == "socks5"
     assert dialog.network_proxy_url_edit.text() == "socks5://user:pass@127.0.0.1:1080"
     assert dialog.network_proxy_bypass_rules_edit.toPlainText() == "localhost\n127.0.0.1"
@@ -3612,11 +3613,13 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
         mpv_network_timeout_seconds=20,
         mpv_default_readahead_secs=35,
         mpv_extra_options="cache-pause-wait=9\nstream-buffer-size=8M",
+        playback_auto_switch_source_on_failure=True,
     )
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(2) == "播放设置"
+    assert dialog.settings_tabs.tabText(0) == "播放设置"
+    assert dialog.playback_auto_switch_source_on_failure_checkbox.isChecked() is True
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
     assert dialog.mpv_cache_size_edit.text() == "1024"
     assert dialog.mpv_hwdec_mode_combo.currentData() == "no"
@@ -3633,6 +3636,7 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
     qtbot.addWidget(dialog)
 
+    dialog.playback_auto_switch_source_on_failure_checkbox.setChecked(True)
     dialog.youtube_cookie_browser_combo.setCurrentIndex(dialog.youtube_cookie_browser_combo.findData("chrome"))
     dialog.mpv_cache_size_edit.setText(" 768 ")
     dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("no"))
@@ -3641,6 +3645,7 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     dialog.mpv_extra_options_edit.setPlainText(" cache-pause-wait=8 \nstream-buffer-size=6M ")
     dialog._save()
 
+    assert config.playback_auto_switch_source_on_failure is True
     assert config.youtube_cookie_browser == "chrome"
     assert config.mpv_cache_size_mb == 768
     assert config.mpv_hwdec_mode == "no"
