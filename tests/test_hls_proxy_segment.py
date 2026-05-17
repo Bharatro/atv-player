@@ -1,5 +1,6 @@
 import threading
 
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import PlaylistSegment, ProxySessionRegistry
 
@@ -114,6 +115,40 @@ def test_segment_proxy_uses_session_headers_for_asset_fetch() -> None:
 
     assert payload == b"key-bytes"
     assert seen_headers == [{"Referer": "https://site.example"}]
+
+
+def test_segment_proxy_passes_proxy_kwargs_to_upstream_fetch() -> None:
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool, **kwargs) -> FakeResponse:
+        seen.update({key: value for key, value in kwargs.items() if key in {"proxy", "trust_env"}})
+        return FakeResponse(b"\x47" + b"\x00" * 187)
+
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    registry.get(token).segments = [
+        PlaylistSegment(index=0, url="https://media.example/path/0001.ts", duration=5.0)
+    ]
+    proxy = SegmentProxy(
+        session_registry=registry,
+        get=fake_get,
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="socks5", proxy_url="socks5://127.0.0.1:1080", bypass_rules=[])
+        ),
+    )
+
+    payload = proxy.fetch_segment(token, 0)
+
+    assert payload.startswith(b"\x47")
+    assert seen["proxy"] == "socks5://127.0.0.1:1080"
+    assert seen["trust_env"] is False
 
 
 def test_segment_proxy_waits_for_in_flight_duplicate_request_instead_of_returning_empty_bytes() -> None:

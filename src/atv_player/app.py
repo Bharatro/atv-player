@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 import gc
+import httpx
 import inspect
 import threading
 import time
@@ -63,16 +64,19 @@ from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
-from atv_player.network_proxy import ProxyConfig, ProxyDecider
+from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
+from atv_player.plugins.compat.base.spider import set_proxy_decider_loader as set_spider_proxy_decider_loader
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.playback_parsers import BuiltInPlaybackParserService
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
+from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.yt_dlp_service import YtdlpPlaybackService
 from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
+from atv_player.ui.poster_loader import set_proxy_decider_loader
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow, load_direct_parse_detail
 from atv_player.ui.icon_cache import load_icon
@@ -299,17 +303,31 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
-        self._m3u8_ad_filter = M3U8AdFilter()
-        self._playback_parser_service = BuiltInPlaybackParserService()
-        self._yt_dlp_service = YtdlpPlaybackService()
-        self._danmaku_service = create_default_danmaku_service()
+        set_proxy_decider_loader(self._build_proxy_decider)
+        set_spider_proxy_decider_loader(self._build_proxy_decider)
+        self._m3u8_ad_filter = M3U8AdFilter(
+            proxy_server=LocalHlsProxyServer(
+                get=self._proxy_http_get(),
+                stream=self._proxy_http_stream(),
+            ),
+            get=self._proxy_http_get(),
+        )
+        self._playback_parser_service = BuiltInPlaybackParserService(
+            get=self._proxy_http_get(),
+            post=self._proxy_http_post(),
+        )
+        self._yt_dlp_service = YtdlpPlaybackService(proxy_decider=self._build_proxy_decider())
+        self._danmaku_service = create_default_danmaku_service(
+            get=self._proxy_http_get(),
+            post=self._proxy_http_post(),
+        )
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
-            self._plugin_loader = SpiderPluginLoader(cache_dir)
+            self._plugin_loader = SpiderPluginLoader(cache_dir, get=self._proxy_http_get())
             self._plugin_manager = SpiderPluginManager(
                 self._plugin_repository,
                 self._plugin_loader,
@@ -358,6 +376,30 @@ class AppCoordinator(QObject):
                 bypass_rules=list(config.network_proxy_bypass_rules),
             )
         )
+
+    def _proxy_http_get(self):
+        def run(url: str, **kwargs):
+            request_kwargs = dict(kwargs)
+            request_kwargs.update(build_httpx_kwargs_for_url(self._build_proxy_decider(), url))
+            return httpx.get(url, **request_kwargs)
+
+        return run
+
+    def _proxy_http_post(self):
+        def run(url: str, **kwargs):
+            request_kwargs = dict(kwargs)
+            request_kwargs.update(build_httpx_kwargs_for_url(self._build_proxy_decider(), url))
+            return httpx.post(url, **request_kwargs)
+
+        return run
+
+    def _proxy_http_stream(self):
+        def run(method: str, url: str, **kwargs):
+            request_kwargs = dict(kwargs)
+            request_kwargs.update(build_httpx_kwargs_for_url(self._build_proxy_decider(), url))
+            return httpx.stream(method, url, **request_kwargs)
+
+        return run
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
@@ -1179,7 +1221,11 @@ class AppCoordinator(QObject):
             drive_detail_loader=drive_detail_loader,
             offline_download_detail_loader=offline_download_detail_loader,
             direct_parse_detail_loader=load_direct_parse_detail,
-            direct_parse_danmaku_loader=load_direct_parse_danmaku,
+            direct_parse_danmaku_loader=lambda url: load_direct_parse_danmaku(
+                url,
+                get=self._proxy_http_get(),
+                proxy_decider=self._build_proxy_decider(),
+            ),
             direct_parse_playback_history_loader=None
             if self._playback_history_repository is None
             else lambda vod_id: self._playback_history_repository.get_history("direct_parse", vod_id),

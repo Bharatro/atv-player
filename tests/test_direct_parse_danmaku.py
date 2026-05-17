@@ -1,6 +1,7 @@
 import atv_player.danmaku.direct_parse as direct_parse_module
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.models import PlayItem
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
 def test_direct_parse_danmaku_controller_refreshes_single_source_candidate() -> None:
@@ -78,3 +79,33 @@ def test_direct_parse_danmaku_controller_uses_cached_xml_before_network(monkeypa
     assert item.danmaku_pending is False
     assert "缓存" in item.danmaku_xml
     assert network_calls == []
+
+
+def test_load_direct_parse_danmaku_passes_proxy_kwargs() -> None:
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"danmuku": []}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        seen["url"] = url
+        seen["proxy"] = kwargs.get("proxy")
+        seen["trust_env"] = kwargs.get("trust_env")
+        return FakeResponse()
+
+    payload = direct_parse_module.load_direct_parse_danmaku(
+        "https://www.youtube.com/watch?v=test123",
+        get=fake_get,
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="http", proxy_url="http://127.0.0.1:7890", bypass_rules=[])
+        ),
+    )
+
+    assert payload == {"danmuku": []}
+    assert seen["url"] == "https://dmku.hls.one/"
+    assert seen["proxy"] == "http://127.0.0.1:7890"
+    assert seen["trust_env"] is False

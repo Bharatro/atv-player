@@ -10,18 +10,24 @@ import httpx
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.models import PlayItem
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 _DIRECT_PARSE_DANMAKU_API = "https://dmku.hls.one/"
 _DIRECT_PARSE_PROVIDER = "direct_parse"
 _DIRECT_PARSE_PROVIDER_LABEL = "全局解析"
 
 
-def load_direct_parse_danmaku(url: str) -> dict[str, Any]:
-    response = httpx.get(
+def load_direct_parse_danmaku(
+    url: str,
+    get=httpx.get,
+    proxy_decider: ProxyDecider | None = None,
+) -> dict[str, Any]:
+    response = get(
         _DIRECT_PARSE_DANMAKU_API,
         params={"ac": "dm", "url": url},
         timeout=10.0,
         follow_redirects=True,
+        **build_httpx_kwargs_for_url(proxy_decider, _DIRECT_PARSE_DANMAKU_API),
     )
     response.raise_for_status()
     payload = response.json()
@@ -165,4 +171,3 @@ class DirectParseDanmakuController:
             return int(text, 16)
         except ValueError:
             return 16777215
-

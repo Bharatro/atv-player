@@ -4,19 +4,34 @@ import json
 import re
 import time
 from abc import ABCMeta
+from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 
 import requests
 from lxml import etree
 
+from atv_player.network_proxy import ProxyDecider, build_requests_proxies_for_url
+
 _CACHE_ROOT = Path.home() / ".cache" / "atv-player" / "plugins" / "spider-cache"
+_proxy_decider_loader: Callable[[], ProxyDecider | None] | None = None
 
 
 def set_cache_root(path: Path | str) -> None:
     global _CACHE_ROOT
     _CACHE_ROOT = Path(path)
     _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def set_proxy_decider_loader(loader: Callable[[], ProxyDecider | None] | None) -> None:
+    global _proxy_decider_loader
+    _proxy_decider_loader = loader
+
+
+def _effective_proxy_decider() -> ProxyDecider | None:
+    if _proxy_decider_loader is None:
+        return None
+    return _proxy_decider_loader()
 
 
 def _cache_path(key: str) -> Path:
@@ -92,6 +107,7 @@ class Spider(metaclass=ABCMeta):
             verify=verify,
             stream=stream,
             allow_redirects=allow_redirects,
+            proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
         )
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)
@@ -120,6 +136,7 @@ class Spider(metaclass=ABCMeta):
             verify=verify,
             stream=stream,
             allow_redirects=allow_redirects,
+            proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
         )
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)

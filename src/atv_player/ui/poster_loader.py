@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from io import BytesIO
 from hashlib import sha256
 from pathlib import Path
@@ -9,6 +10,7 @@ import httpx
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 
+from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir
 
 try:
@@ -38,6 +40,7 @@ _YOUTUBE_PAGE_HOSTS = {
     "music.youtube.com",
     "youtu.be",
 }
+_proxy_decider_loader: Callable[[], ProxyDecider | None] | None = None
 
 
 def _looks_like_unsupported_page_url(source: str) -> bool:
@@ -84,6 +87,19 @@ def poster_cache_path(image_url: str) -> Path:
     normalized_url = normalize_poster_url(image_url)
     digest = sha256(normalized_url.encode("utf-8")).hexdigest()
     return poster_cache_dir() / f"{digest}.img"
+
+
+def set_proxy_decider_loader(loader: Callable[[], ProxyDecider | None] | None) -> None:
+    global _proxy_decider_loader
+    _proxy_decider_loader = loader
+
+
+def _effective_proxy_decider(proxy_decider: ProxyDecider | None) -> ProxyDecider | None:
+    if proxy_decider is not None:
+        return proxy_decider
+    if _proxy_decider_loader is None:
+        return None
+    return _proxy_decider_loader()
 
 
 def _write_poster_cache_bytes(cache_path: Path, image_bytes: bytes) -> None:
@@ -166,6 +182,7 @@ def load_remote_poster_image(
     target_size: QSize,
     timeout: float = POSTER_REQUEST_TIMEOUT_SECONDS,
     get=httpx.get,
+    proxy_decider: ProxyDecider | None = None,
 ) -> QImage | None:
     normalized_url = normalize_poster_url(image_url)
     if not normalized_url:
@@ -182,6 +199,7 @@ def load_remote_poster_image(
             headers=build_poster_request_headers(normalized_url),
             timeout=timeout,
             follow_redirects=True,
+            **build_httpx_kwargs_for_url(_effective_proxy_decider(proxy_decider), normalized_url),
         )
         response.raise_for_status()
     except Exception:

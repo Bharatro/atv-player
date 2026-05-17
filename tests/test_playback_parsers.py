@@ -6,6 +6,7 @@ import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
+from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.playback_parsers import BuiltInPlaybackParserService
 from atv_player.player.resolve_cache import PlaybackResolveCache
 
@@ -87,6 +88,34 @@ def test_parser_service_uses_response_headers_alias_payload() -> None:
         "User-Agent": "UA",
         "Referer": "https://site.example",
     }
+
+
+def test_parser_service_passes_proxy_kwargs_to_http_calls() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_get(
+        url: str,
+        params: dict[str, str],
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool,
+        **kwargs,
+    ):
+        seen.update({key: value for key, value in kwargs.items() if key in {"proxy", "trust_env"}})
+        return httpx.Response(200, json={"parse": 0, "jx": 0, "url": "https://media.example/direct.m3u8"})
+
+    service = BuiltInPlaybackParserService(
+        get=fake_get,
+        proxy_decider=ProxyDecider(
+            ProxyConfig(mode="socks5", proxy_url="socks5://127.0.0.1:1080", bypass_rules=[])
+        ),
+    )
+
+    result = service.resolve("qq", "https://site.example/play?id=3", preferred_key="fish")
+
+    assert result.url == "https://media.example/direct.m3u8"
+    assert seen["proxy"] == "socks5://127.0.0.1:1080"
+    assert seen["trust_env"] is False
 
 
 def test_parser_service_raises_when_all_parsers_fail() -> None:

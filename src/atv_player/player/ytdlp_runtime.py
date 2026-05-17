@@ -90,8 +90,10 @@ def resolve_mpv_ytdlp_path() -> str:
     return resolve_system_ytdlp_path()
 
 
-def build_ytdlp_command_args() -> list[str]:
+def build_ytdlp_command_args(proxy_args: list[str] | None = None) -> list[str]:
     args: list[str] = []
+    if proxy_args:
+        args.extend(proxy_args)
     browser = _resolved_cookie_browser()
     if browser:
         args.extend(["--cookies-from-browser", browser])
