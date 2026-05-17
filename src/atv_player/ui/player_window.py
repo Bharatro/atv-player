@@ -1166,12 +1166,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._last_logged_source_address = source_url
         self._append_log(f"原始来源地址: {source_url}")
 
-    def _resolving_startup_message(self, current_item: PlayItem) -> str:
-        source_url = self._current_item_source_address(current_item)
-        if source_url:
-            return f"正在解析播放地址: {source_url}"
-        return "正在解析播放地址"
-
     def _has_multiple_playback_sources(self) -> bool:
         if self.session is None:
             return False
@@ -1730,9 +1724,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         if not hydrate_only:
-            self._set_startup_state(
-                self._startup_coordinator.resolving(self._resolving_startup_message(current_item))
-            )
+            self._set_startup_state(self._startup_coordinator.resolving())
         playback_loader = self.session.playback_loader
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")
@@ -2389,7 +2381,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         session = self.session
         current_item = session.playlist[self.current_index]
-        self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
+        self._set_startup_state(self._startup_coordinator.resolving())
         if wait_for_load:
             self._append_log(f"正在加载播放地址: {current_item.title}")
         self._play_item_request_id += 1

@@ -13162,7 +13162,7 @@ def test_player_window_logs_loading_message_while_initial_item_resolves_async(qt
     qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/1.m3u8", 0)], timeout=1000)
 
 
-def test_player_window_logs_source_address_in_resolving_state_while_loading_async_playback(qtbot) -> None:
+def test_player_window_keeps_resolving_state_plain_and_logs_source_address_in_playback_log(qtbot) -> None:
     ready = threading.Event()
 
     def load_item(item: PlayItem) -> None:
@@ -13181,10 +13181,13 @@ def test_player_window_logs_source_address_in_resolving_state_while_loading_asyn
 
     window.open_session(session)
 
-    assert "正在解析播放地址: https://pan.baidu.com/s/demo" in window.log_view.toPlainText()
+    assert window.log_view.toPlainText().splitlines()[0] == "正在解析播放地址"
     assert "正在加载播放地址: 网盘剧集" in window.log_view.toPlainText()
 
     ready.set()
+
+    qtbot.waitUntil(lambda: "原始来源地址: https://pan.baidu.com/s/demo" in window.log_view.toPlainText(), timeout=1000)
+    assert "正在解析播放地址: https://pan.baidu.com/s/demo" not in window.log_view.toPlainText()
 
 
 def test_player_window_logs_resolving_startup_message(qtbot) -> None:
