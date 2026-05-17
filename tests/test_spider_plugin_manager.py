@@ -210,22 +210,22 @@ def test_manager_import_github_repository_imports_manifest_plugins_and_disables_
         "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
             200,
             json=[
-                {"file": "py/潮流APP.txt", "valid": True},
-                {"file": "py/双星.txt", "valid": False},
-                {"file": "py/无版本.txt"},
+                {"file": "py/潮流APP.txt", "valid": True, "version": 8},
+                {"file": "py/双星.txt", "valid": False, "version": 3},
+                {"file": "py/无版本.txt", "version": 5},
             ],
         ),
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt": httpx.Response(
             200,
-            text="//@version:6\nprint('a')\n",
+            text="//@version:1\nprint('a')\n",
         ),
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt": httpx.Response(
             200,
-            text="  //@version:2\nprint('b')\n",
+            text="  //@version:99\nprint('b')\n",
         ),
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%97%A0%E7%89%88%E6%9C%AC.txt": httpx.Response(
             200,
-            text="print('c')\n",
+            text="//@version:42\nprint('c')\n",
         ),
     }
     progress_events: list[tuple[str, int, int, str]] = []
@@ -254,7 +254,7 @@ def test_manager_import_github_repository_imports_manifest_plugins_and_disables_
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt",
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%97%A0%E7%89%88%E6%9C%AC.txt",
     ]
-    assert [plugin.plugin_version for plugin in plugins] == [6, 2, 1]
+    assert [plugin.plugin_version for plugin in plugins] == [8, 3, 5]
     assert [plugin.enabled for plugin in plugins] == [True, False, True]
     assert progress_events == [
         ("resolve_repo", 0, 0, "正在解析仓库信息"),
@@ -274,17 +274,17 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
         "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
             200,
             json=[
-                {"file": "py/潮流APP.txt", "valid": True},
-                {"file": "py/双星.txt", "valid": True},
+                {"file": "py/潮流APP.txt", "valid": True, "version": 6},
+                {"file": "py/双星.txt", "valid": True, "version": 9},
             ],
         ),
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt": httpx.Response(
             200,
-            text="//@version:6\nprint('same')\n",
+            text="//@version:100\nprint('same')\n",
         ),
         "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt": httpx.Response(
             200,
-            text="//@version:7\nprint('new')\n",
+            text="//@version:1\nprint('new')\n",
         ),
     }
 
@@ -332,10 +332,39 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
 
     assert result == SpiderPluginImportResult(imported_count=0, updated_count=1, skipped_count=1)
     assert len(plugins) == 2
-    assert updated.plugin_version == 7
+    assert updated.plugin_version == 9
     assert updated.enabled is False
     assert updated.display_name == "双星自定义"
     assert updated.config_text == "token=keep\n"
+
+
+def test_manager_import_github_repository_skips_entries_with_invalid_manifest_version(tmp_path: Path) -> None:
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"file": "py/潮流APP.txt", "version": "bad"},
+            ],
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_github_repository("https://github.com/har01d5/tvbox")
+
+    assert result == SpiderPluginImportResult(imported_count=0, updated_count=0, skipped_count=1)
+    assert repository.list_plugins() == []
 
 
 def test_manager_import_github_repository_stops_after_cancellation_and_preserves_completed_changes(
@@ -351,8 +380,8 @@ def test_manager_import_github_repository_stops_after_cancellation_and_preserves
         "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
             200,
             json=[
-                {"file": "py/潮流APP.txt", "valid": True},
-                {"file": "py/双星.txt", "valid": True},
+                {"file": "py/潮流APP.txt", "valid": True, "version": 6},
+                {"file": "py/双星.txt", "valid": True, "version": 7},
             ],
         ),
         first_url: httpx.Response(

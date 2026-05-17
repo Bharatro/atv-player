@@ -14,6 +14,7 @@ from atv_player.player.ytdlp_runtime import resolve_system_ytdlp_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
+_BUNDLED_VERSION_PATH = Path(__file__).with_name("_build_version.txt")
 _MISSING_VALUE = "未安装"
 _UNAVAILABLE_VALUE = "不可用"
 _TIMEOUT_VALUE = "超时"
@@ -44,10 +45,20 @@ def resolve_app_version() -> str:
         runtime_version = app.applicationVersion().strip()
         if runtime_version:
             return runtime_version
+    bundled_version = _read_bundled_version()
+    if bundled_version:
+        return bundled_version
     try:
         return importlib.metadata.version("atv-player")
     except importlib.metadata.PackageNotFoundError:
         return _read_pyproject_version()
+
+
+def _read_bundled_version() -> str:
+    try:
+        return _BUNDLED_VERSION_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _read_pyproject_version() -> str:

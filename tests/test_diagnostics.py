@@ -30,3 +30,14 @@ def test_resolve_app_version_falls_back_to_pyproject_for_source_run(monkeypatch,
     monkeypatch.setattr(diagnostics, "_PYPROJECT_PATH", Path(pyproject_path))
 
     assert diagnostics.resolve_app_version() == "0.8.2"
+
+
+def test_resolve_app_version_prefers_bundled_build_version(monkeypatch, tmp_path) -> None:
+    version_path = tmp_path / "_build_version.txt"
+    version_path.write_text("1.2.3", encoding="utf-8")
+
+    monkeypatch.setattr(diagnostics.QApplication, "instance", lambda: None)
+    monkeypatch.setattr(diagnostics.importlib.metadata, "version", lambda name: "0.1.0")
+    monkeypatch.setattr(diagnostics, "_BUNDLED_VERSION_PATH", Path(version_path))
+
+    assert diagnostics.resolve_app_version() == "1.2.3"

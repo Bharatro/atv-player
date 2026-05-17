@@ -27,6 +27,15 @@ def test_resolve_artifact_version_falls_back_to_default() -> None:
     assert build.resolve_artifact_version("   ") == "dev"
 
 
+def test_prepare_runtime_version_file_writes_resolved_version(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(build, "BUILD_DIR", tmp_path / "build")
+
+    version_file = build.prepare_runtime_version_file(" 0.3.2 ")
+
+    assert version_file == tmp_path / "build" / "runtime" / build.RUNTIME_VERSION_FILENAME
+    assert version_file.read_text(encoding="utf-8") == "0.3.2"
+
+
 def test_build_archive_name_includes_explicit_version() -> None:
     assert build.build_archive_name("linux", "x86_64", "1.2.3") == "atv-player-1.2.3-linux-x64.AppImage"
     assert build.build_archive_name("Darwin", "aarch64", "2.0.0") == "atv-player-2.0.0-macos-arm64.zip"
@@ -91,9 +100,11 @@ def test_find_libmpv_uses_repo_local_windows_runtime_dir(monkeypatch, tmp_path) 
 def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_path) -> None:
     libmpv = tmp_path / "libmpv.so.2"
     libmpv.write_bytes(b"so")
+    version_file = tmp_path / build.RUNTIME_VERSION_FILENAME
+    version_file.write_text("0.3.2", encoding="utf-8")
     monkeypatch.setattr(build, "find_libmpv", lambda target_platform: [(libmpv, ".")])
 
-    command = build.build_pyinstaller_command("linux")
+    command = build.build_pyinstaller_command("linux", runtime_version_file=version_file)
 
     assert command[:3] == [sys.executable, "-m", "PyInstaller"]
     assert "--noconfirm" in command
@@ -107,6 +118,7 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert "--windowed" not in command
     assert "--add-data" in command
     assert f"{build.ICONS_DIR}:atv_player/icons" in command
+    assert f"{version_file}:atv_player/{build.RUNTIME_VERSION_FILENAME}" in command
     assert "--add-binary" in command
     assert f"{libmpv}:." in command
     assert "--icon" not in command
@@ -273,7 +285,11 @@ def test_build_linux_uses_artifact_version_for_appimage_output(monkeypatch, tmp_
     monkeypatch.setattr(build, "BUILD_DIR", project_root / "build")
     monkeypatch.setattr(build, "ENTRYPOINT", entrypoint)
     monkeypatch.setattr(build, "ICONS_DIR", icons_dir)
-    monkeypatch.setattr(build, "build_pyinstaller_command", lambda target_platform: ["fake-pyinstaller", target_platform])
+    def fake_build_pyinstaller_command(target_platform, runtime_version_file=None):
+        run_calls["runtime_version_file"] = runtime_version_file
+        return ["fake-pyinstaller", target_platform]
+
+    monkeypatch.setattr(build, "build_pyinstaller_command", fake_build_pyinstaller_command)
     monkeypatch.setattr(build.subprocess, "run", lambda command, check, cwd: run_calls.update(command=command, check=check, cwd=cwd))
     monkeypatch.setattr(build, "prepare_linux_appdir", lambda bundle_path: project_root / "build" / "appdir")
 
@@ -294,6 +310,8 @@ def test_build_linux_uses_artifact_version_for_appimage_output(monkeypatch, tmp_
     assert run_calls["appdir_path"] == project_root / "build" / "appdir"
     assert run_calls["output_path"] == dist_dir / "atv-player-0.3.2-linux-x64.AppImage"
     assert run_calls["arch"] is None
+    assert run_calls["runtime_version_file"] == project_root / "build" / "runtime" / build.RUNTIME_VERSION_FILENAME
+    assert run_calls["runtime_version_file"].read_text(encoding="utf-8") == "0.3.2"
     assert result == dist_dir / "atv-player-0.3.2-linux-x64.AppImage"
 
 

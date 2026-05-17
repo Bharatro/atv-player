@@ -12,6 +12,7 @@ from pathlib import Path
 
 APP_NAME = "atv-player"
 DEFAULT_ARTIFACT_VERSION = "dev"
+RUNTIME_VERSION_FILENAME = "_build_version.txt"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "src" / "atv_player" / "main.py"
 ICONS_DIR = PROJECT_ROOT / "src" / "atv_player" / "icons"
@@ -63,6 +64,13 @@ def normalize_arch(value: str | None = None) -> str:
 def resolve_artifact_version(value: str | None = None) -> str:
     normalized = (value or "").strip()
     return normalized or DEFAULT_ARTIFACT_VERSION
+
+
+def prepare_runtime_version_file(version: str | None = None) -> Path:
+    path = BUILD_DIR / "runtime" / RUNTIME_VERSION_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(resolve_artifact_version(version), encoding="utf-8")
+    return path
 
 
 def build_target(value: str | None) -> BuildTarget:
@@ -228,7 +236,7 @@ def build_linux_appimage(appdir_path: Path, output_path: Path, arch: str | None 
     return output_path
 
 
-def build_pyinstaller_command(target_platform: str) -> list[str]:
+def build_pyinstaller_command(target_platform: str, runtime_version_file: Path | None = None) -> list[str]:
     target = build_target(target_platform)
     command = [
         sys.executable,
@@ -254,6 +262,13 @@ def build_pyinstaller_command(target_platform: str) -> list[str]:
             data_mapping(find_libmpv(target.platform_id)[0][0], ".", target.platform_id),
         ]
     )
+    if runtime_version_file is not None:
+        command.extend(
+            [
+                "--add-data",
+                data_mapping(runtime_version_file, f"atv_player/{RUNTIME_VERSION_FILENAME}", target.platform_id),
+            ]
+        )
     icon_path = pyinstaller_icon_path(target.platform_id)
     if icon_path is not None:
         command.extend(["--icon", str(icon_path)])
@@ -277,12 +292,13 @@ def build(target_platform: str) -> Path:
         raise FileNotFoundError(f"Missing entrypoint: {ENTRYPOINT}")
     if not ICONS_DIR.exists():
         raise FileNotFoundError(f"Missing icons directory: {ICONS_DIR}")
-    artifact_version = os.environ.get("ARTIFACT_VERSION")
+    artifact_version = resolve_artifact_version(os.environ.get("ARTIFACT_VERSION"))
     icon_path = pyinstaller_icon_path(target_platform)
     if icon_path is not None and not icon_path.exists():
         raise FileNotFoundError(f"Missing PyInstaller icon: {icon_path}")
 
-    command = build_pyinstaller_command(target_platform)
+    runtime_version_file = prepare_runtime_version_file(artifact_version)
+    command = build_pyinstaller_command(target_platform, runtime_version_file=runtime_version_file)
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)
 
     bundle_path = bundle_path_for_target(target_platform)

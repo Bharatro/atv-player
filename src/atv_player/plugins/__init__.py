@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import re
 import time
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -31,9 +30,6 @@ class SpiderPluginDefinition:
     controller: object
     search_enabled: bool
     sort_order: int = 0
-
-
-_PLUGIN_VERSION_PATTERN = re.compile(r"^\s*//@version:(\d+)\s*$")
 
 
 def _default_plugin_name(source_type: str, source_value: str) -> str:
@@ -72,12 +68,16 @@ def _parse_github_repo(value: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def _parse_plugin_version(source_text: str) -> int:
-    for line in source_text.splitlines()[:16]:
-        matched = _PLUGIN_VERSION_PATTERN.match(line)
-        if matched:
-            return int(matched.group(1))
-    return 1
+def _parse_manifest_plugin_version(entry: object) -> int | None:
+    if not isinstance(entry, dict):
+        return None
+    try:
+        value = int(entry.get("version"))
+    except (TypeError, ValueError):
+        return None
+    if value < 1:
+        return None
+    return value
 
 
 def _raw_github_url(owner: str, repo: str, branch: str, relative_path: str) -> str:
@@ -403,11 +403,14 @@ class SpiderPluginManager:
             if path.is_absolute() or ".." in path.parts:
                 result.skipped_count += 1
                 continue
+            plugin_version = _parse_manifest_plugin_version(entry)
+            if plugin_version is None:
+                result.skipped_count += 1
+                continue
             try:
                 source_url = _raw_github_url(owner, repo, default_branch, file_path)
                 self._raise_if_import_cancelled(cancel_callback, result)
-                source_text = self._fetch_text(source_url)
-                plugin_version = _parse_plugin_version(source_text)
+                self._fetch_text(source_url)
                 existing = self._repository.find_plugin_by_source_value(source_url)
                 if existing is None:
                     plugin = self._repository.add_plugin(
