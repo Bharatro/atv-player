@@ -2784,6 +2784,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_mode = "episode"
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._log_episode_title_mapping()
+
+    def _log_episode_title_mapping(self) -> None:
+        if self.session is None:
+            return
+        playlist = self.session.playlist
+        lines: list[str] = []
+        has_mapping = False
+        for item in playlist:
+            original = str(item.original_title or "").strip()
+            display = str(item.episode_display_title or "").strip()
+            if display and normalize_episode_title_text(original) != normalize_episode_title_text(display):
+                lines.append(f"{original} → {display}")
+                has_mapping = True
+            else:
+                lines.append(original)
+        if not has_mapping:
+            return
+        logger.info("剧集标题改写:\n%s", "\n".join(f"  {line}" for line in lines))
 
     def _handle_metadata_hydration_failed(self, request_id: int, message: str) -> None:
         if request_id != self._metadata_request_id:

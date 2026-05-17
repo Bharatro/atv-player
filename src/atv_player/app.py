@@ -200,6 +200,82 @@ def _extract_quality_variant_episode_number(item: PlayItem) -> int | None:
     return None
 
 
+def _extract_series_title_candidate(value: object) -> str:
+    text = _path_basename(str(value or "").strip())
+    if not text:
+        return ""
+    text = re.sub(r"\.(mkv|mp4|avi|mov|m4v|ts|flv)\b.*$", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"[\[(（【].*$", "", text).strip()
+    for pattern in (
+        r"[.\s_-]*S\d+\s*E\d+.*$",
+        r"[.\s_-]*第\s*[0-9零一二两三四五六七八九十百千]+\s*[集话期部回].*$",
+        r"[.\s_-]*0*\d{1,4}\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b.*$",
+    ):
+        stripped = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+        if stripped != text:
+            text = stripped
+            break
+    text = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", text).strip() or text
+    text = re.sub(r"[丨｜|]", "", text)
+    text = re.sub(r"[._]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" -_")
+    if not text or text.isdigit():
+        return ""
+    return text
+
+
+def _infer_series_title_from_playlist(playlist: list[PlayItem]) -> str:
+    candidate_scores: dict[str, tuple[int, int, str]] = {}
+    for item in playlist:
+        values = [
+            _path_basename(item.path),
+            _path_basename(str(item.path or "").strip().rsplit("/", 1)[0]),
+            item.original_title,
+            item.title,
+        ]
+        for value in values:
+            candidate = _extract_series_title_candidate(value)
+            if not candidate:
+                continue
+            normalized = re.sub(r"\s+", "", candidate).lower()
+            if not normalized:
+                continue
+            count, length, stored = candidate_scores.get(normalized, (0, 0, candidate))
+            preferred = candidate if len(candidate) >= len(stored) else stored
+            candidate_scores[normalized] = (count + 1, max(length, len(candidate)), preferred)
+    if not candidate_scores:
+        return ""
+    _normalized, (_count, _length, candidate) = max(
+        candidate_scores.items(),
+        key=lambda entry: (entry[1][0], entry[1][1], entry[0]),
+    )
+    return candidate
+
+
+def _extract_series_year_candidates(value: object) -> list[str]:
+    text = _path_basename(str(value or "").strip())
+    if not text:
+        return []
+    return re.findall(r"[\(（\[【]\s*((?:19|20)\d{2})\s*[\)）\]】]", text)
+
+
+def _infer_series_year_from_playlist(playlist: list[PlayItem]) -> str:
+    year_scores: dict[str, int] = {}
+    for item in playlist:
+        values = [
+            (_path_basename(str(item.path or "").strip().rsplit("/", 1)[0]), 3),
+            (_path_basename(item.path), 1),
+            (item.original_title, 1),
+            (item.title, 1),
+        ]
+        for value, weight in values:
+            for year in _extract_series_year_candidates(value):
+                year_scores[year] = year_scores.get(year, 0) + weight
+    if not year_scores:
+        return ""
+    return max(year_scores.items(), key=lambda entry: (entry[1], entry[0]))[0]
+
+
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     _install_button_pointing_hand_cursor(app)
@@ -600,13 +676,37 @@ class AppCoordinator(QObject):
                 season_episode_pairs = _season_episode_pairs(playlist, default_season)
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
+                playlist_search_title = _infer_series_title_from_playlist(playlist)
+                playlist_search_year = _infer_series_year_from_playlist(playlist)
                 has_season_marker = _title_has_season_marker(session_vod.vod_name)
                 search_year = "" if has_season_marker else year
                 search_results = _search_tv_cached(tmdb_client, search_title, year=search_year)
                 if not search_results and search_title != session_vod.vod_name and not has_season_marker:
                     search_results = _search_tv_cached(tmdb_client, session_vod.vod_name, year=search_year)
+                if (
+                    not search_results
+                    and playlist_search_title
+                    and _normalize_title(playlist_search_title) not in {_normalize_title(search_title), _normalize_title(session_vod.vod_name)}
+                ):
+                    fallback_year = search_year or playlist_search_year
+                    search_results = _search_tv_cached(tmdb_client, playlist_search_title, year=fallback_year)
+                effective_vod = session_vod
+                if (
+                    playlist_search_title
+                    and (
+                        _normalize_title(playlist_search_title) != _normalize_title(session_vod.vod_name)
+                        or (playlist_search_year and not year)
+                    )
+                ):
+                    effective_vod = replace(
+                        session_vod,
+                        vod_name=playlist_search_title,
+                        vod_year=year or playlist_search_year,
+                    )
                 if search_results:
                     normalized_title = _normalize_title(search_title)
+                    if playlist_search_title and search_results:
+                        normalized_title = _normalize_title(playlist_search_title)
                     matched = None
                     for candidate in search_results:
                         candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
@@ -677,9 +777,9 @@ class AppCoordinator(QObject):
                             finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
                             if finalized is not None:
                                 return finalized
-                for candidate in _search_metadata_candidates(session_vod, source_kind):
+                for candidate in _search_metadata_candidates(effective_vod, source_kind):
                     updated_playlist = build_provider_episode_playlist(
-                        session_vod,
+                        effective_vod,
                         playlist,
                         candidate,
                         source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,

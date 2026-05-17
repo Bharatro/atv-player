@@ -4604,6 +4604,79 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     ]
 
 
+def test_app_coordinator_browse_episode_title_enhancer_falls_back_to_playlist_inferred_series_title(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: list[tuple[str, str]] = []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            seen.append((title, year))
+            if title == "N 哪天第2":
+                return []
+            if title == "逆天邪神" and year == "2023":
+                return [{"id": 42, "name": "逆天邪神", "first_air_date": "2023-01-01"}]
+            raise AssertionError((title, year))
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "初入神界"},
+                    {"episode_number": 31, "name": "邪神归来"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="browse",
+        vod=VodItem(vod_id="v1", vod_name="N 哪天第2", vod_year="", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="N 哪天第2", vod_year="", category_name="动漫"),
+            playlist=[
+                PlayItem(
+                    title="逆丨天邪神 (2023) - 01-4K-[H265.AAC][2023-09-23(815.88 MB)",
+                    original_title="逆丨天邪神 (2023) - 01-4K-[H265.AAC][2023-09-23(815.88 MB)",
+                    path="/show/逆丨天邪神 (2023)/01-4K-[H265.AAC][2023-09-23].mp4",
+                    url="http://m/1.mp4",
+                ),
+                PlayItem(
+                    title="S01E31.2026.2160p.25fps.WEB-DL.H265.10bit.DDP2.0(0.98 GB)",
+                    original_title="S01E31.2026.2160p.25fps.WEB-DL.H265.10bit.DDP2.0(0.98 GB)",
+                    path="/show/逆天邪神.S01E31.2026.2160p.25fps.WEB-DL.H265.10bit.DDP2.0.mp4",
+                    url="http://m/31.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert seen == [("N 哪天第2", ""), ("逆天邪神", "2023")]
+    assert [item.episode_display_title for item in updated] == [
+        "第1集 初入神界",
+        "第31集 邪神归来",
+    ]
+
+
 def test_app_coordinator_episode_title_enhancer_preserves_grouped_multi_version_playlist_order(
     tmp_path,
     monkeypatch,
