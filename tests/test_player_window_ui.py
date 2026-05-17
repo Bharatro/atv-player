@@ -15234,6 +15234,49 @@ def test_player_window_quit_application_preserves_current_paused_state(qtbot, mo
     assert config.last_player_paused is True
 
 
+def test_player_window_close_during_app_quit_preserves_player_restore_state(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.open_session(make_player_session())
+    window.show()
+
+    app = QApplication.instance()
+    assert app is not None
+    app.aboutToQuit.emit()
+    window.close()
+
+    assert config.last_active_window == "player"
+    assert saved["count"] >= 1
+
+
+def test_player_window_close_as_last_visible_window_returns_to_main(qtbot) -> None:
+    saved = {"count": 0}
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player", last_player_paused=True)
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1), start_paused=False)
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+
+    window.close()
+
+    assert config.last_active_window == "main"
+    assert emitted["count"] == 1
+    assert saved["count"] >= 1
+
+
 def visible_shortcut_help_dialogs() -> list[QDialog]:
     return [
         widget

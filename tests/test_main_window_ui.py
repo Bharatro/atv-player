@@ -2856,6 +2856,56 @@ def test_main_window_restore_request_routes_youtube_parse_urls_to_ytdlp(qtbot) -
     assert request.playback_history_loader().position == 156000
 
 
+def test_main_window_restore_request_routes_saved_ytdlp_mode_urls_to_ytdlp(qtbot) -> None:
+    class FakeYtdlpService:
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(
+            last_playback_source="direct_parse",
+            last_playback_mode="ytdlp",
+            last_playback_vod_id="https://www.youtube.com/watch?v=test123",
+        ),
+        plugin_manager=FakePluginManager(),
+        yt_dlp_service=FakeYtdlpService(),
+        direct_parse_playback_history_loader=lambda vod_id: HistoryRecord(
+            id=1,
+            key=vod_id,
+            vod_name="saved",
+            vod_pic="",
+            vod_remarks="",
+            episode=0,
+            episode_url=vod_id,
+            position=156000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+    qtbot.addWidget(window)
+
+    request = window._build_restore_request()
+
+    assert request is not None
+    assert request.source_mode == "ytdlp"
+    assert request.playback_history_loader is not None
+    assert request.playback_history_loader().position == 156000
+
+
 def test_main_window_history_detail_routes_youtube_parse_urls_to_ytdlp(qtbot, monkeypatch) -> None:
     class FakeYtdlpService:
         def is_available(self) -> bool:

@@ -3562,7 +3562,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _build_restore_request(self) -> OpenPlayerRequest | None:
         mode = self.config.last_playback_mode
         source = self.config.last_playback_source or "browse"
-        if mode == "parse" and source in {"direct", "direct_parse"} and self.config.last_playback_vod_id:
+        if mode in {"parse", "ytdlp"} and source in {"direct", "direct_parse"} and self.config.last_playback_vod_id:
             return self._build_parse_request(self.config.last_playback_vod_id)
         if mode in {"detail", "custom"} and self.config.last_playback_vod_id:
             return self._build_detail_restore_request(source, self.config.last_playback_vod_id)

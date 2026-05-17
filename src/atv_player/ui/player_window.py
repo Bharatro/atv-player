@@ -438,6 +438,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._is_muted = bool(getattr(self.config, "player_muted", False))
         self._was_maximized_before_fullscreen = False
         self._quit_requested = False
+        self._app_quit_requested = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
@@ -697,7 +698,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_poster_overlay.hide()
         self.metadata_view = QTextBrowser()
         self.metadata_view.setReadOnly(True)
-        self.metadata_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.metadata_view.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.metadata_view.setOpenLinks(False)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
@@ -928,8 +929,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_log_section_max_height()
         app = QApplication.instance()
         if app is not None:
+            app.aboutToQuit.connect(self._mark_app_quit_requested)
             app.installEventFilter(self)
             self._app_event_filter_installed = True
+
+    def _mark_app_quit_requested(self) -> None:
+        self._app_quit_requested = True
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
@@ -6391,7 +6396,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 app.removeEventFilter(self)
                 self._app_event_filter_installed = False
         self._persist_geometry()
-        if not self._quit_requested and self.config is not None:
+        if not self._quit_requested and not self._app_quit_requested and self.config is not None:
             self.config.last_active_window = "main"
             self._save_config()
             self.closed_to_main.emit()
