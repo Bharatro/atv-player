@@ -399,6 +399,23 @@ def test_github_workflow_includes_release_notes_in_telegram_notification() -> No
     assert workflow.index("Read release notes") < workflow.index("send telegram message")
 
 
+def test_github_workflow_uses_repo_release_notes_file_for_release_body() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+    release_job = workflow[workflow.index("  release:") :]
+
+    assert "body_path: RELEASE_NOTES.md" in release_job
+    assert "generate_release_notes: true" not in release_job
+    assert release_job.index("Checkout code") < release_job.index("Create GitHub Release")
+
+
+def test_github_workflow_checks_out_repo_before_release_notes_lookup() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+    release_job = workflow[workflow.index("  release:") :]
+
+    assert "actions/checkout@v4" in release_job
+    assert release_job.index("Checkout code") < release_job.index("Read release notes")
+
+
 def test_github_workflow_uploads_windows_exe_and_releases_it() -> None:
     workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 
