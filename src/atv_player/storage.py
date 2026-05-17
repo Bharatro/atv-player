@@ -154,6 +154,10 @@ def _normalize_mpv_extra_options(value: object) -> str:
     return str(value or "").strip()
 
 
+def _normalize_playback_auto_switch_source_on_failure(value: object) -> bool:
+    return bool(value)
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -191,6 +195,7 @@ class SettingsRepository:
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
                     mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
                     mpv_extra_options TEXT NOT NULL DEFAULT '',
+                    playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -288,6 +293,10 @@ class SettingsRepository:
             if "mpv_extra_options" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN mpv_extra_options TEXT NOT NULL DEFAULT ''"
+                )
+            if "playback_auto_switch_source_on_failure" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0"
                 )
             if "last_active_window" not in columns:
                 conn.execute(
@@ -431,6 +440,7 @@ class SettingsRepository:
                     mpv_network_timeout_seconds,
                     mpv_default_readahead_secs,
                     mpv_extra_options,
+                    playback_auto_switch_source_on_failure,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -464,7 +474,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -495,6 +505,7 @@ class SettingsRepository:
                     mpv_network_timeout_seconds,
                     mpv_default_readahead_secs,
                     mpv_extra_options,
+                    playback_auto_switch_source_on_failure,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -550,6 +561,7 @@ class SettingsRepository:
             mpv_network_timeout_seconds,
             mpv_default_readahead_secs,
             mpv_extra_options,
+            playback_auto_switch_source_on_failure,
             last_path,
             last_active_window,
             last_playback_source,
@@ -601,6 +613,9 @@ class SettingsRepository:
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
             mpv_default_readahead_secs=_normalize_mpv_default_readahead_secs(mpv_default_readahead_secs),
             mpv_extra_options=_normalize_mpv_extra_options(mpv_extra_options),
+            playback_auto_switch_source_on_failure=_normalize_playback_auto_switch_source_on_failure(
+                playback_auto_switch_source_on_failure
+            ),
             last_path=last_path,
             last_active_window=last_active_window,
             last_playback_source=last_playback_source,
@@ -658,6 +673,7 @@ class SettingsRepository:
                     mpv_network_timeout_seconds = ?,
                     mpv_default_readahead_secs = ?,
                     mpv_extra_options = ?,
+                    playback_auto_switch_source_on_failure = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -710,6 +726,7 @@ class SettingsRepository:
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),
                     _normalize_mpv_default_readahead_secs(config.mpv_default_readahead_secs),
                     _normalize_mpv_extra_options(config.mpv_extra_options),
+                    int(config.playback_auto_switch_source_on_failure),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

@@ -65,6 +65,7 @@ class AdvancedSettingsDialog(QDialog):
         )
         self.network_proxy_scope_label.setWordWrap(True)
         self.playback_group = QGroupBox("播放设置")
+        self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
         self.youtube_cookie_browser_combo = QComboBox()
         self.youtube_cookie_browser_combo.addItem("不使用", "")
         self.youtube_cookie_browser_combo.addItem("Chrome", "chrome")
@@ -101,6 +102,9 @@ class AdvancedSettingsDialog(QDialog):
         self.youtube_cookie_browser_combo.setCurrentIndex(
             max(0, self.youtube_cookie_browser_combo.findData(config.youtube_cookie_browser))
         )
+        self.playback_auto_switch_source_on_failure_checkbox.setChecked(
+            config.playback_auto_switch_source_on_failure
+        )
         self.mpv_cache_size_edit.setText(str(config.mpv_cache_size_mb))
         self.mpv_hwdec_mode_combo.setCurrentIndex(
             max(0, self.mpv_hwdec_mode_combo.findData(config.mpv_hwdec_mode))
@@ -131,6 +135,7 @@ class AdvancedSettingsDialog(QDialog):
         network_proxy_tab_layout.addStretch(1)
 
         playback_layout = QFormLayout()
+        playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
         playback_layout.addRow("YouTube Cookie", self.youtube_cookie_browser_combo)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("解码模式", self.mpv_hwdec_mode_combo)
@@ -143,9 +148,9 @@ class AdvancedSettingsDialog(QDialog):
         playback_tab_layout.addWidget(self.playback_group)
         playback_tab_layout.addStretch(1)
 
+        self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
-        self.settings_tabs.addTab(self.playback_tab, "播放设置")
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -200,7 +205,7 @@ class AdvancedSettingsDialog(QDialog):
             return None
         return mode, proxy_url, bypass_rules
 
-    def _validated_playback_values(self) -> tuple[str, int, str, int, int, str] | None:
+    def _validated_playback_values(self) -> tuple[bool, str, int, str, int, int, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
         if browser not in {"", "chrome", "edge", "firefox"}:
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
@@ -259,6 +264,7 @@ class AdvancedSettingsDialog(QDialog):
             normalized_lines.append(f"{key}={value}")
 
         return (
+            self.playback_auto_switch_source_on_failure_checkbox.isChecked(),
             browser,
             cache_size,
             str(self.mpv_hwdec_mode_combo.currentData() or "auto-safe"),
@@ -281,6 +287,7 @@ class AdvancedSettingsDialog(QDialog):
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
         self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules = proxy_values
         (
+            self._config.playback_auto_switch_source_on_failure,
             self._config.youtube_cookie_browser,
             self._config.mpv_cache_size_mb,
             self._config.mpv_hwdec_mode,
