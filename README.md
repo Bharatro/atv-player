@@ -34,8 +34,9 @@
 - 支持多来源分组、多线路播放列表、自动连播和播放恢复
 - 支持主字幕、次字幕、外挂字幕、音轨选择、DASH 清晰度切换
 - 支持弹幕搜索、弹幕来源切换、弹幕渲染设置和缓存
+- 支持媒体刮削，可手动搜索并补充影片元数据（海报、简介、评分、演员等），也可自动增强
 - 详情侧栏可显示海报、元数据、插件自定义动作和播放日志
-- 解析型播放项会启用“解析”下拉框，可切换并记住偏好的内置解析器
+- 解析型播放项会启用”解析”下拉框，可切换并记住偏好的内置解析器
 
 ### 网络直播
 
@@ -155,6 +156,8 @@ uv run src/atv_player/main.py
 - 海报缓存：`~/.cache/atv-player/posters`
 - 弹幕搜索缓存：`~/.local/share/atv-player/danmaku-search-cache.json`
 - 弹幕系列偏好：`~/.local/share/atv-player/danmaku-series-preferences.json`
+- 元数据缓存：`~/.cache/atv-player/metadata`
+- 元数据手动绑定：`~/.local/share/atv-player/metadata-bindings.json`
 
 应用会持久化以下状态：
 
@@ -165,6 +168,8 @@ uv run src/atv_player/main.py
 - 直播源、手动频道、EPG 配置
 - 插件配置、缓存路径和加载日志
 - 弹幕偏好（启用、行数、显示模式、颜色、位置、速率、字号）
+- 元数据增强配置（启用状态、TMDB API Key、Bangumi Token、豆瓣 Cookie、剧集标题增强）
+- 元数据手动绑定记录
 
 应用不会保存密码。
 

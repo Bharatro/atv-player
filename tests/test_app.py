@@ -4393,6 +4393,236 @@ def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_
     assert calls == [("掩耳盗邻", "")]
 
 
+def test_app_coordinator_episode_title_enhancer_falls_back_to_raw_season_title_for_standalone_sequel_entries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    search_calls: list[tuple[str, str]] = []
+    season_calls: list[tuple[str, int]] = []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            search_calls.append((title, year))
+            if title == "成何体统":
+                return [{"id": 1, "name": "成何体统", "first_air_date": "2024-01-01"}]
+            if title == "成何体统第二季":
+                return [{"id": 2, "name": "成何体统第二季", "first_air_date": "2025-01-01"}]
+            raise AssertionError((title, year))
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            season_calls.append((str(tmdb_id), season_number))
+            if str(tmdb_id) == "1" and season_number == 1:
+                return {"episodes": [{"episode_number": 1, "name": "认亲了"}]}
+            if str(tmdb_id) == "1" and season_number == 2:
+                return {"episodes": []}
+            if str(tmdb_id) == "2" and season_number == 1:
+                return {"episodes": [{"episode_number": 1, "name": "回宫了"}]}
+            raise AssertionError((tmdb_id, season_number))
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="2025", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="2025", category_name="动漫"),
+            playlist=[
+                PlayItem(
+                    title="第一季 - 01(557.99 MB)",
+                    original_title="第一季 - 01(557.99 MB)",
+                    path="/show/第一季/01.mp4",
+                    url="http://m/1-1.mp4",
+                ),
+                PlayItem(
+                    title="01.mp4(706.96 MB)",
+                    original_title="01.mp4(706.96 MB)",
+                    path="/show/01.mp4",
+                    url="http://m/2-1.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert search_calls == [("成何体统", ""), ("成何体统第二季", "")]
+    assert season_calls == [("1", 1), ("1", 2), ("2", 1)]
+    assert [item.episode_display_title for item in updated] == [
+        "第1季 第1集 认亲了",
+        "第2季 第1集 回宫了",
+    ]
+
+
+def test_app_coordinator_episode_title_enhancer_uses_provider_fallback_for_unresolved_standalone_sequel_entries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            if candidate.title != "成何体统第二季":
+                return []
+            return [
+                MetadataMatch(
+                    provider="iqiyi",
+                    provider_id="iqiyi:season2",
+                    title="成何体统第二季",
+                    year=candidate.year,
+                    raw={
+                        "videos": [
+                            {"itemNumber": 1, "itemTitle": "回宫了"},
+                            {"itemNumber": 2, "itemTitle": "装上了"},
+                        ]
+                    },
+                )
+            ]
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            if title == "成何体统":
+                return [{"id": 1, "name": "成何体统", "first_air_date": "2024-01-01"}]
+            if title == "成何体统第二季":
+                return []
+            raise AssertionError(title)
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert str(tmdb_id) == "1"
+            if season_number == 1:
+                return {"episodes": [{"episode_number": 1, "name": "认亲了"}]}
+            if season_number == 2:
+                return {"episodes": []}
+            raise AssertionError((tmdb_id, season_number))
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="browse",
+        vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="", category_name="动漫"),
+            playlist=[
+                PlayItem(
+                    title="第一季 - 01(557.99 MB)",
+                    original_title="第一季 - 01(557.99 MB)",
+                    path="/show/第一季/01.mp4",
+                    url="http://m/1-1.mp4",
+                ),
+                PlayItem(
+                    title="01.mp4(706.96 MB)",
+                    original_title="01.mp4(706.96 MB)",
+                    path="/show/01.mp4",
+                    url="http://m/2-1.mp4",
+                ),
+                PlayItem(
+                    title="02.mp4(722.67 MB)",
+                    original_title="02.mp4(722.67 MB)",
+                    path="/show/02.mp4",
+                    url="http://m/2-2.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1季 第1集 认亲了",
+        "第2季 第1集 回宫了",
+        "第2季 第2集 装上了",
+    ]
+
+
+def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for_anime_category(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: dict[str, object] = {}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "成何体统"
+            return [
+                {"id": 1, "name": "成何体统", "genre_ids": [18], "first_air_date": "2024-01-01"},
+                {"id": 256783, "name": "成何体统", "genre_ids": [16, 35], "first_air_date": "2024-01-01"},
+                {"id": 3, "name": "成何体统", "genre_ids": [10766], "first_air_date": "2024-01-01"},
+            ]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            seen["tmdb_id"] = str(tmdb_id)
+            seen["season_number"] = season_number
+            return {"episodes": [{"episode_number": 1, "name": "认亲了"}]}
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="browse",
+        vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="成何体统第二季", vod_year="", category_name="动漫"),
+            playlist=[PlayItem(title="01.mp4", original_title="01.mp4", path="/show/01.mp4", url="http://m/1.mp4")],
+        )
+    )
+
+    assert updated is not None
+    assert seen == {"tmdb_id": "256783", "season_number": 2}
+    assert updated[0].episode_display_title == "第1集 认亲了"
+
+
 def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_across_reopens(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
