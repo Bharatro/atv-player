@@ -39,7 +39,7 @@ class TMDBClient:
         if self._image_config is None:
             self._image_config = self._request("/configuration").get("images") or {}
         sizes = list(self._image_config.get(f"{kind}_sizes") or [])
-        size = sizes[-1] if sizes else "original"
+        size = "original" if kind == "poster" else (sizes[-1] if sizes else "original")
         base = str(self._image_config.get("secure_base_url") or "https://image.tmdb.org/t/p/")
         return f"{base}{size}"
 

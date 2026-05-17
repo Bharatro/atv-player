@@ -48,7 +48,7 @@ def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:
     }
 
 
-def test_tmdb_client_get_movie_detail_appends_response_and_builds_image_urls() -> None:
+def test_tmdb_client_get_movie_detail_prefers_original_poster_and_builds_image_urls() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -81,7 +81,7 @@ def test_tmdb_client_get_movie_detail_appends_response_and_builds_image_urls() -
 
     detail = client.get_movie_detail("42")
 
-    assert detail["poster_url"] == "https://image.tmdb.org/t/p/w500/poster.jpg"
+    assert detail["poster_url"] == "https://image.tmdb.org/t/p/original/poster.jpg"
     assert detail["backdrop_url"] == "https://image.tmdb.org/t/p/w1280/backdrop.jpg"
     assert detail["external_ids"] == {"imdb_id": "tt123"}
     assert calls == ["/3/configuration", "/3/movie/42"]
