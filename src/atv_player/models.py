@@ -39,6 +39,7 @@ class AppConfig:
     mpv_network_timeout_seconds: int = 15
     mpv_default_readahead_secs: int = 20
     mpv_extra_options: str = ""
+    playback_auto_switch_source_on_failure: bool = False
     episode_title_enhancement_enabled: bool = True
     last_path: str = "/"
     last_active_window: str = "main"
