@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
+from atv_player.diagnostics import collect_system_info_entries
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
     HistoryRecord,
@@ -39,7 +40,7 @@ from atv_player.models import (
 )
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
-from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
+from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.poster_grid_page import PosterGridPage
@@ -3678,12 +3679,28 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
 
+    def _build_main_window_help_payload(self) -> tuple[list[tuple[str, str]], str]:
+        system_info_rows = [
+            (entry.label, entry.value)
+            for entry in collect_system_info_entries()
+        ]
+        shortcut_entries = shortcut_entries_for("main_window", self.quit_shortcut.key())
+        lines = ["系统信息"]
+        lines.extend(f"{label}: {value}" for label, value in system_info_rows)
+        lines.append("")
+        lines.append("快捷键")
+        lines.extend(f"{entry.key}: {entry.description}" for entry in shortcut_entries)
+        return system_info_rows, "\n".join(lines)
+
     def _show_shortcut_help(self) -> None:
+        system_info_rows, diagnostics_text = self._build_main_window_help_payload()
         dialog = show_shortcut_help_dialog(
             self,
             context="main_window",
             existing_dialog=self.help_dialog,
             quit_sequence=self.quit_shortcut.key(),
+            system_info_rows=system_info_rows,
+            diagnostics_text=diagnostics_text,
         )
         if dialog is self.help_dialog:
             return

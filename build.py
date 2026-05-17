@@ -236,6 +236,8 @@ def build_pyinstaller_command(target_platform: str) -> list[str]:
         "PyInstaller",
         "--noconfirm",
         "--clean",
+        "--copy-metadata",
+        APP_NAME,
         "--onefile" if target.onefile else "--onedir",
         "--name",
         APP_NAME,

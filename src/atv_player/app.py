@@ -32,6 +32,7 @@ from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
     apply_episode_title_index_map,
     extract_season_number,
@@ -282,6 +283,8 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     _install_button_pointing_hand_cursor(app)
     _install_main_thread_gc_workaround(app)
     app.setApplicationName("atv-player")
+    if hasattr(app, "setApplicationVersion"):
+        app.setApplicationVersion(resolve_app_version())
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
