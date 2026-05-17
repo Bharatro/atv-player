@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
+    QFileDialog,
     QHeaderView,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -64,12 +71,54 @@ def shortcut_entries_for(context: HelpContext, quit_sequence: QKeySequence) -> t
 
 
 class ShortcutHelpDialog(QDialog):
-    def __init__(self, entries: Sequence[ShortcutEntry], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        entries: Sequence[ShortcutEntry],
+        parent: QWidget | None = None,
+        *,
+        system_info_rows: Sequence[tuple[str, str]] | None = None,
+        diagnostics_text: str = "",
+    ) -> None:
         super().__init__(parent)
         self.setModal(True)
         self.setWindowTitle("快捷键帮助")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.resize(520, 420)
+        self._diagnostics_text = diagnostics_text
+        if system_info_rows is not None:
+            self.resize(640, 520)
+        else:
+            self.resize(520, 420)
+
+        layout = QVBoxLayout(self)
+
+        if system_info_rows is not None:
+            layout.addWidget(QLabel("系统信息", self))
+            self.system_info_table = QTableWidget(len(system_info_rows), 2, self)
+            self.system_info_table.setObjectName("systemInfoTable")
+            self.system_info_table.setHorizontalHeaderLabels(["组件", "版本"])
+            self.system_info_table.verticalHeader().setVisible(False)
+            self.system_info_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.system_info_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            self.system_info_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self.system_info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            self.system_info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            for row, (label, value) in enumerate(system_info_rows):
+                self.system_info_table.setItem(row, 0, QTableWidgetItem(label))
+                self.system_info_table.setItem(row, 1, QTableWidgetItem(value))
+            layout.addWidget(self.system_info_table)
+
+            actions = QHBoxLayout()
+            actions.addStretch(1)
+            self.copy_diagnostics_button = QPushButton("一键复制", self)
+            self.copy_diagnostics_button.setObjectName("copyDiagnosticsButton")
+            self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics_to_clipboard)
+            actions.addWidget(self.copy_diagnostics_button)
+            self.export_diagnostics_button = QPushButton("导出诊断信息", self)
+            self.export_diagnostics_button.setObjectName("exportDiagnosticsButton")
+            self.export_diagnostics_button.clicked.connect(self._export_diagnostics)
+            actions.addWidget(self.export_diagnostics_button)
+            layout.addLayout(actions)
+            layout.addWidget(QLabel("快捷键", self))
 
         self.shortcuts_table = QTableWidget(len(entries), 2, self)
         self.shortcuts_table.setObjectName("shortcutHelpTable")
@@ -85,8 +134,26 @@ class ShortcutHelpDialog(QDialog):
             self.shortcuts_table.setItem(row, 0, QTableWidgetItem(entry.key))
             self.shortcuts_table.setItem(row, 1, QTableWidgetItem(entry.description))
 
-        layout = QVBoxLayout(self)
         layout.addWidget(self.shortcuts_table)
+
+    def _copy_diagnostics_to_clipboard(self) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self._diagnostics_text)
+
+    def _export_diagnostics(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出诊断信息",
+            "atv-player-diagnostics.txt",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(self._diagnostics_text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "错误", f"导出诊断信息失败: {exc}")
 
 
 def show_shortcut_help_dialog(
@@ -95,6 +162,8 @@ def show_shortcut_help_dialog(
     context: HelpContext,
     existing_dialog: ShortcutHelpDialog | None,
     quit_sequence: QKeySequence,
+    system_info_rows: Sequence[tuple[str, str]] | None = None,
+    diagnostics_text: str = "",
 ) -> ShortcutHelpDialog:
     if existing_dialog is not None:
         existing_dialog.show()
@@ -102,7 +171,12 @@ def show_shortcut_help_dialog(
         existing_dialog.activateWindow()
         return existing_dialog
 
-    dialog = ShortcutHelpDialog(shortcut_entries_for(context, quit_sequence), parent)
+    dialog = ShortcutHelpDialog(
+        shortcut_entries_for(context, quit_sequence),
+        parent,
+        system_info_rows=system_info_rows,
+        diagnostics_text=diagnostics_text,
+    )
     dialog.show()
     dialog.raise_()
     dialog.activateWindow()

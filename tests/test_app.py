@@ -1727,6 +1727,15 @@ def shortcut_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
     return rows
 
 
+def system_info_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
+    table = dialog.findChild(QTableWidget, "systemInfoTable")
+    assert table is not None
+    rows: list[tuple[str, str]] = []
+    for row in range(table.rowCount()):
+        rows.append((table.item(row, 0).text(), table.item(row, 1).text()))
+    return rows
+
+
 def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -1743,16 +1752,113 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     window.show()
     window.activateWindow()
     window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [
+            ("atv-player", "0.8.2"),
+            ("Python", "3.12.8"),
+            ("PySide6", "6.8.1"),
+            ("mpv", "0.39"),
+            ("ffmpeg", "7.1"),
+            ("yt-dlp", "2026.05.17"),
+            ("Platform", "Linux"),
+        ],
+        "diagnostic text",
+    )
 
     QTest.keyClick(window, Qt.Key.Key_F1)
 
     qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
-    rows = shortcut_table_rows(visible_shortcut_help_dialogs()[0])
+    dialog = visible_shortcut_help_dialogs()[0]
+    rows = shortcut_table_rows(dialog)
+    system_rows = system_info_table_rows(dialog)
 
     assert ("F1", "打开快捷键帮助") in rows
     assert ("Ctrl+P", "显示或返回播放器") in rows
     assert ("Esc", "显示或返回播放器") in rows
     assert any(description == "退出应用" for _, description in rows)
+    assert ("atv-player", "0.8.2") in system_rows
+    assert ("Python", "3.12.8") in system_rows
+    assert ("PySide6", "6.8.1") in system_rows
+    assert ("mpv", "0.39") in system_rows
+    assert ("ffmpeg", "7.1") in system_rows
+    assert ("yt-dlp", "2026.05.17") in system_rows
+    assert ("Platform", "Linux") in system_rows
+
+
+def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [("atv-player", "0.8.2")],
+        "atv-player: 0.8.2\nPython: 3.12.8",
+    )
+
+    clipboard = QApplication.clipboard()
+    assert clipboard is not None
+    clipboard.clear()
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    copy_button = dialog.findChild(QPushButton, "copyDiagnosticsButton")
+    assert copy_button is not None
+
+    QTest.mouseClick(copy_button, Qt.MouseButton.LeftButton)
+
+    assert clipboard.text() == "atv-player: 0.8.2\nPython: 3.12.8"
+
+
+def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, monkeypatch, tmp_path) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [("atv-player", "0.8.2")],
+        "atv-player: 0.8.2\nPython: 3.12.8",
+    )
+
+    export_path = tmp_path / "diagnostics.txt"
+    monkeypatch.setattr(
+        "atv_player.ui.help_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(export_path), "Text Files (*.txt)"),
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    export_button = dialog.findChild(QPushButton, "exportDiagnosticsButton")
+    assert export_button is not None
+
+    QTest.mouseClick(export_button, Qt.MouseButton.LeftButton)
+
+    assert export_path.read_text(encoding="utf-8") == "atv-player: 0.8.2\nPython: 3.12.8"
 
 
 def test_main_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:

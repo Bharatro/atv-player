@@ -98,6 +98,8 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert command[:3] == [sys.executable, "-m", "PyInstaller"]
     assert "--noconfirm" in command
     assert "--clean" in command
+    assert "--copy-metadata" in command
+    assert command[command.index("--copy-metadata") + 1] == build.APP_NAME
     assert "--onedir" in command
     assert "--onefile" not in command
     assert "--paths" in command
