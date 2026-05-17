@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 from pathlib import Path
@@ -33,6 +34,11 @@ import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.poster_loader as poster_loader_module
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
+
+
+def assert_timestamped_log_line(line: str, message: str) -> None:
+    pattern = rf"\[\d{{2}}:\d{{2}}:\d{{2}}\.\d{{3}}\] {re.escape(message)}"
+    assert re.fullmatch(pattern, line), line
 
 
 class FakePlayerController:
@@ -212,7 +218,7 @@ def test_player_window_can_open_placeholder_session_without_playlist(qtbot) -> N
     assert window.session is session
     assert window.playlist.count() == 0
     assert window.metadata_view.toPlainText().startswith("名称: 占位电影")
-    assert window.log_view.toPlainText() == "正在加载详情..."
+    assert_timestamped_log_line(window.log_view.toPlainText(), "正在加载详情...")
     assert window.video.load_calls == []
 
 
@@ -13181,8 +13187,9 @@ def test_player_window_keeps_resolving_state_plain_and_logs_source_address_in_pl
 
     window.open_session(session)
 
-    assert window.log_view.toPlainText().splitlines()[0] == "正在解析播放地址: https://pan.baidu.com/s/demo"
-    assert "正在加载播放地址: 网盘剧集" in window.log_view.toPlainText()
+    log_lines = window.log_view.toPlainText().splitlines()
+    assert_timestamped_log_line(log_lines[0], "正在解析播放地址: https://pan.baidu.com/s/demo")
+    assert_timestamped_log_line(log_lines[1], "正在加载播放地址: 网盘剧集")
     ready.set()
 
 
@@ -13192,7 +13199,7 @@ def test_player_window_logs_resolving_startup_message(qtbot) -> None:
 
     window._set_startup_state(window._startup_coordinator.resolving())
 
-    assert "正在解析播放地址" in window.log_view.toPlainText()
+    assert_timestamped_log_line(window.log_view.toPlainText(), "正在解析播放地址")
 
 
 def test_player_window_does_not_duplicate_same_resolving_startup_message(qtbot) -> None:
@@ -13203,7 +13210,32 @@ def test_player_window_does_not_duplicate_same_resolving_startup_message(qtbot) 
     window._set_startup_state(state)
     window._set_startup_state(state)
 
-    assert window.log_view.toPlainText().splitlines() == ["正在解析播放地址"]
+    lines = window.log_view.toPlainText().splitlines()
+    assert len(lines) == 1
+    assert_timestamped_log_line(lines[0], "正在解析播放地址")
+
+
+def test_player_window_appends_timestamp_to_playback_logs(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window._append_log("播放失败: boom")
+
+    assert_timestamped_log_line(window.log_view.toPlainText(), "播放失败: boom")
+
+
+def test_player_window_does_not_duplicate_same_message_when_dedupe_enabled(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window._append_log("正在解析播放地址", dedupe=True)
+    window._append_log("正在解析播放地址", dedupe=True)
+    window._append_log("正在加载播放地址: Episode 1", dedupe=True)
+
+    lines = window.log_view.toPlainText().splitlines()
+    assert len(lines) == 2
+    assert_timestamped_log_line(lines[0], "正在解析播放地址")
+    assert_timestamped_log_line(lines[1], "正在加载播放地址: Episode 1")
 
 
 def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
