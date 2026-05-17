@@ -2492,6 +2492,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
+
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             selected_quality_id = current_item.selected_playback_quality_id or ""
@@ -2527,6 +2528,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=False,
             playback_loader=load_item,
             async_playback_loader=True,
+            playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )
 

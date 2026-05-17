@@ -2764,7 +2764,7 @@ def test_main_window_direct_parse_fallback_to_ytdlp_overwrites_session_metadata(
     assert item.ytdl_format == "299+140"
 
 
-def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> None:
+def test_main_window_ytdlp_request_attaches_history_restore_hooks(qtbot) -> None:
     history_calls: list[str] = []
     saved_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -2795,10 +2795,11 @@ def test_main_window_ytdlp_request_disables_initial_history_restore(qtbot) -> No
 
     request = window._build_ytdlp_parse_request("https://www.youtube.com/watch?v=test123")
 
-    assert request.playback_history_loader is None
+    assert request.playback_history_loader is not None
     assert request.playback_history_saver is not None
+    request.playback_history_loader()
     request.playback_history_saver({"position": 12})
-    assert history_calls == []
+    assert history_calls == ["https://www.youtube.com/watch?v=test123"]
     assert saved_calls == [("https://www.youtube.com/watch?v=test123", {"position": 12})]
 
 
@@ -2851,7 +2852,8 @@ def test_main_window_restore_request_routes_youtube_parse_urls_to_ytdlp(qtbot) -
 
     assert request is not None
     assert request.source_mode == "ytdlp"
-    assert request.playback_history_loader is None
+    assert request.playback_history_loader is not None
+    assert request.playback_history_loader().position == 156000
 
 
 def test_main_window_history_detail_routes_youtube_parse_urls_to_ytdlp(qtbot, monkeypatch) -> None:
@@ -2917,7 +2919,8 @@ def test_main_window_history_detail_routes_youtube_parse_urls_to_ytdlp(qtbot, mo
 
     qtbot.waitUntil(lambda: len(opened) == 1)
     assert opened[0].source_mode == "ytdlp"
-    assert opened[0].playback_history_loader is None
+    assert opened[0].playback_history_loader is not None
+    assert opened[0].playback_history_loader().position == 156000
 
 
 def test_main_window_global_search_treats_magnet_as_offline_download(qtbot, monkeypatch) -> None:
