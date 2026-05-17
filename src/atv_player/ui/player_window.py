@@ -452,6 +452,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
+        self._last_logged_source_address = ""
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
@@ -1130,11 +1131,46 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _set_startup_state(self, state: PlaybackStartupState) -> None:
         self._startup_state = state
         self.playback_startup_status_label.setText(state.message)
+        self._append_startup_state_log(state)
         action_keys = {action.key for action in state.actions}
         self.playback_retry_button.setVisible("retry" in action_keys)
         self.playback_switch_line_button.setVisible("switch_line" in action_keys)
         self.playback_switch_parser_button.setVisible("switch_parser" in action_keys)
         self.playback_startup_widget.setHidden(state.stage is PlaybackStartupStage.IDLE)
+
+    def _append_startup_state_log(self, state: PlaybackStartupState) -> None:
+        if state.stage is not PlaybackStartupStage.RESOLVING:
+            return
+        self._append_log(state.message, dedupe=True)
+
+    def _current_item_source_address(self, current_item: PlayItem) -> str:
+        for candidate in (
+            current_item.original_url,
+            current_item.vod_id,
+            current_item.path,
+            current_item.url,
+        ):
+            source = str(candidate or "").strip()
+            if not source:
+                continue
+            if source.startswith(("http://", "https://", "magnet:", "ftp://", "file://", "data:")):
+                return source
+            if source.startswith("/"):
+                return source
+        return ""
+
+    def _append_current_item_source_log(self, current_item: PlayItem) -> None:
+        source_url = self._current_item_source_address(current_item)
+        if not source_url or source_url == self._last_logged_source_address:
+            return
+        self._last_logged_source_address = source_url
+        self._append_log(f"原始来源地址: {source_url}")
+
+    def _resolving_startup_message(self, current_item: PlayItem) -> str:
+        source_url = self._current_item_source_address(current_item)
+        if source_url:
+            return f"正在解析播放地址: {source_url}"
+        return "正在解析播放地址"
 
     def _has_multiple_playback_sources(self) -> bool:
         if self.session is None:
@@ -1692,9 +1728,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     ) -> None:
         if self.session is None or self.session.playback_loader is None:
             return
-        if not hydrate_only:
-            self._set_startup_state(self._startup_coordinator.resolving())
         current_item = self.session.playlist[self.current_index]
+        if not hydrate_only:
+            self._set_startup_state(
+                self._startup_coordinator.resolving(self._resolving_startup_message(current_item))
+            )
         playback_loader = self.session.playback_loader
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")
@@ -1778,6 +1816,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前播放: {current_item.title}")
+        self._append_current_item_source_log(current_item)
         self._append_log(f"播放地址: {current_item.url}")
         if start_position_seconds > self.opening_spin.value():
             effective_start_seconds = start_position_seconds
@@ -2263,10 +2302,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _reset_log(self) -> None:
         self.log_view.clear()
 
-    def _append_log(self, message: str) -> None:
+    def _append_log(self, message: str, *, dedupe: bool = False) -> None:
         if not message:
             return
-        if self.log_view.toPlainText():
+        existing_text = self.log_view.toPlainText()
+        existing_lines = existing_text.splitlines()
+        if dedupe and existing_lines and existing_lines[-1] == message:
+            return
+        if existing_text:
             self.log_view.append(message)
             return
         self.log_view.setPlainText(message)
@@ -2290,6 +2333,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_loader = None
         self._playback_prepare_request_id += 1
         self._pending_playback_prepare = None
+        self._last_logged_source_address = ""
 
     def _run_controller_task_queue(self) -> None:
         while True:
@@ -2343,9 +2387,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
-        self._set_startup_state(self._startup_coordinator.resolving())
         session = self.session
         current_item = session.playlist[self.current_index]
+        self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
         if wait_for_load:
             self._append_log(f"正在加载播放地址: {current_item.title}")
         self._play_item_request_id += 1

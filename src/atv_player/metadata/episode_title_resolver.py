@@ -69,10 +69,10 @@ def _titles_by_index_for_iqiyi(vod: VodItem, playlist: list[PlayItem], raw: dict
         if not isinstance(video, dict):
             continue
         try:
-            episode_number = int(video.get("itemNumber") or video.get("episodeNumber") or 0)
+            episode_number = int(video.get("itemNumber") or video.get("episodeNumber") or video.get("number") or 0)
         except (TypeError, ValueError):
             continue
-        episode_title = str(video.get("itemTitle") or video.get("title") or "").strip()
+        episode_title = str(video.get("itemTitle") or video.get("subtitle") or video.get("title") or "").strip()
         if episode_number > 0 and episode_title:
             titles_by_episode[episode_number] = episode_title
     if not titles_by_episode:

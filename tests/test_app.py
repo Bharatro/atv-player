@@ -4653,6 +4653,74 @@ def test_app_coordinator_episode_title_enhancer_preserves_grouped_multi_version_
     assert [item.index for item in updated] == [0, 1, 2, 3]
 
 
+def test_app_coordinator_episode_title_enhancer_sorts_each_multi_version_block_independently(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "超能路人甲"
+            assert year == "2026"
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "星门初启"},
+                    {"episode_number": 2, "name": "星火初燃"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧"),
+            playlist=[
+                PlayItem(title="2-4K.mp4", url="http://m/2-4k.mp4", original_title="2-4K.mp4"),
+                PlayItem(title="1-4K.mp4", url="http://m/1-4k.mp4", original_title="1-4K.mp4"),
+                PlayItem(title="2-1080P.mp4", url="http://m/2-1080.mp4", original_title="2-1080P.mp4"),
+                PlayItem(title="1-1080P.mp4", url="http://m/1-1080.mp4", original_title="1-1080P.mp4"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.original_title for item in updated] == [
+        "1-4K.mp4",
+        "2-4K.mp4",
+        "1-1080P.mp4",
+        "2-1080P.mp4",
+    ]
+    assert [item.episode_display_title for item in updated] == [
+        "第1集 星门初启",
+        "第2集 星火初燃",
+        "第1集 星门初启",
+        "第2集 星火初燃",
+    ]
+    assert [item.index for item in updated] == [0, 1, 2, 3]
+
+
 def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iqiyi(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

@@ -532,11 +532,31 @@ class AppCoordinator(QObject):
                 return None
             resolved_pairs = [pair for pair in season_episode_pairs if pair is not None]
             has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
-            if len(playlist) > 1 and not has_multi_version_pairs:
+            if len(playlist) > 1:
                 indexed_playlist = list(enumerate(playlist))
-                indexed_playlist.sort(
-                    key=lambda entry: season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL)
-                )
+                if has_multi_version_pairs:
+                    occurrence_by_pair: dict[tuple[int, int], int] = {}
+                    version_slot_by_index: dict[int, int] = {}
+                    for index, pair in enumerate(season_episode_pairs):
+                        if pair is None:
+                            version_slot_by_index[index] = _EPISODE_SORT_SENTINEL
+                            continue
+                        version_slot_by_index[index] = occurrence_by_pair.get(pair, 0)
+                        occurrence_by_pair[pair] = version_slot_by_index[index] + 1
+                    indexed_playlist.sort(
+                        key=lambda entry: (
+                            version_slot_by_index[entry[0]],
+                            season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL),
+                            entry[0],
+                        )
+                    )
+                else:
+                    indexed_playlist.sort(
+                        key=lambda entry: (
+                            season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL),
+                            entry[0],
+                        )
+                    )
                 playlist = [item for _original_index, item in indexed_playlist]
             for index, item in enumerate(playlist):
                 item.index = index
@@ -585,80 +605,78 @@ class AppCoordinator(QObject):
                 search_results = _search_tv_cached(tmdb_client, search_title, year=search_year)
                 if not search_results and search_title != session_vod.vod_name and not has_season_marker:
                     search_results = _search_tv_cached(tmdb_client, session_vod.vod_name, year=search_year)
-                if not search_results:
-                    return None
-                normalized_title = _normalize_title(search_title)
-                matched = None
-                for candidate in search_results:
-                    candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
-                    if not candidate_title:
-                        continue
-                    if _normalize_title(candidate_title) != normalized_title:
-                        continue
-                    matched = candidate
-                    break
-                if matched is None:
-                    matched = search_results[0]
-                tmdb_id = str(matched.get("id") or "").strip()
-                if not tmdb_id:
-                    return None
-                requested_seasons: set[int] = set()
-                for pair in season_episode_pairs:
-                    if pair is None:
-                        continue
-                    requested_seasons.add(pair[0])
-                if not requested_seasons:
-                    requested_seasons.add(default_season)
-                include_season_prefix = len(requested_seasons) > 1
-                titles_by_index: dict[int, str] = {}
-                titles_by_season_episode: dict[tuple[int, int], str] = {}
-                for season_number in sorted(requested_seasons):
-                    try:
-                        season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
-                    except Exception:
-                        logger.debug(
-                            "Skip TMDB season episode title enhancement fallback to provider metadata tmdb_id=%s season=%s title=%s",
-                            tmdb_id,
-                            season_number,
-                            str(getattr(session_vod, "vod_name", "") or "").strip(),
-                            exc_info=True,
-                        )
-                        continue
-                    episodes = season_detail.get("episodes")
-                    if not isinstance(episodes, list):
-                        continue
-                    for episode in episodes:
-                        if not isinstance(episode, dict):
+                if search_results:
+                    normalized_title = _normalize_title(search_title)
+                    matched = None
+                    for candidate in search_results:
+                        candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
+                        if not candidate_title:
                             continue
-                        try:
-                            episode_number = int(episode.get("episode_number") or 0)
-                        except (TypeError, ValueError):
+                        if _normalize_title(candidate_title) != normalized_title:
                             continue
-                        episode_title = str(episode.get("name") or "").strip()
-                        if episode_number <= 0 or not episode_title:
-                            continue
-                        prefix = f"第{season_number}季 " if include_season_prefix else ""
-                        titles_by_season_episode[(season_number, episode_number)] = (
-                            f"{prefix}第{episode_number}集 {episode_title}"
-                        )
-                for index, pair in enumerate(season_episode_pairs):
-                    if pair is None:
-                        continue
-                    candidate = titles_by_season_episode.get(pair)
-                    if candidate:
-                        titles_by_index[index] = candidate
-                if not titles_by_index:
-                    titles_by_index = {}
-                if titles_by_index:
-                    apply_episode_title_index_map(
-                        playlist,
-                        titles_by_index,
-                        source="tmdb",
-                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
-                    )
-                    finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
-                    if finalized is not None:
-                        return finalized
+                        matched = candidate
+                        break
+                    if matched is None:
+                        matched = search_results[0]
+                    tmdb_id = str(matched.get("id") or "").strip()
+                    if tmdb_id:
+                        requested_seasons: set[int] = set()
+                        for pair in season_episode_pairs:
+                            if pair is None:
+                                continue
+                            requested_seasons.add(pair[0])
+                        if not requested_seasons:
+                            requested_seasons.add(default_season)
+                        include_season_prefix = len(requested_seasons) > 1
+                        titles_by_index: dict[int, str] = {}
+                        titles_by_season_episode: dict[tuple[int, int], str] = {}
+                        for season_number in sorted(requested_seasons):
+                            try:
+                                season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
+                            except Exception:
+                                logger.debug(
+                                    "Skip TMDB season episode title enhancement fallback to provider metadata tmdb_id=%s season=%s title=%s",
+                                    tmdb_id,
+                                    season_number,
+                                    str(getattr(session_vod, "vod_name", "") or "").strip(),
+                                    exc_info=True,
+                                )
+                                continue
+                            episodes = season_detail.get("episodes")
+                            if not isinstance(episodes, list):
+                                continue
+                            for episode in episodes:
+                                if not isinstance(episode, dict):
+                                    continue
+                                try:
+                                    episode_number = int(episode.get("episode_number") or 0)
+                                except (TypeError, ValueError):
+                                    continue
+                                episode_title = str(episode.get("name") or "").strip()
+                                if episode_number <= 0 or not episode_title:
+                                    continue
+                                prefix = f"第{season_number}季 " if include_season_prefix else ""
+                                titles_by_season_episode[(season_number, episode_number)] = (
+                                    f"{prefix}第{episode_number}集 {episode_title}"
+                                )
+                        for index, pair in enumerate(season_episode_pairs):
+                            if pair is None:
+                                continue
+                            candidate = titles_by_season_episode.get(pair)
+                            if candidate:
+                                titles_by_index[index] = candidate
+                        if not titles_by_index:
+                            titles_by_index = {}
+                        if titles_by_index:
+                            apply_episode_title_index_map(
+                                playlist,
+                                titles_by_index,
+                                source="tmdb",
+                                source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                            )
+                            finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
+                            if finalized is not None:
+                                return finalized
                 for candidate in _search_metadata_candidates(session_vod, source_kind):
                     updated_playlist = build_provider_episode_playlist(
                         session_vod,

@@ -13162,6 +13162,51 @@ def test_player_window_logs_loading_message_while_initial_item_resolves_async(qt
     qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/1.m3u8", 0)], timeout=1000)
 
 
+def test_player_window_logs_source_address_in_resolving_state_while_loading_async_playback(qtbot) -> None:
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "http://resolved/episode-1.m3u8"
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist[0].title = "网盘剧集"
+    session.playlist[0].url = ""
+    session.playlist[0].vod_id = "https://pan.baidu.com/s/demo"
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+
+    assert "正在解析播放地址: https://pan.baidu.com/s/demo" in window.log_view.toPlainText()
+    assert "正在加载播放地址: 网盘剧集" in window.log_view.toPlainText()
+
+    ready.set()
+
+
+def test_player_window_logs_resolving_startup_message(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window._set_startup_state(window._startup_coordinator.resolving())
+
+    assert "正在解析播放地址" in window.log_view.toPlainText()
+
+
+def test_player_window_does_not_duplicate_same_resolving_startup_message(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    state = window._startup_coordinator.resolving()
+    window._set_startup_state(state)
+    window._set_startup_state(state)
+
+    assert window.log_view.toPlainText().splitlines() == ["正在解析播放地址"]
+
+
 def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
     controller = RecordingPlayerController()
     detail_calls: list[str] = []

@@ -64,6 +64,40 @@ def test_build_provider_episode_playlist_maps_iqiyi_videos_for_multi_season_play
     assert updated[0].episode_display_title == "第1集 终局开篇"
 
 
+def test_build_provider_episode_playlist_maps_iqiyi_videos_with_number_and_subtitle() -> None:
+    vod = VodItem(vod_id="v1", vod_name="择天记", vod_year="2026", category_name="动漫")
+    playlist = [
+        PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4"),
+        PlayItem(title="02.mp4", original_title="02.mp4", url="http://m/2.mp4"),
+    ]
+    match = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:1",
+        title="择天记（2026）",
+        year="2026",
+        raw={
+            "title": "择天记",
+            "videos": [
+                {"number": "1", "title": "择天记 第1集", "subtitle": "小道士下山了"},
+                {"number": "2", "title": "择天记 第2集", "subtitle": "一间院，与一颗星"},
+            ],
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1集 小道士下山了",
+        "第2集 一间院，与一颗星",
+    ]
+
+
 def test_build_provider_episode_playlist_maps_bilibili_eps_long_titles() -> None:
     vod = VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫")
     playlist = [
