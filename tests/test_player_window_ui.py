@@ -4940,6 +4940,7 @@ def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> N
             detail_fields=[
                 PlaybackDetailField(label="TMDB ID", value="76479"),
                 PlaybackDetailField(label="Bangumi ID", value="526975"),
+                PlaybackDetailField(label="IMDb ID", value="tt28489780"),
             ],
         ),
         playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
@@ -4956,6 +4957,9 @@ def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> N
     assert "https://movie.douban.com/subject/30318230/" in html
     assert "https://www.themoviedb.org/tv/76479" in html
     assert "https://bgm.tv/subject/526975" in html
+    assert "https://www.imdb.com/title/tt28489780" in html
+    assert "font-weight:600" in html
+    assert "color:#8f5a32" in html
 
 
 def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:
@@ -4976,6 +4980,7 @@ def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:
     window._handle_metadata_link(QUrl("https://movie.douban.com/subject/30318230/"))
 
     assert opened == ["https://movie.douban.com/subject/30318230/"]
+    assert window.metadata_view.focusPolicy() == Qt.FocusPolicy.NoFocus
 
 
 @pytest.mark.parametrize(
@@ -5014,6 +5019,8 @@ def test_player_window_renders_link_action_id_as_external_url(qtbot, target: str
 
     html = window.metadata_view.toHtml()
     assert expected_url in html
+    assert "font-weight:600" in html
+    assert "color:#8f5a32" in html
 
 
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:

@@ -697,6 +697,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_poster_overlay.hide()
         self.metadata_view = QTextBrowser()
         self.metadata_view.setReadOnly(True)
+        self.metadata_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.metadata_view.setOpenLinks(False)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
@@ -1186,6 +1187,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         values = " / ".join(part.label for part in field.value_parts)
         return f"{field.label}: {values}".rstrip()
 
+    def _external_metadata_link_html(self, url: str, label: str) -> str:
+        escaped_url = html.escape(url)
+        escaped_label = html.escape(label)
+        return (
+            f'<a href="{escaped_url}">'
+            f'<span style=" color:#8f5a32; font-weight:600;">{escaped_label}</span>'
+            "</a>"
+        )
+
     def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
         text = str(value or "").strip()
         if not text:
@@ -1199,6 +1209,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return f"https://movie.douban.com/subject/{text}/"
         if normalized_target == "bangumi" or normalized_label == "bangumi id":
             return f"https://bgm.tv/subject/{text}"
+        if normalized_target == "imdb" or normalized_label == "imdb id":
+            return f"https://www.imdb.com/title/{text}"
         if normalized_target in {"movie", "tv"}:
             return f"https://www.themoviedb.org/{normalized_target}/{text}"
         if normalized_target == "tmdb" or normalized_label == "tmdb id":
@@ -1283,7 +1295,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         text = str(value or "")
         url = self._external_metadata_url(vod, label, text)
         if url:
-            return f'{html.escape(label)}: <a href="{html.escape(url)}">{html.escape(text)}</a>'.rstrip()
+            return f"{html.escape(label)}: {self._external_metadata_link_html(url, text)}".rstrip()
         if "[a=cr:" not in text:
             trimmed = text.rstrip()
             leading_spaces = len(trimmed) - len(trimmed.lstrip(" "))
@@ -1299,13 +1311,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if part.action is None:
                 url = self._external_metadata_url(self.session.vod, field.label, part.label)
                 if url:
-                    return f'{html.escape(field.label)}: <a href="{html.escape(url)}">{html.escape(part.label)}</a>'.rstrip()
+                    return f"{html.escape(field.label)}: {self._external_metadata_link_html(url, part.label)}".rstrip()
         parts: list[str] = []
         for part in field.value_parts:
             if part.action is None:
                 parts.append(html.escape(part.label))
                 continue
-            href = html.escape(self._metadata_action_url(part.action, field.label).toString())
+            action_url = self._metadata_action_url(part.action, field.label).toString()
+            if action_url.startswith(("http://", "https://")):
+                parts.append(self._external_metadata_link_html(action_url, part.label))
+                continue
+            href = html.escape(action_url)
             label = html.escape(part.label)
             parts.append(f'<a href="{href}">{label}</a>')
         return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
