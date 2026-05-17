@@ -4930,6 +4930,92 @@ def test_player_window_metadata_link_dispatches_action_target(qtbot) -> None:
     ]
 
 
+def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            category_name="动漫",
+            dbid=30318230,
+            detail_fields=[
+                PlaybackDetailField(label="TMDB ID", value="76479"),
+                PlaybackDetailField(label="Bangumi ID", value="526975"),
+            ],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    assert "https://movie.douban.com/subject/30318230/" in html
+    assert "https://www.themoviedb.org/tv/76479" in html
+    assert "https://bgm.tv/subject/526975" in html
+
+
+def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(player_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._handle_metadata_link(QUrl("https://movie.douban.com/subject/30318230/"))
+
+    assert opened == ["https://movie.douban.com/subject/30318230/"]
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_url"),
+    [
+        ("movie", "https://www.themoviedb.org/movie/76479"),
+        ("tv", "https://www.themoviedb.org/tv/76479"),
+    ],
+)
+def test_player_window_renders_link_action_id_as_external_url(qtbot, target: str, expected_url: str) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="TMDB ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="76479",
+                            action=PlaybackDetailFieldAction(type="link", value="76479", target=target),
+                        )
+                    ],
+                )
+            ],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    assert expected_url in html
+
+
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(

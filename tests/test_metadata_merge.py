@@ -1,6 +1,6 @@
 from atv_player.metadata.merge import merge_metadata_record
 from atv_player.metadata.models import MetadataRecord
-from atv_player.models import PlaybackDetailField, VodItem
+from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, VodItem
 
 
 def test_merge_metadata_overrides_overview_with_douban_and_preserves_existing_title() -> None:
@@ -115,6 +115,27 @@ def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_official_douban_ove
         ("IMDb ID", "tt123"),
         ("TMDB ID", "42"),
     ]
+
+
+def test_merge_metadata_attaches_exact_tmdb_link_target_from_provider_id() -> None:
+    movie_vod = VodItem(vod_id="v1", vod_name="深空彼岸")
+    tv_vod = VodItem(vod_id="v2", vod_name="七王国的骑士")
+    movie_record = MetadataRecord(provider="tmdb", provider_id="movie:42", tmdb_id="42")
+    tv_record = MetadataRecord(provider="tmdb", provider_id="tv:76479", tmdb_id="76479")
+
+    merge_metadata_record(movie_vod, movie_record, provider_priority=["tmdb"])
+    merge_metadata_record(tv_vod, tv_record, provider_priority=["tmdb"])
+
+    assert movie_vod.detail_fields[0].value_parts[0].action == PlaybackDetailFieldAction(
+        type="link",
+        value="42",
+        target="movie",
+    )
+    assert tv_vod.detail_fields[0].value_parts[0].action == PlaybackDetailFieldAction(
+        type="link",
+        value="76479",
+        target="tv",
+    )
 
 
 def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:

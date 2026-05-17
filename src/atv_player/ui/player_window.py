@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QColor,
     QContextMenuEvent,
     QCursor,
+    QDesktopServices,
     QIcon,
     QImage,
     QKeyEvent,
@@ -57,6 +58,7 @@ from PySide6.QtWidgets import (
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
+from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
@@ -1184,7 +1186,45 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         values = " / ".join(part.label for part in field.value_parts)
         return f"{field.label}: {values}".rstrip()
 
-    def _metadata_action_url(self, action: PlaybackDetailFieldAction) -> QUrl:
+    def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.startswith(("http://", "https://")):
+            return text
+
+        normalized_label = str(label or "").strip().lower()
+        normalized_target = str(target or "").strip().lower()
+        if normalized_target == "douban" or normalized_label in {"豆瓣id", "dbid"}:
+            return f"https://movie.douban.com/subject/{text}/"
+        if normalized_target == "bangumi" or normalized_label == "bangumi id":
+            return f"https://bgm.tv/subject/{text}"
+        if normalized_target in {"movie", "tv"}:
+            return f"https://www.themoviedb.org/{normalized_target}/{text}"
+        if normalized_target == "tmdb" or normalized_label == "tmdb id":
+            media_type = "movie"
+            if vod is not None:
+                media_type = infer_tmdb_media_type(
+                    MetadataQuery(
+                        title=str(getattr(vod, "vod_name", "") or "").strip(),
+                        year=str(getattr(vod, "vod_year", "") or "").strip(),
+                        type_name=str(getattr(vod, "type_name", "") or "").strip(),
+                        category_name=str(getattr(vod, "category_name", "") or "").strip(),
+                    ),
+                ) or "movie"
+            return f"https://www.themoviedb.org/{media_type}/{text}"
+        return ""
+
+    def _metadata_action_url(self, action: PlaybackDetailFieldAction, label: str = "") -> QUrl:
+        if action.type == "link":
+            external_url = self._external_metadata_url(
+                self.session.vod if self.session is not None else None,
+                label,
+                action.value,
+                action.target,
+            )
+            if external_url:
+                return QUrl(external_url)
         url = QUrl("atv-player://detail-field")
         query = QUrlQuery()
         if action.target:
@@ -1202,7 +1242,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         action_target = str(payload.get("target") or "").strip()
         if not action_type or not action_value:
             return None
-        if action_target not in {"", "bilibili"}:
+        if action_target not in {"", "bilibili", "douban", "tmdb", "bangumi"}:
             return None
         return PlaybackDetailFieldAction(type=action_type, value=action_value, target=action_target)
 
@@ -1239,8 +1279,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             parts.append(html.escape(tail).replace("\n", "<br>"))
         return "".join(parts)
 
-    def _metadata_row_html(self, label: str, value: object) -> str:
+    def _metadata_row_html(self, vod: VodItem, label: str, value: object) -> str:
         text = str(value or "")
+        url = self._external_metadata_url(vod, label, text)
+        if url:
+            return f'{html.escape(label)}: <a href="{html.escape(url)}">{html.escape(text)}</a>'.rstrip()
         if "[a=cr:" not in text:
             trimmed = text.rstrip()
             leading_spaces = len(trimmed) - len(trimmed.lstrip(" "))
@@ -1251,17 +1294,27 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         return f"{html.escape(label)}: {self._render_metadata_value_html(text)}".rstrip()
 
     def _detail_field_html(self, field: PlaybackDetailField) -> str:
+        if self.session is not None and len(field.value_parts) == 1:
+            part = field.value_parts[0]
+            if part.action is None:
+                url = self._external_metadata_url(self.session.vod, field.label, part.label)
+                if url:
+                    return f'{html.escape(field.label)}: <a href="{html.escape(url)}">{html.escape(part.label)}</a>'.rstrip()
         parts: list[str] = []
         for part in field.value_parts:
             if part.action is None:
                 parts.append(html.escape(part.label))
                 continue
-            href = html.escape(self._metadata_action_url(part.action).toString())
+            href = html.escape(self._metadata_action_url(part.action, field.label).toString())
             label = html.escape(part.label)
             parts.append(f'<a href="{href}">{label}</a>')
         return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
 
     def _handle_metadata_link(self, url: QUrl) -> None:
+        if url.scheme() in {"http", "https"}:
+            if not QDesktopServices.openUrl(url):
+                self._append_log(f"详情跳转失败[link]: 无法打开链接 {url.toString()}")
+            return
         if url.scheme() != "atv-player" or url.host() != "detail-field":
             return
         query = QUrlQuery(url)
@@ -1867,7 +1920,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            parts = [self._metadata_row_html(label, value) for label, value in rows]
+            parts = [self._metadata_row_html(vod, label, value) for label, value in rows]
             parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
             return "<br>".join(parts)
         rows = [
@@ -1887,7 +1940,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 for label, value in rows
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
-        parts = [self._metadata_row_html(label, value) for label, value in rows]
+        parts = [self._metadata_row_html(vod, label, value) for label, value in rows]
         parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
         parts.append("")
         parts.append(html.escape("简介:"))

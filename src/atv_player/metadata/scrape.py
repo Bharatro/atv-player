@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.cache import MetadataCache
@@ -133,7 +136,16 @@ class MetadataScrapeService:
                     break
         if season_number is None:
             return candidate
-        season_detail = client.get_tv_season_detail(tmdb_id, season_number) or {}
+        try:
+            season_detail = client.get_tv_season_detail(tmdb_id, season_number) or {}
+        except Exception:
+            logger.debug(
+                "Skip TMDB season detail hydration tmdb_id=%s season=%s",
+                tmdb_id,
+                season_number,
+                exc_info=True,
+            )
+            return candidate
         episodes = season_detail.get("episodes")
         if not isinstance(episodes, list) or not episodes:
             return candidate

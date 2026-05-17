@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.providers.douban import clean_overview_text
-from atv_player.models import PlaybackDetailField, VodItem
+from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, PlaybackDetailValuePart, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
     "overview": ["iqiyi", "official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin"],
@@ -64,6 +64,33 @@ def _can_override_overview(vod: VodItem, record: MetadataRecord) -> bool:
 
 def _set_field_source(vod: VodItem, field_name: str, provider: str) -> None:
     vod.metadata_field_sources[field_name] = provider
+
+
+def _tmdb_media_type(record: MetadataRecord) -> str:
+    if record.provider != "tmdb":
+        return ""
+    media_type = str(record.provider_id or "").strip().split(":", 1)[0]
+    return media_type if media_type in {"movie", "tv"} else ""
+
+
+def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
+    label = str(item.get("label") or "").strip()
+    value = str(item.get("value") or "").strip()
+    if not label or not value:
+        return None
+    if record.provider == "tmdb" and label == "TMDB ID":
+        media_type = _tmdb_media_type(record)
+        if media_type:
+            return PlaybackDetailField(
+                label=label,
+                value_parts=[
+                    PlaybackDetailValuePart(
+                        label=value,
+                        action=PlaybackDetailFieldAction(type="link", value=value, target=media_type),
+                    )
+                ],
+            )
+    return PlaybackDetailField(label=label, value=value)
 
 
 def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
@@ -132,7 +159,9 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         for field in vod.detail_fields:
             replacement = next((item for item in detail_fields if item.get("label") == field.label), None)
             if replacement is not None:
-                merged.append(PlaybackDetailField(label=field.label, value=str(replacement.get("value") or "")))
+                replacement_field = _build_detail_field(record, replacement)
+                if replacement_field is not None:
+                    merged.append(replacement_field)
                 seen_labels.add(field.label)
                 continue
             merged.append(field)
@@ -140,8 +169,10 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         for item in detail_fields:
             label = str(item.get("label") or "").strip()
             if label and label not in seen_labels:
-                merged.append(PlaybackDetailField(label=label, value=str(item.get("value") or "")))
-                seen_labels.add(label)
+                appended_field = _build_detail_field(record, item)
+                if appended_field is not None:
+                    merged.append(appended_field)
+                    seen_labels.add(label)
         vod.detail_fields = merged
         _set_field_source(vod, "detail_fields", record.provider)
     return vod
@@ -187,10 +218,12 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
         appended = False
         for item in detail_fields:
             label = str(item.get("label") or "").strip()
-            value = str(item.get("value") or "").strip()
-            if not label or not value or label in existing_labels:
+            if not label or label in existing_labels:
                 continue
-            vod.detail_fields.append(PlaybackDetailField(label=label, value=value))
+            appended_field = _build_detail_field(record, item)
+            if appended_field is None:
+                continue
+            vod.detail_fields.append(appended_field)
             existing_labels.add(label)
             appended = True
         if appended:
@@ -214,11 +247,7 @@ def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
     vod.vod_content = cleaned_overview
     vod.vod_remarks = record.rating
     vod.dbid = record.douban_id
-    vod.detail_fields = [
-        PlaybackDetailField(label=str(item.get("label") or ""), value=str(item.get("value") or ""))
-        for item in detail_fields
-        if str(item.get("label") or "").strip() and str(item.get("value") or "").strip()
-    ]
+    vod.detail_fields = [field for item in detail_fields if (field := _build_detail_field(record, item)) is not None]
 
     for field_name in (
         "poster",
