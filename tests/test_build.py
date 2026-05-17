@@ -388,6 +388,17 @@ def test_github_workflow_releases_only_for_version_tags() -> None:
     assert "softprops/action-gh-release@v2" in workflow
 
 
+def test_github_workflow_includes_release_notes_in_telegram_notification() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert 'gh release view "$GITHUB_REF_NAME" --json body --jq .body' in workflow
+    assert "body<<EOF" in workflow
+    assert "更新内容:" in workflow
+    assert "${{ steps.release_notes.outputs.body }}" in workflow
+    assert workflow.index("Create GitHub Release") < workflow.index("Read release notes")
+    assert workflow.index("Read release notes") < workflow.index("send telegram message")
+
+
 def test_github_workflow_uploads_windows_exe_and_releases_it() -> None:
     workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 
