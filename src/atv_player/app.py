@@ -588,6 +588,8 @@ class AppCoordinator(QObject):
             search_results: list[dict[str, object]],
             preferred_title: str,
             vod: VodItem,
+            requested_seasons: set[int],
+            tmdb_client: TMDBClient,
         ) -> dict[str, object] | None:
             if not search_results:
                 return None
@@ -596,8 +598,38 @@ class AppCoordinator(QObject):
             preferred_season = extract_season_number(preferred_title)
             category_name = str(getattr(vod, "category_name", "") or "").strip().lower()
             prefer_animation = any(token in category_name for token in ("动漫", "动画", "anime", "国创"))
+            prefer_live_action = any(token in category_name for token in ("电视剧", "剧集", "连续剧", "真人"))
+            prefer_short_drama = any(token in category_name for token in ("短剧", "短片"))
+            expected_year = str(getattr(vod, "vod_year", "") or "").strip()
 
-            def _score(candidate: dict[str, object]) -> tuple[int, int, int, int]:
+            def _extract_candidate_year(candidate: dict[str, object]) -> int | None:
+                raw = str(candidate.get("first_air_date") or candidate.get("release_date") or candidate.get("year") or "").strip()
+                return int(raw[:4]) if len(raw) >= 4 and raw[:4].isdigit() else None
+
+            def _year_closeness_score(candidate: dict[str, object]) -> int:
+                if not expected_year.isdigit():
+                    return 0
+                candidate_year = _extract_candidate_year(candidate)
+                if candidate_year is None:
+                    return 0
+                return -abs(candidate_year - int(expected_year))
+
+            def _season_coverage_score(candidate: dict[str, object]) -> int:
+                tmdb_id = str(candidate.get("id") or "").strip()
+                if not tmdb_id or not requested_seasons:
+                    return 0
+                covered = 0
+                for season_number in requested_seasons:
+                    try:
+                        detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
+                    except Exception:
+                        continue
+                    episodes = detail.get("episodes")
+                    if isinstance(episodes, list) and episodes:
+                        covered += 1
+                return covered
+
+            def _score(candidate: dict[str, object]) -> tuple[int, int, int, int, int, int, int]:
                 candidate_title = str(candidate.get("name") or candidate.get("title") or "").strip()
                 candidate_normalized = _normalize_title(candidate_title)
                 candidate_base = _normalize_title(_strip_search_season_suffix(candidate_title))
@@ -608,9 +640,21 @@ class AppCoordinator(QObject):
                     genre_ids = set()
                 exact_match = 1 if candidate_normalized == normalized_title else 0
                 season_base_match = 1 if preferred_base and candidate_base == preferred_base and candidate_season == preferred_season else 0
+                live_action_match = 1 if prefer_live_action and 16 not in genre_ids else 0
+                short_drama_match = 1 if prefer_short_drama and 10766 in genre_ids else 0
                 animation_match = 1 if prefer_animation and 16 in genre_ids else 0
                 base_match = 1 if preferred_base and candidate_base == preferred_base else 0
-                return (exact_match, season_base_match, animation_match, base_match)
+                season_coverage = _season_coverage_score(candidate)
+                year_closeness = _year_closeness_score(candidate)
+                return (
+                    exact_match,
+                    season_base_match,
+                    base_match,
+                    animation_match,
+                    live_action_match + short_drama_match,
+                    season_coverage,
+                    year_closeness,
+                )
 
             return max(search_results, key=_score)
 
@@ -784,18 +828,24 @@ class AppCoordinator(QObject):
                         vod_name=playlist_search_title,
                         vod_year=year or playlist_search_year,
                     )
+                requested_seasons: set[int] = set()
+                for pair in season_episode_pairs:
+                    if pair is None:
+                        continue
+                    requested_seasons.add(pair[0])
+                if not requested_seasons:
+                    requested_seasons.add(default_season)
                 if search_results:
                     preferred_title = playlist_search_title or search_title
-                    matched = _select_tmdb_search_match(search_results, preferred_title, session_vod)
+                    matched = _select_tmdb_search_match(
+                        search_results,
+                        preferred_title,
+                        session_vod,
+                        requested_seasons,
+                        tmdb_client,
+                    )
                     tmdb_id = str(matched.get("id") or "").strip()
                     if tmdb_id:
-                        requested_seasons: set[int] = set()
-                        for pair in season_episode_pairs:
-                            if pair is None:
-                                continue
-                            requested_seasons.add(pair[0])
-                        if not requested_seasons:
-                            requested_seasons.add(default_season)
                         include_season_prefix = len(requested_seasons) > 1
                         titles_by_season_episode = _load_tmdb_titles_by_season_episode(
                             tmdb_client,
@@ -815,7 +865,13 @@ class AppCoordinator(QObject):
                             and search_title != session_vod.vod_name
                         ):
                             raw_search_results = _search_tv_cached(tmdb_client, session_vod.vod_name, year="")
-                            raw_matched = _select_tmdb_search_match(raw_search_results, session_vod.vod_name, session_vod)
+                            raw_matched = _select_tmdb_search_match(
+                                raw_search_results,
+                                session_vod.vod_name,
+                                session_vod,
+                                {1},
+                                tmdb_client,
+                            )
                             raw_tmdb_id = str((raw_matched or {}).get("id") or "").strip()
                             if raw_tmdb_id:
                                 season_map = {

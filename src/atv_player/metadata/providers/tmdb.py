@@ -71,6 +71,11 @@ def _extract_year(payload: dict[str, object], *, media_type: str) -> str:
     return raw[:4] if len(raw) >= 4 and raw[:4].isdigit() else ""
 
 
+def _extract_year_int(payload: dict[str, object], *, media_type: str) -> int | None:
+    year = _extract_year(payload, media_type=media_type)
+    return int(year) if year.isdigit() else None
+
+
 def _should_reject_year_mismatch(media_type: str, expected_year: str, actual_year: str) -> bool:
     if media_type != "movie":
         return False
@@ -106,6 +111,114 @@ class TMDBProvider:
         if _title_has_season_marker(candidate.title):
             return ""
         return candidate.year
+
+    def _tv_category_preference(self, candidate: MetadataQuery, item: dict[str, object]) -> int:
+        category = str(candidate.category_name or "").strip().lower()
+        try:
+            genre_ids = {int(value) for value in item.get("genre_ids") or []}
+        except (TypeError, ValueError):
+            genre_ids = set()
+        if any(token in category for token in ("动漫", "动画", "anime", "国创", "番剧")):
+            return 2 if 16 in genre_ids else 0
+        if any(token in category for token in ("短剧", "短片")):
+            return 2 if 10766 in genre_ids else 0
+        if any(token in category for token in ("电视剧", "剧集", "连续剧", "真人")):
+            if 10766 in genre_ids:
+                return 0
+            return 2 if 16 not in genre_ids else 1
+        return 0
+
+    def _tv_year_closeness(self, candidate: MetadataQuery, item: dict[str, object]) -> int:
+        if not str(candidate.year or "").isdigit():
+            return 0
+        item_year = _extract_year_int(item, media_type="tv")
+        if item_year is None:
+            return 0
+        return -abs(item_year - int(str(candidate.year)))
+
+    def _tv_season_coverage(self, item: dict[str, object], query_title: str) -> int:
+        season_number = extract_season_number(query_title)
+        if season_number is None:
+            return 0
+        tmdb_id = str(item.get("id") or "").strip()
+        if not tmdb_id:
+            return 0
+        try:
+            payload = self._client.get_tv_season_detail(tmdb_id, season_number) or {}
+        except Exception:
+            return 0
+        episodes = payload.get("episodes")
+        return 1 if isinstance(episodes, list) and len(episodes) > 0 else 0
+
+    def _select_best_tv_match(
+        self,
+        candidate: MetadataQuery,
+        search_title: str,
+        payload: list[dict[str, object]],
+    ) -> list[MetadataMatch]:
+        if not payload:
+            return []
+        normalized_search_title = _normalize_title(search_title)
+        normalized_query_title = _normalize_title(candidate.title)
+        query_base = _normalize_title(_strip_search_season_suffix(candidate.title))
+
+        ranked: list[tuple[tuple[int, int, int, int, int, int], MetadataMatch]] = []
+        for raw_item in payload:
+            item = dict(raw_item)
+            provider_id = str(item.get("id") or "").strip()
+            item_title = str(
+                item.get("title")
+                or item.get("name")
+                or item.get("original_title")
+                or item.get("original_name")
+                or ""
+            ).strip()
+            if not provider_id or not item_title:
+                continue
+            item_year = _extract_year(item, media_type="tv")
+            title_for_match = search_title
+            match = self._match_from_payload("tv", item, title_for_match, candidate.year, candidate.title)
+            if match is None:
+                if _should_reject_year_mismatch("tv", candidate.year, item_year):
+                    continue
+                match = MetadataMatch(
+                    provider=self.name,
+                    provider_id=f"tv:{_provider_id_with_season('tv', provider_id, candidate.title)}",
+                    title=item_title,
+                    year=item_year,
+                    score=0.55,
+                    raw=(
+                        {"season_number": extract_season_number(candidate.title)}
+                        if extract_season_number(candidate.title) is not None
+                        else {}
+                    ),
+                )
+            normalized_item_title = _normalize_title(item_title)
+            item_base = _normalize_title(_strip_search_season_suffix(item_title))
+            exact_query_match = 1 if normalized_item_title == normalized_query_title else 0
+            exact_search_match = 1 if normalized_item_title == normalized_search_title else 0
+            base_match = 1 if query_base and item_base == query_base else 0
+            category_preference = self._tv_category_preference(candidate, item)
+            season_coverage = self._tv_season_coverage(item, candidate.title)
+            year_closeness = self._tv_year_closeness(candidate, item)
+            ranked.append(
+                (
+                    (
+                        exact_query_match,
+                        exact_search_match,
+                        base_match,
+                        category_preference,
+                        season_coverage,
+                        year_closeness,
+                    ),
+                    match,
+                )
+            )
+        if not ranked:
+            return []
+        ranked.sort(key=lambda entry: entry[0], reverse=True)
+        best = ranked[0][1]
+        return [best]
 
     def _match_from_payload(
         self,
@@ -148,6 +261,8 @@ class TMDBProvider:
         payload = search_fn(search_title, year=search_year)
         if not payload and search_title != candidate.title and not (media_type == "tv" and _title_has_season_marker(candidate.title)):
             payload = search_fn(candidate.title, year=search_year)
+        if media_type == "tv":
+            return self._select_best_tv_match(candidate, search_title, payload)
         matches: list[MetadataMatch] = []
         fallback_matches: list[MetadataMatch] = []
         for item in payload:
