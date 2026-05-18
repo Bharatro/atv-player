@@ -50,6 +50,7 @@ from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.theme import build_round_icon_button_qss, build_search_line_edit_qss, current_tokens
 
 
 class _EmptyDoubanController:
@@ -1285,54 +1286,18 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._app_event_filter_installed = False
         self._app_state_signal_connected = False
 
+        tokens = current_tokens()
         self.global_search_container.setFixedWidth(400)
         self.global_search_edit.setPlaceholderText("搜索")
         self.global_search_edit.setClearButtonEnabled(True)
-        self.global_search_edit.setStyleSheet(
-            """
-            QLineEdit {
-                min-height: 36px;
-                padding: 0 12px;
-                border: 1px solid #d0d7de;
-                border-radius: 18px;
-                background: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #409eff;
-            }
-            """
-        )
+        self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
         self.global_search_button.setText("")
         self.global_search_button.setIcon(load_icon(self._SEARCH_ICON_PATH))
         self.global_search_button.setFixedSize(36, 36)
-        self.global_search_button.setStyleSheet(
-            """
-            QPushButton {
-                border: 1px solid #d0d7de;
-                border-radius: 18px;
-                background: #ffffff;
-                padding: 0;
-            }
-            QPushButton:hover {
-                background: #f3f4f6;
-            }
-            """
-        )
+        self.global_search_button.setStyleSheet(build_round_icon_button_qss(tokens))
         self.global_search_popup_button.setIcon(load_icon(self._SEARCH_POPUP_ICON_PATH))
         self.global_search_popup_button.setFixedSize(36, 36)
-        self.global_search_popup_button.setStyleSheet(
-            """
-            QPushButton {
-                border: 1px solid #d0d7de;
-                border-radius: 18px;
-                background: #ffffff;
-                padding: 0;
-            }
-            QPushButton:hover {
-                background: #f3f4f6;
-            }
-            """
-        )
+        self.global_search_popup_button.setStyleSheet(build_round_icon_button_qss(tokens))
         self.global_search_status_label.setWordWrap(True)
         self.global_search_clear_button.setEnabled(False)
         self.global_search_clear_button.hide()

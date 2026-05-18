@@ -178,3 +178,98 @@ def install_theme(app: QApplication, manager: ThemeManager, mode: str) -> str:
         setattr(app, "theme_mode", mode)
     setattr(app, "_theme_manager", manager)
     return resolved
+
+
+def current_theme_manager() -> ThemeManager:
+    app = QApplication.instance()
+    manager = getattr(app, "_theme_manager", None) if app is not None else None
+    return manager if isinstance(manager, ThemeManager) else ThemeManager()
+
+
+def current_resolved_theme() -> ResolvedTheme:
+    app = QApplication.instance()
+    if app is None or not hasattr(app, "property"):
+        return "light"
+    resolved = str(app.property("resolved_theme") or "light").strip().lower()
+    return "dark" if resolved == "dark" else "light"
+
+
+def current_tokens() -> ThemeTokens:
+    return current_theme_manager().tokens_for(current_resolved_theme())
+
+
+def build_search_line_edit_qss(tokens: ThemeTokens, *, border_radius: int = 15, min_height: int = 30) -> str:
+    return f"""
+    QLineEdit {{
+        min-height: {min_height}px;
+        padding: 0 10px;
+        border: 1px solid {tokens.input_border};
+        border-radius: {border_radius}px;
+        background: {tokens.input_bg};
+        color: {tokens.text_primary};
+    }}
+    QLineEdit:focus {{
+        border: 1px solid {tokens.accent};
+    }}
+    """
+
+
+def build_round_icon_button_qss(tokens: ThemeTokens, *, border_radius: int = 18) -> str:
+    return f"""
+    QPushButton {{
+        border: 1px solid {tokens.input_border};
+        border-radius: {border_radius}px;
+        background: {tokens.input_bg};
+        color: {tokens.text_primary};
+        padding: 0;
+    }}
+    QPushButton:hover {{
+        background: {tokens.panel_alt_bg};
+        border-color: {tokens.accent_hover};
+    }}
+    """
+
+
+def build_pill_button_qss(tokens: ThemeTokens, *, checked_accent: bool = False) -> str:
+    checked_block = ""
+    if checked_accent:
+        checked_block = f"""
+        QPushButton:checked {{
+            background-color: {tokens.input_bg};
+            color: {tokens.accent};
+            border: 1px solid {tokens.accent};
+        }}
+        QPushButton:checked:hover {{
+            color: {tokens.accent_hover};
+            border: 1px solid {tokens.accent_hover};
+        }}
+        """
+    return f"""
+    QPushButton {{
+        background-color: {tokens.input_bg};
+        color: {tokens.text_primary};
+        border: 1px solid {tokens.input_border};
+        border-radius: 14px;
+        padding: 4px 12px;
+    }}
+    QPushButton:hover {{
+        background-color: {tokens.panel_alt_bg};
+        border-color: {tokens.accent_hover};
+    }}
+    {checked_block}
+    """
+
+
+def build_accent_label_qss(tokens: ThemeTokens) -> str:
+    return f"color: {tokens.accent};"
+
+
+def build_placeholder_label_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QLabel {{
+        border: 1px solid {tokens.border_subtle};
+        padding: 4px 14px;
+        background-color: {tokens.panel_alt_bg};
+        color: {tokens.text_secondary};
+    }}
+    """
