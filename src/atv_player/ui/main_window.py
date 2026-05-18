@@ -3063,6 +3063,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     play_item.media_title = resolved_media_title
         return request
 
+    @staticmethod
+    def _apply_request_playback_history_title(request: OpenPlayerRequest) -> OpenPlayerRequest:
+        history_loader = request.playback_history_loader
+        if history_loader is None:
+            return request
+        try:
+            history = history_loader()
+        except Exception:
+            return request
+        if history is None or not str(getattr(history, "vod_name", "") or "").strip():
+            return request
+        return MainWindow._apply_request_fallback_metadata(request, history, prefer_fallback_media_title=True)
+
     def _current_player_session_is_placeholder(self) -> bool:
         if self.player_window is None:
             return False
@@ -3786,15 +3799,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _build_detail_restore_request(self, source: str, vod_id: str):
         if source == "telegram":
-            return self.telegram_controller.build_request(vod_id)
+            request = self.telegram_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
         if source == "live":
             return self.live_controller.build_request(vod_id)
         if source == "emby":
-            return self.emby_controller.build_request(vod_id)
+            request = self.emby_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
         if source == "bilibili":
-            return self.bilibili_controller.build_request(vod_id)
+            request = self.bilibili_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
         if source == "jellyfin":
-            return self.jellyfin_controller.build_request(vod_id)
+            request = self.jellyfin_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
         if source == "plugin":
             controller = self._plugin_controller_by_id(self.config.last_playback_source_key)
             if controller is None:
@@ -3802,8 +3819,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             request = controller.build_request(vod_id)
             request.source_kind = "plugin"
             request.source_key = self.config.last_playback_source_key
-            return request
-        return self.browse_controller.build_request_from_detail(vod_id)
+            return self._apply_request_playback_history_title(request)
+        request = self.browse_controller.build_request_from_detail(vod_id)
+        return self._apply_request_playback_history_title(request)
 
     def _plugin_controller_by_id(self, plugin_id: str) -> _PluginController | None:
         for _page, controller, current_plugin_id in self._plugin_pages:

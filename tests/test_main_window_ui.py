@@ -6392,6 +6392,75 @@ def test_main_window_telegram_page_item_open_signal_preserves_list_title(qtbot, 
     assert session["playlist"][0].media_title == "成何体统 (2026)"
 
 
+def test_main_window_restore_last_player_uses_saved_history_title_as_telegram_media_title(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            del controller, config, save_config
+            self.closed_to_main = SimpleNamespace(connect=lambda _callback: None)
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestoreTelegramController(FakeStaticController):
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="di|纸上|f|紫微(2026)"),
+                playlist=[PlayItem(title="正片", url="https://media.example/movie.m3u8", media_title="di|纸上|f|紫微(2026)")],
+                clicked_index=0,
+                source_kind="telegram",
+                source_mode="detail",
+                source_vod_id=vod_id,
+                use_local_history=False,
+                playback_history_loader=lambda: HistoryRecord(
+                    id=0,
+                    key=vod_id,
+                    vod_name="纸上紫微",
+                    vod_pic="poster",
+                    vod_remarks="正片",
+                    episode=0,
+                    episode_url="https://media.example/movie.m3u8",
+                    position=45000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1713206400000,
+                    source_kind="telegram",
+                ),
+            )
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        telegram_controller=RestoreTelegramController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(
+            last_active_window="player",
+            last_playback_source="telegram",
+            last_playback_mode="detail",
+            last_playback_vod_id="vod-1",
+            last_player_paused=True,
+        ),
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    session = window.player_window.opened[0][0]
+    assert session["playlist"][0].media_title == "纸上紫微"
+
+
 def test_main_window_prepares_episode_title_enhancer_for_browse_request(qtbot) -> None:
     marker = object()
     window = MainWindow(
