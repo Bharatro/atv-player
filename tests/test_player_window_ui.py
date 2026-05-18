@@ -16915,8 +16915,8 @@ def test_player_window_close_as_last_visible_window_returns_to_main(qtbot) -> No
 
     window.close()
 
-    assert config.last_active_window == "main"
-    assert emitted["count"] == 1
+    assert config.last_active_window == "player"
+    assert emitted["count"] == 0
     assert saved["count"] >= 1
 
 

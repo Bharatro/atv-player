@@ -1063,6 +1063,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _mark_app_quit_requested(self) -> None:
         self._app_quit_requested = True
 
+    def _has_other_visible_top_level_windows(self) -> bool:
+        app = QApplication.instance()
+        if app is None:
+            return False
+        for widget in app.topLevelWidgets():
+            if widget is self:
+                continue
+            if widget.isVisible():
+                return True
+        return False
+
     def _apply_theme(self) -> None:
         manager = current_theme_manager()
         theme = current_resolved_theme()
@@ -7266,7 +7277,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 app.removeEventFilter(self)
                 self._app_event_filter_installed = False
         self._persist_geometry()
-        if not self._quit_requested and not self._app_quit_requested and self.config is not None:
+        if (
+            not self._quit_requested
+            and not self._app_quit_requested
+            and self.config is not None
+            and self._has_other_visible_top_level_windows()
+        ):
             self.config.last_active_window = "main"
             self._save_config()
             self.closed_to_main.emit()

@@ -4163,6 +4163,11 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
             captured["emby_loader"] = playback_history_loader
             captured["emby_saver"] = playback_history_saver
 
+    class RecordingTelegramController:
+        def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
+            captured["telegram_loader"] = playback_history_loader
+            captured["telegram_saver"] = playback_history_saver
+
     class RecordingJellyfinController:
         def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
             captured["jellyfin_loader"] = playback_history_loader
@@ -4192,6 +4197,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
     monkeypatch.setattr(app_module, "SpiderPluginManager", RecordingSpiderPluginManager)
+    monkeypatch.setattr(app_module, "TelegramSearchController", RecordingTelegramController)
     monkeypatch.setattr(app_module, "EmbyController", RecordingEmbyController)
     monkeypatch.setattr(app_module, "JellyfinController", RecordingJellyfinController)
     monkeypatch.setattr(app_module, "FeiniuController", RecordingFeiniuController)
@@ -4209,6 +4215,8 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     shared_repo = captured["history_repository"]
     assert shared_repo is not None
     assert captured["plugin_repository"] is shared_repo
+    assert callable(captured["telegram_loader"])
+    assert callable(captured["telegram_saver"])
     assert callable(captured["emby_loader"])
     assert callable(captured["emby_saver"])
     assert callable(captured["jellyfin_loader"])
@@ -7252,6 +7260,85 @@ def test_main_window_restore_last_player_routes_emby_detail_to_emby_controller(q
 
     assert restored is window.player_window
     assert window.player_window.opened[0][0]["vod"].vod_name == "Emby Movie"
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_telegram_detail_with_playback_history_loader(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestoreTelegramController:
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="电报影视剧"),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="telegram",
+                source_mode="detail",
+                source_vod_id=vod_id,
+                use_local_history=False,
+                playback_history_loader=lambda: HistoryRecord(
+                    id=0,
+                    key=vod_id,
+                    vod_name="电报影视剧",
+                    vod_pic="poster",
+                    vod_remarks="第2集",
+                    episode=0,
+                    episode_url="https://media.example/2.m3u8",
+                    position=45000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1713206400000,
+                ),
+            )
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="telegram",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        telegram_controller=RestoreTelegramController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    session = window.player_window.opened[0][0]
+    assert session["vod"].vod_name == "电报影视剧"
+    assert session["use_local_history"] is False
+    assert session["playback_history_loader"] is not None
+    assert session["playback_history_loader"]().position == 45000
     assert window.player_window.opened[0][1] is True
 
 

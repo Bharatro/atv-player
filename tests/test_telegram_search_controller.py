@@ -138,9 +138,10 @@ def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> 
     }
     controller = TelegramSearchController(api)
 
-    request = controller.build_request("https://pan.quark.cn/s/f518510ef92a")
+    source_vod_id = "https://pan.quark.cn/s/f518510ef92a"
+    request = controller.build_request(source_vod_id)
 
-    assert api.detail_calls == ["https://pan.quark.cn/s/f518510ef92a"]
+    assert api.detail_calls == [source_vod_id]
     assert request.vod.vod_id == "1$91792$1"
     assert [item.title for item in request.playlist] == [
         "S05E01 - 第 1 集 - 2160p WEB-DL HDR10+ H265 DDP 5.1.mkv(8.43 GB)",
@@ -153,10 +154,71 @@ def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> 
     assert request.clicked_index == 0
     assert request.source_kind == "telegram"
     assert request.source_mode == "detail"
-    assert request.source_vod_id == "1$91792$1"
+    assert request.source_vod_id == source_vod_id
 
     resolved = request.detail_resolver(request.playlist[1])
 
     assert api.resolve_calls == ["1@91794@0@1"]
     assert resolved is not None
     assert resolved.vod_name == "Resolved 1@91794@0@1"
+
+
+def test_build_request_exposes_local_telegram_history_hooks() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "1$91792$1",
+                "vod_name": "剧集",
+                "vod_play_url": "第1集$1@91793@0@0#第2集$1@91794@0@1",
+            }
+        ]
+    }
+    load_calls: list[str] = []
+    save_calls: list[tuple[str, dict[str, object]]] = []
+    controller = TelegramSearchController(
+        api,
+        playback_history_loader=lambda vod_id: load_calls.append(vod_id) or None,
+        playback_history_saver=lambda vod_id, payload: save_calls.append((vod_id, payload)),
+    )
+
+    request = controller.build_request("tg-detail-1")
+
+    assert request.use_local_history is False
+    assert request.restore_history is False
+    assert request.playback_history_loader is not None
+    assert request.playback_history_saver is not None
+
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 45000})
+
+    assert load_calls == ["tg-detail-1", "1$91792$1"]
+    assert save_calls == [("tg-detail-1", {"position": 45000})]
+
+
+def test_build_request_falls_back_to_detail_vod_id_when_original_telegram_history_key_is_missing() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "1$91792$1",
+                "vod_name": "剧集",
+                "vod_play_url": "第1集$1@91793@0@0#第2集$1@91794@0@1",
+            }
+        ]
+    }
+    load_calls: list[str] = []
+
+    def load_history(vod_id: str):
+        load_calls.append(vod_id)
+        if vod_id == "1$91792$1":
+            return {"position": 45000}
+        return None
+
+    controller = TelegramSearchController(api, playback_history_loader=load_history)
+
+    request = controller.build_request("tg-detail-1")
+
+    assert request.playback_history_loader is not None
+    assert request.playback_history_loader() == {"position": 45000}
+    assert load_calls == ["tg-detail-1", "1$91792$1"]

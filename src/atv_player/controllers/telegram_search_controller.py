@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
-from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
 
 def _looks_like_media_url(value: str) -> bool:
@@ -49,8 +51,15 @@ def build_detail_playlist(detail: VodItem) -> list[PlayItem]:
 class TelegramSearchController:
     _PAGE_SIZE = 30
 
-    def __init__(self, api_client) -> None:
+    def __init__(
+        self,
+        api_client,
+        playback_history_loader: Callable[[str], HistoryRecord | None] | None = None,
+        playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._api_client = api_client
+        self._playback_history_loader = playback_history_loader
+        self._playback_history_saver = playback_history_saver
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_telegram_search_categories()
@@ -105,12 +114,26 @@ class TelegramSearchController:
             for item in playlist:
                 if not item.media_title:
                     item.media_title = media_title
+        history_loader = None
+        history_saver = None
+        source_vod_id = vod_id or detail.vod_id
+        if self._playback_history_loader is not None:
+            def history_loader(source_vod_id=source_vod_id, detail_vod_id=detail.vod_id):
+                history = self._playback_history_loader(source_vod_id)
+                if history is None and detail_vod_id and detail_vod_id != source_vod_id:
+                    history = self._playback_history_loader(detail_vod_id)
+                return history
+        if self._playback_history_saver is not None:
+            history_saver = lambda payload, source_vod_id=source_vod_id: self._playback_history_saver(source_vod_id, payload)
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
             clicked_index=0,
             source_kind="telegram",
             source_mode="detail",
-            source_vod_id=detail.vod_id,
+            source_vod_id=source_vod_id,
             detail_resolver=self.resolve_playlist_item,
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )

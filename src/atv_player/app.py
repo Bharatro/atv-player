@@ -1189,7 +1189,20 @@ class AppCoordinator(QObject):
             epg_service=live_epg_service,
         )
         douban_controller = DoubanController(self._api_client)
-        telegram_controller = TelegramSearchController(self._api_client)
+        telegram_controller = TelegramSearchController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("telegram", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "telegram",
+                vod_id,
+                payload,
+                source_name="电报影视",
+            ),
+        )
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
         bilibili_controller = BilibiliController(
             self._api_client,
