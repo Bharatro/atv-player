@@ -81,6 +81,7 @@ from atv_player.ui.poster_loader import set_proxy_decider_loader
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow, load_direct_parse_detail
 from atv_player.ui.icon_cache import load_icon
+from atv_player.ui.theme import ThemeManager, install_theme
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _MAIN_THREAD_GC_INTERVAL_MS = 30_000
@@ -293,10 +294,22 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
+    install_theme(app, ThemeManager(), repo.load_config().theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
     logger.info("Application initialized data_dir=%s", data_dir)
     return app, repo
+
+
+def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str:
+    target_app = app or QApplication.instance()
+    if target_app is None:
+        return "light"
+    manager = getattr(target_app, "_theme_manager", None)
+    if manager is None:
+        manager = ThemeManager()
+        setattr(target_app, "_theme_manager", manager)
+    return install_theme(target_app, manager, repo.load_config().theme_mode)
 
 
 class AppCoordinator(QObject):
