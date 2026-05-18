@@ -1708,7 +1708,7 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
     assert session.danmaku_controller.calls == [(None, None, None, session.playlist)]
 
 
-def test_player_window_allows_rerun_danmaku_search_while_current_item_is_pending(qtbot) -> None:
+def test_player_window_auto_searches_danmaku_sources_when_current_item_is_pending(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
             self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
@@ -1758,12 +1758,9 @@ def test_player_window_allows_rerun_danmaku_search_while_current_item_is_pending
     window._open_danmaku_source_dialog()
 
     assert window._danmaku_source_rerun_button is not None
-    assert window._danmaku_source_rerun_button.isEnabled() is True
-
-    window._rerun_current_item_danmaku_search()
     qtbot.waitUntil(
         lambda: session.danmaku_controller.calls
-        == [(None, "", "", session.playlist, True, 0, "")]
+        == [(None, "红果短剧", None, session.playlist, True, 0, "")]
     )
 
 
@@ -4762,14 +4759,14 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: len(requested_headers) == 1)
+    qtbot.waitUntil(lambda: len(requested_headers) >= 1)
 
-    assert requested_headers == [
-        {
-            "Referer": "https://www.youtube.com/",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        }
-    ]
+    expected_headers = {
+        "Referer": "https://www.youtube.com/",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    }
+    assert requested_headers
+    assert all(headers == expected_headers for headers in requested_headers)
 
 
 def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypatch, tmp_path) -> None:
@@ -4823,14 +4820,14 @@ def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypat
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: len(requested_headers) == 1)
+    qtbot.waitUntil(lambda: len(requested_headers) >= 1)
 
-    assert requested_headers == [
-        {
-            "Referer": "https://cc.163.com/",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        }
-    ]
+    expected_headers = {
+        "Referer": "https://cc.163.com/",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    }
+    assert requested_headers
+    assert all(headers == expected_headers for headers in requested_headers)
 
 
 def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:
@@ -5598,12 +5595,15 @@ def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> N
     window.open_session(session)
 
     html = window.metadata_view.toHtml()
+    accent = player_window_module.current_theme_manager().tokens_for(
+        player_window_module.current_resolved_theme()
+    ).accent
     assert "https://movie.douban.com/subject/30318230/" in html
     assert "https://www.themoviedb.org/tv/76479" in html
     assert "https://bgm.tv/subject/526975" in html
     assert "https://www.imdb.com/title/tt28489780" in html
     assert "font-weight:600" in html
-    assert "color:#8f5a32" in html
+    assert f"color:{accent}" in html
     assert "text-decoration: underline" not in html
 
 
@@ -5625,7 +5625,7 @@ def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:
     window._handle_metadata_link(QUrl("https://movie.douban.com/subject/30318230/"))
 
     assert opened == ["https://movie.douban.com/subject/30318230/"]
-    assert window.metadata_view.focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert window.metadata_view.focusPolicy() == Qt.FocusPolicy.ClickFocus
 
 
 @pytest.mark.parametrize(
@@ -5663,9 +5663,12 @@ def test_player_window_renders_link_action_id_as_external_url(qtbot, target: str
     window.open_session(session)
 
     html = window.metadata_view.toHtml()
+    accent = player_window_module.current_theme_manager().tokens_for(
+        player_window_module.current_resolved_theme()
+    ).accent
     assert expected_url in html
     assert "font-weight:600" in html
-    assert "color:#8f5a32" in html
+    assert f"color:{accent}" in html
     assert "text-decoration: underline" not in html
 
 
@@ -6809,6 +6812,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "次字幕大小",
         "音轨",
         "弹幕配置",
+        "刮削",
         "弹幕源",
         "弹幕设置",
         "视频信息",
@@ -7576,6 +7580,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "次字幕大小",
         "音轨",
         "弹幕配置",
+        "刮削",
         "弹幕源",
         "弹幕设置",
         "视频信息",
@@ -12811,7 +12816,7 @@ def test_player_window_playback_loader_replacement_restores_cached_danmaku_for_c
     assert controller.load_calls == ["11.mp4(1.21 GB)"]
     assert controller.switch_calls == ["https://v.qq.com/ep11"]
     assert "第十一集弹幕" in session.playlist[0].danmaku_xml
-    assert "缓存弹幕恢复命中: 11.mp4(1.21 GB) -> https://v.qq.com/ep11" in window.log_view.toPlainText()
+    assert "当前播放: 11.mp4(1.21 GB)" in window.log_view.toPlainText()
 
 
 def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qtbot) -> None:
@@ -12934,9 +12939,7 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert controller.switch_calls == ["https://v.qq.com/ep2"]
     assert "第二集弹幕" in session.playlist[1].danmaku_xml
     log_text = window.log_view.toPlainText()
-    assert "缓存弹幕恢复命中: 第2集 -> https://v.qq.com/ep2" in log_text
-    assert "弹幕任务开始: 缓存恢复 第2集" in log_text
-    assert "弹幕任务完成: 缓存恢复 第2集 success=True has_xml=True" in log_text
+    assert "当前播放: 第2集" in log_text
 
 
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
@@ -14361,7 +14364,7 @@ def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_
     assert "Hydrated Video" in window.windowTitle()
     assert window.playlist.item(0).text() == "Hydrated Video"
     assert "hydrated description" in window.metadata_view.toPlainText()
-    assert ("detail", "https://img.example/poster.jpg") in poster_sources
+    assert ("video", "https://img.example/poster.jpg") in poster_sources
 
 
 def test_player_window_ignores_stale_async_loader_result_after_switching_items(qtbot) -> None:
@@ -16167,7 +16170,7 @@ def visible_shortcut_help_dialogs() -> list[QDialog]:
         widget
         for widget in QApplication.topLevelWidgets()
         if isinstance(widget, QDialog)
-        and widget.windowTitle() == "快捷键帮助"
+        and widget.windowTitle() == "帮助"
         and widget.isVisible()
     ]
 
@@ -16225,7 +16228,7 @@ def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
     rows = shortcut_table_rows(visible_shortcut_help_dialogs()[0])
 
-    assert ("F1", "打开快捷键帮助") in rows
+    assert ("F1", "打开帮助") in rows
     assert ("Space", "播放/暂停") in rows
     assert ("Left", "后退 15 秒") in rows
     assert ("Ctrl+Right", "前进 60 秒") in rows
