@@ -221,6 +221,44 @@ def test_main_window_uses_custom_title_bar(qtbot) -> None:
     assert window.title_bar().maximize_button.isHidden() is False
 
 
+def test_main_window_global_search_button_styles_include_disabled_tokens(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    install_theme(app, manager, "light")
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    tokens = manager.tokens_for("light")
+    stylesheet = window.global_search_button.styleSheet()
+
+    assert "QPushButton:disabled" in stylesheet
+    assert f"background: {tokens.button_disabled_bg};" in stylesheet
+    assert f"border: 1px solid {tokens.button_disabled_border};" in stylesheet
+    assert f"color: {tokens.button_disabled_text};" in stylesheet
+
+
+def test_global_search_popup_action_button_qss_uses_disabled_button_text_token() -> None:
+    from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    qss = main_window_module.GlobalSearchPopup._action_button_qss()
+    tokens = current_tokens()
+
+    assert "QPushButton:disabled" in qss
+    assert f"color: {tokens.button_disabled_text};" in qss
+
+
 class AsyncOpenController(FakeStaticController):
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -3840,6 +3878,9 @@ def test_history_page_search_styles_follow_resolved_dark_theme(qtbot) -> None:
     tokens = manager.tokens_for("dark")
     assert tokens.input_border in page.search_edit.styleSheet()
     assert tokens.accent in page.continue_button.styleSheet()
+    assert tokens.button_disabled_bg in page.continue_button.styleSheet()
+    assert tokens.button_disabled_border in page.continue_button.styleSheet()
+    assert tokens.button_disabled_text in page.continue_button.styleSheet()
 
 
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:

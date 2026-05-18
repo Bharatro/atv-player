@@ -537,7 +537,7 @@ class GlobalSearchPopup(QWidget):
             color: {tokens.accent_hover};
         }}
         QPushButton:disabled {{
-            color: {tokens.border_subtle};
+            color: {tokens.button_disabled_text};
         }}
         """
 

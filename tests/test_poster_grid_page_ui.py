@@ -503,8 +503,12 @@ def test_poster_grid_page_filter_buttons_use_light_theme_stylesheet(qtbot) -> No
     assert "QPushButton:hover" in stylesheet
     assert tokens.panel_alt_bg in stylesheet
     assert "QPushButton:checked" in stylesheet
+    assert "QPushButton:disabled" in stylesheet
     assert tokens.accent in stylesheet
     assert tokens.accent_hover in stylesheet
+    assert tokens.button_disabled_bg in stylesheet
+    assert tokens.button_disabled_border in stylesheet
+    assert tokens.button_disabled_text in stylesheet
 
 
 def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
