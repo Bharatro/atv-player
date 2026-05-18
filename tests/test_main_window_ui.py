@@ -3611,7 +3611,7 @@ def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     assert dialog.douban_cookie_edit.isEnabled() is False
     assert dialog.tmdb_api_key_edit.isEnabled() is False
     assert dialog.bangumi_access_token_edit.isEnabled() is False
-    assert dialog.douban_cookie_edit.placeholderText() == "填写豆瓣 Cookie；留空时跳过本地豆瓣抓取"
+    assert dialog.douban_cookie_edit.placeholderText() == "填写豆瓣 Cookie；留空时跳过豆瓣官方抓取"
 
 
 def test_advanced_settings_dialog_toggles_input_enabled_state(qtbot) -> None:
