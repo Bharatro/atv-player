@@ -7,6 +7,7 @@ from atv_player.sqlite_utils import managed_connection
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
+_VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
@@ -84,6 +85,11 @@ def _normalize_global_search_history(value: object) -> list[str]:
         history.append(text)
         seen.add(text)
     return history[:10]
+
+
+def _normalize_theme_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_THEME_MODES else "system"
 
 
 def _normalize_network_proxy_mode(value: object) -> str:
@@ -181,6 +187,7 @@ class SettingsRepository:
                     username TEXT NOT NULL,
                     token TEXT NOT NULL,
                     vod_token TEXT NOT NULL,
+                    theme_mode TEXT NOT NULL DEFAULT 'system',
                     metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
@@ -237,6 +244,10 @@ class SettingsRepository:
             if "vod_token" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN vod_token TEXT NOT NULL DEFAULT ''"
+                )
+            if "theme_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'system'"
                 )
             if "metadata_enhancement_enabled" not in columns:
                 conn.execute(
@@ -426,6 +437,7 @@ class SettingsRepository:
                     username,
                     token,
                     vod_token,
+                    theme_mode,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     metadata_douban_cookie,
@@ -474,7 +486,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -491,6 +503,7 @@ class SettingsRepository:
                     username,
                     token,
                     vod_token,
+                    theme_mode,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     metadata_douban_cookie,
@@ -547,6 +560,7 @@ class SettingsRepository:
             username,
             token,
             vod_token,
+            theme_mode,
             metadata_enhancement_enabled,
             episode_title_enhancement_enabled,
             metadata_douban_cookie,
@@ -599,6 +613,7 @@ class SettingsRepository:
             username=username,
             token=token,
             vod_token=vod_token,
+            theme_mode=_normalize_theme_mode(theme_mode),
             metadata_enhancement_enabled=bool(metadata_enhancement_enabled),
             episode_title_enhancement_enabled=bool(episode_title_enhancement_enabled),
             metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
@@ -659,6 +674,7 @@ class SettingsRepository:
                     username = ?,
                     token = ?,
                     vod_token = ?,
+                    theme_mode = ?,
                     metadata_enhancement_enabled = ?,
                     episode_title_enhancement_enabled = ?,
                     metadata_douban_cookie = ?,
@@ -712,6 +728,7 @@ class SettingsRepository:
                     config.username,
                     config.token,
                     config.vod_token,
+                    _normalize_theme_mode(config.theme_mode),
                     int(config.metadata_enhancement_enabled),
                     int(config.episode_title_enhancement_enabled),
                     str(config.metadata_douban_cookie or "").strip(),

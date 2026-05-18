@@ -340,6 +340,29 @@ def test_settings_repository_round_trip_persists_global_search_hot_source(tmp_pa
     assert saved == config
 
 
+def test_settings_repository_defaults_theme_mode_to_system(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+
+    assert repo.load_config().theme_mode == "system"
+
+
+def test_settings_repository_round_trip_persists_theme_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = AppConfig(theme_mode="dark")
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.theme_mode == "dark"
+
+
+def test_settings_repository_normalizes_invalid_theme_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(theme_mode="sepia"))
+
+    assert repo.load_config().theme_mode == "system"
+
+
 def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)
