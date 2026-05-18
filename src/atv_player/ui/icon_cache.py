@@ -18,6 +18,10 @@ def load_icon(path: str | Path) -> QIcon:
     return icon
 
 
+def load_tinted_icon(path: str | Path, color: str, *, size: int | QSize = 24) -> QIcon:
+    return tint_icon(load_icon(path), color, size=size)
+
+
 def tint_icon(icon: QIcon, color: str, *, size: int | QSize = 24) -> QIcon:
     target_size = QSize(size, size) if isinstance(size, int) else size
     key = (icon.cacheKey(), color, target_size.width(), target_size.height())
