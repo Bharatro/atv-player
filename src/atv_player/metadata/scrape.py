@@ -32,6 +32,9 @@ _PROVIDER_LABELS = {
 
 _SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
+_ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
+_LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
+_MOVIE_MARKERS = ("电影", "影片", "movie")
 
 
 def normalize_metadata_scrape_title(value: object) -> str:
@@ -81,6 +84,56 @@ def _parse_bangumi_provider_id(provider_id: str) -> str:
     return text.split(":", 1)[1].strip()
 
 
+def _iter_category_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return _iter_category_values(value.get("value"))
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_iter_category_values(item))
+        return values
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _classify_media_kind(*values: object) -> str:
+    tokens = " ".join(
+        token.strip().lower()
+        for value in values
+        for token in _iter_category_values(value)
+        if token and token.strip()
+    )
+    if not tokens:
+        return ""
+    if any(marker in tokens for marker in _ANIME_MARKERS):
+        return "anime"
+    if any(marker in tokens for marker in _MOVIE_MARKERS):
+        return "movie"
+    if any(marker in tokens for marker in _LIVE_ACTION_MARKERS):
+        return "live_action"
+    return ""
+
+
+def _query_media_kind(query: MetadataQuery) -> str:
+    return _classify_media_kind(query.category_name, query.type_name)
+
+
+def _match_media_kind(match: MetadataMatch) -> str:
+    if match.provider == "bangumi":
+        return "anime"
+    if match.provider == "tmdb" and str(match.provider_id or "").strip().startswith("movie:"):
+        return "movie"
+    raw = dict(match.raw or {})
+    return _classify_media_kind(
+        raw.get("typeName"),
+        raw.get("channel"),
+        raw.get("genres"),
+        raw.get("categories"),
+        raw.get("baseTags"),
+        raw.get("category"),
+    )
+
+
 class MetadataScrapeService:
     def __init__(self, cache: MetadataCache, providers: list[object]) -> None:
         self._cache = cache
@@ -108,6 +161,13 @@ class MetadataScrapeService:
             subtitle=str(match.raw.get("subtitle") or ""),
             raw=dict(match.raw),
         )
+
+    def _is_manual_search_match_compatible(self, query: MetadataQuery, match: MetadataMatch) -> bool:
+        query_kind = _query_media_kind(query)
+        match_kind = _match_media_kind(match)
+        if not query_kind or not match_kind:
+            return True
+        return query_kind == match_kind
 
     def _hydrate_tmdb_episode_candidate(self, vod: VodItem, candidate: object) -> object:
         provider = str(getattr(candidate, "provider", "") or "").strip()
@@ -203,6 +263,7 @@ class MetadataScrapeService:
                     provider_label=self._provider_label(provider.name),
                     error_text=str(exc),
                 )
+            matches = [match for match in matches if self._is_manual_search_match_compatible(query, match)]
             return MetadataScrapeGroup(
                 provider=provider.name,
                 provider_label=self._provider_label(provider.name),

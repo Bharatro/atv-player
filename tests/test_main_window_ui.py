@@ -3566,6 +3566,20 @@ def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None
     )
 
 
+def test_advanced_settings_dialog_applies_branded_line_edit_styles(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(network_proxy_mode="system"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(dialog.isVisible)
+
+    assert "QLineEdit:disabled" in dialog.network_proxy_url_edit.styleSheet()
+    assert dialog.tmdb_api_key_edit.styleSheet() == dialog.mpv_cache_size_edit.styleSheet()
+    assert dialog.tmdb_api_key_edit.height() == 42
+    assert dialog.network_proxy_url_edit.height() == 42
+
+
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

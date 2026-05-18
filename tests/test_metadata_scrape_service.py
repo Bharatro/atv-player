@@ -79,6 +79,41 @@ def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: P
     assert groups[1].items[0].provider_id == "35746415"
 
 
+def test_metadata_scrape_service_filters_explicit_category_mismatches_for_manual_search(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:anime-1",
+                title="仙剑奇侠传三",
+                year="2025",
+                raw={"channel": "动漫,4"},
+            ),
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:anime-2",
+                title="仙剑奇侠传三 特别篇",
+                year="2025",
+                raw={"category": {"value": "动画/奇幻"}},
+            ),
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:drama-1",
+                title="仙剑奇侠传三",
+                year="2025",
+                raw={"channel": "电视剧,2"},
+            ),
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[iqiyi])
+
+    groups = service.search(MetadataQuery(title="仙剑奇侠传3", year="2025", category_name="动漫"), provider_filter="")
+
+    assert [item.provider_id for item in groups[0].items] == ["iqiyi:anime-1", "iqiyi:anime-2"]
+
+
 def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_candidate(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

@@ -23,6 +23,7 @@ from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
 from atv_player.ui.theme import (
     FlatComboBox,
     build_form_combobox_qss,
+    build_form_line_edit_qss,
     configure_form_flat_combobox,
     current_tokens,
 )
@@ -197,6 +198,7 @@ class AdvancedSettingsDialog(QDialog):
     def _apply_theme(self) -> None:
         tokens = current_tokens()
         combo_qss = build_form_combobox_qss(tokens)
+        line_edit_qss = build_form_line_edit_qss(tokens)
         for combo in (
             self.theme_mode_combo,
             self.network_proxy_mode_combo,
@@ -205,6 +207,16 @@ class AdvancedSettingsDialog(QDialog):
         ):
             combo.setStyleSheet(combo_qss)
             configure_form_flat_combobox(combo, tokens)
+        for edit in (
+            self.tmdb_api_key_edit,
+            self.bangumi_access_token_edit,
+            self.network_proxy_url_edit,
+            self.mpv_cache_size_edit,
+            self.mpv_network_timeout_edit,
+            self.mpv_default_readahead_edit,
+        ):
+            edit.setStyleSheet(line_edit_qss)
+            edit.setFixedHeight(42)
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)
