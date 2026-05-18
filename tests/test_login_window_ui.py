@@ -1,5 +1,6 @@
 import threading
 
+from PySide6.QtCore import Qt
 from PySide6.QtCore import QSize
 
 from atv_player.models import AppConfig
@@ -57,6 +58,14 @@ class AsyncLoginController:
         if exc is not None:
             self._login_errors.append(exc)
         self._login_events.pop(0).set()
+
+
+def test_login_window_uses_custom_title_bar(qtbot) -> None:
+    window = LoginWindow(FakeLoginController())
+    qtbot.addWidget(window)
+
+    assert bool(window.windowFlags() & Qt.WindowType.FramelessWindowHint)
+    assert window.title_bar().title_label.text() == "alist-tvbox 登录"
 
 
 def test_login_window_uses_larger_default_size(qtbot) -> None:

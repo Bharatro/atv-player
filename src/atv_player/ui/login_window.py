@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.window_chrome import ThemedWidgetWindowBase
 
 
 class _LoginWindowSignals(QObject):
@@ -22,11 +23,11 @@ class _LoginWindowSignals(QObject):
     login_failed = Signal(str)
 
 
-class LoginWindow(QWidget, AsyncGuardMixin):
+class LoginWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     login_succeeded = Signal()
 
     def __init__(self, controller) -> None:
-        super().__init__()
+        super().__init__(title="alist-tvbox 登录", allow_minimize=True, allow_maximize=True)
         self._init_async_guard()
         self._controller = controller
         self._login_request_id = 0
@@ -34,7 +35,6 @@ class LoginWindow(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._signals.defaults_loaded, self._handle_defaults_loaded)
         self._connect_async_signal(self._signals.login_succeeded, self._handle_login_succeeded)
         self._connect_async_signal(self._signals.login_failed, self._handle_login_failed)
-        self.setWindowTitle("alist-tvbox 登录")
         self.resize(720, 520)
 
         self.base_url_edit = QLineEdit()
@@ -71,7 +71,8 @@ class LoginWindow(QWidget, AsyncGuardMixin):
         centered_row.addWidget(self.content_container, 100)
         centered_row.addStretch(1)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
+        layout.setContentsMargins(0, self.title_bar().height(), 0, 0)
         layout.addStretch(1)
         layout.addLayout(centered_row)
         layout.addStretch(1)
