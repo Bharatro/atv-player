@@ -165,6 +165,11 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self._update_pagination_controls()
         self._sync_action_state()
 
+    def _apply_theme(self) -> None:
+        tokens = current_tokens()
+        self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens))
+        self.continue_button.setStyleSheet(build_pill_button_qss(tokens, checked_accent=True))
+
     def ensure_loaded(self) -> None:
         if self._initial_load_started:
             return

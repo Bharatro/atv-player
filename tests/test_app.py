@@ -3621,6 +3621,58 @@ def test_build_application_installs_theme_manager_from_saved_config(monkeypatch,
     assert built_app.property("theme_mode") == "dark"
 
 
+def test_apply_saved_theme_refreshes_main_window_without_recursive_callback(qtbot, tmp_path) -> None:
+    app = QApplication.instance()
+    assert app is not None
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    config = AppConfig(theme_mode="dark")
+    repo.save_config(config)
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+        apply_theme=lambda: app_module.apply_saved_theme(app, repo),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    resolved = app_module.apply_saved_theme(app, repo)
+
+    assert resolved == "dark"
+    assert app.property("resolved_theme") == "dark"
+
+
+def test_apply_saved_theme_ignores_advanced_settings_callback_storage(qtbot, tmp_path) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    app = QApplication.instance()
+    assert app is not None
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    config = AppConfig(theme_mode="dark")
+    repo.save_config(config)
+
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: None,
+        apply_theme=lambda: app_module.apply_saved_theme(app, repo),
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    resolved = app_module.apply_saved_theme(app, repo)
+
+    assert resolved == "dark"
+    assert app.property("resolved_theme") == "dark"
+
+
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:

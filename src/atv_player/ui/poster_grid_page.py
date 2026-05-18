@@ -287,6 +287,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _is_widget_alive(self) -> bool:
         return self._can_deliver_async_result()
 
+    def _apply_theme(self) -> None:
+        self._rebuild_filter_panel()
+
     def ensure_loaded(self) -> None:
         if self._initial_load_started:
             return

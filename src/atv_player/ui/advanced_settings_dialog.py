@@ -34,7 +34,7 @@ class AdvancedSettingsDialog(QDialog):
         super().__init__(parent)
         self._config = config
         self._save_config = save_config
-        self._apply_theme = apply_theme
+        self._apply_application_theme = apply_theme
         self.setWindowTitle("高级设置")
         self.resize(680, 440)
 
@@ -317,6 +317,6 @@ class AdvancedSettingsDialog(QDialog):
             self._config.mpv_extra_options,
         ) = playback_values
         self._save_config()
-        if self._apply_theme is not None:
-            self._apply_theme()
+        if self._apply_application_theme is not None:
+            self._apply_application_theme()
         self.accept()

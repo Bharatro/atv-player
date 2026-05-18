@@ -667,6 +667,31 @@ class GlobalSearchPopup(QWidget):
         self._build_history_panel()
         self._build_hot_panel()
 
+    def _apply_theme(self) -> None:
+        self._container.setStyleSheet(self._container_qss())
+        divider_item = self._container_layout.itemAt(1)
+        divider_widget = divider_item.widget() if divider_item is not None else None
+        if isinstance(divider_widget, QFrame):
+            divider_widget.setStyleSheet(self._divider_qss())
+        if self._history_title_label is not None:
+            self._history_title_label.setStyleSheet(self._section_title_qss())
+        if self._hot_title_label is not None:
+            self._hot_title_label.setStyleSheet(self._section_title_qss())
+        if self.clear_history_button is not None:
+            self.clear_history_button.setStyleSheet(self._action_button_qss())
+        self.hot_source_tab_bar.setStyleSheet(self._hot_tab_qss())
+        self.hot_tab_bar.setStyleSheet(self._hot_tab_qss())
+        for row in self._history_item_rows.values():
+            row.setStyleSheet(self._history_row_qss())
+        for button in self._history_item_buttons.values():
+            button.setStyleSheet(self._history_button_qss())
+        for button in self._history_delete_buttons.values():
+            button.setStyleSheet(self._action_button_qss())
+        for label in self._hot_rank_labels:
+            label.setStyleSheet(self._hot_rank_qss())
+        for button in self._hot_item_buttons.values():
+            button.setStyleSheet(self._hot_button_qss())
+
     def history_item_texts(self) -> list[str]:
         return [button.text() for button in self._history_item_buttons.values()]
 
@@ -1117,7 +1142,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         super().__init__()
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
-        self._apply_theme = apply_theme
+        self._apply_application_theme = apply_theme or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
@@ -1545,6 +1570,31 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._sync_startup_plugin_loading_ui()
         self._sync_global_search_action_state()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
+
+    def _apply_theme(self) -> None:
+        tokens = current_tokens()
+        self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
+        self.global_search_button.setStyleSheet(build_round_icon_button_qss(tokens))
+        self.global_search_popup_button.setStyleSheet(build_round_icon_button_qss(tokens))
+        self._global_search_popup._apply_theme()
+        for page in (
+            self.history_page,
+            self.douban_page,
+            self.telegram_page,
+            self.live_page,
+            self.emby_page,
+            self.bilibili_page,
+            self.jellyfin_page,
+            self.feiniu_page,
+            self.pansou_page,
+        ):
+            apply_theme = getattr(page, "_apply_theme", None)
+            if callable(apply_theme):
+                apply_theme()
+        for page, _controller, _plugin_id in self._plugin_pages:
+            apply_theme = getattr(page, "_apply_theme", None)
+            if callable(apply_theme):
+                apply_theme()
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
@@ -3080,7 +3130,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
-        dialog = AdvancedSettingsDialog(self.config, self._save_config, self, apply_theme=self._apply_theme)
+        dialog = AdvancedSettingsDialog(
+            self.config,
+            self._save_config,
+            self,
+            apply_theme=self._apply_application_theme,
+        )
         dialog.exec()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
