@@ -353,7 +353,7 @@ class AppCoordinator(QObject):
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
-            self._plugin_loader = SpiderPluginLoader(cache_dir, get=self._proxy_http_get())
+            self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
                 self._plugin_repository,
                 self._plugin_loader,
@@ -384,6 +384,20 @@ class AppCoordinator(QObject):
             if hasattr(repo, "database_path")
             else None
         )
+
+    def _build_spider_plugin_loader(self, cache_dir: Path):
+        try:
+            parameters = inspect.signature(SpiderPluginLoader).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        kwargs = {}
+        if accepts_kwargs or "get" in parameters:
+            kwargs["get"] = self._proxy_http_get()
+        return SpiderPluginLoader(cache_dir, **kwargs)
 
     def _close_api_client(self) -> None:
         if self._api_client is None:

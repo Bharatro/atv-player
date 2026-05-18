@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 import threading
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -183,7 +184,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                records, total = self.controller.load_page(
+                records, total = self._load_page_from_controller(
                     page=page,
                     size=size,
                     keyword=keyword,
@@ -206,6 +207,41 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             self._load_signals.succeeded.emit(request_id, page, size, records, total)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _load_page_from_controller(
+        self,
+        *,
+        page: int,
+        size: int,
+        keyword: str,
+        source_kind: str,
+        time_range: str,
+        continue_watching: bool,
+    ) -> tuple[list[HistoryRecord], int]:
+        load_page = self.controller.load_page
+        parameters = inspect.signature(load_page).parameters.values()
+        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+        if accepts_var_kwargs:
+            return load_page(
+                page=page,
+                size=size,
+                keyword=keyword,
+                source_kind=source_kind,
+                time_range=time_range,
+                continue_watching=continue_watching,
+            )
+        supported_keys = {parameter.name for parameter in parameters}
+        kwargs = {"page": page, "size": size}
+        optional_kwargs = {
+            "keyword": keyword,
+            "source_kind": source_kind,
+            "time_range": time_range,
+            "continue_watching": continue_watching,
+        }
+        for key, value in optional_kwargs.items():
+            if key in supported_keys:
+                kwargs[key] = value
+        return load_page(**kwargs)
 
     def delete_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})

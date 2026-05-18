@@ -2215,9 +2215,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.setText("")
         self.poster_label.setPixmap(pixmap)
         video_source = self._preferred_video_poster_source()
-        if video_source == self._preferred_detail_poster_source() and Path(video_source).is_file():
-            self._show_video_poster_overlay(pixmap)
         if video_source == self._preferred_detail_poster_source():
+            self._show_video_poster_overlay(pixmap)
             self._attach_audio_cover_if_available()
 
     def _handle_video_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
@@ -2272,6 +2271,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _preferred_poster_source(self) -> str:
         return self._preferred_video_poster_source()
+
+    def _should_defer_same_source_video_poster_load(self) -> bool:
+        if self.session is None:
+            return False
+        if not self.session.async_playback_loader or self.session.playback_loader is None:
+            return False
+        current_item = self._current_play_item()
+        return current_item is not None and not bool(current_item.url)
 
     def _should_use_audio_cover(self, url: str) -> bool:
         normalized_path = urlparse(url or "").path.lower()
@@ -2349,6 +2356,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._show_video_poster_overlay(pixmap)
             else:
                 self._clear_video_poster_overlay()
+                if self._should_defer_same_source_video_poster_load():
+                    return
+            if self._should_defer_same_source_video_poster_load():
+                return
             self._start_poster_load(source, self._video_poster_request_id, target="video")
             return
         pixmap = self._load_poster_pixmap(source)
@@ -2696,7 +2707,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._apply_playback_loader_result(load_result)
         self._render_playlist_items()
-        self._render_poster()
+        self._render_video_poster()
         self._render_metadata()
         self._render_detail_fields()
         self._refresh_window_title()
