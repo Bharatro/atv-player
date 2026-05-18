@@ -279,6 +279,8 @@ def build_combobox_qss(
     field_bg: str | None = None,
     drop_down_bg: str | None = None,
     text_color: str | None = None,
+    hover_field_bg: str | None = None,
+    hover_drop_down_bg: str | None = None,
     disabled_field_bg: str | None = None,
     disabled_drop_down_bg: str | None = None,
     disabled_text_color: str | None = None,
@@ -292,6 +294,8 @@ def build_combobox_qss(
     resolved_field_bg = field_bg or tokens.input_bg
     resolved_drop_down_bg = drop_down_bg or (resolved_field_bg if borderless else tokens.panel_alt_bg)
     resolved_text_color = text_color or tokens.text_primary
+    resolved_hover_field_bg = hover_field_bg or resolved_field_bg
+    resolved_hover_drop_down_bg = hover_drop_down_bg or resolved_drop_down_bg
     resolved_disabled_field_bg = disabled_field_bg or tokens.panel_alt_bg
     resolved_disabled_drop_down_bg = disabled_drop_down_bg or (
         resolved_disabled_field_bg if borderless else tokens.panel_bg
@@ -313,7 +317,11 @@ def build_combobox_qss(
         color: {resolved_text_color};
     }}
     QComboBox:hover {{
+        background: {resolved_hover_field_bg};
         border-color: {resolved_hover_border_color};
+    }}
+    QComboBox:hover::drop-down {{
+        background: {resolved_hover_drop_down_bg};
     }}
     QComboBox:focus {{
         border: 1px solid {resolved_focus_border_color};
@@ -365,6 +373,40 @@ def build_combobox_qss(
     }}
     QComboBox QAbstractItemView::item:selected {{
         background: {tokens.menu_selected_bg};
+    }}
+    """
+
+
+def build_combobox_popup_qss(
+    *,
+    background: str,
+    text_color: str,
+    border_color: str,
+    hover_bg: str,
+    selected_bg: str,
+    selected_text_color: str | None = None,
+) -> str:
+    resolved_selected_text_color = selected_text_color or text_color
+    return f"""
+    QAbstractItemView {{
+        background: {background};
+        color: {text_color};
+        border: 1px solid {border_color};
+        selection-background-color: {selected_bg};
+        selection-color: {resolved_selected_text_color};
+        outline: 0;
+    }}
+    QAbstractItemView::item {{
+        min-height: 28px;
+        padding: 4px 10px;
+        background: transparent;
+    }}
+    QAbstractItemView::item:hover {{
+        background: {hover_bg};
+    }}
+    QAbstractItemView::item:selected {{
+        background: {selected_bg};
+        color: {resolved_selected_text_color};
     }}
     """
 

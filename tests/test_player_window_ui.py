@@ -3246,11 +3246,15 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
         "QComboBox {\n        min-height: 30px;\n        padding: 0 40px 0 12px;\n        border: 1px solid transparent;"
         in window.speed_combo.styleSheet()
     )
-    assert f"background: {player_tokens.player_button_bg};" in window.speed_combo.styleSheet()
+    assert f"background: {player_tokens.player_controls_bg};" in window.speed_combo.styleSheet()
     assert "#ffffff" not in window.speed_combo.styleSheet()
     assert f"background: {player_tokens.player_controls_bg};" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled::drop-down" in window.subtitle_combo.styleSheet()
+    popup_qss = window.speed_combo.view().styleSheet()
+    assert f"background: {player_tokens.player_button_bg};" in popup_qss
+    assert f"color: {player_tokens.player_text_on_dark};" in popup_qss
+    assert f"selection-background-color: {player_tokens.player_button_hover_bg};" in popup_qss
 
 
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
@@ -6207,12 +6211,18 @@ def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
     assert window.playlist_group_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
     assert window.playlist_group_combo.minimumContentsLength() == 10
     assert window.playlist_source_combo.minimumContentsLength() == 12
-    assert window.speed_combo.minimumContentsLength() == 4
-    assert window.subtitle_combo.minimumContentsLength() == 8
-    assert window.danmaku_combo.minimumContentsLength() == 4
-    assert window.video_quality_combo.minimumContentsLength() == 5
-    assert window.audio_combo.minimumContentsLength() == 6
-    assert window.parse_combo.minimumContentsLength() == 5
+    assert window.speed_combo.minimumContentsLength() == 3
+    assert window.subtitle_combo.minimumContentsLength() == 4
+    assert window.danmaku_combo.minimumContentsLength() == 3
+    assert window.video_quality_combo.minimumContentsLength() == 4
+    assert window.audio_combo.minimumContentsLength() == 4
+    assert window.parse_combo.minimumContentsLength() == 4
+    assert window.speed_combo.maximumWidth() == 76
+    assert window.subtitle_combo.maximumWidth() == 96
+    assert window.danmaku_combo.maximumWidth() == 76
+    assert window.video_quality_combo.maximumWidth() == 92
+    assert window.audio_combo.maximumWidth() == 92
+    assert window.parse_combo.maximumWidth() == 84
     assert "min-height: 30px" in window.speed_combo.styleSheet()
 
 

@@ -87,6 +87,7 @@ from atv_player.ui.poster_loader import load_remote_poster_image, normalize_post
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import (
     build_combobox_qss,
+    build_combobox_popup_qss,
     build_player_control_button_qss,
     build_player_immersive_qss,
     build_player_list_qss,
@@ -741,12 +742,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.parse_combo = QComboBox()
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
-        self._configure_control_combo(self.speed_combo, minimum_contents_length=4)
-        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=8)
-        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=4)
-        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=5)
-        self._configure_control_combo(self.audio_combo, minimum_contents_length=6)
-        self._configure_control_combo(self.parse_combo, minimum_contents_length=5)
+        self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=76)
+        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=4, maximum_width=96)
+        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=3, maximum_width=76)
+        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=4, maximum_width=92)
+        self._configure_control_combo(self.audio_combo, minimum_contents_length=4, maximum_width=92)
+        self._configure_control_combo(self.parse_combo, minimum_contents_length=4, maximum_width=84)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -1046,21 +1047,31 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             tokens,
             border_radius=12,
             min_height=30,
-            field_bg=player_tokens.player_button_bg,
-            drop_down_bg=player_tokens.player_button_bg,
+            field_bg=player_tokens.player_controls_bg,
+            drop_down_bg=player_tokens.player_controls_bg,
             text_color=player_tokens.player_text_on_dark,
+            hover_field_bg=player_tokens.player_button_bg,
+            hover_drop_down_bg=player_tokens.player_button_bg,
             disabled_field_bg=player_tokens.player_controls_bg,
             disabled_drop_down_bg=player_tokens.player_controls_bg,
             disabled_text_color=tokens.text_secondary,
             border_color="transparent",
-            hover_border_color=player_tokens.player_button_border,
+            hover_border_color="transparent",
             focus_border_color=tokens.accent,
             disabled_border_color="transparent",
             drop_down_border_left_color="transparent",
             disabled_drop_down_border_left_color="transparent",
         )
+        combo_popup_qss = build_combobox_popup_qss(
+            background=player_tokens.player_button_bg,
+            text_color=player_tokens.player_text_on_dark,
+            border_color=player_tokens.player_button_border,
+            hover_bg=player_tokens.player_button_hover_bg,
+            selected_bg=player_tokens.player_button_hover_bg,
+        )
         for combo in self._themed_comboboxes():
             combo.setStyleSheet(combo_qss)
+            combo.view().setStyleSheet(combo_popup_qss)
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)
@@ -1144,11 +1155,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         spinbox.setSingleStep(10)
         return spinbox
 
-    def _configure_control_combo(self, combo: QComboBox, *, minimum_contents_length: int) -> None:
+    def _configure_control_combo(
+        self,
+        combo: QComboBox,
+        *,
+        minimum_contents_length: int,
+        maximum_width: int | None = None,
+    ) -> None:
         combo.setCursor(Qt.CursorShape.PointingHandCursor)
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(minimum_contents_length)
         combo.setMaxVisibleItems(12)
+        if maximum_width is not None:
+            combo.setMaximumWidth(maximum_width)
 
     def _update_play_button_icon(self) -> None:
         icon_name = "pause.svg" if self.is_playing else "play.svg"
