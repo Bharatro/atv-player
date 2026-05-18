@@ -34,6 +34,7 @@ class AppConfig:
     network_proxy_mode: str = "direct"
     network_proxy_url: str = ""
     network_proxy_bypass_rules: list[str] = field(default_factory=_default_network_proxy_bypass_rules)
+    network_proxy_rules: list[str] = field(default_factory=list)
     youtube_cookie_browser: str = ""
     mpv_cache_size_mb: int = 512
     mpv_hwdec_mode: str = "auto-safe"

@@ -418,6 +418,7 @@ class AppCoordinator(QObject):
                 mode=config.network_proxy_mode,
                 proxy_url=config.network_proxy_url,
                 bypass_rules=list(config.network_proxy_bypass_rules),
+                proxy_rules=list(config.network_proxy_rules),
             )
         )
 

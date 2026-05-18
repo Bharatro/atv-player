@@ -10,6 +10,7 @@ class ProxyConfig:
     mode: str = "direct"
     proxy_url: str = ""
     bypass_rules: list[str] = field(default_factory=list)
+    proxy_rules: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +35,10 @@ class ProxyDecider:
             mode=str(config.mode or "").strip().lower() or "direct",
             proxy_url=str(config.proxy_url or "").strip(),
             bypass_rules=[str(rule or "").strip() for rule in config.bypass_rules if str(rule or "").strip()],
+            proxy_rules=[str(rule or "").strip() for rule in config.proxy_rules if str(rule or "").strip()],
         )
         self._rules = [self._parse_rule(rule) for rule in self._config.bypass_rules]
+        self._proxy_rules = [self._parse_rule(rule) for rule in self._config.proxy_rules]
 
     def decide(self, target_url: str) -> ProxyDecision:
         parsed = urlparse(str(target_url or "").strip())
@@ -48,12 +51,37 @@ class ProxyDecider:
             return ProxyDecision("direct")
         if self._config.mode == "direct":
             return ProxyDecision("direct")
+        if self._proxy_rules:
+            if not self._matches_proxy_rules(host):
+                return ProxyDecision("direct")
         if self._config.mode == "system":
             return ProxyDecision("system")
         return ProxyDecision("manual", self._config.proxy_url)
 
     def _matches_bypass(self, host: str) -> bool:
         for rule in self._rules:
+            if rule.kind == "suffix" and host.endswith(str(rule.value)):
+                return True
+            if rule.kind == "exact" and host == str(rule.value):
+                return True
+            if rule.kind == "ip":
+                try:
+                    ip = ipaddress.ip_address(host)
+                except ValueError:
+                    continue
+                if ip == rule.value:
+                    return True
+            if rule.kind == "network":
+                try:
+                    ip = ipaddress.ip_address(host)
+                except ValueError:
+                    continue
+                if ip in rule.value:
+                    return True
+        return False
+
+    def _matches_proxy_rules(self, host: str) -> bool:
+        for rule in self._proxy_rules:
             if rule.kind == "suffix" and host.endswith(str(rule.value)):
                 return True
             if rule.kind == "exact" and host == str(rule.value):

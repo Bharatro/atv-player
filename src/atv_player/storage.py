@@ -122,6 +122,27 @@ def _normalize_network_proxy_bypass_rules(value: object) -> list[str]:
     return rules
 
 
+def _normalize_network_proxy_rules(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
+    rules: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        rules.append(text)
+        seen.add(text)
+    return rules
+
+
 def _normalize_youtube_cookie_browser(value: object) -> str:
     text = str(value or "").strip().lower()
     return text if text in _VALID_YOUTUBE_COOKIE_BROWSERS else ""
@@ -429,6 +450,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN global_search_hot_source TEXT NOT NULL DEFAULT '360'"
                 )
+            if "network_proxy_rules" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN network_proxy_rules TEXT NOT NULL DEFAULT '[]'"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -512,6 +537,7 @@ class SettingsRepository:
                     network_proxy_mode,
                     network_proxy_url,
                     network_proxy_bypass_rules,
+                    network_proxy_rules,
                     youtube_cookie_browser,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
@@ -569,6 +595,7 @@ class SettingsRepository:
             network_proxy_mode,
             network_proxy_url,
             network_proxy_bypass_rules,
+            network_proxy_rules,
             youtube_cookie_browser,
             mpv_cache_size_mb,
             mpv_hwdec_mode,
@@ -622,6 +649,7 @@ class SettingsRepository:
             network_proxy_mode=_normalize_network_proxy_mode(network_proxy_mode),
             network_proxy_url=_normalize_network_proxy_url(network_proxy_url),
             network_proxy_bypass_rules=_normalize_network_proxy_bypass_rules(network_proxy_bypass_rules),
+            network_proxy_rules=_normalize_network_proxy_rules(network_proxy_rules),
             youtube_cookie_browser=_normalize_youtube_cookie_browser(youtube_cookie_browser),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
@@ -683,6 +711,7 @@ class SettingsRepository:
                     network_proxy_mode = ?,
                     network_proxy_url = ?,
                     network_proxy_bypass_rules = ?,
+                    network_proxy_rules = ?,
                     youtube_cookie_browser = ?,
                     mpv_cache_size_mb = ?,
                     mpv_hwdec_mode = ?,
@@ -737,6 +766,7 @@ class SettingsRepository:
                     _normalize_network_proxy_mode(config.network_proxy_mode),
                     _normalize_network_proxy_url(config.network_proxy_url),
                     json.dumps(_normalize_network_proxy_bypass_rules(config.network_proxy_bypass_rules), ensure_ascii=False),
+                    json.dumps(_normalize_network_proxy_rules(config.network_proxy_rules), ensure_ascii=False),
                     _normalize_youtube_cookie_browser(config.youtube_cookie_browser),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),

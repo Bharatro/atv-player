@@ -95,3 +95,167 @@ def test_build_ytdlp_proxy_args_skips_bypass_targets() -> None:
 def test_proxy_decider_rejects_invalid_cidr_rule() -> None:
     with pytest.raises(ProxyRuleError):
         ProxyDecider(ProxyConfig(mode="direct", proxy_url="", bypass_rules=["10.0.0.0/99"]))
+
+
+# --- proxy_rules tests ---
+
+
+def test_proxy_rules_only_matches_listed_domains() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="socks5",
+            proxy_url="socks5://127.0.0.1:1080",
+            bypass_rules=[],
+            proxy_rules=[".google.com", "youtube.com"],
+        )
+    )
+
+    assert decider.decide("https://www.google.com/search").kind == "manual"
+    assert decider.decide("https://youtube.com/watch?v=abc").kind == "manual"
+    assert decider.decide("https://api.bgm.tv/v0/subjects").kind == "direct"
+
+
+def test_proxy_rules_empty_proxies_everything() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="http",
+            proxy_url="http://127.0.0.1:7890",
+            bypass_rules=[],
+            proxy_rules=[],
+        )
+    )
+
+    assert decider.decide("https://api.themoviedb.org/3/search/tv").kind == "manual"
+    assert decider.decide("https://api.bgm.tv/v0/subjects").kind == "manual"
+
+
+def test_proxy_rules_bypass_takes_priority_over_proxy_rules() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="socks5",
+            proxy_url="socks5://127.0.0.1:1080",
+            bypass_rules=[".google.com"],
+            proxy_rules=[".google.com", ".youtube.com"],
+        )
+    )
+
+    assert decider.decide("https://www.google.com/search").kind == "direct"
+    assert decider.decide("https://www.youtube.com/watch").kind == "manual"
+
+
+def test_proxy_rules_suffix_matching() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="socks5",
+            proxy_url="socks5://127.0.0.1:1080",
+            bypass_rules=[],
+            proxy_rules=[".github.com"],
+        )
+    )
+
+    assert decider.decide("https://raw.githubusercontent.com/file").kind == "direct"
+    assert decider.decide("https://api.github.com/repos").kind == "manual"
+
+
+def test_proxy_rules_exact_matching() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="http",
+            proxy_url="http://127.0.0.1:7890",
+            bypass_rules=[],
+            proxy_rules=["api.tmdb.org"],
+        )
+    )
+
+    assert decider.decide("https://api.tmdb.org/3/movie").kind == "manual"
+    assert decider.decide("https://sub.api.tmdb.org/3/movie").kind == "direct"
+
+
+def test_proxy_rules_with_system_mode() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="system",
+            proxy_url="",
+            bypass_rules=[],
+            proxy_rules=[".youtube.com"],
+        )
+    )
+
+    assert decider.decide("https://www.youtube.com/watch").kind == "system"
+    assert decider.decide("https://api.bgm.tv/v0/subjects").kind == "direct"
+
+
+def test_proxy_rules_with_direct_mode_always_direct() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="direct",
+            proxy_url="",
+            bypass_rules=[],
+            proxy_rules=[".youtube.com"],
+        )
+    )
+
+    assert decider.decide("https://www.youtube.com/watch").kind == "direct"
+
+
+def test_build_httpx_kwargs_respects_proxy_rules() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="socks5",
+            proxy_url="socks5://127.0.0.1:1080",
+            bypass_rules=[],
+            proxy_rules=[".google.com"],
+        )
+    )
+
+    assert build_httpx_kwargs_for_url(decider, "https://www.google.com/search") == {
+        "proxy": "socks5://127.0.0.1:1080",
+        "trust_env": False,
+    }
+    assert build_httpx_kwargs_for_url(decider, "https://api.bgm.tv/v0/subjects") == {
+        "trust_env": False,
+    }
+
+
+def test_build_requests_proxies_respects_proxy_rules() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="http",
+            proxy_url="http://127.0.0.1:7890",
+            bypass_rules=[],
+            proxy_rules=[".google.com"],
+        )
+    )
+
+    assert build_requests_proxies_for_url(decider, "https://www.google.com/search") == {
+        "http": "http://127.0.0.1:7890",
+        "https": "http://127.0.0.1:7890",
+    }
+    assert build_requests_proxies_for_url(decider, "https://api.bgm.tv/v0/subjects") == {
+        "http": None,
+        "https": None,
+    }
+
+
+def test_build_ytdlp_proxy_args_respects_proxy_rules() -> None:
+    decider = ProxyDecider(
+        ProxyConfig(
+            mode="socks5",
+            proxy_url="socks5://127.0.0.1:1080",
+            bypass_rules=[],
+            proxy_rules=[".youtube.com"],
+        )
+    )
+
+    assert build_ytdlp_proxy_args(decider, "https://www.youtube.com/watch") == [
+        "--proxy",
+        "socks5://127.0.0.1:1080",
+    ]
+    assert build_ytdlp_proxy_args(decider, "https://api.bgm.tv/v0/subjects") == []
+
+
+def test_proxy_decider_rejects_invalid_proxy_rule() -> None:
+    with pytest.raises(ProxyRuleError):
+        ProxyDecider(
+            ProxyConfig(mode="direct", proxy_url="", bypass_rules=[], proxy_rules=["10.0.0.0/99"])
+        )

@@ -60,7 +60,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.douban_cookie_edit = QPlainTextEdit()
-        self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过本地豆瓣抓取")
+        self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
         self.tmdb_api_key_edit.setPlaceholderText("填写 TMDB API Key")
         self.bangumi_access_token_edit = QLineEdit()
@@ -76,6 +76,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.network_proxy_url_edit.setPlaceholderText("例如 socks5://user:pass@127.0.0.1:1080")
         self.network_proxy_bypass_rules_edit = QPlainTextEdit()
         self.network_proxy_bypass_rules_edit.setPlaceholderText("一行一条，例如 localhost 或 10.0.0.0/8")
+        self.network_proxy_rules_edit = QPlainTextEdit()
+        self.network_proxy_rules_edit.setPlaceholderText("留空则代理所有域名；填写后仅匹配域名走代理，如 .google.com")
         self.network_proxy_scope_label = QLabel(
             "覆盖范围：API、元数据、解析源、弹幕、海报、插件下载、HLS 上游请求、yt-dlp"
         )
@@ -116,6 +118,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.network_proxy_url_edit.setText(config.network_proxy_url)
         self.network_proxy_bypass_rules_edit.setPlainText("\n".join(config.network_proxy_bypass_rules))
+        self.network_proxy_rules_edit.setPlainText("\n".join(config.network_proxy_rules))
         self.youtube_cookie_browser_combo.setCurrentIndex(
             max(0, self.youtube_cookie_browser_combo.findData(config.youtube_cookie_browser))
         )
@@ -153,6 +156,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         network_proxy_layout.addRow("代理模式", self.network_proxy_mode_combo)
         network_proxy_layout.addRow("代理地址", self.network_proxy_url_edit)
         network_proxy_layout.addRow("直连规则", self.network_proxy_bypass_rules_edit)
+        network_proxy_layout.addRow("代理规则", self.network_proxy_rules_edit)
         network_proxy_layout.addRow("覆盖范围", self.network_proxy_scope_label)
         self.network_proxy_group.setLayout(network_proxy_layout)
         network_proxy_tab_layout = QVBoxLayout(self.network_proxy_tab)
@@ -226,14 +230,21 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
     def _sync_network_proxy_inputs(self) -> None:
         manual_mode = self.network_proxy_mode_combo.currentData() in {"http", "https", "socks5"}
+        has_proxy = self.network_proxy_mode_combo.currentData() not in {"direct"}
         self.network_proxy_url_edit.setEnabled(manual_mode)
+        self.network_proxy_rules_edit.setEnabled(has_proxy)
 
-    def _validated_network_proxy_values(self) -> tuple[str, str, list[str]] | None:
+    def _validated_network_proxy_values(self) -> tuple[str, str, list[str], list[str]] | None:
         mode = str(self.network_proxy_mode_combo.currentData() or "direct")
         proxy_url = self.network_proxy_url_edit.text().strip()
         bypass_rules = [
             line.strip()
             for line in self.network_proxy_bypass_rules_edit.toPlainText().splitlines()
+            if line.strip()
+        ]
+        proxy_rules = [
+            line.strip()
+            for line in self.network_proxy_rules_edit.toPlainText().splitlines()
             if line.strip()
         ]
         if mode in {"http", "https", "socks5"} and not proxy_url:
@@ -249,11 +260,11 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             QMessageBox.warning(self, "代理地址无效", scheme_errors[mode])
             return None
         try:
-            ProxyDecider(ProxyConfig(mode="direct", proxy_url="", bypass_rules=bypass_rules))
+            ProxyDecider(ProxyConfig(mode="direct", proxy_url="", bypass_rules=bypass_rules, proxy_rules=proxy_rules))
         except ProxyRuleError as exc:
-            QMessageBox.warning(self, "直连规则无效", str(exc))
+            QMessageBox.warning(self, "代理规则无效", str(exc))
             return None
-        return mode, proxy_url, bypass_rules
+        return mode, proxy_url, bypass_rules, proxy_rules
 
     def _validated_playback_values(self) -> tuple[bool, str, int, str, int, int, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
@@ -336,7 +347,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
-        self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules = proxy_values
+        self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules, self._config.network_proxy_rules = proxy_values
         (
             self._config.playback_auto_switch_source_on_failure,
             self._config.youtube_cookie_browser,
