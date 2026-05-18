@@ -6290,11 +6290,52 @@ def test_player_window_progress_row_background_matches_immersive_panel(qtbot) ->
     qtbot.waitExposed(window)
     QApplication.processEvents()
 
-    sample = window.progress.mapTo(window, QPoint(window.progress.width() // 2, window.progress.height() // 2))
+    sample = window.progress.mapTo(window, QPoint(window.progress.width() // 2, 2))
     color = window.grab().toImage().pixelColor(sample)
     tokens = ThemeManager(system_theme_getter=lambda: "light").player_tokens_for("light")
 
     assert color.name() == QColor(tokens.player_overlay_bg).name()
+
+
+def test_player_window_progress_slider_renders_remaining_track(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress.setRange(0, 100)
+    window.progress.setValue(25)
+    window.progress.setFixedSize(200, 24)
+    window.show()
+    qtbot.waitExposed(window)
+    QApplication.processEvents()
+
+    image = window.progress.grab().toImage()
+    center_y = window.progress.height() // 2
+    remaining_x = window.progress.width() - 24
+    tokens = ThemeManager(system_theme_getter=lambda: "light").player_tokens_for("light")
+
+    assert image.pixelColor(20, center_y).name() == QColor(tokens.accent).name()
+    assert image.pixelColor(remaining_x, center_y).name() == QColor(tokens.player_button_border).name()
+
+
+def test_player_window_volume_slider_renders_remaining_track(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.volume_slider.setValue(35)
+    window.volume_slider.setFixedSize(180, 24)
+    window.show()
+    qtbot.waitExposed(window)
+    QApplication.processEvents()
+
+    image = window.volume_slider.grab().toImage()
+    center_y = window.volume_slider.height() // 2
+    remaining_x = window.volume_slider.width() - 24
+    tokens = ThemeManager(system_theme_getter=lambda: "light").player_tokens_for("light")
+
+    assert image.pixelColor(20, center_y).name() == QColor(tokens.accent).name()
+    assert image.pixelColor(remaining_x, center_y).name() == QColor(tokens.player_button_border).name()
 
 
 def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:

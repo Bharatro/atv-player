@@ -227,6 +227,10 @@ class ClickableSlider(QSlider):
         painter.fillRect(self.rect(), QColor(tokens.player_overlay_bg))
         painter.setPen(Qt.PenStyle.NoPen)
 
+        track_color = tokens.player_button_border if self.isEnabled() else tokens.border_subtle
+        painter.setBrush(QColor(track_color))
+        painter.drawRoundedRect(0, track_top, self.width(), track_height, track_height / 2, track_height / 2)
+
         if self.isEnabled() and handle_center_x > handle_diameter / 2:
             painter.setBrush(QColor(tokens.accent))
             painter.drawRoundedRect(0, track_top, handle_center_x, track_height, track_height / 2, track_height / 2)
