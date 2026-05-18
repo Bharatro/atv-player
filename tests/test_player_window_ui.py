@@ -392,6 +392,25 @@ def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(q
     assert window._metadata_scrape_provider_combo.currentData() == ""
 
 
+def test_player_window_metadata_scrape_dialog_prefills_current_media_title(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="【C】成丨何体统", vod_year="2026"),
+        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4", media_title="成何体统 (2026)")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "成何体统 (2026)"
+    assert window._metadata_scrape_year_edit.text() == "2026"
+
+
 def test_player_window_metadata_scrape_dialog_normalizes_leading_topic_marker_in_title(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(

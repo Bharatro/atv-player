@@ -40,8 +40,6 @@ def normalize_metadata_scrape_title(value: object) -> str:
         return ""
     # strip leading # prefix
     normalized = re.sub(r"^[#＃]+\s*", "", text).strip()
-    # strip trailing year suffix like (2026) or （2026）
-    normalized = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", normalized).strip()
     return normalized or text
 
 
