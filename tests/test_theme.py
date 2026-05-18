@@ -56,9 +56,9 @@ def test_build_combobox_qss_uses_fill_first_default_state() -> None:
 
     qss = theme_module.build_combobox_qss(tokens)
 
-    assert "QComboBox {\n        min-height: 34px;\n        padding: 0 40px 0 12px;\n        border: 1px solid transparent;" in qss
+    assert "QComboBox {\n        min-height: 34px;\n        padding: 0 40px 0 12px;\n        border: 0px solid transparent;" in qss
     assert f"background: {tokens.input_bg};" in qss
-    assert f"border-color: {tokens.input_hover_border};" in qss
+    assert f"border: 1px solid {tokens.input_hover_border};" in qss
     assert f"border: 1px solid {tokens.input_focus_ring};" in qss
     assert "border-left: 1px solid transparent;" in qss
     assert "QComboBox:disabled" in qss

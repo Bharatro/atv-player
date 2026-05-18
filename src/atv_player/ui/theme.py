@@ -275,6 +275,9 @@ def build_combobox_qss(
     *,
     border_radius: int = 14,
     min_height: int = 34,
+    horizontal_padding: int = 12,
+    indicator_padding: int = 40,
+    drop_down_width: int = 30,
     borderless: bool = False,
     field_bg: str | None = None,
     drop_down_bg: str | None = None,
@@ -310,15 +313,15 @@ def build_combobox_qss(
     return f"""
     QComboBox {{
         min-height: {min_height}px;
-        padding: 0 40px 0 12px;
-        border: 1px solid {resolved_border_color};
+        padding: 0 {indicator_padding}px 0 {horizontal_padding}px;
+        border: 0px solid {resolved_border_color};
         border-radius: {border_radius}px;
         background: {resolved_field_bg};
         color: {resolved_text_color};
     }}
     QComboBox:hover {{
         background: {resolved_hover_field_bg};
-        border-color: {resolved_hover_border_color};
+        border: 1px solid {resolved_hover_border_color};
     }}
     QComboBox:hover::drop-down {{
         background: {resolved_hover_drop_down_bg};
@@ -327,14 +330,14 @@ def build_combobox_qss(
         border: 1px solid {resolved_focus_border_color};
     }}
     QComboBox:disabled {{
-        border-color: {resolved_disabled_border_color};
+        border: 0px solid {resolved_disabled_border_color};
         background: {resolved_disabled_field_bg};
         color: {resolved_disabled_text_color};
     }}
     QComboBox::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
-        width: 30px;
+        width: {drop_down_width}px;
         border: none;
         border-left: 1px solid {resolved_drop_down_border_left_color};
         background: {resolved_drop_down_bg};
