@@ -1457,7 +1457,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
-        self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         if self.bilibili_page is not None:
             bilibili_page = self.bilibili_page
             bilibili_page.item_open_requested.connect(self._handle_bilibili_item_open_requested)
