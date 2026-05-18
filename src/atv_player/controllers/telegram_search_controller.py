@@ -100,6 +100,11 @@ class TelegramSearchController:
         playlist = build_detail_playlist(detail)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        media_title = str(detail.vod_name or "").strip()
+        if media_title:
+            for item in playlist:
+                if not item.media_title:
+                    item.media_title = media_title
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,

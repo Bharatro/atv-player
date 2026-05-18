@@ -149,6 +149,7 @@ def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> 
     ]
     assert [item.vod_id for item in request.playlist] == ["1@91793@0@0", "1@91794@0@1", "1@91795@0@2"]
     assert [item.url for item in request.playlist] == ["", "", ""]
+    assert [item.media_title for item in request.playlist] == [request.vod.vod_name] * 3
     assert request.clicked_index == 0
     assert request.source_kind == "telegram"
     assert request.source_mode == "detail"

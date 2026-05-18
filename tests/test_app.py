@@ -1613,7 +1613,7 @@ def test_main_window_telegram_item_open_prefers_card_title_over_obfuscated_detai
         def build_request(self, vod_id: str):
             return OpenPlayerRequest(
                 vod=VodItem(vod_id=vod_id, vod_name="8@swf2fkq3zrk@t58d"),
-                playlist=[PlayItem(title="查看", url="", vod_id="detail-ep-1")],
+                playlist=[PlayItem(title="查看", url="", vod_id="detail-ep-1", media_title="8@swf2fkq3zrk@t58d")],
                 clicked_index=0,
                 source_mode="detail",
                 source_vod_id=vod_id,

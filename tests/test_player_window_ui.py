@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
@@ -3319,12 +3319,12 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
 
     assert "min-height: 30px" in window.speed_combo.styleSheet()
     assert (
-        "QComboBox {\n        min-height: 30px;\n        padding: 0 28px 0 10px;\n        border: 0px solid transparent;"
+        "QComboBox {\n        min-height: 30px;\n        padding: 0 18px 0 4px;\n        border: none;"
         in window.speed_combo.styleSheet()
     )
-    assert f"background: {player_tokens.player_controls_bg};" in window.speed_combo.styleSheet()
+    assert "background: transparent;" in window.speed_combo.styleSheet()
     assert "#ffffff" not in window.speed_combo.styleSheet()
-    assert f"background: {player_tokens.player_controls_bg};" in window.subtitle_combo.styleSheet()
+    assert "background: transparent;" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled::drop-down" in window.subtitle_combo.styleSheet()
     popup_qss = window.speed_combo.view().styleSheet()
@@ -6300,6 +6300,32 @@ def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
     assert window.audio_combo.maximumWidth() == 74
     assert window.parse_combo.maximumWidth() == 72
     assert "min-height: 30px" in window.speed_combo.styleSheet()
+
+
+def test_player_window_control_combo_text_fits_rendered_edit_field(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(window.isVisible)
+
+    for name in (
+        "speed_combo",
+        "subtitle_combo",
+        "danmaku_combo",
+        "video_quality_combo",
+        "audio_combo",
+        "parse_combo",
+    ):
+        combo = getattr(window, name)
+        option = QStyleOptionComboBox()
+        combo.initStyleOption(option)
+        edit_rect = combo.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            combo,
+        )
+        assert edit_rect.width() >= combo.fontMetrics().horizontalAdvance(combo.currentText()), name
 
 
 def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> None:

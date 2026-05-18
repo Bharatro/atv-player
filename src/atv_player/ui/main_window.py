@@ -3041,7 +3041,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                     play_item.type_name = fallback_type_name
                 if fallback_category_name and not play_item.category_name:
                     play_item.category_name = fallback_category_name
-                if resolved_media_title and not play_item.media_title:
+                if resolved_media_title and (prefer_fallback_media_title or not play_item.media_title):
                     play_item.media_title = resolved_media_title
         return request
 

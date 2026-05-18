@@ -188,11 +188,23 @@ class ThemeManager:
         QWidget {{
             color: {tokens.text_primary};
         }}
-        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QTableWidget {{
+        QLineEdit, QPlainTextEdit, QTextEdit, QTableWidget {{
             background-color: {tokens.input_bg};
             border: 1px solid {tokens.input_border};
             border-radius: 12px;
             color: {tokens.text_primary};
+        }}
+        QComboBox {{
+            background-color: {tokens.input_bg};
+            border: none;
+            border-radius: 12px;
+            color: {tokens.text_primary};
+        }}
+        QComboBox:hover {{
+            border: 1px solid {tokens.input_hover_border};
+        }}
+        QComboBox:focus {{
+            border: 1px solid {tokens.input_focus_ring};
         }}
         QPushButton {{
             background-color: {tokens.button_bg};
@@ -314,7 +326,7 @@ def build_combobox_qss(
     QComboBox {{
         min-height: {min_height}px;
         padding: 0 {indicator_padding}px 0 {horizontal_padding}px;
-        border: 0px solid {resolved_border_color};
+        border: none;
         border-radius: {border_radius}px;
         background: {resolved_field_bg};
         color: {resolved_text_color};
@@ -330,7 +342,7 @@ def build_combobox_qss(
         border: 1px solid {resolved_focus_border_color};
     }}
     QComboBox:disabled {{
-        border: 0px solid {resolved_disabled_border_color};
+        border: none;
         background: {resolved_disabled_field_bg};
         color: {resolved_disabled_text_color};
     }}
