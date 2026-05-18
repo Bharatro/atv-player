@@ -149,6 +149,65 @@ _GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES: dict[str, list[tuple[str, str]]] = {
 _CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX = b"main-window-geometry-v2:"
 
 
+def _available_screen_geometries() -> list[QRect]:
+    geometries: list[QRect] = []
+    app = QApplication.instance()
+    if app is None:
+        return geometries
+    for screen in app.screens():
+        geometry = screen.availableGeometry()
+        if geometry.isValid() and geometry.width() > 0 and geometry.height() > 0:
+            geometries.append(geometry)
+    return geometries
+
+
+def _distance_squared_to_rect(point: QPoint, rect: QRect) -> int:
+    if rect.left() <= point.x() <= rect.right():
+        dx = 0
+    else:
+        dx = min(abs(point.x() - rect.left()), abs(point.x() - rect.right()))
+    if rect.top() <= point.y() <= rect.bottom():
+        dy = 0
+    else:
+        dy = min(abs(point.y() - rect.top()), abs(point.y() - rect.bottom()))
+    return dx * dx + dy * dy
+
+
+def _fit_rect_within_available_screens(rect: QRect, screen_geometries: Iterable[QRect]) -> QRect:
+    if not rect.isValid() or rect.width() <= 0 or rect.height() <= 0:
+        return rect
+
+    screens = [
+        QRect(screen)
+        for screen in screen_geometries
+        if screen.isValid() and screen.width() > 0 and screen.height() > 0
+    ]
+    if not screens:
+        return rect
+
+    center = rect.center()
+    best_screen = screens[0]
+    best_key: tuple[int, int, int] | None = None
+    for index, screen in enumerate(screens):
+        intersection = rect.intersected(screen)
+        intersection_area = max(0, intersection.width()) * max(0, intersection.height())
+        distance = _distance_squared_to_rect(center, screen)
+        key = (-intersection_area, distance, index)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_screen = screen
+
+    width = min(max(1, rect.width()), best_screen.width())
+    height = min(max(1, rect.height()), best_screen.height())
+    min_x = best_screen.x()
+    min_y = best_screen.y()
+    max_x = best_screen.x() + best_screen.width() - width
+    max_y = best_screen.y() + best_screen.height() - height
+    x = min(max(rect.x(), min_x), max_x)
+    y = min(max(rect.y(), min_y), max_y)
+    return QRect(x, y, width, height)
+
+
 def _coerce_hot_search_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -3686,7 +3745,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             width = max(1, int(payload.get("width", 0)))
             height = max(1, int(payload.get("height", 0)))
             if width > 0 and height > 0:
-                self.setGeometry(x, y, width, height)
+                fitted = _fit_rect_within_available_screens(
+                    QRect(x, y, width, height),
+                    _available_screen_geometries(),
+                )
+                self.setGeometry(fitted)
+                self._last_normal_geometry = QRect(fitted)
             if apply_maximized and bool(payload.get("maximized", False)):
                 self.showMaximized()
             return

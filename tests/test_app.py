@@ -5,7 +5,7 @@ import pytest
 import threading
 import time
 from types import SimpleNamespace
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QTableWidget, QToolButton
@@ -6676,6 +6676,24 @@ def test_app_coordinator_show_login_closes_active_api_client(monkeypatch) -> Non
 
     assert client.closed is True
     assert coordinator._api_client is None
+
+
+def test_fit_rect_within_available_screens_keeps_window_on_matching_secondary_screen() -> None:
+    fitted = main_window_module._fit_rect_within_available_screens(
+        QRect(2200, 540, 1100, 900),
+        [QRect(0, 0, 1920, 1080), QRect(1920, 0, 1280, 720)],
+    )
+
+    assert fitted == QRect(2100, 0, 1100, 720)
+
+
+def test_fit_rect_within_available_screens_uses_nearest_screen_when_saved_rect_no_longer_intersects() -> None:
+    fitted = main_window_module._fit_rect_within_available_screens(
+        QRect(2200, 900, 1000, 400),
+        [QRect(0, 0, 1920, 1080), QRect(1920, 0, 1280, 720)],
+    )
+
+    assert fitted == QRect(2200, 320, 1000, 400)
 
 
 def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot, monkeypatch) -> None:
