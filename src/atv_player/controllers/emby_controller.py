@@ -114,6 +114,11 @@ class EmbyController:
                     vod_id=detail.vod_play_url.strip() or detail.vod_id,
                 )
             ]
+        media_title = str(detail.vod_name or "").strip()
+        if media_title:
+            for item in playlist:
+                if not item.media_title:
+                    item.media_title = media_title
         return playlist
 
     def report_playback_progress(self, item: PlayItem, position_ms: int, paused: bool) -> None:
@@ -132,6 +137,11 @@ class EmbyController:
         playlist = self._build_playlist(detail)
         if not playlist and detail.items:
             playlist = list(detail.items)
+        media_title = str(detail.vod_name or "").strip()
+        if media_title:
+            for item in playlist:
+                if not item.media_title:
+                    item.media_title = media_title
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
         history_loader = None

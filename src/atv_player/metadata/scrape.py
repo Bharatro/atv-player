@@ -40,6 +40,31 @@ def normalize_metadata_scrape_title(value: object) -> str:
         return ""
     # strip leading # prefix
     normalized = re.sub(r"^[#＃]+\s*", "", text).strip()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(r"^[^\w\u4e00-\u9fff]+", "", normalized).strip()
+    normalized = re.sub(
+        r"^(?:电视剧|电影|剧集|综艺|动漫|动画|番剧|纪录片)\s*[:：]\s*",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # Keep the trusted "title + year" prefix and drop noisy suffixes after the year.
+    year_match = re.match(
+        r"^(.*?[\(（]\s*(?:19|20)\d{2}\s*[\)）])(?:\s*.*)?$",
+        normalized,
+    )
+    if year_match is not None:
+        return year_match.group(1).strip()
+
+    # Drop trailing bracket tags and common release/update noise when no year anchor exists.
+    normalized = re.sub(r"(?:\s*[【\[].*?[】\]])+$", "", normalized).strip()
+    normalized = re.sub(
+        r"(?:\s*(?:更新\d+集|更\d+集|4K(?:HDR\d*|HDR|60FPS)?|高码率|内嵌简中|内封简中|简中内嵌|简中|剧情|动画|奇幻|冒险))+$",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    ).strip()
     return normalized or text
 
 

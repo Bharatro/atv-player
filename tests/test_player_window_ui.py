@@ -435,6 +435,64 @@ def test_player_window_metadata_scrape_dialog_normalizes_leading_topic_marker_in
     assert service.search_calls == [("牧神记 年番2", "2024", "")]
 
 
+def test_player_window_metadata_scrape_dialog_strips_trailing_noise_but_keeps_year(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="v1",
+            vod_name="主角 (2026)剧情 张嘉益 刘浩存 4KHDR60FPS 更新17集",
+            vod_year="2026",
+        ),
+        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "主角 (2026)"
+
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_calls == [("主角 (2026)", "2026", "")]
+
+
+def test_player_window_metadata_scrape_dialog_strips_bracketed_noise_after_year(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="v1",
+            vod_name="牧神记(2026)【更83集】【4K.高码率】【内嵌简中】【动画/奇幻/冒险】",
+            vod_year="2026",
+            category_name="动漫",
+            type_name="动画",
+        ),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "牧神记(2026)"
+
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_calls == [("牧神记(2026)", "2026", "")]
+
+
 def test_player_window_metadata_scrape_search_passes_category_and_type_into_query(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(

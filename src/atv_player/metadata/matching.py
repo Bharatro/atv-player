@@ -88,7 +88,7 @@ def score_match(query: MetadataQuery, match: MetadataMatch) -> float:
         else:
             score -= 0.08
 
-    score += _category_score(query.category_name, match.raw)
+    score += _category_score(query.category_name, query.type_name, match.raw)
 
     if _is_full_exact_match(query.title, match.title):
         if match.provider == "bilibili":
@@ -121,8 +121,13 @@ def _is_full_exact_match(query_title: str, match_title: str) -> bool:
     return normalize_match_title(query_title) == normalize_match_title(match_title)
 
 
-def _category_score(query_category_name: str, raw: Mapping[str, object]) -> float:
-    query_categories = _expanded_categories(_category_tokens(query_category_name))
+def _category_score(query_category_name: str, query_type_name: str, raw: Mapping[str, object]) -> float:
+    query_categories = _expanded_categories(
+        [
+            *_category_tokens(query_category_name),
+            *_category_tokens(query_type_name),
+        ]
+    )
     if not query_categories:
         return 0.0
     match_categories = _expanded_categories(_raw_category_tokens(raw))

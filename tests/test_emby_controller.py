@@ -185,6 +185,7 @@ def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> N
     assert request.vod.vod_id == "1-3281"
     assert [item.title for item in request.playlist] == ["Episode 1", "Episode 2"]
     assert [item.vod_id for item in request.playlist] == ["1-3282", "1-3283"]
+    assert [item.media_title for item in request.playlist] == ["Season 1", "Season 1"]
 
 
 def test_build_request_disables_remote_history_and_exposes_local_emby_history_hooks() -> None:

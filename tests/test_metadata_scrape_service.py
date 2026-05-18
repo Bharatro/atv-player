@@ -2,7 +2,12 @@ from pathlib import Path
 
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
-from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup, MetadataScrapeService
+from atv_player.metadata.scrape import (
+    MetadataScrapeCandidate,
+    MetadataScrapeGroup,
+    MetadataScrapeService,
+    normalize_metadata_scrape_title,
+)
 from atv_player.models import PlayItem, PlaybackDetailField, VodItem
 
 
@@ -43,6 +48,16 @@ class FakeTMDBClient:
         assert str(tmdb_id) == "42"
         assert season_number == 1
         return {"episodes": list(self.episodes)}
+
+
+def test_normalize_metadata_scrape_title_strips_leading_media_prefix_and_episode_marker() -> None:
+    assert normalize_metadata_scrape_title("📺 电视剧：雨霖铃 (2026) S01E04") == "雨霖铃 (2026)"
+
+
+def test_normalize_metadata_scrape_title_keeps_bilingual_title_but_drops_release_noise_after_year() -> None:
+    value = "木乃伊 Lee Cronin's The Mummy (2026) 4K高码.外挂繁体中字.2160p.AMZN.WEB-DL.HDR.H.265.DDP5.1.Atmos.mkv ( 14.8G )"
+
+    assert normalize_metadata_scrape_title(value) == "木乃伊 Lee Cronin's The Mummy (2026)"
 
 
 def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: Path) -> None:

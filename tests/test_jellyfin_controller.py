@@ -217,6 +217,28 @@ def test_build_request_disables_remote_history_and_exposes_local_jellyfin_histor
     assert api.playback_stop_calls == ["1-3458"]
 
 
+def test_build_request_sets_media_title_for_danmaku_search() -> None:
+    from atv_player.controllers.jellyfin_controller import JellyfinController
+
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "1-3281",
+                "vod_name": "人生切割术",
+                "vod_pic": "poster.jpg",
+                "vod_play_url": "S01E01.mkv$1-3458#S01E02.mkv$1-3459",
+            }
+        ]
+    }
+    controller = JellyfinController(api)
+
+    request = controller.build_request("1-3281")
+
+    assert [item.title for item in request.playlist] == ["S01E01.mkv", "S01E02.mkv"]
+    assert [item.media_title for item in request.playlist] == ["人生切割术", "人生切割术"]
+
+
 def test_jellyfin_progress_reporter_reports_when_called_for_paused_final_update() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
