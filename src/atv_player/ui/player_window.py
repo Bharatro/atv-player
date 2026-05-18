@@ -1286,7 +1286,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _external_metadata_link_html(self, url: str, label: str) -> str:
         escaped_url = html.escape(url)
         escaped_label = html.escape(label)
-        return f'<a href="{escaped_url}" style=" text-decoration:none; color:#8f5a32; font-weight:600;">{escaped_label}</a>'
+        return (
+            f'<a href="{escaped_url}" style=" text-decoration:none; '
+            f'color:{current_theme_manager().tokens_for(current_resolved_theme()).accent}; font-weight:600;">'
+            f"{escaped_label}</a>"
+        )
 
     def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
         text = str(value or "").strip()

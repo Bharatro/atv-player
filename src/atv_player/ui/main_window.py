@@ -490,91 +490,134 @@ class GlobalSearchPopup(QWidget):
     HISTORY_ITEM_HEIGHT = 40
     HOT_ITEM_HEIGHT = 48
 
-    _CONTAINER_QSS = """
-    QWidget#globalSearchPopupContainer {
-        background: #f7f1e8;
-        border: 1px solid #dccfbe;
-        border-radius: 0;
-        color: #2f241c;
-    }
-    """
-    _DIVIDER_QSS = "QFrame { color: #e7d8c8; background: #e7d8c8; min-width: 1px; }"
-    _SECTION_TITLE_QSS = """
-    QLabel {
-        color: #7a5c47;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 1px;
-    }
-    """
-    _ACTION_BUTTON_QSS = """
-    QPushButton {
-        color: #a98268;
-        font-size: 12px;
-        border: none;
-        background: transparent;
-        padding: 0 4px;
-    }
-    QPushButton:hover {
-        color: #8e5f40;
-    }
-    QPushButton:disabled {
-        color: #c7b09c;
-    }
-    """
-    _EMPTY_LABEL_QSS = "QLabel { color: #9a7b63; font-size: 12px; }"
-    _HISTORY_ROW_QSS = """
-    QWidget {
-        background: transparent;
-    }
-    QWidget:hover {
-        background: #efe2d3;
-    }
-    """
-    _HISTORY_BUTTON_QSS = """
-    QPushButton {
-        text-align: left;
-        color: #2f241c;
-        font-size: 13px;
-        border: none;
-        background: transparent;
-        padding: 0;
-    }
-    """
-    _HOT_TAB_QSS = """
-    QTabBar::tab {
-        background: transparent;
-        color: #866652;
-        padding: 8px 12px;
-        margin-right: 6px;
-        border: none;
-    }
-    QTabBar::tab:selected {
-        background: #ead2bb;
-        color: #7f4d2a;
-        font-weight: 600;
-    }
-    """
-    _HOT_ROW_QSS = """
-    QWidget {
-        background: transparent;
-    }
-    QWidget:hover {
-        background: #f2dfcc;
-    }
-    """
-    _HOT_RANK_QSS = "QLabel { color: #b06b3c; font-weight: 700; font-size: 12px; }"
-    _HOT_BUTTON_QSS = """
-    QPushButton {
-        text-align: left;
-        color: #2d2017;
-        font-size: 14px;
-        font-weight: 600;
-        border: none;
-        background: transparent;
-        padding: 0;
-    }
-    """
+    @staticmethod
+    def _container_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QWidget#globalSearchPopupContainer {{
+            background: {tokens.window_bg};
+            border: 1px solid {tokens.border_subtle};
+            border-radius: 0;
+            color: {tokens.text_primary};
+        }}
+        """
+
+    @staticmethod
+    def _divider_qss() -> str:
+        tokens = current_tokens()
+        return f"QFrame {{ color: {tokens.border_subtle}; background: {tokens.border_subtle}; min-width: 1px; }}"
+
+    @staticmethod
+    def _section_title_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QLabel {{
+            color: {tokens.text_secondary};
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }}
+        """
+
+    @staticmethod
+    def _action_button_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QPushButton {{
+            color: {tokens.text_secondary};
+            font-size: 12px;
+            border: none;
+            background: transparent;
+            padding: 0 4px;
+        }}
+        QPushButton:hover {{
+            color: {tokens.accent_hover};
+        }}
+        QPushButton:disabled {{
+            color: {tokens.border_subtle};
+        }}
+        """
+
+    @staticmethod
+    def _empty_label_qss() -> str:
+        tokens = current_tokens()
+        return f"QLabel {{ color: {tokens.text_secondary}; font-size: 12px; }}"
+
+    @staticmethod
+    def _history_row_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QWidget {{
+            background: transparent;
+        }}
+        QWidget:hover {{
+            background: {tokens.panel_alt_bg};
+        }}
+        """
+
+    @staticmethod
+    def _history_button_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QPushButton {{
+            text-align: left;
+            color: {tokens.text_primary};
+            font-size: 13px;
+            border: none;
+            background: transparent;
+            padding: 0;
+        }}
+        """
+
+    @staticmethod
+    def _hot_tab_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QTabBar::tab {{
+            background: transparent;
+            color: {tokens.text_secondary};
+            padding: 8px 12px;
+            margin-right: 6px;
+            border: none;
+        }}
+        QTabBar::tab:selected {{
+            background: {tokens.panel_alt_bg};
+            color: {tokens.accent};
+            font-weight: 600;
+        }}
+        """
+
+    @staticmethod
+    def _hot_row_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QWidget {{
+            background: transparent;
+        }}
+        QWidget:hover {{
+            background: {tokens.panel_alt_bg};
+        }}
+        """
+
+    @staticmethod
+    def _hot_rank_qss() -> str:
+        tokens = current_tokens()
+        return f"QLabel {{ color: {tokens.accent}; font-weight: 700; font-size: 12px; }}"
+
+    @staticmethod
+    def _hot_button_qss() -> str:
+        tokens = current_tokens()
+        return f"""
+        QPushButton {{
+            text-align: left;
+            color: {tokens.text_primary};
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            background: transparent;
+            padding: 0;
+        }}
+        """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -598,7 +641,7 @@ class GlobalSearchPopup(QWidget):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._container = QWidget(self)
         self._container.setObjectName("globalSearchPopupContainer")
-        self._container.setStyleSheet(self._CONTAINER_QSS)
+        self._container.setStyleSheet(self._container_qss())
         self._container_layout = QHBoxLayout(self._container)
         self._container_layout.setContentsMargins(0, 0, 0, 0)
         self._container_layout.setSpacing(0)
@@ -612,7 +655,7 @@ class GlobalSearchPopup(QWidget):
 
         separator = QFrame(self._container)
         separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setStyleSheet(self._DIVIDER_QSS)
+        separator.setStyleSheet(self._divider_qss())
         self._container_layout.addWidget(separator)
 
         self._hot_panel = QWidget(self._container)
@@ -683,14 +726,14 @@ class GlobalSearchPopup(QWidget):
         title_layout = QHBoxLayout(title_widget)
         title_layout.setContentsMargins(16, 14, 16, 10)
         title = QLabel("搜索历史", title_widget)
-        title.setStyleSheet(self._SECTION_TITLE_QSS)
+        title.setStyleSheet(self._section_title_qss())
         self._history_title_label = title
         title_layout.addWidget(title)
         title_layout.addStretch(1)
         clear_button = QPushButton("清空", title_widget)
         clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_button.setFlat(True)
-        clear_button.setStyleSheet(self._ACTION_BUTTON_QSS)
+        clear_button.setStyleSheet(self._action_button_qss())
         clear_button.clicked.connect(self._on_clear_clicked)
         title_layout.addWidget(clear_button)
         self.clear_history_button = clear_button
@@ -704,7 +747,7 @@ class GlobalSearchPopup(QWidget):
     def _build_hot_panel(self) -> None:
         title = QLabel("热搜", self._hot_panel)
         title.setContentsMargins(16, 14, 16, 10)
-        title.setStyleSheet(self._SECTION_TITLE_QSS)
+        title.setStyleSheet(self._section_title_qss())
         self._hot_title_label = title
         self._hot_layout.addWidget(title)
         self.hot_source_tab_bar.setDocumentMode(True)
@@ -713,7 +756,7 @@ class GlobalSearchPopup(QWidget):
         self.hot_source_tab_bar.setDrawBase(False)
         self.hot_source_tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.hot_source_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.hot_source_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
+        self.hot_source_tab_bar.setStyleSheet(self._hot_tab_qss())
         self.hot_source_tab_bar.currentChanged.connect(self._handle_hot_source_tab_changed)
         self._hot_layout.addWidget(self.hot_source_tab_bar)
         self.hot_tab_bar.setDocumentMode(True)
@@ -722,7 +765,7 @@ class GlobalSearchPopup(QWidget):
         self.hot_tab_bar.setDrawBase(False)
         self.hot_tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.hot_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.hot_tab_bar.setStyleSheet(self._HOT_TAB_QSS)
+        self.hot_tab_bar.setStyleSheet(self._hot_tab_qss())
         self.hot_tab_bar.currentChanged.connect(self._handle_hot_tab_changed)
         self._hot_layout.addWidget(self.hot_tab_bar)
         self._hot_items_widget = QWidget(self._hot_panel)
@@ -746,7 +789,7 @@ class GlobalSearchPopup(QWidget):
         if not history_exists:
             empty_label = QLabel("暂无搜索历史", self._history_items_widget)
             empty_label.setContentsMargins(8, 12, 8, 10)
-            empty_label.setStyleSheet(self._EMPTY_LABEL_QSS)
+            empty_label.setStyleSheet(self._empty_label_qss())
             self._history_items_layout.addWidget(empty_label)
         if self.clear_history_button is not None:
             self.clear_history_button.setEnabled(history_exists)
@@ -795,13 +838,13 @@ class GlobalSearchPopup(QWidget):
         if not hotkey_exists:
             empty_label = QLabel("暂无热搜词", self._hot_items_widget)
             empty_label.setContentsMargins(8, 12, 8, 10)
-            empty_label.setStyleSheet(self._EMPTY_LABEL_QSS)
+            empty_label.setStyleSheet(self._empty_label_qss())
             self._hot_items_layout.addWidget(empty_label)
 
     def _add_history_item(self, keyword: str) -> None:
         row = QWidget(self._history_items_widget)
         row.setFixedHeight(self.HISTORY_ITEM_HEIGHT)
-        row.setStyleSheet(self._HISTORY_ROW_QSS)
+        row.setStyleSheet(self._history_row_qss())
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(12, 4, 10, 4)
         row_layout.setSpacing(8)
@@ -809,13 +852,13 @@ class GlobalSearchPopup(QWidget):
         item_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
         item_button.setCursor(Qt.CursorShape.PointingHandCursor)
         item_button.setFlat(True)
-        item_button.setStyleSheet(self._HISTORY_BUTTON_QSS)
+        item_button.setStyleSheet(self._history_button_qss())
         item_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_item_clicked(current_keyword))
         delete_button = QPushButton("删除", row)
         delete_button.setFixedHeight(self.HISTORY_ITEM_HEIGHT - 8)
         delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_button.setFlat(True)
-        delete_button.setStyleSheet(self._ACTION_BUTTON_QSS)
+        delete_button.setStyleSheet(self._action_button_qss())
         delete_button.clicked.connect(lambda checked=False, current_keyword=keyword: self._on_delete_clicked(current_keyword))
         row_layout.addWidget(item_button, 1)
         row_layout.addWidget(delete_button)
@@ -827,18 +870,18 @@ class GlobalSearchPopup(QWidget):
     def _add_hot_item(self, index: int, text: str, query: str) -> None:
         row = QWidget(self._hot_items_widget)
         row.setFixedHeight(self.HOT_ITEM_HEIGHT)
-        row.setStyleSheet(self._HOT_ROW_QSS)
+        row.setStyleSheet(self._hot_row_qss())
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(12, 6, 12, 6)
         row_layout.setSpacing(10)
 
         rank_label = QLabel(f"{index:02d}", row)
-        rank_label.setStyleSheet(self._HOT_RANK_QSS)
+        rank_label.setStyleSheet(self._hot_rank_qss())
 
         button = QPushButton(text, row)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFlat(True)
-        button.setStyleSheet(self._HOT_BUTTON_QSS)
+        button.setStyleSheet(self._hot_button_qss())
         button.clicked.connect(lambda checked=False, current_query=query: self._on_item_clicked(current_query))
 
         row_layout.addWidget(rank_label)
