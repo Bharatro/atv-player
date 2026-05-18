@@ -176,6 +176,27 @@ def test_button_helpers_emit_disabled_rules_without_opacity() -> None:
         assert "opacity" not in qss
 
 
+def test_build_round_icon_button_qss_accepts_surface_overrides() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = theme_module.build_round_icon_button_qss(
+        tokens,
+        background=tokens.button_bg,
+        border_color=tokens.input_hover_border,
+        text_color=tokens.text_primary,
+        hover_background=tokens.panel_alt_bg,
+        hover_border_color=tokens.accent_hover,
+    )
+
+    assert f"background: {tokens.button_bg};" in qss
+    assert f"border: 1px solid {tokens.input_hover_border};" in qss
+    assert f"color: {tokens.text_primary};" in qss
+    assert f"background: {tokens.panel_alt_bg};" in qss
+    assert f"border-color: {tokens.accent_hover};" in qss
+    assert "QPushButton:disabled" in qss
+
+
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "dark")
     tokens = manager.tokens_for("dark")

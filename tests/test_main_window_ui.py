@@ -257,6 +257,46 @@ def test_main_window_global_search_button_styles_include_disabled_tokens(qtbot) 
     assert f"color: {tokens.button_disabled_text};" in stylesheet
 
 
+def test_main_window_global_search_icon_buttons_use_dark_theme_contrast_treatment(qtbot) -> None:
+    from atv_player.ui.icon_cache import load_icon
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    tokens = manager.tokens_for("dark")
+    button_qss = window.global_search_button.styleSheet()
+
+    assert f"background: {tokens.button_bg};" in button_qss
+    assert f"border: 1px solid {tokens.input_hover_border};" in button_qss
+    assert f"border-color: {tokens.accent_hover};" in button_qss
+
+    raw_search = load_icon(window._SEARCH_ICON_PATH).pixmap(24, 24).toImage()
+    raw_hot = load_icon(window._SEARCH_POPUP_ICON_PATH).pixmap(24, 24).toImage()
+
+    assert window.global_search_button.icon().pixmap(24, 24).toImage() != raw_search
+    assert window.global_search_popup_button.icon().pixmap(24, 24).toImage() != raw_hot
+    assert window.global_search_button.width() == 36
+    assert window.global_search_popup_button.width() == 36
+
+
 def test_global_search_popup_action_button_qss_uses_disabled_button_text_token() -> None:
     from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
 
