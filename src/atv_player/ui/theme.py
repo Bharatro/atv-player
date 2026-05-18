@@ -276,42 +276,60 @@ def build_combobox_qss(
     border_radius: int = 14,
     min_height: int = 34,
     borderless: bool = False,
+    field_bg: str | None = None,
+    drop_down_bg: str | None = None,
+    text_color: str | None = None,
+    disabled_field_bg: str | None = None,
+    disabled_drop_down_bg: str | None = None,
+    disabled_text_color: str | None = None,
+    border_color: str | None = None,
+    hover_border_color: str | None = None,
+    focus_border_color: str | None = None,
+    disabled_border_color: str | None = None,
+    drop_down_border_left_color: str | None = None,
+    disabled_drop_down_border_left_color: str | None = None,
 ) -> str:
-    border = "none" if borderless else f"1px solid {tokens.input_border}"
-    hover_border = "none" if borderless else tokens.input_hover_border
-    focus_border = "none" if borderless else f"1px solid {tokens.input_focus_ring}"
-    disabled_border = "none" if borderless else tokens.border_subtle
-    drop_down_border_left = "none" if borderless else f"1px solid {tokens.input_border}"
-    drop_down_bg = tokens.input_bg if borderless else tokens.panel_alt_bg
-    disabled_drop_down_border_left = "none" if borderless else f"1px solid {tokens.border_subtle}"
-    disabled_drop_down_bg = tokens.panel_alt_bg if borderless else tokens.panel_bg
+    resolved_field_bg = field_bg or tokens.input_bg
+    resolved_drop_down_bg = drop_down_bg or (resolved_field_bg if borderless else tokens.panel_alt_bg)
+    resolved_text_color = text_color or tokens.text_primary
+    resolved_disabled_field_bg = disabled_field_bg or tokens.panel_alt_bg
+    resolved_disabled_drop_down_bg = disabled_drop_down_bg or (
+        resolved_disabled_field_bg if borderless else tokens.panel_bg
+    )
+    resolved_disabled_text_color = disabled_text_color or tokens.text_secondary
+    resolved_border_color = border_color or ("transparent" if borderless else "transparent")
+    resolved_hover_border_color = hover_border_color or ("transparent" if borderless else tokens.input_hover_border)
+    resolved_focus_border_color = focus_border_color or ("transparent" if borderless else tokens.input_focus_ring)
+    resolved_disabled_border_color = disabled_border_color or ("transparent" if borderless else "transparent")
+    resolved_drop_down_border_left_color = drop_down_border_left_color or "transparent"
+    resolved_disabled_drop_down_border_left_color = disabled_drop_down_border_left_color or "transparent"
     return f"""
     QComboBox {{
         min-height: {min_height}px;
         padding: 0 40px 0 12px;
-        border: {border};
+        border: 1px solid {resolved_border_color};
         border-radius: {border_radius}px;
-        background: {tokens.input_bg};
-        color: {tokens.text_primary};
+        background: {resolved_field_bg};
+        color: {resolved_text_color};
     }}
     QComboBox:hover {{
-        border-color: {hover_border};
+        border-color: {resolved_hover_border_color};
     }}
     QComboBox:focus {{
-        border: {focus_border};
+        border: 1px solid {resolved_focus_border_color};
     }}
     QComboBox:disabled {{
-        border-color: {disabled_border};
-        background: {tokens.panel_alt_bg};
-        color: {tokens.text_secondary};
+        border-color: {resolved_disabled_border_color};
+        background: {resolved_disabled_field_bg};
+        color: {resolved_disabled_text_color};
     }}
     QComboBox::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
         width: 30px;
         border: none;
-        border-left: {drop_down_border_left};
-        background: {drop_down_bg};
+        border-left: 1px solid {resolved_drop_down_border_left_color};
+        background: {resolved_drop_down_bg};
         border-top-right-radius: {max(0, border_radius - 1)}px;
         border-bottom-right-radius: {max(0, border_radius - 1)}px;
     }}
@@ -323,8 +341,8 @@ def build_combobox_qss(
         border-top: 6px solid {tokens.text_secondary};
     }}
     QComboBox:disabled::drop-down {{
-        border-left: {disabled_drop_down_border_left};
-        background: {disabled_drop_down_bg};
+        border-left: 1px solid {resolved_disabled_drop_down_border_left_color};
+        background: {resolved_disabled_drop_down_bg};
     }}
     QComboBox:disabled::down-arrow {{
         border-top: 6px solid {tokens.border_subtle};
