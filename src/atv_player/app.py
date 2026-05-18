@@ -317,6 +317,9 @@ def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str
     refresh_widgets = getattr(target_app, "topLevelWidgets", None)
     if callable(refresh_widgets):
         for widget in refresh_widgets():
+            refresh_window_chrome = getattr(widget, "refresh_window_chrome", None)
+            if callable(refresh_window_chrome):
+                refresh_window_chrome()
             apply_theme = getattr(widget, "_apply_theme", None)
             if callable(apply_theme):
                 apply_theme()

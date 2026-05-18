@@ -17,6 +17,7 @@ from atv_player.app import AppCoordinator, decide_start_view
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
+from atv_player.ui.theme import DARK_TOKENS
 
 
 class RaisingTransport(httpx.BaseTransport):
@@ -3671,6 +3672,7 @@ def test_build_application_installs_theme_manager_from_saved_config(monkeypatch,
 def test_apply_saved_theme_refreshes_main_window_without_recursive_callback(qtbot, tmp_path) -> None:
     app = QApplication.instance()
     assert app is not None
+    app_module.install_theme(app, app_module.ThemeManager(system_theme_getter=lambda: "light"), "light")
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     config = AppConfig(theme_mode="dark")
     repo.save_config(config)
@@ -3695,6 +3697,7 @@ def test_apply_saved_theme_refreshes_main_window_without_recursive_callback(qtbo
 
     assert resolved == "dark"
     assert app.property("resolved_theme") == "dark"
+    assert DARK_TOKENS.window_chrome_bg in window._window_chrome_root.styleSheet()
 
 
 def test_apply_saved_theme_ignores_advanced_settings_callback_storage(qtbot, tmp_path) -> None:
