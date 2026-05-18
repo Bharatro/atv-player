@@ -99,6 +99,8 @@ def _title_quality_score(value: object) -> tuple[int, int]:
     score = 0
     if _TITLE_NOISE_PATTERN.search(text):
         score -= 2
+    if re.search(r"[丨｜|]", text):
+        score -= 2
     if re.search(r"[【】\[\]{}<>]", text):
         score -= 1
     if re.search(r"[@_~`]", text):

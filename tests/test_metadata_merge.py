@@ -186,3 +186,12 @@ def test_merge_metadata_iqiyi_preserves_clean_existing_title() -> None:
     merge_metadata_record(vod, record, provider_priority=["iqiyi"])
 
     assert vod.vod_name == "国色芳花"
+
+
+def test_merge_metadata_iqiyi_overrides_drive_folder_style_title_with_record_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="di|纸上|f|紫微(2026)")
+    record = MetadataRecord(provider="iqiyi", provider_id="iqiyi:1", title="纸上紫微", year="2026")
+
+    merge_metadata_record(vod, record, provider_priority=["iqiyi"])
+
+    assert vod.vod_name == "纸上紫微"
