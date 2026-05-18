@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 from atv_player.metadata.models import MetadataRecord
+from atv_player.metadata.matching import normalize_match_title
 from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, PlaybackDetailValuePart, VodItem
 
@@ -28,6 +31,8 @@ _OVERVIEW_PROVIDER_PRIORITY = {
     "remote_douban": 6,
     "plugin": 7,
 }
+
+_TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban"}
 
 
 def _provider_rank(field_name: str, provider: str) -> int:
@@ -71,6 +76,27 @@ def _tmdb_media_type(record: MetadataRecord) -> str:
         return ""
     media_type = str(record.provider_id or "").strip().split(":", 1)[0]
     return media_type if media_type in {"movie", "tv"} else ""
+
+
+def _normalize_title_for_correction(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^(?:[\[(（【][^)\]）】]{1,12}[\])）】]\s*)+", "", text)
+    text = re.sub(r"[丨｜|]", "", text)
+    return normalize_match_title(text)
+
+
+def _should_correct_existing_title(vod: VodItem, record: MetadataRecord) -> bool:
+    if record.provider not in _TITLE_CORRECTION_PROVIDERS or not record.title or not vod.vod_name:
+        return False
+    if str(vod.vod_name).strip() == str(record.title).strip():
+        return False
+    current = _normalize_title_for_correction(vod.vod_name)
+    target = _normalize_title_for_correction(record.title)
+    if not current or not target:
+        return False
+    return current == target or current in target or target in current
 
 
 def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
@@ -119,7 +145,7 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
 
 def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priority: list[str]) -> VodItem:
     del provider_priority
-    if not vod.vod_name and record.title:
+    if (not vod.vod_name and record.title) or _should_correct_existing_title(vod, record):
         vod.vod_name = record.title
     if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
         vod.vod_pic = record.poster

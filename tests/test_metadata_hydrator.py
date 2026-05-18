@@ -253,6 +253,30 @@ def test_metadata_hydrator_later_lower_priority_provider_does_not_override_tmdb_
     assert updated.metadata_field_sources["poster"] == "tmdb"
 
 
+def test_metadata_hydrator_local_douban_corrects_noisy_similar_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="35746415", title="成何体统")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="35746415",
+            title="成何体统",
+            overview="豆瓣简介",
+            genres=["爱情", "古装"],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="【C】成丨何体统"), source_kind="browse")
+    )
+
+    assert updated.vod_name == "成何体统"
+    assert updated.vod_content == "豆瓣简介"
+    assert updated.type_name == "爱情 / 古装"
+
+
 def test_metadata_hydrator_prefers_tmdb_season_over_local_douban_overview(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(

@@ -704,6 +704,190 @@ def test_player_window_metadata_scrape_apply_refreshes_metadata_and_saves_bindin
     assert "已绑定手动刮削结果" in window.log_view.toPlainText()
 
 
+def test_player_window_danmaku_source_dialog_falls_back_to_current_vod_title_when_search_title_missing(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.vod.vod_name = "深空彼岸"
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_title_edit.text() == "深空彼岸"
+
+
+def test_player_window_rerun_danmaku_search_uses_fallback_current_vod_title(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    playlist,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
+
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window.session.vod.vod_name = "深空彼岸"
+    window._open_danmaku_source_dialog()
+    qtbot.waitUntil(lambda: controller.calls == [(None, None, None, session.playlist, True, 120, "")])
+    qtbot.waitUntil(lambda: session.playlist[0].danmaku_pending is False)
+
+    window._rerun_current_item_danmaku_search()
+
+    qtbot.waitUntil(
+        lambda: controller.calls
+        == [
+            (None, None, None, session.playlist, True, 120, ""),
+            (None, "深空彼岸", "", session.playlist, True, 120, ""),
+        ]
+    )
+
+
+def test_player_window_open_danmaku_source_dialog_loads_cached_results_with_fallback_current_vod_title(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.seen_titles: list[str] = []
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            self.seen_titles.append(item.danmaku_search_title)
+            if item.danmaku_search_title != "深空彼岸":
+                return False
+            item.danmaku_search_episode = "1集"
+            item.danmaku_search_query = "深空彼岸 1集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="深空彼岸 第1集", url="https://v.qq.com/demo")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/demo"
+            item.selected_danmaku_title = "深空彼岸 第1集"
+            return True
+
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.vod.vod_name = "深空彼岸"
+
+    window._open_danmaku_source_dialog()
+
+    assert controller.seen_titles == ["深空彼岸"]
+    assert window._danmaku_source_provider_list.count() == 1
+    assert window._danmaku_source_title_edit.text() == "深空彼岸"
+
+
+def test_player_window_open_danmaku_source_dialog_auto_searches_when_cache_misses_with_fallback_title(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.cache_titles: list[str] = []
+            self.refresh_calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            self.cache_titles.append(item.danmaku_search_title)
+            return False
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.refresh_calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    playlist,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
+            item.danmaku_search_episode = "1集"
+            item.danmaku_search_query = "深空彼岸 1集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="深空彼岸 第1集", url="https://v.qq.com/demo")],
+                )
+            ]
+
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window.session.vod.vod_name = "深空彼岸"
+
+    window._open_danmaku_source_dialog()
+
+    qtbot.waitUntil(
+        lambda: controller.refresh_calls == [(None, None, None, session.playlist, True, 120, "")]
+    )
+    assert controller.cache_titles == ["深空彼岸"]
+    assert window._danmaku_source_title_edit.text() == "深空彼岸"
+
+
 def test_player_window_metadata_scrape_apply_still_works_after_metadata_hydration_request_started(qtbot) -> None:
     service = FakeMetadataScrapeService()
     bindings = FakeMetadataBindingRepository()

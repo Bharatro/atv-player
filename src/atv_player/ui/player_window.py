@@ -5608,13 +5608,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self._current_play_item()
         if current_item is None:
             return
+        if not current_item.danmaku_search_title:
+            fallback_title = str(current_item.media_title or "").strip()
+            if not fallback_title and self.session is not None:
+                fallback_title = str(self.session.vod.vod_name or "").strip()
+            current_item.danmaku_search_title = fallback_title
+        loaded_cached_sources = False
         if (
             not current_item.danmaku_candidates
             and self.session is not None
             and self.session.danmaku_controller is not None
             and hasattr(self.session.danmaku_controller, "load_cached_danmaku_sources")
         ):
-            self.session.danmaku_controller.load_cached_danmaku_sources(current_item)
+            loaded_cached_sources = bool(self.session.danmaku_controller.load_cached_danmaku_sources(current_item))
         dialog = self._ensure_danmaku_source_dialog()
         if self._danmaku_source_title_edit is not None:
             self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)
@@ -5627,6 +5633,31 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+        if (
+            not loaded_cached_sources
+            and not current_item.danmaku_candidates
+            and not current_item.danmaku_search_query
+            and self.session is not None
+            and self.session.danmaku_controller is not None
+            and hasattr(self.session.danmaku_controller, "refresh_danmaku_sources")
+        ):
+            current_item.danmaku_status_text = (
+                f"搜索中（{self._danmaku_provider_label(current_item.danmaku_search_provider)}）..."
+            )
+            media_duration_seconds = self._current_media_duration_seconds()
+            self._start_danmaku_source_task(
+                current_item,
+                error_prefix="弹幕源自动搜索失败",
+                task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
+                    current_item,
+                    query_override=None,
+                    playlist=self.session.playlist,
+                    force_refresh=True,
+                    media_duration_seconds=media_duration_seconds,
+                    provider_filter=current_item.danmaku_search_provider,
+                ),
+                debug_label="自动搜索",
+            )
 
     def _refresh_danmaku_source_dialog_from_item(self, current_item: PlayItem) -> None:
         if self._danmaku_source_dialog is None:
