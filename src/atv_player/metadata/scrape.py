@@ -265,7 +265,13 @@ class MetadataScrapeService:
             return replace(candidate, raw=raw)
         return candidate
 
-    def search(self, query: MetadataQuery, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+    def search(
+        self,
+        query: MetadataQuery,
+        provider_filter: str = "",
+        *,
+        cache_only: bool = False,
+    ) -> list[MetadataScrapeGroup]:
         normalized_title, normalized_year = normalize_metadata_query_inputs(query.title, query.year)
         query = replace(query, title=normalized_title, year=normalized_year)
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
@@ -286,7 +292,9 @@ class MetadataScrapeService:
                     ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
                     empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
                 )
-                if matches is None:
+                if matches is None and cache_only:
+                    matches = []
+                elif matches is None:
                     matches = provider.search(query)
                     self._cache.save_search(provider.name, cache_title, cache_year, matches)
             except Exception as exc:

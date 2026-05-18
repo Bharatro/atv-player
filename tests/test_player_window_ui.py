@@ -10,7 +10,10 @@ from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, 
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
+from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.hydrator import MetadataHydrator
+from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
+from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup, MetadataScrapeService
 from atv_player.models import (
     AppConfig,
     ExternalSubtitleOption,
@@ -639,10 +642,12 @@ def test_player_window_metadata_scrape_dialog_ignores_inflight_previous_search_w
             self.search_started = threading.Event()
             self.release_search = threading.Event()
 
-        def search(self, query, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+        def search(self, query, provider_filter: str = "", cache_only: bool = False) -> list[MetadataScrapeGroup]:
+            if cache_only:
+                return super().search(query, provider_filter=provider_filter, cache_only=True)
             self.search_started.set()
             assert self.release_search.wait(timeout=1)
-            return super().search(query, provider_filter=provider_filter)
+            return super().search(query, provider_filter=provider_filter, cache_only=False)
 
     blocking_service = BlockingMetadataScrapeService()
     window = PlayerWindow(FakePlayerController())
@@ -683,6 +688,80 @@ def test_player_window_metadata_scrape_dialog_ignores_inflight_previous_search_w
     assert window._metadata_scrape_group_list.count() == 0
 
 
+def test_player_window_metadata_scrape_dialog_reuses_cached_auto_hydration_results(qtbot, tmp_path: Path) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class FakeProvider:
+        name = "tmdb"
+
+        def __init__(self) -> None:
+            self.search_calls: list[tuple[str, str]] = []
+
+        def can_enrich(self, _context) -> bool:
+            return True
+
+        def search(self, query) -> list[MetadataMatch]:
+            self.search_calls.append((query.title, query.year))
+            return [MetadataMatch(provider="tmdb", provider_id="movie:1", title="深空彼岸", year="2026", score=1.0)]
+
+        def get_detail(self, match: MetadataMatch) -> MetadataRecord:
+            return MetadataRecord(
+                provider=match.provider,
+                provider_id=match.provider_id,
+                title=match.title,
+                year=match.year,
+                overview="自动刮削简介",
+            )
+
+    provider = FakeProvider()
+    cache = MetadataCache(tmp_path)
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: hydrator.hydrate(
+            MetadataContext(
+                vod=current_session.vod,
+                source_kind="plugin",
+                current_item=current_session.playlist[current_session.start_index],
+            )
+        ),
+        metadata_scrape_service=MetadataScrapeService(cache=cache, providers=[provider]),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "自动刮削简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert provider.search_calls == [("深空彼岸", "2026")]
+
+    window._open_metadata_scrape_dialog()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert window._metadata_scrape_group_list.count() == 1
+    assert window._metadata_scrape_result_list.item(0).text() == "深空彼岸 (2026) · 电影"
+    assert provider.search_calls == [("深空彼岸", "2026")]
+
+
 class FakeMetadataScrapeService:
     def __init__(self, provider_options: list[tuple[str, str]] | None = None) -> None:
         self.search_calls: list[tuple[str, str, str]] = []
@@ -690,6 +769,7 @@ class FakeMetadataScrapeService:
         self.apply_calls: list[tuple[str, str]] = []
         self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
+        self.cached_groups: list[MetadataScrapeGroup] = []
         self._provider_options = list(
             provider_options
             or [
@@ -721,7 +801,9 @@ class FakeMetadataScrapeService:
         del query
         return list(self._provider_options)
 
-    def search(self, query, provider_filter: str = "") -> list[MetadataScrapeGroup]:
+    def search(self, query, provider_filter: str = "", cache_only: bool = False) -> list[MetadataScrapeGroup]:
+        if cache_only:
+            return list(self.cached_groups)
         self.search_calls.append((query.title, query.year, provider_filter))
         self.search_queries.append((getattr(query, "category_name", ""), getattr(query, "type_name", "")))
         return self.groups

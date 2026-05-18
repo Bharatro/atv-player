@@ -5738,6 +5738,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
         self._refresh_metadata_scrape_search_row_heights()
+        self._reload_metadata_scrape_cached_results()
 
     def _metadata_scrape_current_title(self) -> str:
         return self._metadata_scrape_current_query()[0]
@@ -5806,6 +5807,68 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._metadata_scrape_result_list.count():
             self._metadata_scrape_result_list.setCurrentRow(0)
 
+    def _start_metadata_scrape_search(
+        self,
+        *,
+        title: str,
+        year: str,
+        category_name: str,
+        provider_filter: str,
+        cache_only: bool,
+        status_text: str | None,
+    ) -> None:
+        if self.session is None or self.session.metadata_scrape_service is None:
+            return
+        if self._metadata_scrape_status_label is not None and status_text is not None:
+            self._metadata_scrape_status_label.setText(status_text)
+        self._metadata_scrape_request_id += 1
+        request_id = self._metadata_scrape_request_id
+        service = self.session.metadata_scrape_service
+        query = MetadataQuery(
+            title=title,
+            year=year,
+            category_name=category_name,
+            type_name=str(self.session.vod.type_name or "").strip(),
+        )
+
+        def run() -> None:
+            try:
+                groups = service.search(query, provider_filter=provider_filter, cache_only=cache_only)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._metadata_scrape_signals.failed.emit(request_id, f"刮削搜索失败: {exc}")
+                return
+            if self._is_window_alive():
+                self._metadata_scrape_signals.search_succeeded.emit(request_id, groups)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _reload_metadata_scrape_cached_results(self) -> None:
+        if (
+            self.session is None
+            or self.session.metadata_scrape_service is None
+            or self._metadata_scrape_title_edit is None
+            or self._metadata_scrape_year_edit is None
+            or self._metadata_scrape_provider_combo is None
+        ):
+            return
+        title, year = self._normalize_metadata_scrape_query_inputs(
+            self._metadata_scrape_title_edit.text().strip(),
+            self._metadata_scrape_year_edit.text().strip() if self._metadata_scrape_year_edit is not None else "",
+        )
+        if not title:
+            if self._metadata_scrape_status_label is not None:
+                self._metadata_scrape_status_label.setText("当前条目缺少标题")
+            return
+        self._start_metadata_scrape_search(
+            title=title,
+            year=year,
+            category_name=self._metadata_scrape_selected_category_name(),
+            provider_filter=str(self._metadata_scrape_provider_combo.currentData() or ""),
+            cache_only=True,
+            status_text=None,
+        )
+
     def _rerun_metadata_scrape_search(self) -> None:
         if (
             self.session is None
@@ -5830,32 +5893,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         category_name = self._metadata_scrape_selected_category_name()
         provider_filter = str(self._metadata_scrape_provider_combo.currentData() or "")
-        self._metadata_scrape_status_label.setText(
-            f"刮削搜索中（{self._metadata_scrape_provider_label(provider_filter)}）..."
+        self._start_metadata_scrape_search(
+            title=title,
+            year=year,
+            category_name=category_name,
+            provider_filter=provider_filter,
+            cache_only=False,
+            status_text=f"刮削搜索中（{self._metadata_scrape_provider_label(provider_filter)}）...",
         )
-        self._metadata_scrape_request_id += 1
-        request_id = self._metadata_scrape_request_id
-        service = self.session.metadata_scrape_service
-
-        def run() -> None:
-            try:
-                groups = service.search(
-                    MetadataQuery(
-                        title=title,
-                        year=year,
-                        category_name=category_name,
-                        type_name=str(self.session.vod.type_name or "").strip(),
-                    ),
-                    provider_filter=provider_filter,
-                )
-            except Exception as exc:
-                if self._is_window_alive():
-                    self._metadata_scrape_signals.failed.emit(request_id, f"刮削搜索失败: {exc}")
-                return
-            if self._is_window_alive():
-                self._metadata_scrape_signals.search_succeeded.emit(request_id, groups)
-
-        threading.Thread(target=run, daemon=True).start()
 
     def _reset_metadata_scrape_search_query(self) -> None:
         self._rerun_metadata_scrape_search()

@@ -79,6 +79,37 @@ def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: P
     assert groups[1].items[0].provider_id == "35746415"
 
 
+def test_metadata_scrape_service_cache_only_reuses_cached_results_without_provider_calls(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cached_match = MetadataMatch(provider="tmdb", provider_id="movie:1", title="深空彼岸", year="2026")
+    cache.save_search("tmdb", "深空彼岸", "2026", [cached_match])
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="movie:2", title="不该触发实时搜索", year="2026")],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[tmdb])
+
+    groups = service.search(MetadataQuery(title="深空彼岸", year="2026"), provider_filter="", cache_only=True)
+
+    assert groups == [
+        MetadataScrapeGroup(
+            provider="tmdb",
+            provider_label="TMDB",
+            items=[
+                MetadataScrapeCandidate(
+                    provider="tmdb",
+                    provider_label="TMDB",
+                    provider_id="movie:1",
+                    title="深空彼岸",
+                    year="2026",
+                    subtitle="电影",
+                )
+            ],
+        )
+    ]
+    assert tmdb.search_calls == []
+
+
 def test_metadata_scrape_service_filters_explicit_category_mismatches_for_manual_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     iqiyi = FakeProvider(
