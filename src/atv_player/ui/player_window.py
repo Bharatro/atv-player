@@ -30,6 +30,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
+    QPainter,
     QPixmap,
     QShortcut,
     QWindow,
@@ -636,7 +637,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_tabs.addTab("原始文件名")
         self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
-        self.playlist.setSpacing(4)
+        self.playlist.setSpacing(2)
         self.playlist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist.customContextMenuRequested.connect(lambda pos: self._show_playlist_context_menu(pos))
         self.playlist.viewport().installEventFilter(self)
@@ -1224,19 +1225,34 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None:
             return
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        current_icon = self._build_playlist_state_icon(tokens.accent)
         for index in range(self.playlist.count()):
             playlist_item = self.playlist.item(index)
             font = playlist_item.font()
             if index == self.current_index:
                 playlist_item.setForeground(QBrush(QColor(tokens.accent)))
                 font.setBold(True)
+                playlist_item.setIcon(current_icon)
             elif index < self.current_index:
                 playlist_item.setForeground(QBrush(QColor(tokens.text_secondary)))
                 font.setBold(False)
+                playlist_item.setIcon(QIcon())
             else:
                 playlist_item.setForeground(QBrush(QColor(tokens.text_primary)))
                 font.setBold(False)
+                playlist_item.setIcon(QIcon())
             playlist_item.setFont(font)
+
+    def _build_playlist_state_icon(self, color: str) -> QIcon:
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(1, 1, 8, 8)
+        painter.end()
+        return QIcon(pixmap)
 
     def _current_detail_actions(self) -> list[PlaybackDetailAction]:
         if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):

@@ -411,13 +411,13 @@ def build_player_list_qss(tokens: ThemeTokens) -> str:
         color: {tokens.text_primary};
         border: 1px solid {tokens.border_subtle};
         border-radius: 16px;
-        padding: 8px;
+        padding: 6px;
         outline: 0;
     }}
     QListWidget::item {{
-        min-height: 34px;
-        margin: 2px 0;
-        padding: 8px 12px;
+        min-height: 28px;
+        margin: 1px 0;
+        padding: 6px 10px;
         border: 1px solid transparent;
         border-radius: 10px;
         background: transparent;
