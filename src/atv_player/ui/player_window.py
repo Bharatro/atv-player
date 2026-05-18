@@ -9,7 +9,7 @@ import threading
 import time
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -487,6 +487,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_default_year = ""
         self._metadata_scrape_binding_title = ""
         self._metadata_scrape_binding_year = ""
+        self._metadata_scrape_query_saved = False
+        self._metadata_scrape_saved_title = ""
+        self._metadata_scrape_saved_year = ""
+        self._metadata_scrape_saved_provider = ""
+        self._metadata_hydration_override_title = ""
+        self._metadata_hydration_override_year = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -1555,6 +1561,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.session = session
         self._metadata_scrape_binding_title = str(session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
+        self._metadata_scrape_query_saved = False
+        self._metadata_scrape_saved_title = ""
+        self._metadata_scrape_saved_year = ""
+        self._metadata_scrape_saved_provider = ""
         self.current_index = session.start_index
         current_title = (
             session.playlist[self.current_index].title
@@ -2746,10 +2756,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         session = self.session
         self._pending_metadata_session = session
         session.metadata_hydrated = True
+        override_title = self._metadata_hydration_override_title
+        override_year = self._metadata_hydration_override_year
+        self._metadata_hydration_override_title = ""
+        self._metadata_hydration_override_year = ""
+        hydration_session = session
+        if override_title or override_year:
+            hydration_session = replace(
+                session,
+                vod=replace(
+                    session.vod,
+                    vod_name=override_title or session.vod.vod_name,
+                    vod_year=override_year or session.vod.vod_year,
+                ),
+            )
 
         def run() -> None:
             try:
-                updated_vod = session.metadata_hydrator(session)
+                updated_vod = session.metadata_hydrator(hydration_session)
             except Exception as exc:
                 if self._is_window_alive():
                     self._metadata_hydration_signals.failed.emit(request_id, str(exc))
@@ -5187,11 +5211,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._populate_metadata_scrape_provider_options()
         self._clear_metadata_scrape_search_results()
         if self._metadata_scrape_title_edit is not None:
-            self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
+            self._metadata_scrape_title_edit.setText(
+                self._metadata_scrape_saved_title if self._metadata_scrape_query_saved else self._metadata_scrape_default_title
+            )
         if self._metadata_scrape_year_edit is not None:
-            self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
+            self._metadata_scrape_year_edit.setText(
+                self._metadata_scrape_saved_year if self._metadata_scrape_query_saved else self._metadata_scrape_default_year
+            )
         if self._metadata_scrape_provider_combo is not None:
-            self._metadata_scrape_provider_combo.setCurrentIndex(0)
+            provider_value = self._metadata_scrape_saved_provider if self._metadata_scrape_query_saved else ""
+            provider_index = max(0, self._metadata_scrape_provider_combo.findData(provider_value))
+            self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -5286,10 +5316,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
 
     def _reset_metadata_scrape_search_query(self) -> None:
-        if self._metadata_scrape_title_edit is not None:
-            self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
-        if self._metadata_scrape_year_edit is not None:
-            self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
         self._rerun_metadata_scrape_search()
 
     def _reset_metadata_scrape_state(self) -> None:
@@ -5313,10 +5339,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 key = (provider, provider_id)
                 if provider and provider_id and key not in detail_keys:
                     detail_keys.append(key)
+        reset_title = self._metadata_scrape_default_title
+        if self._metadata_scrape_title_edit is not None:
+            reset_title = normalize_metadata_scrape_title(self._metadata_scrape_title_edit.text().strip())
+        reset_year = self._metadata_scrape_default_year
+        if self._metadata_scrape_year_edit is not None:
+            reset_year = self._metadata_scrape_year_edit.text().strip()
         self.session.metadata_scrape_service.reset(
             MetadataQuery(
-                title=self._metadata_scrape_default_title,
-                year=self._metadata_scrape_default_year,
+                title=reset_title,
+                year=reset_year,
                 type_name=str(self.session.vod.type_name or "").strip(),
                 category_name=str(self.session.vod.category_name or "").strip(),
             ),
@@ -5327,6 +5359,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if bindings is not None and hasattr(bindings, "delete"):
             bindings.delete(binding_title, binding_year)
         self._reset_metadata_scrape_search_query()
+        self._metadata_hydration_override_title = reset_title
+        self._metadata_hydration_override_year = reset_year
         self.session.metadata_hydrated = False
         self._start_metadata_hydration()
         self._append_log("已重置元数据缓存与手动绑定，重新开始自动搜索")
@@ -6403,6 +6437,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog = self._metadata_scrape_dialog
         if dialog is None or not dialog.isVisible():
             return
+        if self._metadata_scrape_title_edit is not None:
+            self._metadata_scrape_saved_title = self._metadata_scrape_title_edit.text()
+        if self._metadata_scrape_year_edit is not None:
+            self._metadata_scrape_saved_year = self._metadata_scrape_year_edit.text()
+        if self._metadata_scrape_provider_combo is not None:
+            self._metadata_scrape_saved_provider = str(self._metadata_scrape_provider_combo.currentData() or "")
+        self._metadata_scrape_query_saved = True
         dialog.close()
 
     def _dismiss_escape_dialog(self) -> bool:

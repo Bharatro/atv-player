@@ -449,6 +449,30 @@ def test_player_window_metadata_scrape_dialog_clears_previous_results_when_reope
     assert window._metadata_scrape_status_label.text() == ""
 
 
+def test_player_window_metadata_scrape_dialog_preserves_user_query_when_reopened_for_same_item(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("手动修改标题")
+    window._metadata_scrape_year_edit.setText("2030")
+    window._close_metadata_scrape_dialog()
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "手动修改标题"
+    assert window._metadata_scrape_year_edit.text() == "2030"
+
+
 def test_player_window_metadata_scrape_dialog_ignores_inflight_previous_search_when_reopened(qtbot) -> None:
     class BlockingMetadataScrapeService(FakeMetadataScrapeService):
         def __init__(self) -> None:
@@ -865,7 +889,7 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     service = FakeMetadataScrapeService()
     bindings = FakeMetadataBindingRepository()
     bindings.binding = type("Binding", (), {"provider": "tmdb", "provider_id": "tv:42:season:5"})()
-    hydration_calls: list[str] = []
+    hydration_calls: list[tuple[str, str]] = []
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="黑袍纠察队", vod_year="2026", vod_content="当前简介"),
         playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
@@ -879,8 +903,13 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     qtbot.addWidget(window)
     window.open_session(session)
     window.session.metadata_hydrator = lambda current_session: (
-        hydration_calls.append(current_session.vod.vod_name)
-        or VodItem(vod_id="v1", vod_name=current_session.vod.vod_name, vod_year="2026", vod_content="自动简介")
+        hydration_calls.append((current_session.vod.vod_name, current_session.vod.vod_year))
+        or VodItem(
+            vod_id="v1",
+            vod_name=current_session.vod.vod_name,
+            vod_year=current_session.vod.vod_year,
+            vod_content="自动简介",
+        )
     )
     window.session.metadata_hydrated = True
     window._metadata_scrape_binding_title = "黑袍纠察队第五季"
@@ -897,17 +926,17 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     assert bindings.deleted == [("黑袍纠察队第五季", "2026")]
     assert service.reset_calls == [
         (
-            "黑袍纠察队",
-            "2026",
+            "手动改过的标题",
+            "2030",
             "tmdb",
             "tv:42:season:5",
             [("tmdb", "movie:1")],
         )
     ]
-    assert hydration_calls == ["黑袍纠察队"]
-    assert service.search_calls[-1] == ("黑袍纠察队", "2026", "")
-    assert window._metadata_scrape_title_edit.text() == "黑袍纠察队"
-    assert window._metadata_scrape_year_edit.text() == "2026"
+    assert hydration_calls == [("手动改过的标题", "2030")]
+    assert service.search_calls[-1] == ("手动改过的标题", "2030", "")
+    assert window._metadata_scrape_title_edit.text() == "手动改过的标题"
+    assert window._metadata_scrape_year_edit.text() == "2030"
     assert "已重置元数据缓存与手动绑定" in window.log_view.toPlainText()
 
 
