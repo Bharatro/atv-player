@@ -727,7 +727,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._auto_spider_subtitle_suppressed = False
         self._auto_spider_subtitle_attempted_key: tuple[int, str] | None = None
         self.subtitle_combo = QComboBox()
-        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.addItem("字幕", ("auto", None))
         self.subtitle_combo.setEnabled(False)
         self.danmaku_combo = QComboBox()
         self._reset_danmaku_combo()
@@ -737,17 +737,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._audio_tracks: list[AudioTrack] = []
         self._audio_preference = AudioPreference()
         self.audio_combo = QComboBox()
-        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.addItem("音轨", ("auto", None))
         self.audio_combo.setEnabled(False)
         self.parse_combo = QComboBox()
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
-        self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=76)
-        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=4, maximum_width=96)
-        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=3, maximum_width=76)
-        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=4, maximum_width=92)
-        self._configure_control_combo(self.audio_combo, minimum_contents_length=4, maximum_width=92)
-        self._configure_control_combo(self.parse_combo, minimum_contents_length=4, maximum_width=84)
+        self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72)
+        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=2, maximum_width=74)
+        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=2, maximum_width=72)
+        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=3, maximum_width=84)
+        self._configure_control_combo(self.audio_combo, minimum_contents_length=2, maximum_width=74)
+        self._configure_control_combo(self.parse_combo, minimum_contents_length=2, maximum_width=72)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -1047,6 +1047,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             tokens,
             border_radius=12,
             min_height=30,
+            horizontal_padding=10,
+            indicator_padding=28,
+            drop_down_width=24,
             field_bg=player_tokens.player_controls_bg,
             drop_down_bg=player_tokens.player_controls_bg,
             text_color=player_tokens.player_text_on_dark,

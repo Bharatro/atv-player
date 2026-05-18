@@ -3319,7 +3319,7 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
 
     assert "min-height: 30px" in window.speed_combo.styleSheet()
     assert (
-        "QComboBox {\n        min-height: 30px;\n        padding: 0 40px 0 12px;\n        border: 1px solid transparent;"
+        "QComboBox {\n        min-height: 30px;\n        padding: 0 28px 0 10px;\n        border: 0px solid transparent;"
         in window.speed_combo.styleSheet()
     )
     assert f"background: {player_tokens.player_controls_bg};" in window.speed_combo.styleSheet()
@@ -6288,17 +6288,17 @@ def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
     assert window.playlist_group_combo.minimumContentsLength() == 10
     assert window.playlist_source_combo.minimumContentsLength() == 12
     assert window.speed_combo.minimumContentsLength() == 3
-    assert window.subtitle_combo.minimumContentsLength() == 4
-    assert window.danmaku_combo.minimumContentsLength() == 3
-    assert window.video_quality_combo.minimumContentsLength() == 4
-    assert window.audio_combo.minimumContentsLength() == 4
-    assert window.parse_combo.minimumContentsLength() == 4
-    assert window.speed_combo.maximumWidth() == 76
-    assert window.subtitle_combo.maximumWidth() == 96
-    assert window.danmaku_combo.maximumWidth() == 76
-    assert window.video_quality_combo.maximumWidth() == 92
-    assert window.audio_combo.maximumWidth() == 92
-    assert window.parse_combo.maximumWidth() == 84
+    assert window.subtitle_combo.minimumContentsLength() == 2
+    assert window.danmaku_combo.minimumContentsLength() == 2
+    assert window.video_quality_combo.minimumContentsLength() == 3
+    assert window.audio_combo.minimumContentsLength() == 2
+    assert window.parse_combo.minimumContentsLength() == 2
+    assert window.speed_combo.maximumWidth() == 72
+    assert window.subtitle_combo.maximumWidth() == 74
+    assert window.danmaku_combo.maximumWidth() == 72
+    assert window.video_quality_combo.maximumWidth() == 84
+    assert window.audio_combo.maximumWidth() == 74
+    assert window.parse_combo.maximumWidth() == 72
     assert "min-height: 30px" in window.speed_combo.styleSheet()
 
 
@@ -6308,7 +6308,7 @@ def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> 
 
     assert isinstance(window.subtitle_combo, QComboBox)
     assert window.subtitle_combo.count() == 1
-    assert window.subtitle_combo.itemText(0) == "自动选择"
+    assert window.subtitle_combo.itemText(0) == "字幕"
     assert window.subtitle_combo.isEnabled() is False
 
 
@@ -6342,7 +6342,7 @@ def test_player_window_exposes_audio_combo_with_default_auto_entry(qtbot) -> Non
 
     assert isinstance(window.audio_combo, QComboBox)
     assert window.audio_combo.count() == 1
-    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.itemText(0) == "音轨"
     assert window.audio_combo.isEnabled() is False
 
 
