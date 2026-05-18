@@ -3051,12 +3051,31 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         previous_vod = self.session.vod
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self.session.vod = updated_vod
+        self._sync_playlist_media_title_from_metadata(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
+
+    def _sync_playlist_media_title_from_metadata(self, previous_vod: VodItem, updated_vod: VodItem) -> None:
+        if self.session is None:
+            return
+        corrected_title = str(updated_vod.vod_name or "").strip()
+        if not corrected_title:
+            return
+        previous_title = str(previous_vod.vod_name or "").strip()
+        stale_titles = {title for title in (previous_title,) if title}
+        current_item = self._current_play_item()
+        if current_item is not None:
+            current_media_title = str(current_item.media_title or "").strip()
+            if current_media_title:
+                stale_titles.add(current_media_title)
+        for item in self.session.playlist:
+            media_title = str(item.media_title or "").strip()
+            if not media_title or media_title in stale_titles:
+                item.media_title = corrected_title
 
     @staticmethod
     def _playlist_identity_key(item: PlayItem) -> tuple[str, str, str, str, str]:
