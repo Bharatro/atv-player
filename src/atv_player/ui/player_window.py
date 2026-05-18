@@ -3011,6 +3011,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_hydration_override_year = ""
         hydration_session = session
         if override_title or override_year:
+            hydration_playlist = session.playlist
+            if override_title and 0 <= session.start_index < len(session.playlist):
+                hydration_playlist = list(session.playlist)
+                hydration_playlist[session.start_index] = replace(
+                    hydration_playlist[session.start_index],
+                    media_title=override_title,
+                )
             hydration_session = replace(
                 session,
                 vod=replace(
@@ -3018,6 +3025,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                     vod_name=override_title or session.vod.vod_name,
                     vod_year=override_year or session.vod.vod_year,
                 ),
+                playlist=hydration_playlist,
             )
 
         def run() -> None:
@@ -5913,13 +5921,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self._current_play_item()
         if current_item is None:
             return
-        applied_fallback_title = False
-        if not current_item.danmaku_search_title:
-            fallback_title = str(current_item.media_title or "").strip()
-            if not fallback_title and self.session is not None:
-                fallback_title = str(self.session.vod.vod_name or "").strip()
-            current_item.danmaku_search_title = fallback_title
-            applied_fallback_title = bool(fallback_title)
+        if not current_item.danmaku_search_query_overridden:
+            fallback_title = ""
+            for candidate in (
+                str(current_item.danmaku_search_title or "").strip(),
+                str(current_item.media_title or "").strip(),
+                str(self.session.vod.vod_name or "").strip() if self.session is not None else "",
+            ):
+                fallback_title = normalize_metadata_scrape_title(candidate)
+                if fallback_title:
+                    break
+            if fallback_title and current_item.danmaku_search_title != fallback_title:
+                current_item.danmaku_search_title = fallback_title
+                current_item.danmaku_search_query = " ".join(
+                    part for part in (fallback_title, str(current_item.danmaku_search_episode or "").strip()) if part
+                ).strip()
         loaded_cached_sources = False
         if (
             not current_item.danmaku_candidates
@@ -5941,10 +5957,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.raise_()
         dialog.activateWindow()
         if (
-            applied_fallback_title
-            and
             not loaded_cached_sources
             and not current_item.danmaku_candidates
+            and not current_item.danmaku_search_query_overridden
+            and bool(str(current_item.danmaku_search_title or "").strip())
             and self.session is not None
             and self.session.danmaku_controller is not None
             and hasattr(self.session.danmaku_controller, "refresh_danmaku_sources")

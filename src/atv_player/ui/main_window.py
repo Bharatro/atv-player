@@ -3659,6 +3659,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return None
         if request is None:
             return None
+        request = self._prepare_request_for_open(request)
         self._next_player_session_request_id()
         session = self._create_player_session(request)
         self._apply_open_player(request, session, restore_paused_state=True)

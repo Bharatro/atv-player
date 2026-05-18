@@ -1053,6 +1053,70 @@ def test_player_window_open_danmaku_source_dialog_auto_searches_when_stale_query
     assert window._danmaku_source_title_edit.text() == "深空彼岸"
 
 
+def test_player_window_open_danmaku_source_dialog_normalizes_automatic_title_and_auto_searches(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.cache_titles: list[str] = []
+            self.refresh_calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            self.cache_titles.append(item.danmaku_search_title)
+            return False
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.refresh_calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    playlist,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
+
+    controller = FakeDanmakuController()
+    noisy_title = "📺 电视剧：良陈美锦 (2026) S01E26"
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="8@swf2fkq3zrk@t58d", vod_year="2026", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="第26集",
+                url="https://media.example/26.mp4",
+                media_title=noisy_title,
+                danmaku_search_title=noisy_title,
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._open_danmaku_source_dialog()
+
+    qtbot.waitUntil(
+        lambda: controller.refresh_calls == [(None, "良陈美锦 (2026)", None, session.playlist, True, 120, "")]
+    )
+    assert controller.cache_titles == ["良陈美锦 (2026)"]
+    assert window._danmaku_source_title_edit.text() == "良陈美锦 (2026)"
+
+
 def test_player_window_metadata_scrape_apply_still_works_after_metadata_hydration_request_started(qtbot) -> None:
     service = FakeMetadataScrapeService()
     bindings = FakeMetadataBindingRepository()
@@ -1299,10 +1363,16 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     service = FakeMetadataScrapeService()
     bindings = FakeMetadataBindingRepository()
     bindings.binding = type("Binding", (), {"provider": "tmdb", "provider_id": "tv:42:season:5"})()
-    hydration_calls: list[tuple[str, str]] = []
+    hydration_calls: list[tuple[str, str, str]] = []
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="黑袍纠察队", vod_year="2026", vod_content="当前简介"),
-        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://media.example/1.mp4",
+                media_title="📺 电视剧：黑袍纠察队 (2026) S05E01",
+            )
+        ],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
@@ -1313,7 +1383,13 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     qtbot.addWidget(window)
     window.open_session(session)
     window.session.metadata_hydrator = lambda current_session: (
-        hydration_calls.append((current_session.vod.vod_name, current_session.vod.vod_year))
+        hydration_calls.append(
+            (
+                current_session.vod.vod_name,
+                current_session.playlist[current_session.start_index].media_title,
+                current_session.vod.vod_year,
+            )
+        )
         or VodItem(
             vod_id="v1",
             vod_name=current_session.vod.vod_name,
@@ -1343,7 +1419,7 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
             [("tmdb", "movie:1")],
         )
     ]
-    assert hydration_calls == [("手动改过的标题", "2030")]
+    assert hydration_calls == [("手动改过的标题", "手动改过的标题", "2030")]
     assert service.search_calls[-1] == ("手动改过的标题", "2030", "")
     assert window._metadata_scrape_title_edit.text() == "手动改过的标题"
     assert window._metadata_scrape_year_edit.text() == "2030"

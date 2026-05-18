@@ -4399,6 +4399,74 @@ def test_main_window_restore_last_player_routes_custom_live_to_live_controller(q
     assert window.player_window.opened[0][1] is True
 
 
+def test_main_window_restore_last_player_prepares_emby_request_with_metadata_and_danmaku_factories(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestoreEmbyController(FakeStaticController):
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="恢复的 Emby 条目"),
+                playlist=[PlayItem(title="第4集", url="", vod_id="emby-ep-4")],
+                clicked_index=0,
+                source_kind="emby",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="emby",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-restore-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        emby_controller=RestoreEmbyController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **kwargs: ("hydrator", kwargs["source_kind"], kwargs["vod"].vod_id),
+        metadata_scrape_service_factory=lambda **kwargs: ("scraper", kwargs["source_kind"], kwargs["vod"].vod_id),
+        danmaku_controller_factory=lambda **kwargs: ("danmaku", kwargs["source_kind"], kwargs["vod"].vod_id),
+        metadata_binding_repository="binding-repo",
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    opened_session, paused = window.player_window.opened[0]
+    assert paused is True
+    assert opened_session["metadata_hydrator"] == ("hydrator", "emby", "vod-restore-1")
+    assert opened_session["metadata_scrape_service"] == ("scraper", "emby", "vod-restore-1")
+    assert opened_session["danmaku_controller"] == ("danmaku", "emby", "vod-restore-1")
+    assert opened_session["metadata_binding_repository"] == "binding-repo"
+
+
 def test_main_window_restore_last_player_reloads_cached_plugin_danmaku(qtbot, monkeypatch, tmp_path) -> None:
     class FakeSpider:
         def detailContent(self, ids):
