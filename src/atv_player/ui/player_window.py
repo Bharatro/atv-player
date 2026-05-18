@@ -1042,7 +1042,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
-        combo_qss = build_combobox_qss(tokens, border_radius=12, min_height=30, borderless=True)
+        combo_qss = build_combobox_qss(
+            tokens,
+            border_radius=12,
+            min_height=30,
+            field_bg=player_tokens.player_button_bg,
+            drop_down_bg=player_tokens.player_button_bg,
+            text_color=player_tokens.player_text_on_dark,
+            disabled_field_bg=player_tokens.player_controls_bg,
+            disabled_drop_down_bg=player_tokens.player_controls_bg,
+            disabled_text_color=tokens.text_secondary,
+            border_color="transparent",
+            hover_border_color=player_tokens.player_button_border,
+            focus_border_color=tokens.accent,
+            disabled_border_color="transparent",
+            drop_down_border_left_color="transparent",
+            disabled_drop_down_border_left_color="transparent",
+        )
         for combo in self._themed_comboboxes():
             combo.setStyleSheet(combo_qss)
         self.progress.setProperty("track_height", 4)
