@@ -814,6 +814,7 @@ def test_player_window_metadata_scrape_dialog_hides_providers_missing_from_servi
 
 def test_player_window_metadata_scrape_search_selects_first_result_without_auto_apply(qtbot) -> None:
     service = FakeMetadataScrapeService()
+    service.groups[0].items[0].subtitle = "动漫"
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
         playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
@@ -831,6 +832,7 @@ def test_player_window_metadata_scrape_search_selects_first_result_without_auto_
 
     qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
     assert window._metadata_scrape_result_list.currentRow() == 0
+    assert window._metadata_scrape_result_list.item(0).text() == "深空彼岸 (2026) · 动漫"
     assert "原始简介" in window.metadata_view.toPlainText()
     assert service.apply_calls == []
 

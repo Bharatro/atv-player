@@ -114,6 +114,95 @@ def test_metadata_scrape_service_filters_explicit_category_mismatches_for_manual
     assert [item.provider_id for item in groups[0].items] == ["iqiyi:anime-1", "iqiyi:anime-2"]
 
 
+def test_metadata_scrape_service_extracts_type_subtitle_from_provider_raw(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:movie-1",
+                title="流浪地球",
+                year="2019",
+                raw={"channel": "电影,1", "s3": "电影类长视频"},
+            )
+        ],
+    )
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:anime-1",
+                title="牧神记",
+                year="2024",
+                raw={"typeName": "动漫"},
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[iqiyi, tencent])
+
+    groups = service.search(MetadataQuery(title="测试", category_name=""), provider_filter="")
+
+    assert groups[0].items[0].subtitle == "电影"
+    assert groups[1].items[0].subtitle == "动漫"
+
+
+def test_metadata_scrape_service_prefers_standard_type_subtitle_over_provider_specific_text(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili = FakeProvider(
+        "bilibili",
+        matches=[
+            MetadataMatch(
+                provider="bilibili",
+                provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+                title="牧神记",
+                year="2024",
+                raw={
+                    "genres": ["动画", "奇幻"],
+                    "subtitle": "国创 · 更新至第83话",
+                },
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[bilibili])
+
+    groups = service.search(MetadataQuery(title="牧神记", category_name="动漫"), provider_filter="")
+
+    assert groups[0].items[0].subtitle == "动漫"
+
+
+def test_metadata_scrape_service_prefers_explicit_selected_category_over_conflicting_type_name(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:anime-1",
+                title="示例作品",
+                year="2025",
+                raw={"channel": "动漫,4"},
+            ),
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:drama-1",
+                title="示例作品",
+                year="2025",
+                raw={"channel": "电视剧,2"},
+            ),
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[iqiyi])
+
+    groups = service.search(
+        MetadataQuery(title="示例作品", year="2025", category_name="剧集", type_name="动画"),
+        provider_filter="",
+    )
+
+    assert [item.provider_id for item in groups[0].items] == ["iqiyi:drama-1"]
+
+
 def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_candidate(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(
@@ -462,6 +551,7 @@ def test_metadata_scrape_service_uses_cached_search_results_before_retrying_prov
                     provider_id="movie:1",
                     title="深空彼岸",
                     year="2026",
+                    subtitle="电影",
                     raw={},
                 )
             ],

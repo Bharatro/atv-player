@@ -5798,6 +5798,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         group = self._metadata_scrape_groups[group_index]
         for candidate in group.items:
             label = candidate.title if not candidate.year else f"{candidate.title} ({candidate.year})"
+            if str(candidate.subtitle or "").strip():
+                label = f"{label} · {candidate.subtitle.strip()}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, candidate)
             self._metadata_scrape_result_list.addItem(item)

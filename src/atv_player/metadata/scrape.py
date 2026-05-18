@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,16 @@ def _iter_category_values(value: object) -> list[str]:
     return [text] if text else []
 
 
+def _split_category_tokens(value: object) -> list[str]:
+    tokens: list[str] = []
+    for item in _iter_category_values(value):
+        for part in re.split(r"[,/|、，]", str(item or "").strip()):
+            normalized = part.strip()
+            if normalized and not normalized.isdigit():
+                tokens.append(normalized)
+    return tokens
+
+
 def _classify_media_kind(*values: object) -> str:
     tokens = " ".join(
         token.strip().lower()
@@ -114,8 +125,19 @@ def _classify_media_kind(*values: object) -> str:
     return ""
 
 
+def _media_kind_label(kind: str) -> str:
+    return {
+        "anime": "动漫",
+        "movie": "电影",
+        "live_action": "剧集",
+    }.get(kind, "")
+
+
 def _query_media_kind(query: MetadataQuery) -> str:
-    return _classify_media_kind(query.category_name, query.type_name)
+    explicit_kind = _classify_media_kind(query.category_name)
+    if explicit_kind:
+        return explicit_kind
+    return _classify_media_kind(query.type_name)
 
 
 def _match_media_kind(match: MetadataMatch) -> str:
@@ -132,6 +154,15 @@ def _match_media_kind(match: MetadataMatch) -> str:
         raw.get("baseTags"),
         raw.get("category"),
     )
+
+
+def _match_type_subtitle(match: MetadataMatch) -> str:
+    raw = dict(match.raw or {})
+    for value in (raw.get("typeName"), raw.get("channel"), raw.get("category")):
+        tokens = _split_category_tokens(value)
+        if tokens:
+            return tokens[0]
+    return _media_kind_label(_match_media_kind(match))
 
 
 class MetadataScrapeService:
@@ -152,13 +183,14 @@ class MetadataScrapeService:
         return options
 
     def _candidate_from_match(self, match: MetadataMatch) -> MetadataScrapeCandidate:
+        subtitle = _match_type_subtitle(match) or str(match.raw.get("subtitle") or "").strip()
         return MetadataScrapeCandidate(
             provider=match.provider,
             provider_label=self._provider_label(match.provider),
             provider_id=str(match.provider_id),
             title=match.title,
             year=match.year,
-            subtitle=str(match.raw.get("subtitle") or ""),
+            subtitle=subtitle,
             raw=dict(match.raw),
         )
 
