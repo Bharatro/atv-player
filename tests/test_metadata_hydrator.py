@@ -798,6 +798,56 @@ def test_metadata_hydrator_manual_binding_blocks_other_provider_overrides(tmp_pa
     assert douban.get_detail_calls == []
 
 
+def test_metadata_hydrator_manual_binding_survives_noisy_title_with_embedded_year(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save(
+        "西游记 (1986) 4K 2025年重新深度修复4K",
+        "",
+        provider="tmdb",
+        provider_id="tv:42",
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            poster="https://img.example/journey-poster.jpg",
+            year="1986",
+            overview="手动绑定简介",
+        ),
+    )
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="1978-jp", title="西游记", year="1978")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="1978-jp",
+            title="西游记",
+            year="1978",
+            overview="错误自动结果",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="西游记 (1986) 4K 2025年重新深度修复4K"),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="正片",
+                url="https://media.example/1.m3u8",
+                media_title="西游记 (1986) 4K 2025年重新深度修复4K",
+            ),
+        )
+    )
+
+    assert updated.vod_pic == "https://img.example/journey-poster.jpg"
+    assert updated.vod_year == "1986"
+    assert updated.vod_content == "手动绑定简介"
+    assert local_douban.search_calls == 0
+
+
 def test_metadata_hydrator_deletes_invalid_manual_binding_and_falls_back_to_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     bindings = MetadataBindingRepository(tmp_path / "app.db")

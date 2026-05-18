@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import time
 
+from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.sqlite_utils import managed_connection
 
 
 def normalize_metadata_binding_title(value: object) -> str:
-    text = str(value or "").strip()
+    text, _year = normalize_metadata_query_inputs(value, "")
     if not text:
         return ""
     compact = re.sub(r"\s+", "", text)
@@ -17,13 +18,20 @@ def normalize_metadata_binding_title(value: object) -> str:
 
 
 def normalize_metadata_binding_year(value: object) -> str:
+    _title, year = normalize_metadata_query_inputs("", value)
+    if year:
+        return year
     text = str(value or "").strip()
     match = re.search(r"(\d{4})", text)
     return match.group(1) if match else ""
 
 
 def metadata_binding_query_key(title: object, year: object) -> str:
-    return f"{normalize_metadata_binding_title(title)}\x1f{normalize_metadata_binding_year(year)}"
+    normalized_title, normalized_year = normalize_metadata_query_inputs(title, year)
+    compact_title = re.sub(r"\s+", "", normalized_title).casefold()
+    match = re.search(r"(\d{4})", normalized_year)
+    compact_year = match.group(1) if match else ""
+    return f"{compact_title}\x1f{compact_year}"
 
 
 @dataclass(slots=True)

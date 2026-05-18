@@ -114,6 +114,67 @@ def test_generic_danmaku_controller_refresh_emits_log_events(monkeypatch, tmp_pa
     ]
 
 
+def test_generic_danmaku_controller_refresh_emits_all_actual_search_queries(monkeypatch, tmp_path: Path) -> None:
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            self.calls.append(name)
+            if name == "成何体统 1集":
+                return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+            if name == "成何体统":
+                return DanmakuSourceSearchResult(
+                    groups=[
+                        DanmakuSourceGroup(
+                            provider="iqiyi",
+                            provider_label="爱奇艺",
+                            options=[DanmakuSourceOption(provider="iqiyi", name="成何体统 第1集", url="https://www.iqiyi.com/v_ep1.html")],
+                        )
+                    ],
+                    default_option_url="https://www.iqiyi.com/v_ep1.html",
+                    default_provider="iqiyi",
+                )
+            raise AssertionError(name)
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="item-1", media_title="成何体统")
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    assert service.calls == ["成何体统 1集", "成何体统"]
+    assert logs == [
+        "弹幕搜索中: 成何体统 1集",
+        "弹幕搜索中: 成何体统",
+        "弹幕搜索成功: 找到 1 个候选",
+    ]
+
+
 def test_generic_danmaku_controller_switches_to_cached_xml_without_refetch(monkeypatch, tmp_path: Path) -> None:
     class FailingResolveDanmakuService:
         def search_danmu_sources(

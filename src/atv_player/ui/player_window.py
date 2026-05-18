@@ -87,6 +87,7 @@ from atv_player.ui.icon_cache import load_icon, tint_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import (
+    FlatComboBox,
     build_combobox_qss,
     build_combobox_popup_qss,
     build_player_control_button_qss,
@@ -97,6 +98,7 @@ from atv_player.ui.theme import (
     build_player_tabbar_qss,
     build_player_text_panel_qss,
     build_slider_qss,
+    configure_flat_combobox,
     current_resolved_theme,
     current_theme_manager,
 )
@@ -665,9 +667,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
         self.playlist_title_mode = "episode"
-        self.playlist_group_combo = QComboBox()
+        self.playlist_group_combo = FlatComboBox()
         self.playlist_group_combo.setHidden(True)
-        self.playlist_source_combo = QComboBox()
+        self.playlist_source_combo = FlatComboBox()
         self.playlist_source_combo.setHidden(True)
         self.playlist_title_tabs = QTabBar()
         self.playlist_title_tabs.addTab("剧集标题")
@@ -703,7 +705,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.toggle_details_button.setChecked(True)
         self.toggle_log_button.setChecked(bool(getattr(self.config, "player_log_visible", True)))
 
-        self.speed_combo = QComboBox()
+        self.speed_combo = FlatComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
         self._subtitle_tracks: list[SubtitleTrack] = []
@@ -727,20 +729,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._skip_audio_refresh_for_manual_subtitle_switch = False
         self._auto_spider_subtitle_suppressed = False
         self._auto_spider_subtitle_attempted_key: tuple[int, str] | None = None
-        self.subtitle_combo = QComboBox()
+        self.subtitle_combo = FlatComboBox()
         self.subtitle_combo.addItem("字幕", ("auto", None))
         self.subtitle_combo.setEnabled(False)
-        self.danmaku_combo = QComboBox()
+        self.danmaku_combo = FlatComboBox()
         self._reset_danmaku_combo()
         self._video_quality_options: list[VideoQualityOption] = []
-        self.video_quality_combo = QComboBox()
+        self.video_quality_combo = FlatComboBox()
         self._reset_video_quality_combo()
         self._audio_tracks: list[AudioTrack] = []
         self._audio_preference = AudioPreference()
-        self.audio_combo = QComboBox()
+        self.audio_combo = FlatComboBox()
         self.audio_combo.addItem("音轨", ("auto", None))
         self.audio_combo.setEnabled(False)
-        self.parse_combo = QComboBox()
+        self.parse_combo = FlatComboBox()
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
         self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72)
@@ -1084,9 +1086,39 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
             combo.view().setStyleSheet(sidebar_combo_popup_qss)
+            configure_flat_combobox(
+                combo,
+                text_color=tokens.text_primary,
+                disabled_text_color=tokens.text_secondary,
+                arrow_color=tokens.text_secondary,
+                disabled_arrow_color=tokens.border_subtle,
+                field_bg=tokens.input_bg,
+                hover_field_bg=tokens.input_bg,
+                disabled_field_bg=tokens.panel_alt_bg,
+                hover_border_color=tokens.input_hover_border,
+                focus_border_color=tokens.input_focus_ring,
+                disabled_border_color="transparent",
+            )
         for combo in self._player_control_comboboxes():
             combo.setStyleSheet(combo_qss)
             combo.view().setStyleSheet(combo_popup_qss)
+            configure_flat_combobox(
+                combo,
+                text_color=player_tokens.player_text_on_dark,
+                disabled_text_color=tokens.text_secondary,
+                arrow_color=tokens.text_secondary,
+                disabled_arrow_color=tokens.border_subtle,
+                field_bg="transparent",
+                hover_field_bg=player_tokens.player_button_bg,
+                disabled_field_bg="transparent",
+                hover_border_color="transparent",
+                focus_border_color=tokens.accent,
+                disabled_border_color="transparent",
+                border_radius=12,
+                left_padding=4,
+                indicator_padding=18,
+                drop_down_width=16,
+            )
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)
@@ -5359,7 +5391,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         render_row = QHBoxLayout()
         render_row.addWidget(QLabel("显示模式", dialog))
-        self._danmaku_render_mode_combo = QComboBox(dialog)
+        self._danmaku_render_mode_combo = FlatComboBox(dialog)
         self._danmaku_render_mode_combo.addItem("静态", "static")
         self._danmaku_render_mode_combo.addItem("仅滚动", "scroll_only")
         self._danmaku_render_mode_combo.addItem("混合", "mixed")
@@ -5368,7 +5400,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         position_row = QHBoxLayout()
         position_row.addWidget(QLabel("位置预设", dialog))
-        self._danmaku_position_preset_combo = QComboBox(dialog)
+        self._danmaku_position_preset_combo = FlatComboBox(dialog)
         self._danmaku_position_preset_combo.addItem("顶部", "top")
         self._danmaku_position_preset_combo.addItem("顶部偏下", "upper")
         self._danmaku_position_preset_combo.addItem("中上", "mid_upper")
@@ -5378,7 +5410,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         color_mode_row = QHBoxLayout()
         color_mode_row.addWidget(QLabel("颜色模式", dialog))
-        self._danmaku_color_mode_combo = QComboBox(dialog)
+        self._danmaku_color_mode_combo = FlatComboBox(dialog)
         self._danmaku_color_mode_combo.addItem("统一颜色", "uniform")
         self._danmaku_color_mode_combo.addItem("保留原色", "source")
         color_mode_row.addWidget(self._danmaku_color_mode_combo, 1)
@@ -5480,7 +5512,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         provider_column = QVBoxLayout()
         provider_column.addWidget(QLabel("搜索来源", dialog))
-        self._metadata_scrape_provider_combo = QComboBox(dialog)
+        self._metadata_scrape_provider_combo = FlatComboBox(dialog)
         provider_column.addWidget(self._metadata_scrape_provider_combo)
 
         search_row.addLayout(title_column, 2)
@@ -5835,7 +5867,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         episode_column.addWidget(self._danmaku_source_episode_edit)
         source_column = QVBoxLayout()
         source_column.addWidget(QLabel("搜索来源", dialog))
-        self._danmaku_source_search_provider_combo = QComboBox(dialog)
+        self._danmaku_source_search_provider_combo = FlatComboBox(dialog)
         for provider_key, provider_label in _DANMAKU_SEARCH_PROVIDER_OPTIONS:
             self._danmaku_source_search_provider_combo.addItem(provider_label, provider_key)
         source_column.addWidget(self._danmaku_source_search_provider_combo)

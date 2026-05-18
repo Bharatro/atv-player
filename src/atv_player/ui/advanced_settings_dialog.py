@@ -4,7 +4,6 @@ from collections.abc import Callable
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFormLayout,
     QGroupBox,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
-from atv_player.ui.theme import build_combobox_qss, current_tokens
+from atv_player.ui.theme import FlatComboBox, build_combobox_qss, configure_flat_combobox, current_tokens
 
 
 class AdvancedSettingsDialog(QDialog):
@@ -45,7 +44,7 @@ class AdvancedSettingsDialog(QDialog):
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
-        self.theme_mode_combo = QComboBox()
+        self.theme_mode_combo = FlatComboBox()
         self.theme_mode_combo.addItem("浅色", "light")
         self.theme_mode_combo.addItem("深色", "dark")
         self.theme_mode_combo.addItem("跟随系统", "system")
@@ -61,7 +60,7 @@ class AdvancedSettingsDialog(QDialog):
         self.bangumi_access_token_edit = QLineEdit()
         self.bangumi_access_token_edit.setPlaceholderText("可选；留空时使用匿名访问")
         self.network_proxy_group = QGroupBox("网络代理配置")
-        self.network_proxy_mode_combo = QComboBox()
+        self.network_proxy_mode_combo = FlatComboBox()
         self.network_proxy_mode_combo.addItem("直连", "direct")
         self.network_proxy_mode_combo.addItem("系统代理", "system")
         self.network_proxy_mode_combo.addItem("HTTP", "http")
@@ -77,14 +76,14 @@ class AdvancedSettingsDialog(QDialog):
         self.network_proxy_scope_label.setWordWrap(True)
         self.playback_group = QGroupBox("播放设置")
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
-        self.youtube_cookie_browser_combo = QComboBox()
+        self.youtube_cookie_browser_combo = FlatComboBox()
         self.youtube_cookie_browser_combo.addItem("不使用", "")
         self.youtube_cookie_browser_combo.addItem("Chrome", "chrome")
         self.youtube_cookie_browser_combo.addItem("Edge", "edge")
         self.youtube_cookie_browser_combo.addItem("Firefox", "firefox")
         self.mpv_cache_size_edit = QLineEdit()
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
-        self.mpv_hwdec_mode_combo = QComboBox()
+        self.mpv_hwdec_mode_combo = FlatComboBox()
         self.mpv_hwdec_mode_combo.addItem("硬解", "auto-safe")
         self.mpv_hwdec_mode_combo.addItem("软解", "no")
         self.mpv_network_timeout_edit = QLineEdit()
@@ -191,7 +190,8 @@ class AdvancedSettingsDialog(QDialog):
         self._apply_theme()
 
     def _apply_theme(self) -> None:
-        combo_qss = build_combobox_qss(current_tokens())
+        tokens = current_tokens()
+        combo_qss = build_combobox_qss(tokens)
         for combo in (
             self.theme_mode_combo,
             self.network_proxy_mode_combo,
@@ -199,6 +199,19 @@ class AdvancedSettingsDialog(QDialog):
             self.mpv_hwdec_mode_combo,
         ):
             combo.setStyleSheet(combo_qss)
+            configure_flat_combobox(
+                combo,
+                text_color=tokens.text_primary,
+                disabled_text_color=tokens.text_secondary,
+                arrow_color=tokens.text_secondary,
+                disabled_arrow_color=tokens.border_subtle,
+                field_bg=tokens.input_bg,
+                hover_field_bg=tokens.input_bg,
+                disabled_field_bg=tokens.panel_alt_bg,
+                hover_border_color=tokens.input_hover_border,
+                focus_border_color=tokens.input_focus_ring,
+                disabled_border_color="transparent",
+            )
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)

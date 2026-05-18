@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 import atv_player.ui.theme as theme_module
 from atv_player.ui.theme import ThemeManager, install_theme
@@ -71,6 +71,36 @@ def test_build_application_stylesheet_uses_borderless_default_comboboxes() -> No
 
     assert "QComboBox {\n            background-color:" in qss
     assert "border: none;" in qss
+
+
+def test_flat_combobox_avoids_native_top_border_line_when_background_is_transparent() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    theme = install_theme(app, manager, "light")
+    tokens = manager.tokens_for(theme)
+
+    root = QWidget()
+    root.setStyleSheet(f"background: {tokens.panel_bg};")
+    layout = QVBoxLayout(root)
+    combo = theme_module.FlatComboBox()
+    combo.addItems(["备用线", "极速线"])
+    combo.setStyleSheet(
+        theme_module.build_combobox_qss(
+            tokens,
+            field_bg="transparent",
+            drop_down_bg="transparent",
+            disabled_field_bg="transparent",
+            disabled_drop_down_bg="transparent",
+        )
+    )
+    layout.addWidget(combo)
+    root.resize(360, 120)
+    root.show()
+    app.processEvents()
+
+    image = root.grab().toImage()
+    top_center = combo.geometry().center().x(), combo.geometry().top() + 3
+    assert image.pixelColor(*top_center).name() == tokens.panel_bg
 
 
 def test_build_combobox_qss_accepts_surface_overrides() -> None:

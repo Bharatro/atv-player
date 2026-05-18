@@ -8,7 +8,6 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,7 +22,7 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.table_utils import configure_table_columns
-from atv_player.ui.theme import build_pill_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.theme import FlatComboBox, build_pill_button_qss, build_search_line_edit_qss, current_tokens
 
 
 class _HistoryLoadSignals(QObject):
@@ -53,7 +52,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
         self.page_label = QLabel("第 1 / 1 页")
-        self.page_size_combo = QComboBox()
+        self.page_size_combo = FlatComboBox()
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["标题", "集数", "当前播放", "进度", "时间", "来源"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -88,7 +87,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         tokens = current_tokens()
         self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens))
 
-        self.source_combo = QComboBox()
+        self.source_combo = FlatComboBox()
         for label, value in (
             ("全部来源", ""),
             ("远程", "remote"),
@@ -101,7 +100,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         ):
             self.source_combo.addItem(label, value)
 
-        self.time_combo = QComboBox()
+        self.time_combo = FlatComboBox()
         self.time_combo.addItem("全部时间", "")
         self.time_combo.addItem("最近7天", "7d")
         self.time_combo.addItem("最近30天", "30d")

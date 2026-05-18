@@ -6,7 +6,6 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QHBoxLayout,
     QLineEdit,
     QPushButton,
@@ -23,6 +22,7 @@ from atv_player.models import VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.table_utils import configure_table_columns
+from atv_player.ui.theme import FlatComboBox
 
 
 class _SearchSignals(QObject):
@@ -46,7 +46,7 @@ class SearchPage(QWidget, AsyncGuardMixin):
         self._init_async_guard()
         self.controller = controller
         self.keyword_edit = QLineEdit()
-        self.filter_combo = QComboBox()
+        self.filter_combo = FlatComboBox()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
         self.refresh_button = QPushButton("刷新")

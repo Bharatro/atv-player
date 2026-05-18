@@ -3,12 +3,110 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QPolygon
+from PySide6.QtWidgets import QApplication, QComboBox
 
 ThemeMode = Literal["light", "dark", "system"]
 ResolvedTheme = Literal["light", "dark"]
+
+
+class FlatComboBox(QComboBox):
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        left_padding = int(self.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(self.property("flat_combo_indicator_padding") or 40)
+        drop_down_width = int(self.property("flat_combo_drop_down_width") or 30)
+        border_radius = int(self.property("flat_combo_border_radius") or 14)
+
+        if self.isEnabled():
+            background = self._resolved_color("flat_combo_field_bg", QColor(0, 0, 0, 0))
+            border = QColor(0, 0, 0, 0)
+            if self.underMouse():
+                background = self._resolved_color("flat_combo_hover_field_bg", background)
+                border = self._resolved_color("flat_combo_hover_border_color", border)
+            if self.hasFocus():
+                border = self._resolved_color("flat_combo_focus_border_color", border)
+        else:
+            background = self._resolved_color("flat_combo_disabled_field_bg", QColor(0, 0, 0, 0))
+            border = self._resolved_color("flat_combo_disabled_border_color", QColor(0, 0, 0, 0))
+
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        if background.alpha() > 0 or border.alpha() > 0:
+            painter.setBrush(background if background.alpha() > 0 else Qt.BrushStyle.NoBrush)
+            painter.setPen(border if border.alpha() > 0 else Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect, border_radius, border_radius)
+
+        text = self.currentText() if self.currentIndex() >= 0 else self.placeholderText()
+        text_color_name = "flat_combo_text_color" if self.isEnabled() else "flat_combo_disabled_text_color"
+        fallback_role = QPalette.ColorRole.Text if self.isEnabled() else QPalette.ColorRole.Mid
+        text_color = self._resolved_color(text_color_name, self.palette().color(fallback_role))
+        painter.setPen(text_color)
+        text_rect = self.rect().adjusted(left_padding, 0, -indicator_padding, 0)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+
+        arrow_color_name = "flat_combo_arrow_color" if self.isEnabled() else "flat_combo_disabled_arrow_color"
+        arrow_color = self._resolved_color(arrow_color_name, text_color)
+        painter.setBrush(arrow_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        center_x = self.width() - max(8, drop_down_width // 2) - 2
+        center_y = self.height() // 2 + 1
+        painter.drawPolygon(
+            QPolygon(
+                [
+                    QPoint(center_x - 4, center_y - 2),
+                    QPoint(center_x + 4, center_y - 2),
+                    QPoint(center_x, center_y + 3),
+                ]
+            )
+        )
+
+    def _resolved_color(self, property_name: str, fallback: QColor) -> QColor:
+        value = self.property(property_name)
+        if isinstance(value, QColor):
+            return value
+        if isinstance(value, str) and value:
+            color = QColor(value)
+            if color.isValid():
+                return color
+        return fallback
+
+
+def configure_flat_combobox(
+    combo: QComboBox,
+    *,
+    text_color: str | None = None,
+    disabled_text_color: str | None = None,
+    arrow_color: str | None = None,
+    disabled_arrow_color: str | None = None,
+    field_bg: str | None = None,
+    hover_field_bg: str | None = None,
+    disabled_field_bg: str | None = None,
+    hover_border_color: str | None = None,
+    focus_border_color: str | None = None,
+    disabled_border_color: str | None = None,
+    border_radius: int = 14,
+    left_padding: int = 12,
+    indicator_padding: int = 40,
+    drop_down_width: int = 30,
+) -> None:
+    combo.setProperty("flat_combo_text_color", text_color or "")
+    combo.setProperty("flat_combo_disabled_text_color", disabled_text_color or "")
+    combo.setProperty("flat_combo_arrow_color", arrow_color or "")
+    combo.setProperty("flat_combo_disabled_arrow_color", disabled_arrow_color or "")
+    combo.setProperty("flat_combo_field_bg", field_bg or "")
+    combo.setProperty("flat_combo_hover_field_bg", hover_field_bg or "")
+    combo.setProperty("flat_combo_disabled_field_bg", disabled_field_bg or "")
+    combo.setProperty("flat_combo_hover_border_color", hover_border_color or "")
+    combo.setProperty("flat_combo_focus_border_color", focus_border_color or "")
+    combo.setProperty("flat_combo_disabled_border_color", disabled_border_color or "")
+    combo.setProperty("flat_combo_border_radius", border_radius)
+    combo.setProperty("flat_combo_left_padding", left_padding)
+    combo.setProperty("flat_combo_indicator_padding", indicator_padding)
+    combo.setProperty("flat_combo_drop_down_width", drop_down_width)
+    combo.update()
 
 
 @dataclass(frozen=True, slots=True)

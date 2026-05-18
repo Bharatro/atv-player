@@ -8,7 +8,6 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,6 +27,7 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.table_utils import configure_table_columns
+from atv_player.ui.theme import FlatComboBox
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -138,7 +138,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
         self.search_refresh_button = QPushButton("刷新")
-        self.filter_combo = QComboBox()
+        self.filter_combo = FlatComboBox()
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
@@ -156,7 +156,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
         self.page_label = QLabel("第 1 / 1 页")
-        self.page_size_combo = QComboBox()
+        self.page_size_combo = FlatComboBox()
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "大小", "豆瓣ID", "评分", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

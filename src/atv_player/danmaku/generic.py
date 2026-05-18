@@ -256,6 +256,7 @@ class GenericDanmakuController:
             and item.danmaku_search_title.strip()
             and query_name == _compose_danmaku_search_query(item.danmaku_search_title, item.danmaku_search_episode)
         ):
+            self._log_danmaku_event("弹幕搜索中", detail=item.danmaku_search_title.strip())
             result = self._search_sources(
                 item.danmaku_search_title.strip(),
                 reg_src,
