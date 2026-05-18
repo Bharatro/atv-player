@@ -3681,6 +3681,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def show_or_restore_player(self) -> PlayerWindow | None:
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
+            self._dismiss_visible_global_search_popup()
             self._close_help_dialog()
             self.config.last_active_window = "player"
             self._save_config()

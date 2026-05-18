@@ -6798,6 +6798,41 @@ def test_main_window_escape_shows_existing_player_window(qtbot) -> None:
     assert window.player_window.show_calls == 1
 
 
+def test_main_window_show_or_restore_player_hides_global_search_popup(qtbot) -> None:
+    class ExistingPlayerWindow:
+        def __init__(self) -> None:
+            self.session = object()
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(last_active_window="main", global_search_history=["庆余年"]),
+        save_config=lambda: None,
+        global_search_hotkey_loader=lambda hot_type: [{"title": "热搜一", "query": "热搜一"}],
+    )
+    qtbot.addWidget(window)
+    window.player_window = ExistingPlayerWindow()
+    window.show()
+
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window._global_search_popup.isVisible() is True)
+
+    window.show_or_restore_player()
+
+    assert window._global_search_popup.isVisible() is False
+    assert window.isHidden() is True
+
+
 def test_main_window_show_or_restore_player_resumes_existing_hidden_session(qtbot) -> None:
     class ExistingPlayerWindow:
         def __init__(self) -> None:
