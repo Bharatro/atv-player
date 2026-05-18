@@ -33,6 +33,11 @@ _OVERVIEW_PROVIDER_PRIORITY = {
 }
 
 _TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban"}
+_TITLE_NOISE_PATTERN = re.compile(
+    r"(?:\bS\d+E\d+\b|第\s*\d+\s*[集话]|\b(?:WEB[-_. ]?\d+|2160p|1080p|4K|HDR|简繁字幕|外挂|内嵌|高码率)\b|@\w+@)",
+    re.IGNORECASE,
+)
+_FOREIGN_SCRIPT_PATTERN = re.compile(r"[\u3040-\u30ff\u0400-\u04ff\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]")
 
 
 def _provider_rank(field_name: str, provider: str) -> int:
@@ -87,16 +92,38 @@ def _normalize_title_for_correction(value: object) -> str:
     return normalize_match_title(text)
 
 
-def _should_correct_existing_title(vod: VodItem, record: MetadataRecord) -> bool:
-    if record.provider not in _TITLE_CORRECTION_PROVIDERS or not record.title or not vod.vod_name:
-        return False
-    if str(vod.vod_name).strip() == str(record.title).strip():
-        return False
-    current = _normalize_title_for_correction(vod.vod_name)
-    target = _normalize_title_for_correction(record.title)
-    if not current or not target:
-        return False
-    return current == target or current in target or target in current
+def _title_quality_score(value: object) -> tuple[int, int]:
+    text = str(value or "").strip()
+    if not text:
+        return (-100, 0)
+    score = 0
+    if _TITLE_NOISE_PATTERN.search(text):
+        score -= 2
+    if re.search(r"[【】\[\]{}<>]", text):
+        score -= 1
+    if re.search(r"[@_~`]", text):
+        score -= 1
+    if _FOREIGN_SCRIPT_PATTERN.search(text):
+        score -= 1
+    return (score, -len(text))
+
+
+def choose_preferred_title(current_title: object, candidate_title: object) -> str:
+    current_text = str(current_title or "").strip()
+    candidate_text = str(candidate_title or "").strip()
+    if not current_text:
+        return candidate_text
+    if not candidate_text:
+        return current_text
+    current = _normalize_title_for_correction(current_text)
+    target = _normalize_title_for_correction(candidate_text)
+    if not current:
+        return candidate_text
+    if not target:
+        return current_text
+    if current != target and current not in target and target not in current:
+        return current_text
+    return candidate_text if _title_quality_score(candidate_text) > _title_quality_score(current_text) else current_text
 
 
 def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
@@ -145,8 +172,11 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
 
 def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priority: list[str]) -> VodItem:
     del provider_priority
-    if (not vod.vod_name and record.title) or _should_correct_existing_title(vod, record):
-        vod.vod_name = record.title
+    if record.title:
+        if not vod.vod_name:
+            vod.vod_name = record.title
+        elif record.provider in _TITLE_CORRECTION_PROVIDERS:
+            vod.vod_name = choose_preferred_title(vod.vod_name, record.title)
     if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
         vod.vod_pic = record.poster
         _set_field_source(vod, "poster", record.provider)

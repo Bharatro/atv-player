@@ -7,7 +7,12 @@ import logging
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.matching import is_confident_match, score_match
-from atv_player.metadata.merge import fill_missing_metadata_record, merge_metadata_record, override_visual_metadata_record
+from atv_player.metadata.merge import (
+    choose_preferred_title,
+    fill_missing_metadata_record,
+    merge_metadata_record,
+    override_visual_metadata_record,
+)
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.models import VodItem
 
@@ -244,10 +249,13 @@ class MetadataHydrator:
         record = self._load_detail_record(local_provider, best_match)
         if record is None:
             return query
+        preferred_title = choose_preferred_title(query.title, record.title)
         merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
+        if preferred_title:
+            vod.vod_name = preferred_title
         return replace(
             query,
-            title=str(vod.vod_name or "").strip() or query.title,
+            title=preferred_title or str(vod.vod_name or "").strip() or query.title,
             year=str(vod.vod_year or "").strip() or query.year,
             type_name=str(vod.type_name or "").strip() or query.type_name,
             category_name=str(vod.category_name or "").strip() or query.category_name,

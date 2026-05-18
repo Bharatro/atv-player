@@ -351,6 +351,57 @@ def test_metadata_hydrator_primes_local_douban_before_full_search_for_telegram_e
         assert [query.title for query in tmdb.search_queries] == [corrected_title]
 
 
+def test_metadata_hydrator_local_douban_prime_keeps_cleaner_original_title_when_record_title_is_noisier(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    original_title = "努力克服自卑的我们"
+    noisier_title = "努力克服自卑的我们 모두가 자신의 무가치함과 싸우고 있다"
+
+    class DynamicTMDBProvider(FakeProvider):
+        def search(self, candidate) -> list[MetadataMatch]:
+            self.search_calls += 1
+            self.search_queries.append(candidate)
+            if candidate.title == original_title:
+                return [MetadataMatch(provider="tmdb", provider_id="tv:42", title=original_title, year="2026", score=0.95)]
+            return []
+
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="37335468", title=noisier_title, year="2026", score=0.95)],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="37335468",
+            title=noisier_title,
+            year="2026",
+            overview="豆瓣简介",
+        ),
+    )
+    tmdb = DynamicTMDBProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            title=original_title,
+            year="2026",
+            poster="https://img.example/tmdb-poster.jpg",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="8@swf2fkq3zrk@t58d", vod_year="2026"),
+            source_kind="telegram",
+            current_item=PlayItem(title="第1集", url="https://media.example/1.mp4", media_title=original_title),
+        )
+    )
+
+    assert updated.vod_name == original_title
+    assert updated.vod_content == "豆瓣简介"
+    assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert [query.title for query in local_douban.search_queries] == [original_title]
+    assert [query.title for query in tmdb.search_queries] == [original_title]
+
+
 def test_metadata_hydrator_skips_local_douban_prime_for_feiniu(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     original_title = "努力克服自卑的我们 모두가 자신의 무가치함과 싸우고 있다"

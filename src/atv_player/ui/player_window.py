@@ -3101,6 +3101,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
+        if self._should_restart_episode_title_enhancement(previous_vod, updated_vod):
+            self.session.episode_titles_hydrated = False
+            self._start_episode_title_enhancement()
 
     def _sync_playlist_media_title_from_metadata(self, previous_vod: VodItem, updated_vod: VodItem) -> None:
         if self.session is None:
@@ -3127,6 +3130,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 item.danmaku_search_query = " ".join(
                     part for part in (corrected_title, str(item.danmaku_search_episode or "").strip()) if part
                 ).strip()
+
+    def _should_restart_episode_title_enhancement(self, previous_vod: VodItem, updated_vod: VodItem) -> bool:
+        if self.session is None or self.session.episode_title_enhancer is None:
+            return False
+        previous_signature = (
+            str(previous_vod.vod_name or "").strip(),
+            str(previous_vod.vod_year or "").strip(),
+            str(previous_vod.type_name or "").strip(),
+            str(previous_vod.category_name or "").strip(),
+        )
+        updated_signature = (
+            str(updated_vod.vod_name or "").strip(),
+            str(updated_vod.vod_year or "").strip(),
+            str(updated_vod.type_name or "").strip(),
+            str(updated_vod.category_name or "").strip(),
+        )
+        return previous_signature != updated_signature
 
     @staticmethod
     def _playlist_identity_key(item: PlayItem) -> tuple[str, str, str, str, str]:

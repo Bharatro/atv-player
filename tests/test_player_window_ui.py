@@ -14707,6 +14707,78 @@ def test_player_window_async_metadata_hydration_updates_danmaku_source_dialog_ti
     assert window._danmaku_source_title_edit.text() == corrected_title
 
 
+def test_player_window_async_metadata_hydration_restarts_episode_title_enhancement_with_corrected_title(qtbot) -> None:
+    hydration_ready = threading.Event()
+    enhancement_calls: list[str] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    corrected_title = "刮削后的标题"
+
+    def hydrate(_session: PlayerSession) -> VodItem:
+        assert hydration_ready.wait(timeout=1)
+        return VodItem(
+            vod_id="v1",
+            vod_name=corrected_title,
+            vod_year="2026",
+            vod_content="刮削后的简介",
+        )
+
+    def enhance(current_session: PlayerSession) -> list[PlayItem] | None:
+        enhancement_calls.append(current_session.vod.vod_name)
+        if current_session.vod.vod_name != corrected_title:
+            return None
+        return [
+            PlayItem(
+                title=current_session.playlist[0].title,
+                url=current_session.playlist[0].url,
+                vod_id=current_session.playlist[0].vod_id,
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            )
+        ]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=hydrate,
+        episode_title_enhancer=enhance,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: enhancement_calls == ["原始标题"], timeout=1000)
+    hydration_ready.set()
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
+    qtbot.waitUntil(lambda: enhancement_calls == ["原始标题", corrected_title], timeout=1000)
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 星门初启", timeout=1000)
+
+
 def test_player_window_async_metadata_hydration_preserves_manual_danmaku_source_title(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
