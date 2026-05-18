@@ -445,7 +445,7 @@ class _PendingPlaybackLoader:
 
 class _PlayerToolDialog(ThemedDialogBase):
     def __init__(self, *, title: str, parent: QWidget, size: tuple[int, int]) -> None:
-        super().__init__(title=title, parent=parent, allow_maximize=True)
+        super().__init__(title=title, parent=parent)
         self.resize(*size)
 
 

@@ -79,7 +79,7 @@ class ShortcutHelpDialog(ThemedDialogBase):
         system_info_rows: Sequence[tuple[str, str]] | None = None,
         diagnostics_text: str = "",
     ) -> None:
-        super().__init__(title="帮助", parent=parent, allow_maximize=True)
+        super().__init__(title="帮助", parent=parent)
         self.setModal(True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._diagnostics_text = diagnostics_text

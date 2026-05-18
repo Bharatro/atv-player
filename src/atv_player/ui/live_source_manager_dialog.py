@@ -52,7 +52,7 @@ class _EpgRefreshWorker(QObject):
 
 class LiveSourceManagerDialog(ThemedDialogBase):
     def __init__(self, manager, parent=None) -> None:
-        super().__init__(title="直播源管理", parent=parent, allow_maximize=True)
+        super().__init__(title="直播源管理", parent=parent)
         self.manager = manager
         self.resize(920, 520)
         self._epg_refresh_thread: QThread | None = None

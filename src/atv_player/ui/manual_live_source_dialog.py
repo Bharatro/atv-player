@@ -60,7 +60,7 @@ class _ManualEntryFormDialog(ThemedDialogBase):
 
 class ManualLiveSourceDialog(ThemedDialogBase):
     def __init__(self, manager, source_id: int, parent=None) -> None:
-        super().__init__(title="管理频道", parent=parent, allow_maximize=True)
+        super().__init__(title="管理频道", parent=parent)
         self.manager = manager
         self.source_id = source_id
         self.resize(760, 420)

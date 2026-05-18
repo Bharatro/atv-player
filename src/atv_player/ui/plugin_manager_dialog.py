@@ -47,7 +47,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     _ACTION_RELOAD_DELAY_MS = 75
 
     def __init__(self, plugin_manager, parent=None) -> None:
-        super().__init__(title="插件管理", parent=parent, allow_maximize=True)
+        super().__init__(title="插件管理", parent=parent)
         self._init_async_guard()
         self.plugin_manager = plugin_manager
         self.plugin_actions = PluginActions(plugin_manager)

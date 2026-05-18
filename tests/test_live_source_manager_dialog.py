@@ -127,11 +127,25 @@ def test_live_source_manager_dialog_uses_custom_title_bar(qtbot) -> None:
     assert dialog.title_bar().title_label.text() == "直播源管理"
 
 
+def test_live_source_manager_dialog_hides_maximize_button(qtbot) -> None:
+    dialog = LiveSourceManagerDialog(FakeLiveSourceManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().maximize_button.isHidden() is True
+
+
 def test_manual_live_source_dialog_uses_custom_title_bar(qtbot) -> None:
     dialog = ManualLiveSourceDialog(FakeLiveSourceManager(), source_id=2)
     qtbot.addWidget(dialog)
 
     assert dialog.title_bar().title_label.text() == "管理频道"
+
+
+def test_manual_live_source_dialog_hides_maximize_button(qtbot) -> None:
+    dialog = ManualLiveSourceDialog(FakeLiveSourceManager(), source_id=2)
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().maximize_button.isHidden() is True
 
 
 def test_manual_entry_form_dialog_uses_custom_title_bar(qtbot) -> None:

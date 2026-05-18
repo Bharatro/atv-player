@@ -6332,6 +6332,19 @@ def test_player_window_runtime_dialogs_use_custom_title_bars(qtbot) -> None:
     assert danmaku_source.title_bar().title_label.text() == "弹幕源"
 
 
+def test_player_window_runtime_dialogs_hide_maximize_buttons(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    danmaku_settings = window._ensure_danmaku_settings_dialog()
+    metadata_scrape = window._ensure_metadata_scrape_dialog()
+    danmaku_source = window._ensure_danmaku_source_dialog()
+
+    assert danmaku_settings.title_bar().maximize_button.isHidden() is True
+    assert metadata_scrape.title_bar().maximize_button.isHidden() is True
+    assert danmaku_source.title_bar().maximize_button.isHidden() is True
+
+
 def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
