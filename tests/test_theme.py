@@ -50,16 +50,41 @@ def test_build_combobox_qss_uses_brand_tokens() -> None:
     assert "QComboBox:disabled::drop-down" in qss
 
 
-def test_build_borderless_combobox_qss_blends_drop_down_with_main_field() -> None:
+def test_build_combobox_qss_uses_fill_first_default_state() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "light")
     tokens = manager.tokens_for("light")
 
-    qss = theme_module.build_combobox_qss(tokens, borderless=True, min_height=30)
+    qss = theme_module.build_combobox_qss(tokens)
 
-    assert "border: none;" in qss
-    assert "border-left: none;" in qss
+    assert "QComboBox {\n        min-height: 34px;\n        padding: 0 40px 0 12px;\n        border: 1px solid transparent;" in qss
     assert f"background: {tokens.input_bg};" in qss
-    assert f"background: {tokens.panel_alt_bg};" in qss
+    assert f"border-color: {tokens.input_hover_border};" in qss
+    assert f"border: 1px solid {tokens.input_focus_ring};" in qss
+    assert "border-left: 1px solid transparent;" in qss
+    assert "QComboBox:disabled" in qss
+    assert "QComboBox:disabled::drop-down" in qss
+
+
+def test_build_combobox_qss_accepts_surface_overrides() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = theme_module.build_combobox_qss(
+        tokens,
+        min_height=30,
+        field_bg="#202734",
+        drop_down_bg="#202734",
+        text_color="#f5f7fb",
+        disabled_field_bg="#212734",
+        disabled_drop_down_bg="#212734",
+        disabled_text_color="#b0b8c7",
+    )
+
+    assert "min-height: 30px" in qss
+    assert "background: #202734;" in qss
+    assert "color: #f5f7fb;" in qss
+    assert "background: #212734;" in qss
+    assert "color: #b0b8c7;" in qss
 
 
 def test_build_slider_qss_uses_brand_fill_and_hover_handle() -> None:
