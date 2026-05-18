@@ -1,4 +1,4 @@
-from atv_player.metadata.matching import score_match
+from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 import pytest
 
@@ -77,3 +77,16 @@ def test_score_match_prefers_same_year_for_same_title() -> None:
     )
 
     assert score_match(query, matched_year) > score_match(query, mismatched_year)
+
+
+def test_score_match_rejects_large_year_conflict_even_for_exact_title() -> None:
+    query = MetadataQuery(title="西游记", year="1986")
+
+    mismatched_year = MetadataMatch(
+        provider="local_douban",
+        provider_id="1890547",
+        title="西游记",
+        year="1978",
+    )
+
+    assert is_confident_match(score_match(query, mismatched_year)) is False

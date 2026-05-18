@@ -95,6 +95,7 @@ from atv_player.ui.theme import (
     build_player_list_qss,
     build_player_panel_qss,
     build_player_section_heading_qss,
+    build_player_spinbox_qss,
     build_player_tabbar_qss,
     build_player_text_panel_qss,
     build_slider_qss,
@@ -1087,6 +1088,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             hover_bg=player_tokens.player_button_hover_bg,
             selected_bg=player_tokens.player_button_hover_bg,
         )
+        skip_spinbox_qss = build_player_spinbox_qss(player_tokens)
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
             combo.view().setStyleSheet(sidebar_combo_popup_qss)
@@ -1123,6 +1125,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 indicator_padding=18,
                 drop_down_width=16,
             )
+        self.opening_spin.setStyleSheet(skip_spinbox_qss)
+        self.ending_spin.setStyleSheet(skip_spinbox_qss)
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)

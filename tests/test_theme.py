@@ -166,3 +166,18 @@ def test_build_player_text_panel_qss_uses_brand_panel_tokens() -> None:
     assert tokens.panel_alt_bg in qss
     assert "padding: 12px 14px" in qss
     assert "selection-background-color" in qss
+
+
+def test_build_player_spinbox_qss_keeps_step_arrows_visible() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.player_tokens_for("dark")
+
+    qss = theme_module.build_player_spinbox_qss(tokens)
+
+    assert "QSpinBox::up-button" in qss
+    assert "QSpinBox::down-button" in qss
+    assert "QSpinBox::up-arrow" in qss
+    assert "QSpinBox::down-arrow" in qss
+    assert f"background-color: {tokens.player_button_hover_bg};" in qss
+    assert f"border-left: 1px solid {tokens.player_button_border};" in qss
+    assert f"border-bottom: 1px solid {tokens.player_button_border};" in qss

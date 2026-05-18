@@ -248,6 +248,39 @@ def test_metadata_hydrator_cleans_noisy_current_item_media_title_for_query(tmp_p
     assert updated.vod_content == "豆瓣简介"
 
 
+def test_metadata_hydrator_prefers_embedded_title_year_over_conflicting_vod_year(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="1295644", title="西游记", year="1986")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="1295644",
+            title="西游记",
+            year="1986",
+            overview="央视版",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="西游记 (1986) 4K 2025年重新深度修复4K", vod_year="2025"),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="正片",
+                url="https://media.example/1.m3u8",
+                media_title="西游记 (1986) 4K 2025年重新深度修复4K",
+            ),
+        )
+    )
+
+    assert provider.search_queries[0].title == "西游记"
+    assert provider.search_queries[0].year == "1986"
+    assert updated.vod_year == "1986"
+    assert updated.vod_content == "央视版"
+
+
 def test_metadata_hydrator_later_tmdb_overrides_existing_official_douban_poster(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     official_douban = FakeProvider(
@@ -385,6 +418,40 @@ def test_metadata_hydrator_primes_local_douban_before_full_search_for_telegram_e
         assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
         assert [query.title for query in local_douban.search_queries] == [original_title, corrected_title]
         assert [query.title for query in tmdb.search_queries] == [corrected_title]
+
+
+def test_metadata_hydrator_skips_local_douban_prime_when_year_conflicts_strongly(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="1890547", title="西游记", year="1978")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="1890547",
+            title="西游记",
+            year="1978",
+            overview="错误自动结果",
+        ),
+    )
+    tmdb = FakeProvider("tmdb", matches=[])
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="西游记 (1986) 4K 2025年重新深度修复4K", vod_year="2025"),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="正片",
+                url="https://media.example/1.m3u8",
+                media_title="西游记 (1986) 4K 2025年重新深度修复4K",
+            ),
+        )
+    )
+
+    assert local_douban.search_queries[0].year == "1986"
+    assert updated.vod_name == "西游记 (1986) 4K 2025年重新深度修复4K"
+    assert updated.vod_year == "2025"
+    assert updated.vod_content == ""
 
 
 def test_metadata_hydrator_local_douban_prime_keeps_cleaner_original_title_when_record_title_is_noisier(tmp_path: Path) -> None:
@@ -846,6 +913,45 @@ def test_metadata_hydrator_manual_binding_survives_noisy_title_with_embedded_yea
     assert updated.vod_year == "1986"
     assert updated.vod_content == "手动绑定简介"
     assert local_douban.search_calls == 0
+
+
+def test_metadata_hydrator_remote_auto_search_ignores_prefilled_dbid_for_local_douban_prime(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="1295644", title="西游记", year="1986", score=0.95)],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="1295644",
+            title="西游记",
+            year="1986",
+            overview="央视版西游记",
+            douban_id=1295644,
+        ),
+    )
+    tmdb = FakeProvider("tmdb", matches=[])
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="S01E01", dbid=1890547),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="S01E01",
+                url="https://media.example/1.m3u8",
+                media_title="西游记 (1986) 4K 2025年重新深度修复4K",
+            ),
+        )
+    )
+
+    assert local_douban.search_calls == 1
+    assert [query.vod_dbid for query in local_douban.search_queries] == [0]
+    assert [query.title for query in local_douban.search_queries] == ["西游记"]
+    assert [query.year for query in local_douban.search_queries] == ["1986"]
+    assert updated.vod_name == "西游记"
+    assert updated.vod_year == "1986"
+    assert updated.dbid == 1295644
+    assert updated.vod_content == "央视版西游记"
 
 
 def test_metadata_hydrator_deletes_invalid_manual_binding_and_falls_back_to_search(tmp_path: Path) -> None:

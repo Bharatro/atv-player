@@ -86,7 +86,17 @@ def score_match(query: MetadataQuery, match: MetadataMatch) -> float:
         if query_year == match_year:
             score += 0.05
         else:
-            score -= 0.08
+            query_year_number = _parse_year(query_year)
+            match_year_number = _parse_year(match_year)
+            if (
+                query_year_number is not None
+                and match_year_number is not None
+                and abs(query_year_number - match_year_number) >= 2
+                and query_season is None
+            ):
+                score -= 0.7
+            else:
+                score -= 0.08
 
     score += _category_score(query.category_name, query.type_name, match.raw)
 
@@ -115,6 +125,16 @@ def _title_similarity_score(query_title: str, match_title: str) -> float:
     if query_base and match_base and (query_base in match_base or match_base in query_base):
         return 0.65
     return SequenceMatcher(a=query_base or normalized_query, b=match_base or normalized_match).ratio() * 0.6
+
+
+def _parse_year(value: object) -> int | None:
+    match = re.search(r"(19|20)\d{2}", str(value or ""))
+    if match is None:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
 
 
 def _is_full_exact_match(query_title: str, match_title: str) -> bool:

@@ -778,6 +778,72 @@ def build_player_control_button_qss(
     """
 
 
+def build_player_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, min_height: int = 28) -> str:
+    return f"""
+    QSpinBox {{
+        min-height: {min_height}px;
+        padding: 0 22px 0 8px;
+        background-color: {tokens.player_button_bg};
+        color: {tokens.player_text_on_dark};
+        border: 1px solid {tokens.player_button_border};
+        border-radius: {border_radius}px;
+    }}
+    QSpinBox:hover {{
+        border-color: {tokens.accent_hover};
+    }}
+    QSpinBox:focus {{
+        border-color: {tokens.accent};
+    }}
+    QSpinBox:disabled {{
+        color: {tokens.text_secondary};
+        border-color: {tokens.border_subtle};
+    }}
+    QSpinBox::up-button,
+    QSpinBox::down-button {{
+        subcontrol-origin: border;
+        width: 14px;
+        background-color: {tokens.player_button_hover_bg};
+        border-left: 1px solid {tokens.player_button_border};
+    }}
+    QSpinBox::up-button {{
+        subcontrol-position: top right;
+        border-top-right-radius: {max(0, border_radius - 1)}px;
+        border-bottom: 1px solid {tokens.player_button_border};
+    }}
+    QSpinBox::down-button {{
+        subcontrol-position: bottom right;
+        border-bottom-right-radius: {max(0, border_radius - 1)}px;
+    }}
+    QSpinBox::up-button:hover,
+    QSpinBox::down-button:hover {{
+        background-color: {tokens.player_button_pressed_bg};
+    }}
+    QSpinBox::up-button:pressed,
+    QSpinBox::down-button:pressed {{
+        background-color: {tokens.player_button_bg};
+    }}
+    QSpinBox::up-button:disabled,
+    QSpinBox::down-button:disabled {{
+        background-color: {tokens.player_button_bg};
+        width: 14px;
+    }}
+    QSpinBox::up-arrow {{
+        width: 0px;
+        height: 0px;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid {tokens.player_text_on_dark};
+    }}
+    QSpinBox::down-arrow {{
+        width: 0px;
+        height: 0px;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {tokens.player_text_on_dark};
+    }}
+    """
+
+
 def build_slider_qss(
     tokens: ThemeTokens,
     *,

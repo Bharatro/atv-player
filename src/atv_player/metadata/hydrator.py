@@ -22,6 +22,7 @@ _SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _LOCAL_DOUBAN_PRIME_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
+_REMOTE_AUTO_SEARCH_IGNORE_DBID_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
 _LOCAL_DOUBAN_PROVIDER_NAMES = {"local_douban", "remote_douban"}
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
@@ -234,6 +235,15 @@ class MetadataHydrator:
         self._cache.save_detail(provider.name, str(match.provider_id), record)
         return record
 
+    def _prepare_search_query(self, context: MetadataContext, query):
+        if context.source_kind not in _REMOTE_AUTO_SEARCH_IGNORE_DBID_SOURCE_KINDS:
+            return query
+        if not str(query.title or "").strip():
+            return query
+        if int(query.vod_dbid or 0) <= 0:
+            return query
+        return replace(query, vod_dbid=0)
+
     def _prime_local_douban_query(self, context: MetadataContext, vod: VodItem, query, eligible_providers: list[MetadataProvider]):
         if context.source_kind not in _LOCAL_DOUBAN_PRIME_SOURCE_KINDS:
             return query
@@ -263,7 +273,7 @@ class MetadataHydrator:
 
     def hydrate(self, context: MetadataContext) -> VodItem:
         vod = replace(context.vod)
-        query = context.to_query()
+        query = self._prepare_search_query(context, context.to_query())
         bound_record = self._load_bound_record(query)
         if bound_record is not None:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])

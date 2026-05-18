@@ -39,6 +39,6 @@ def normalize_metadata_query_inputs(title: object, year: object) -> tuple[str, s
         embedded_year = year_match.group(2).strip()
         if embedded_title:
             normalized_title = embedded_title
-        if not normalized_year:
-            normalized_year = embedded_year
+        # Prefer an explicit year embedded in the title over a conflicting external year.
+        normalized_year = embedded_year
     return normalized_title.strip(), normalized_year

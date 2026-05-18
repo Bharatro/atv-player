@@ -287,6 +287,8 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.bottom_layout.spacing() == 4
     assert window.opening_spin.prefix() == "片头 "
     assert window.ending_spin.prefix() == "片尾 "
+    assert "border: 1px solid" in window.opening_spin.styleSheet()
+    assert "border: 1px solid" in window.ending_spin.styleSheet()
 
 
 def test_player_window_icon_updates_use_cached_icon_loader(qtbot, monkeypatch) -> None:
@@ -491,6 +493,35 @@ def test_player_window_metadata_scrape_dialog_strips_bracketed_noise_and_uses_se
 
     qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
     assert service.search_calls == [("牧神记", "2026", "")]
+
+
+def test_player_window_metadata_scrape_dialog_prefers_embedded_title_year_over_conflicting_vod_year(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="v1",
+            vod_name="西游记 (1986) 4K 2025年重新深度修复4K",
+            vod_year="2025",
+        ),
+        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "西游记"
+    assert window._metadata_scrape_year_edit.text() == "1986"
+
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_calls == [("西游记", "1986", "")]
 
 
 def test_player_window_metadata_scrape_search_passes_category_and_type_into_query(qtbot) -> None:
