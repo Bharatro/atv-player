@@ -1,5 +1,6 @@
 from __future__ import annotations
 import inspect
+import json
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent, QRect
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -51,6 +52,7 @@ from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import build_round_icon_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.window_chrome import ThemedMainWindowBase
 
 
 class _EmptyDoubanController:
@@ -139,6 +141,7 @@ _GLOBAL_SEARCH_HOT_SOURCE_CATEGORIES: dict[str, list[tuple[str, str]]] = {
     "tencent": [("hot", "热搜")],
     "iqiyi": [("hot", "热搜")],
 }
+_CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX = b"main-window-geometry-v2:"
 
 
 def _coerce_hot_search_text(value: object) -> str:
@@ -1093,7 +1096,7 @@ class _NavigationTabs(QWidget):
         return QSize(0, nav_height + spacing + content_hint.height())
 
 
-class MainWindow(QMainWindow, AsyncGuardMixin):
+class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     logout_requested = Signal()
     _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
     _SEARCH_POPUP_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "rank.svg"
@@ -1140,7 +1143,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
     ) -> None:
-        super().__init__()
+        super().__init__(title="alist-tvbox Desktop Player")
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
         self._apply_application_theme = apply_theme or (lambda: None)
@@ -1355,6 +1358,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         )
         self._app_event_filter_installed = False
         self._app_state_signal_connected = False
+        self._last_normal_geometry = QRect(0, 0, self.width(), self.height())
 
         tokens = current_tokens()
         self.global_search_container.setFixedWidth(400)
@@ -1448,10 +1452,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         container_layout.addLayout(self.header_layout)
         container_layout.addWidget(self.global_search_status_label)
         container_layout.addWidget(self.nav_tabs)
-        self.setCentralWidget(container)
-        self.setWindowTitle("alist-tvbox Desktop Player")
+        self.content_layout().addWidget(container)
         if self.config.main_window_geometry:
-            self.restoreGeometry(to_qbytearray(self.config.main_window_geometry))
+            self._restore_saved_geometry(apply_maximized=True)
 
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
@@ -3025,9 +3028,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             request.vod.type_name = fallback_type_name
         if fallback_category_name and not request.vod.category_name:
             request.vod.category_name = fallback_category_name
-        if prefer_fallback_media_title and fallback_vod_name:
-            request.vod.vod_name = fallback_vod_name
-        elif fallback_vod_name and not request.vod.vod_name:
+        if fallback_vod_name and not request.vod.vod_name:
             request.vod.vod_name = fallback_vod_name
         resolved_media_title = (
             fallback_vod_name if prefer_fallback_media_title and fallback_vod_name else request.vod.vod_name or fallback_vod_name
@@ -3562,13 +3563,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if not restore_paused_state:
             self.config.last_player_paused = False
         self._remember_main_window_state_for_player()
-        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
+        self.config.main_window_geometry = self._capture_main_window_geometry()
         self._save_config()
         self.player_window.open_session(session, start_paused=start_paused)
         self.player_window.show()
         self.player_window.raise_()
         self.player_window.activateWindow()
-        self.hide()
+        QTimer.singleShot(0, self.hide)
 
     def open_player(self, request, restore_paused_state: bool = False) -> None:
         request = self._prepare_request_for_open(request)
@@ -3590,7 +3591,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
     def _handle_session_open_succeeded(self, request_id: int, request, session, restore_paused_state: bool) -> None:
         if request_id != self._player_session_request_id:
             return
-        self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
+        QTimer.singleShot(
+            0,
+            lambda request_id=request_id, request=request, session=session, restore_paused_state=restore_paused_state: (
+                self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
+                if request_id == self._player_session_request_id and self._is_window_alive()
+                else None
+            ),
+        )
 
     def _handle_session_open_failed(self, request_id: int, message: str, restore_paused_state: bool) -> None:
         if request_id != self._player_session_request_id:
@@ -3621,9 +3629,36 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._refresh_main_window_layout()
         QTimer.singleShot(0, self._refresh_main_window_layout)
 
-    def _restore_saved_geometry(self) -> None:
+    def _capture_main_window_geometry(self) -> bytes:
+        rect = self._last_normal_geometry
+        if not rect.isValid() or rect.width() <= 0 or rect.height() <= 0:
+            rect = QRect(self.x(), self.y(), max(1, self.width()), max(1, self.height()))
+        payload = {
+            "x": rect.x(),
+            "y": rect.y(),
+            "width": rect.width(),
+            "height": rect.height(),
+            "maximized": bool(self.isMaximized()),
+        }
+        return _CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX + json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    def _restore_saved_geometry(self, *, apply_maximized: bool = False) -> None:
         geometry = self.config.main_window_geometry
         if not geometry:
+            return
+        if geometry.startswith(_CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX):
+            try:
+                payload = json.loads(geometry[len(_CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX) :].decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = {}
+            x = int(payload.get("x", 0))
+            y = int(payload.get("y", 0))
+            width = max(1, int(payload.get("width", 0)))
+            height = max(1, int(payload.get("height", 0)))
+            if width > 0 and height > 0:
+                self.setGeometry(x, y, width, height)
+            if apply_maximized and bool(payload.get("maximized", False)):
+                self.showMaximized()
             return
         self.restoreGeometry(to_qbytearray(geometry))
 
@@ -3636,6 +3671,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if layout is not None:
             layout.invalidate()
             layout.activate()
+
+    def _update_last_normal_geometry(self) -> None:
+        if self.isMaximized() or self.isFullScreen():
+            return
+        rect = QRect(self.x(), self.y(), self.width(), self.height())
+        if rect.isValid() and rect.width() > 0 and rect.height() > 0:
+            self._last_normal_geometry = rect
 
     def show_or_restore_player(self) -> PlayerWindow | None:
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
@@ -3811,7 +3853,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _quit_application(self) -> None:
         self.config.last_active_window = "main"
-        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
+        self.config.main_window_geometry = self._capture_main_window_geometry()
         self._save_config()
         app = QApplication.instance()
         if app is not None:
@@ -3837,6 +3879,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._update_last_normal_geometry()
         app = QApplication.instance()
         if app is not None and not self._app_event_filter_installed:
             app.installEventFilter(self)
@@ -3849,6 +3892,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._update_last_normal_geometry()
         self._refresh_navigation_tabs()
         if self._plugin_overflow_drawer.isVisible():
             self._position_plugin_overflow_drawer()
@@ -3856,6 +3900,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
+        self._update_last_normal_geometry()
         self._position_global_search_popup()
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -3870,7 +3915,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if app is not None and self._app_state_signal_connected:
             app.applicationStateChanged.disconnect(self._handle_application_state_changed)
             self._app_state_signal_connected = False
-        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
+        self.config.main_window_geometry = self._capture_main_window_geometry()
         if self.isVisible():
             self.config.last_active_window = "main"
         self._save_config()

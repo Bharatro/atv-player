@@ -172,6 +172,16 @@ class ThemeTokens:
     player_primary_button_hover_bg: str
     player_primary_button_pressed_bg: str
     player_primary_button_icon: str
+    titlebar_bg: str
+    titlebar_border: str
+    titlebar_text: str
+    titlebar_button_bg: str
+    titlebar_button_hover_bg: str
+    titlebar_button_pressed_bg: str
+    titlebar_button_close_hover_bg: str
+    titlebar_button_close_pressed_bg: str
+    window_chrome_bg: str
+    window_chrome_border: str
 
 
 LIGHT_TOKENS = ThemeTokens(
@@ -206,6 +216,16 @@ LIGHT_TOKENS = ThemeTokens(
     player_primary_button_hover_bg="#ff835b",
     player_primary_button_pressed_bg="#e95528",
     player_primary_button_icon="#ffffff",
+    titlebar_bg="#f3ebe1",
+    titlebar_border="#d8cabc",
+    titlebar_text="#241f1a",
+    titlebar_button_bg="#fffaf5",
+    titlebar_button_hover_bg="#f8ede2",
+    titlebar_button_pressed_bg="#efe0cf",
+    titlebar_button_close_hover_bg="#ff6a3d",
+    titlebar_button_close_pressed_bg="#e95528",
+    window_chrome_bg="#fffdfa",
+    window_chrome_border="#d8cabc",
 )
 
 DARK_TOKENS = ThemeTokens(
@@ -240,6 +260,16 @@ DARK_TOKENS = ThemeTokens(
     player_primary_button_hover_bg="#ff835b",
     player_primary_button_pressed_bg="#e95528",
     player_primary_button_icon="#ffffff",
+    titlebar_bg="#222836",
+    titlebar_border="#343c4d",
+    titlebar_text="#f3f5f8",
+    titlebar_button_bg="#232937",
+    titlebar_button_hover_bg="#2d3444",
+    titlebar_button_pressed_bg="#1c2330",
+    titlebar_button_close_hover_bg="#ff6a3d",
+    titlebar_button_close_pressed_bg="#e95528",
+    window_chrome_bg="#1a1f2a",
+    window_chrome_border="#343c4d",
 )
 
 PLAYER_IMMERSIVE_TOKENS = ThemeTokens(
@@ -274,6 +304,16 @@ PLAYER_IMMERSIVE_TOKENS = ThemeTokens(
     player_primary_button_hover_bg="#ff835b",
     player_primary_button_pressed_bg="#e95528",
     player_primary_button_icon="#ffffff",
+    titlebar_bg="#222836",
+    titlebar_border="#343c4d",
+    titlebar_text="#f3f5f8",
+    titlebar_button_bg="#232937",
+    titlebar_button_hover_bg="#2d3444",
+    titlebar_button_pressed_bg="#1c2330",
+    titlebar_button_close_hover_bg="#ff6a3d",
+    titlebar_button_close_pressed_bg="#e95528",
+    window_chrome_bg="#1a1f2a",
+    window_chrome_border="#343c4d",
 )
 
 
@@ -404,6 +444,68 @@ def current_resolved_theme() -> ResolvedTheme:
 
 def current_tokens() -> ThemeTokens:
     return current_theme_manager().tokens_for(current_resolved_theme())
+
+
+def build_window_chrome_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QWidget#windowChromeRoot {{
+        background: {tokens.window_chrome_bg};
+        border: 1px solid {tokens.window_chrome_border};
+        border-radius: 18px;
+    }}
+    QWidget#windowChromeRoot[maximized="true"] {{
+        border-radius: 0px;
+    }}
+    QWidget#customTitleBar {{
+        background: {tokens.titlebar_bg};
+        border-bottom: 1px solid {tokens.titlebar_border};
+        border-top-left-radius: 18px;
+        border-top-right-radius: 18px;
+    }}
+    QWidget#windowChromeRoot[maximized="true"] QWidget#customTitleBar {{
+        border-top-left-radius: 0px;
+        border-top-right-radius: 0px;
+    }}
+    QLabel#customTitleBarLabel {{
+        color: {tokens.titlebar_text};
+        font-size: 14px;
+        font-weight: 600;
+        background: transparent;
+    }}
+    QWidget#windowChromeContent {{
+        background: {tokens.window_chrome_bg};
+        border-bottom-left-radius: 18px;
+        border-bottom-right-radius: 18px;
+    }}
+    QWidget#windowChromeRoot[maximized="true"] QWidget#windowChromeContent {{
+        border-bottom-left-radius: 0px;
+        border-bottom-right-radius: 0px;
+    }}
+    QWidget#customTitleBar QPushButton {{
+        background: {tokens.titlebar_button_bg};
+        color: {tokens.titlebar_text};
+        border: 1px solid {tokens.window_chrome_border};
+        border-radius: 10px;
+        padding: 0;
+    }}
+    QWidget#customTitleBar QPushButton:hover {{
+        background: {tokens.titlebar_button_hover_bg};
+        border-color: {tokens.accent_hover};
+    }}
+    QWidget#customTitleBar QPushButton:pressed {{
+        background: {tokens.titlebar_button_pressed_bg};
+    }}
+    QPushButton#customTitleBarCloseButton:hover {{
+        background: {tokens.titlebar_button_close_hover_bg};
+        color: {tokens.button_primary_text};
+        border-color: {tokens.titlebar_button_close_hover_bg};
+    }}
+    QPushButton#customTitleBarCloseButton:pressed {{
+        background: {tokens.titlebar_button_close_pressed_bg};
+        color: {tokens.button_primary_text};
+        border-color: {tokens.titlebar_button_close_pressed_bg};
+    }}
+    """
 
 
 def build_search_line_edit_qss(tokens: ThemeTokens, *, border_radius: int = 15, min_height: int = 30) -> str:

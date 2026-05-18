@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.time_utils import format_refresh_timestamp
 from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 
 def _display_source_type(source_type: str) -> str:
@@ -49,11 +50,10 @@ class _EpgRefreshWorker(QObject):
             self.finished.emit()
 
 
-class LiveSourceManagerDialog(QDialog):
+class LiveSourceManagerDialog(ThemedDialogBase):
     def __init__(self, manager, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(title="直播源管理", parent=parent, allow_maximize=True)
         self.manager = manager
-        self.setWindowTitle("直播源管理")
         self.resize(920, 520)
         self._epg_refresh_thread: QThread | None = None
         self._epg_refresh_worker: _EpgRefreshWorker | None = None
@@ -98,7 +98,7 @@ class LiveSourceManagerDialog(QDialog):
             self.refresh_button,
         ):
             actions.addWidget(button)
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         epg_row = QHBoxLayout()
         epg_row.addWidget(QLabel("EPG URL（每行一个）"))
         epg_row.addWidget(self.epg_url_edit, 1)

@@ -10,7 +10,6 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QDialog,
     QFileDialog,
     QHeaderView,
     QHBoxLayout,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 HelpContext = Literal["main_window", "player_window"]
 
@@ -70,7 +70,7 @@ def shortcut_entries_for(context: HelpContext, quit_sequence: QKeySequence) -> t
     return (*base_entries, ShortcutEntry(quit_label, "退出应用"))
 
 
-class ShortcutHelpDialog(QDialog):
+class ShortcutHelpDialog(ThemedDialogBase):
     def __init__(
         self,
         entries: Sequence[ShortcutEntry],
@@ -79,9 +79,8 @@ class ShortcutHelpDialog(QDialog):
         system_info_rows: Sequence[tuple[str, str]] | None = None,
         diagnostics_text: str = "",
     ) -> None:
-        super().__init__(parent)
+        super().__init__(title="帮助", parent=parent, allow_maximize=True)
         self.setModal(True)
-        self.setWindowTitle("帮助")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._diagnostics_text = diagnostics_text
         if system_info_rows is not None:
@@ -89,7 +88,7 @@ class ShortcutHelpDialog(QDialog):
         else:
             self.resize(520, 420)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
 
         if system_info_rows is not None:
             layout.addWidget(QLabel("系统信息", self))

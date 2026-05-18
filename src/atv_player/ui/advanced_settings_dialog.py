@@ -27,9 +27,10 @@ from atv_player.ui.theme import (
     configure_form_flat_combobox,
     current_tokens,
 )
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 
-class AdvancedSettingsDialog(QDialog):
+class AdvancedSettingsDialog(ThemedDialogBase):
     def __init__(
         self,
         config: AppConfig,
@@ -37,11 +38,10 @@ class AdvancedSettingsDialog(QDialog):
         parent: QWidget | None = None,
         apply_theme: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(title="高级设置", parent=parent)
         self._config = config
         self._save_config = save_config
         self._apply_application_theme = apply_theme
-        self.setWindowTitle("高级设置")
         self.resize(680, 440)
 
         self.settings_tabs = QTabWidget()
@@ -183,7 +183,7 @@ class AdvancedSettingsDialog(QDialog):
         button_row.addWidget(self.save_button)
         button_row.addWidget(self.cancel_button)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.addWidget(self.settings_tabs)
         layout.addLayout(button_row)
 

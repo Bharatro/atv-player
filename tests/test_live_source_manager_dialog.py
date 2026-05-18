@@ -3,7 +3,7 @@ from datetime import datetime
 
 from atv_player.models import LiveSourceConfig, LiveSourceEntry
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
-from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
+from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog, _ManualEntryFormDialog
 
 
 class FakeLiveSourceManager:
@@ -118,6 +118,27 @@ class FakeLiveSourceManager:
 
     def move_manual_entry(self, entry_id: int, direction: int):
         self.move_entry_calls.append((entry_id, direction))
+
+
+def test_live_source_manager_dialog_uses_custom_title_bar(qtbot) -> None:
+    dialog = LiveSourceManagerDialog(FakeLiveSourceManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().title_label.text() == "直播源管理"
+
+
+def test_manual_live_source_dialog_uses_custom_title_bar(qtbot) -> None:
+    dialog = ManualLiveSourceDialog(FakeLiveSourceManager(), source_id=2)
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().title_label.text() == "管理频道"
+
+
+def test_manual_entry_form_dialog_uses_custom_title_bar(qtbot) -> None:
+    dialog = _ManualEntryFormDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().title_label.text() == "频道信息"
 
 
 def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch) -> None:

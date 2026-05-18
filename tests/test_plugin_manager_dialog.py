@@ -143,6 +143,13 @@ class FakePluginManager:
         self.action_calls.append((plugin_id, action_id, parent))
 
 
+def test_plugin_manager_dialog_uses_custom_title_bar(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().title_label.text() == "插件管理"
+
+
 def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)

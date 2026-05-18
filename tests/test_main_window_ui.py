@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
@@ -178,6 +179,46 @@ class FakePlayerController:
             "initial_log_message": initial_log_message,
             "is_placeholder": is_placeholder,
         }
+
+
+class DummyHistoryController:
+    def list_records(self):
+        return []
+
+
+def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
+    deadline = time.perf_counter() + timeout_seconds
+    while time.perf_counter() < deadline:
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        if predicate():
+            return
+        time.sleep(0.01)
+    assert predicate()
+
+
+def _player_window_has_active_danmaku(window: MainWindow) -> bool:
+    player_window = window.player_window
+    if player_window is None or player_window.session is None or not player_window.session.playlist:
+        return False
+    if not (0 <= player_window.current_index < len(player_window.session.playlist)):
+        return False
+    current_item = player_window.session.playlist[player_window.current_index]
+    return bool(current_item.danmaku_xml) and bool(getattr(player_window, "_danmaku_active", False))
+
+
+def test_main_window_uses_custom_title_bar(qtbot) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.title_bar().title_label.text() == "alist-tvbox Desktop Player"
+    assert window.title_bar().maximize_button.isHidden() is False
 
 
 class AsyncOpenController(FakeStaticController):
@@ -800,7 +841,13 @@ def test_main_window_plugin_restore_opens_placeholder_player_while_restore_reque
     window.show()
     window._start_restore_last_player()
 
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and len(window.player_window.opened) == 1
+            and window.isHidden() is True
+        )
+    )
     assert window.isHidden() is True
     assert window.player_window.opened[0][0]["is_placeholder"] is True
     assert window.player_window.logs == ["正在恢复播放..."]
@@ -3808,19 +3855,24 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             clicked_index: int,
             playlists=None,
             playlist_index: int = 0,
+            source_groups=None,
+            source_group_index: int = 0,
+            source_index: int = 0,
             detail_resolver=None,
             resolved_vod_by_id=None,
             use_local_history=True,
-        restore_history=False,
-        playback_loader=None,
-        async_playback_loader=False,
-        detail_action_runner=None,
-        detail_field_runner=None,
-        metadata_hydrator=None,
-        episode_title_enhancer=None,
-        danmaku_controller=None,
-        playback_progress_reporter=None,
-        playback_stopper=None,
+            restore_history=False,
+            playback_loader=None,
+            async_playback_loader=False,
+            detail_action_runner=None,
+            detail_field_runner=None,
+            metadata_hydrator=None,
+            metadata_scrape_service=None,
+            metadata_binding_repository=None,
+            episode_title_enhancer=None,
+            danmaku_controller=None,
+            playback_progress_reporter=None,
+            playback_stopper=None,
             playback_history_loader=None,
             playback_history_saver=None,
             initial_log_message="",
@@ -3833,6 +3885,9 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 clicked_index,
                 playlists=playlists,
                 playlist_index=playlist_index,
+                source_groups=source_groups,
+                source_group_index=source_group_index,
+                source_index=source_index,
                 detail_resolver=detail_resolver,
                 resolved_vod_by_id=resolved_vod_by_id,
                 use_local_history=use_local_history,
@@ -3842,6 +3897,8 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 detail_action_runner=detail_action_runner,
                 detail_field_runner=detail_field_runner,
                 metadata_hydrator=metadata_hydrator,
+                metadata_scrape_service=metadata_scrape_service,
+                metadata_binding_repository=metadata_binding_repository,
                 episode_title_enhancer=episode_title_enhancer,
                 danmaku_controller=danmaku_controller,
                 playback_progress_reporter=playback_progress_reporter,
@@ -3881,6 +3938,8 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
         config=config,
         save_config=lambda: None,
     )
+    errors: list[str] = []
+    monkeypatch.setattr(window, "show_error", lambda message: errors.append(message))
     qtbot.addWidget(window)
     window.show()
     request = OpenPlayerRequest(
@@ -3899,12 +3958,25 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
     assert window.isHidden() is False
     assert window.player_window is None
 
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    deadline = time.perf_counter() + 5.0
+    while (
+        window.player_window is None
+        or len(window.player_window.opened) != 1
+        or window.isHidden() is False
+    ) and time.perf_counter() < deadline:
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        time.sleep(0.01)
+    assert errors == []
+    assert window.player_window is not None
+    assert len(window.player_window.opened) == 1
     assert window.isHidden() is True
     assert config.last_active_window == "player"
     assert config.last_playback_mode == "detail"
     assert config.last_playback_vod_id == "vod-1"
     assert config.last_player_paused is False
+    window.close()
 
 
 def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, monkeypatch) -> None:
@@ -4677,7 +4749,7 @@ def test_main_window_restore_last_player_reloads_cached_plugin_danmaku(qtbot, mo
     restored = window.restore_last_player()
 
     assert restored is window.player_window
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
 
 
@@ -4819,7 +4891,7 @@ def test_main_window_restore_last_player_reloads_cached_direct_parse_danmaku(qtb
     restored = restore_window.restore_last_player()
 
     assert restored is restore_window.player_window
-    qtbot.waitUntil(lambda: len(restore_window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(restore_window.player_window.video.loaded_danmaku_paths) == 1)
     assert restore_window.player_window.danmaku_combo.currentText() == "弹幕"
 
 
@@ -4999,13 +5071,13 @@ def test_main_window_reopen_plugin_item_from_list_reloads_cached_danmaku(qtbot, 
 
     request = second_controller.build_request("/detail/1")
     window.open_player(request)
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
     window.player_window._return_to_main()
 
     list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
     window._open_spider_item(second_controller, "plugin-1", list_item)
 
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) >= 2)
+    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) >= 2)
     assert window.player_window.session is not None
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
@@ -5195,7 +5267,8 @@ def test_main_window_reopen_plugin_item_from_list_uses_reg_src_cached_danmaku_wi
 
     first_request = first_controller.build_request("/detail/1")
     window.open_player(first_request)
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: _player_window_has_active_danmaku(window))
+    previous_session = window.player_window.session
     window.player_window._return_to_main()
 
     list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
@@ -5209,7 +5282,13 @@ def test_main_window_reopen_plugin_item_from_list_uses_reg_src_cached_danmaku_wi
             and bool(window.player_window.session.playlist)
         )
     )
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    _spin_until(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not previous_session
+            and _player_window_has_active_danmaku(window)
+        )
+    )
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
 
@@ -5392,7 +5471,8 @@ def test_main_window_reopen_direct_media_plugin_item_from_list_does_not_trigger_
 
     first_open_request = first_controller.build_request("/detail/1")
     window.open_player(first_open_request)
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: _player_window_has_active_danmaku(window))
+    previous_session = window.player_window.session
     window.player_window._return_to_main()
 
     list_item = VodItem(vod_id="/detail/1", vod_name="玄界之门3D版", vod_pic="poster-list")
@@ -5406,7 +5486,13 @@ def test_main_window_reopen_direct_media_plugin_item_from_list_does_not_trigger_
             and bool(window.player_window.session.playlist)
         )
     )
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    _spin_until(
+        lambda: (
+            window.player_window is not None
+            and window.player_window.session is not previous_session
+            and _player_window_has_active_danmaku(window)
+        )
+    )
     assert "恢复缓存弹幕失败" not in window.player_window.log_view.toPlainText()
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
@@ -5580,7 +5666,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_reloads_cached_danmaku(
 
     first_open_request = first_controller.build_request("/detail/drive")
     window.open_player(first_open_request)
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
     window.player_window._return_to_main()
 
     list_item = VodItem(vod_id="/detail/drive", vod_name="网盘剧集", vod_pic="poster-list")
@@ -5594,7 +5680,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_reloads_cached_danmaku(
             and bool(window.player_window.session.playlist)
         )
     )
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
+    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
     assert "弹幕搜索中" not in window.player_window.log_view.toPlainText()
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
@@ -5768,7 +5854,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_after_closing_player_rel
 
     first_open_request = first_controller.build_request("/detail/drive")
     window.open_player(first_open_request)
-    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
     player_window = window.player_window
     player_window.close()
     qtbot.waitUntil(lambda: window.player_window is None)
@@ -5784,7 +5870,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_after_closing_player_rel
             and bool(window.player_window.session.playlist)
         )
     )
-    qtbot.waitUntil(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
     assert "弹幕搜索中" not in window.player_window.log_view.toPlainText()
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"
@@ -5827,6 +5913,9 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             clicked_index: int,
             playlists=None,
             playlist_index: int = 0,
+            source_groups=None,
+            source_group_index: int = 0,
+            source_index: int = 0,
             detail_resolver=None,
             resolved_vod_by_id=None,
             use_local_history=True,
@@ -5836,6 +5925,8 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             detail_action_runner=None,
             detail_field_runner=None,
             metadata_hydrator=None,
+            metadata_scrape_service=None,
+            metadata_binding_repository=None,
             episode_title_enhancer=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
@@ -5851,6 +5942,9 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 clicked_index,
                 playlists,
                 playlist_index,
+                source_groups,
+                source_group_index,
+                source_index,
                 detail_resolver,
                 resolved_vod_by_id,
                 use_local_history,
@@ -5860,6 +5954,8 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 detail_action_runner,
                 detail_field_runner,
                 metadata_hydrator,
+                metadata_scrape_service,
+                metadata_binding_repository,
                 episode_title_enhancer,
                 danmaku_controller,
                 playback_progress_reporter,

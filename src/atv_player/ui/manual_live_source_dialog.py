@@ -14,8 +14,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from atv_player.ui.window_chrome import ThemedDialogBase
 
-class _ManualEntryFormDialog(QDialog):
+
+class _ManualEntryFormDialog(ThemedDialogBase):
     def __init__(
         self,
         *,
@@ -25,8 +27,7 @@ class _ManualEntryFormDialog(QDialog):
         logo_url: str = "",
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("频道信息")
+        super().__init__(title="频道信息", parent=parent)
         self.group_edit = QLineEdit(group_name, self)
         self.channel_edit = QLineEdit(channel_name, self)
         self.url_edit = QLineEdit(stream_url, self)
@@ -42,7 +43,7 @@ class _ManualEntryFormDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(self.ok_button)
         actions.addWidget(self.cancel_button)
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.addLayout(form)
         layout.addLayout(actions)
         self.ok_button.clicked.connect(self.accept)
@@ -57,12 +58,11 @@ class _ManualEntryFormDialog(QDialog):
         )
 
 
-class ManualLiveSourceDialog(QDialog):
+class ManualLiveSourceDialog(ThemedDialogBase):
     def __init__(self, manager, source_id: int, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(title="管理频道", parent=parent, allow_maximize=True)
         self.manager = manager
         self.source_id = source_id
-        self.setWindowTitle("管理频道")
         self.resize(760, 420)
         self.entry_table = QTableWidget(0, 4, self)
         self.entry_table.setHorizontalHeaderLabels(["分组", "频道名", "地址", "Logo"])
@@ -87,7 +87,7 @@ class ManualLiveSourceDialog(QDialog):
             self.down_button,
         ):
             actions.addWidget(button)
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.addLayout(actions)
         layout.addWidget(self.entry_table)
         self.add_button.clicked.connect(self._add_entry)

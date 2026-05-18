@@ -48,6 +48,14 @@ class FakePluginManager:
             plugin.sort_order = sort_order
 
 
+def test_plugin_reorder_dialog_uses_custom_title_bar(qtbot) -> None:
+    dialog = PluginReorderDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert bool(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+    assert dialog.title_bar().title_label.text() == "调整插件顺序"
+
+
 def test_plugin_reorder_dialog_uses_current_plugin_order_as_initial_draft(qtbot) -> None:
     dialog = PluginReorderDialog(FakePluginManager())
     qtbot.addWidget(dialog)

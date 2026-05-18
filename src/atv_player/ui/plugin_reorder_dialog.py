@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDialog,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -11,13 +10,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 
-class PluginReorderDialog(QDialog):
+class PluginReorderDialog(ThemedDialogBase):
     def __init__(self, plugin_manager, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(title="调整插件顺序", parent=parent)
         self.plugin_manager = plugin_manager
-        self.setWindowTitle("调整插件顺序")
         self.resize(520, 460)
 
         self.plugin_list = QListWidget(self)
@@ -41,7 +40,7 @@ class PluginReorderDialog(QDialog):
         footer.addWidget(self.save_button)
         footer.addWidget(self.cancel_button)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.addWidget(self.plugin_list)
         layout.addLayout(controls)
         layout.addLayout(footer)
