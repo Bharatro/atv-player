@@ -68,6 +68,13 @@ def test_login_window_uses_custom_title_bar(qtbot) -> None:
     assert window.title_bar().title_label.text() == "alist-tvbox 登录"
 
 
+def test_login_window_enables_resize_support(qtbot) -> None:
+    window = LoginWindow(FakeLoginController())
+    qtbot.addWidget(window)
+
+    assert window.is_window_resizable() is True
+
+
 def test_login_window_uses_larger_default_size(qtbot) -> None:
     window = LoginWindow(FakeLoginController())
     qtbot.addWidget(window)

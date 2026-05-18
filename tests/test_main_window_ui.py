@@ -221,6 +221,18 @@ def test_main_window_uses_custom_title_bar(qtbot) -> None:
     assert window.title_bar().maximize_button.isHidden() is False
 
 
+def test_main_window_enables_resize_support(qtbot) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.is_window_resizable() is True
+
+
 def test_main_window_global_search_button_styles_include_disabled_tokens(qtbot) -> None:
     from atv_player.ui.theme import ThemeManager, install_theme
 

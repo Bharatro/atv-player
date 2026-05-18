@@ -27,7 +27,7 @@ class LoginWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     login_succeeded = Signal()
 
     def __init__(self, controller) -> None:
-        super().__init__(title="alist-tvbox 登录", allow_minimize=True, allow_maximize=True)
+        super().__init__(title="alist-tvbox 登录", allow_minimize=True, allow_maximize=True, resizable=True)
         self._init_async_guard()
         self._controller = controller
         self._login_request_id = 0

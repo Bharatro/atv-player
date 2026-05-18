@@ -1143,7 +1143,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
     ) -> None:
-        super().__init__(title="alist-tvbox Desktop Player")
+        super().__init__(title="alist-tvbox Desktop Player", resizable=True)
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
         self._apply_application_theme = apply_theme or (lambda: None)

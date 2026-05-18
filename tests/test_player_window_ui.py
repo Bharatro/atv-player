@@ -6312,6 +6312,13 @@ def test_player_window_uses_custom_title_bar(qtbot) -> None:
     assert window.title_bar().title_label.text() == "alist-tvbox 播放器"
 
 
+def test_player_window_enables_resize_support(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.is_window_resizable() is True
+
+
 def test_player_window_runtime_dialogs_use_custom_title_bars(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

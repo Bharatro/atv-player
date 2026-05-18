@@ -516,6 +516,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             title="alist-tvbox 播放器",
             allow_minimize=True,
             allow_maximize=True,
+            resizable=True,
         )
         self._init_async_guard()
         self.controller = controller
