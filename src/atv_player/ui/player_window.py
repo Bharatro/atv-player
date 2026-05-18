@@ -750,12 +750,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.parse_combo = FlatComboBox()
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
-        self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72)
-        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=2, maximum_width=74)
-        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=2, maximum_width=72)
-        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=3, maximum_width=84)
-        self._configure_control_combo(self.audio_combo, minimum_contents_length=2, maximum_width=74)
-        self._configure_control_combo(self.parse_combo, minimum_contents_length=2, maximum_width=72)
+        self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72, fixed_height=28)
+        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=2, maximum_width=74, fixed_height=28)
+        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=2, maximum_width=72, fixed_height=28)
+        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=3, maximum_width=84, fixed_height=28)
+        self._configure_control_combo(self.audio_combo, minimum_contents_length=2, maximum_width=74, fixed_height=28)
+        self._configure_control_combo(self.parse_combo, minimum_contents_length=2, maximum_width=72, fixed_height=28)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -1062,7 +1062,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         combo_qss = build_combobox_qss(
             tokens,
             border_radius=12,
-            min_height=30,
+            min_height=28,
             horizontal_padding=4,
             indicator_padding=18,
             drop_down_width=16,
@@ -1071,9 +1071,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             text_color=player_tokens.player_text_on_dark,
             hover_field_bg=player_tokens.player_button_bg,
             hover_drop_down_bg=player_tokens.player_button_bg,
-            disabled_field_bg="transparent",
-            disabled_drop_down_bg="transparent",
-            disabled_text_color=tokens.text_secondary,
+            disabled_field_bg=player_tokens.player_button_pressed_bg,
+            disabled_drop_down_bg=player_tokens.player_button_pressed_bg,
+            disabled_text_color=player_tokens.player_button_border,
             border_color="transparent",
             hover_border_color="transparent",
             focus_border_color=tokens.accent,
@@ -1088,6 +1088,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             hover_bg=player_tokens.player_button_hover_bg,
             selected_bg=player_tokens.player_button_hover_bg,
         )
+        dialog_combo_qss = build_combobox_qss(
+            tokens,
+            border_color=tokens.input_border,
+            hover_border_color=tokens.input_hover_border,
+            focus_border_color=tokens.input_focus_ring,
+            disabled_border_color=tokens.border_subtle,
+            drop_down_border_left_color=tokens.border_subtle,
+            disabled_drop_down_border_left_color=tokens.border_subtle,
+        )
+        dialog_combo_popup_qss = build_combobox_popup_qss(
+            background=tokens.menu_bg,
+            text_color=tokens.text_primary,
+            border_color=tokens.input_border,
+            hover_bg=tokens.menu_hover_bg,
+            selected_bg=tokens.menu_selected_bg,
+        )
         skip_spinbox_qss = build_player_spinbox_qss(player_tokens)
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
@@ -1098,6 +1114,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 disabled_text_color=tokens.text_secondary,
                 arrow_color=tokens.text_secondary,
                 disabled_arrow_color=tokens.border_subtle,
+                border_color="transparent",
                 field_bg=tokens.input_bg,
                 hover_field_bg=tokens.input_bg,
                 disabled_field_bg=tokens.panel_alt_bg,
@@ -1111,12 +1128,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             configure_flat_combobox(
                 combo,
                 text_color=player_tokens.player_text_on_dark,
-                disabled_text_color=tokens.text_secondary,
+                disabled_text_color=player_tokens.player_button_border,
                 arrow_color=tokens.text_secondary,
-                disabled_arrow_color=tokens.border_subtle,
+                disabled_arrow_color=player_tokens.player_button_border,
+                border_color=player_tokens.player_button_border,
                 field_bg="transparent",
                 hover_field_bg=player_tokens.player_button_bg,
-                disabled_field_bg="transparent",
+                disabled_field_bg=player_tokens.player_button_pressed_bg,
                 hover_border_color="transparent",
                 focus_border_color=tokens.accent,
                 disabled_border_color="transparent",
@@ -1124,6 +1142,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 left_padding=4,
                 indicator_padding=18,
                 drop_down_width=16,
+            )
+        for combo in self._dialog_comboboxes():
+            combo.setStyleSheet(dialog_combo_qss)
+            combo.view().setStyleSheet(dialog_combo_popup_qss)
+            configure_flat_combobox(
+                combo,
+                text_color=tokens.text_primary,
+                disabled_text_color=tokens.text_secondary,
+                arrow_color=tokens.text_secondary,
+                disabled_arrow_color=tokens.border_subtle,
+                border_color=tokens.input_border,
+                field_bg=tokens.input_bg,
+                hover_field_bg=tokens.input_bg,
+                disabled_field_bg=tokens.panel_alt_bg,
+                hover_border_color=tokens.input_hover_border,
+                focus_border_color=tokens.input_focus_ring,
+                disabled_border_color=tokens.border_subtle,
             )
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
@@ -1177,6 +1212,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.parse_combo,
         ]
 
+    def _dialog_comboboxes(self) -> list[QComboBox]:
+        combos: list[QComboBox] = []
+        if self._metadata_scrape_provider_combo is not None:
+            combos.append(self._metadata_scrape_provider_combo)
+        if self._danmaku_source_search_provider_combo is not None:
+            combos.append(self._danmaku_source_search_provider_combo)
+        return combos
+
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
             return label
@@ -1220,11 +1263,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         *,
         minimum_contents_length: int,
         maximum_width: int | None = None,
+        fixed_height: int | None = None,
     ) -> None:
         combo.setCursor(Qt.CursorShape.PointingHandCursor)
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(minimum_contents_length)
         combo.setMaxVisibleItems(12)
+        if fixed_height is not None:
+            combo.setFixedHeight(fixed_height)
         if maximum_width is not None:
             combo.setMaximumWidth(maximum_width)
 
@@ -5556,6 +5602,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
 
         self._metadata_scrape_dialog = dialog
+        self._apply_theme()
         return dialog
 
     def _populate_metadata_scrape_provider_options(self) -> None:
@@ -5909,6 +5956,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._handle_danmaku_search_provider_changed
         )
         self._danmaku_source_dialog = dialog
+        self._apply_theme()
         return dialog
 
     def _set_danmaku_search_provider_combo_value(self, provider_key: str) -> None:

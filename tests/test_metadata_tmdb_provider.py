@@ -38,6 +38,7 @@ class FakeTMDBClient:
 
 def test_infer_tmdb_media_type_uses_category_name() -> None:
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="电影")) == "movie"
+    assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", type_name="电影")) == "movie"
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="动漫")) == "tv"
     assert infer_tmdb_media_type(MetadataQuery(title="掩耳盗邻第二季", category_name="")) == "tv"
     assert infer_tmdb_media_type(MetadataQuery(title="七王国的骑士 第一季", category_name="")) == "tv"

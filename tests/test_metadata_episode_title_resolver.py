@@ -162,3 +162,24 @@ def test_build_provider_episode_playlist_maps_bangumi_episode_names() -> None:
         "第1集 天黑别出门",
         "第2集 我是霸体",
     ]
+
+
+def test_build_provider_episode_playlist_skips_movie_vod_when_only_type_name_marks_movie() -> None:
+    vod = VodItem(vod_id="v1", vod_name="长安的荔枝", vod_year="2025", type_name="电影")
+    playlist = [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")]
+    match = MetadataMatch(
+        provider="tencent",
+        provider_id="tx:1",
+        title="长安的荔枝",
+        year="2025",
+        raw={"episode_sites": [{"episodeInfoList": [{"title": "第01话 误匹配标题"}]}]},
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is None

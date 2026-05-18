@@ -1364,6 +1364,66 @@ def test_controller_uses_media_title_only_for_short_bare_numeric_playlists() -> 
     assert calls == [("search", "疯狂动物城2|/play/1")]
 
 
+def test_controller_movie_category_from_list_prevents_episode_title_enhancer_for_plugin_detail() -> None:
+    class MovieCategorySpider(FakeSpider):
+        def homeContent(self, filter):
+            return {
+                "class": [{"type_id": "movie", "type_name": "电影"}],
+                "list": [],
+            }
+
+        def categoryContent(self, tid, pg, filter, extend):
+            assert tid == "movie"
+            return {
+                "list": [
+                    {
+                        "vod_id": "/detail/movie-1",
+                        "vod_name": "疯狂动物城2",
+                        "vod_pic": "poster-cat",
+                    }
+                ],
+                "page": pg,
+                "pagecount": 1,
+                "total": 1,
+            }
+
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "疯狂动物城2",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "1$/play/1#2$/play/2",
+                    }
+                ]
+            }
+
+    marker = object()
+
+    def episode_title_enhancer_factory(**kwargs):
+        vod = kwargs["vod"]
+        return None if getattr(vod, "category_name", "") == "电影" else marker
+
+    controller = SpiderPluginController(
+        MovieCategorySpider(),
+        plugin_name="布布影视",
+        search_enabled=True,
+        episode_title_enhancer_factory=episode_title_enhancer_factory,
+    )
+
+    items, total = controller.load_items("movie", 1)
+    assert total == 1
+    assert items[0].category_name == "电影"
+
+    request = controller.build_request("/detail/movie-1")
+
+    assert request.vod.category_name == "电影"
+    assert request.playlist[0].category_name == "电影"
+    assert request.episode_title_enhancer is None
+
+
 def test_controller_keeps_implicit_numeric_suffix_for_long_bare_numeric_playlists() -> None:
     calls: list[tuple[str, str]] = []
 

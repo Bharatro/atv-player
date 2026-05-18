@@ -31,10 +31,14 @@ def _season_number_from_provider_id(provider_id: str) -> tuple[str, int | None]:
 
 
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
-    category = str(query.category_name or "").strip().lower()
-    if any(token in category for token in ("电影", "影片", "movie")):
+    media_hints = " ".join(
+        str(value or "").strip().lower()
+        for value in (query.category_name, query.type_name)
+        if str(value or "").strip()
+    )
+    if any(token in media_hints for token in ("电影", "影片", "movie")):
         return "movie"
-    if any(token in category for token in ("电视剧", "剧集", "动漫", "番剧", "综艺", "纪录片", "tv")):
+    if any(token in media_hints for token in ("电视剧", "剧集", "动漫", "番剧", "综艺", "纪录片", "tv")):
         return "tv"
     if _title_has_season_marker(query.title):
         return "tv"

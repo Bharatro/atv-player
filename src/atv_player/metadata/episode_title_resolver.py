@@ -44,6 +44,7 @@ def _candidate_supports_episode_title_rewrite(
         MetadataQuery(
             title=str(vod.vod_name or "").strip(),
             year=str(vod.vod_year or "").strip(),
+            type_name=str(vod.type_name or "").strip(),
             category_name=str(vod.category_name or "").strip(),
         )
     )

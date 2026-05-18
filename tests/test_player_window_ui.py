@@ -3348,11 +3348,13 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
     theme = player_window_module.current_resolved_theme()
     player_tokens = manager.player_tokens_for(theme)
 
-    assert "min-height: 30px" in window.speed_combo.styleSheet()
+    assert "min-height: 28px" in window.speed_combo.styleSheet()
     assert (
-        "QComboBox {\n        min-height: 30px;\n        padding: 0 18px 0 4px;\n        border: none;"
+        "QComboBox {\n        min-height: 28px;\n        padding: 0 18px 0 4px;\n        border: none;"
         in window.speed_combo.styleSheet()
     )
+    assert window.speed_combo.minimumHeight() == 28
+    assert window.speed_combo.maximumHeight() == 28
     assert "background: transparent;" in window.speed_combo.styleSheet()
     assert "#ffffff" not in window.speed_combo.styleSheet()
     assert "background: transparent;" in window.subtitle_combo.styleSheet()
@@ -3362,6 +3364,64 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
     assert f"background: {player_tokens.player_button_bg};" in popup_qss
     assert f"color: {player_tokens.player_text_on_dark};" in popup_qss
     assert f"selection-background-color: {player_tokens.player_button_hover_bg};" in popup_qss
+
+
+def test_player_window_dark_theme_player_combo_uses_enabled_border_and_muted_disabled_state(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.subtitle_combo.setEnabled(False)
+    window._apply_theme()
+
+    player_tokens = manager.player_tokens_for("dark")
+
+    assert window.speed_combo.property("flat_combo_border_color") == player_tokens.player_button_border
+    assert window.subtitle_combo.property("flat_combo_disabled_text_color") == player_tokens.player_button_border
+    assert window.subtitle_combo.property("flat_combo_disabled_arrow_color") == player_tokens.player_button_border
+    assert window.subtitle_combo.property("flat_combo_disabled_field_bg") == player_tokens.player_button_pressed_bg
+    assert window.subtitle_combo.property("flat_combo_disabled_border_color") == "transparent"
+    assert f"background: {player_tokens.player_button_pressed_bg};" in window.subtitle_combo.styleSheet()
+
+
+def test_player_window_dialog_provider_combos_use_bordered_theme_after_creation(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://stream.example/1.m3u8",
+                media_title="深空彼岸",
+                danmaku_search_title="深空彼岸",
+                danmaku_search_episode="1集",
+                danmaku_search_query="深空彼岸 1集",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._open_danmaku_source_dialog()
+
+    tokens = player_window_module.current_theme_manager().tokens_for(player_window_module.current_resolved_theme())
+
+    assert window._metadata_scrape_provider_combo is not None
+    assert window._danmaku_source_search_provider_combo is not None
+    assert window._metadata_scrape_provider_combo.property("flat_combo_border_color") == tokens.input_border
+    assert window._danmaku_source_search_provider_combo.property("flat_combo_border_color") == tokens.input_border
+    assert window._metadata_scrape_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
+    assert window._danmaku_source_search_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
 
 
 def test_player_window_keeps_sidebar_route_combos_readable_on_light_surfaces(qtbot) -> None:

@@ -709,10 +709,43 @@ class SpiderPluginController:
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
+        self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
 
     def _map_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
+
+    def _category_name_for_category_id(self, category_id: str) -> str:
+        normalized_category_id = str(category_id or "").strip()
+        if not normalized_category_id or normalized_category_id == "home":
+            return ""
+        for category in self._home_categories:
+            if str(category.type_id or "").strip() == normalized_category_id:
+                return str(category.type_name or "").strip()
+        return ""
+
+    def _annotate_items_with_category(self, items: list[VodItem], *, category_id: str = "") -> list[VodItem]:
+        fallback_category_name = self._category_name_for_category_id(category_id)
+        annotated: list[VodItem] = []
+        for item in items:
+            if fallback_category_name and not str(item.category_name or "").strip():
+                item.category_name = fallback_category_name
+            annotated.append(item)
+            if item.vod_id:
+                self._items_by_vod_id[str(item.vod_id)] = replace(item)
+        return annotated
+
+    def _apply_cached_item_metadata(self, detail: VodItem, source_vod_id: str) -> VodItem:
+        fallback = self._items_by_vod_id.get(str(source_vod_id or "").strip())
+        if fallback is None:
+            fallback = self._items_by_vod_id.get(str(detail.vod_id or "").strip())
+        if fallback is None:
+            return detail
+        if not str(detail.type_name or "").strip():
+            detail.type_name = str(fallback.type_name or "").strip()
+        if not str(detail.category_name or "").strip():
+            detail.category_name = str(fallback.category_name or "").strip()
+        return detail
 
     def _detect_search_supports_category(self) -> bool:
         if not self.supports_search:
@@ -743,6 +776,7 @@ class SpiderPluginController:
         ]
         items = self._map_items(payload)
         if items:
+            items = self._annotate_items_with_category(items)
             categories = [DoubanCategory(type_id="home", type_name="推荐"), *categories]
         self._home_categories = categories
         self._home_items = items
@@ -830,7 +864,7 @@ class SpiderPluginController:
                 page,
             )
             raise ApiError(str(exc)) from exc
-        items = self._map_items(payload)
+        items = self._annotate_items_with_category(self._map_items(payload), category_id=category_id)
         total = int(payload.get("total") or 0)
         if total <= 0:
             total = len(items)
@@ -860,7 +894,7 @@ class SpiderPluginController:
                 category,
             )
             raise ApiError(str(exc)) from exc
-        items = self._map_items(payload)
+        items = self._annotate_items_with_category(self._map_items(payload), category_id=category_id)
         total = int(payload.get("total") or len(items))
         return items, total
 
@@ -2029,6 +2063,7 @@ class SpiderPluginController:
         try:
             raw_detail = payload["list"][0]
             detail = _map_vod_item(raw_detail)
+            detail = self._apply_cached_item_metadata(detail, vod_id)
             detail.detail_fields = _map_playback_detail_fields(raw_detail.get("ext") if isinstance(raw_detail, Mapping) else None)
         except (KeyError, IndexError) as exc:
             raise ValueError(f"没有可播放的项目: {vod_id}") from exc

@@ -25,7 +25,7 @@ class FlatComboBox(QComboBox):
 
         if self.isEnabled():
             background = self._resolved_color("flat_combo_field_bg", QColor(0, 0, 0, 0))
-            border = QColor(0, 0, 0, 0)
+            border = self._resolved_color("flat_combo_border_color", QColor(0, 0, 0, 0))
             if self.underMouse():
                 background = self._resolved_color("flat_combo_hover_field_bg", background)
                 border = self._resolved_color("flat_combo_hover_border_color", border)
@@ -83,6 +83,7 @@ def configure_flat_combobox(
     disabled_text_color: str | None = None,
     arrow_color: str | None = None,
     disabled_arrow_color: str | None = None,
+    border_color: str | None = None,
     field_bg: str | None = None,
     hover_field_bg: str | None = None,
     disabled_field_bg: str | None = None,
@@ -94,6 +95,7 @@ def configure_flat_combobox(
     indicator_padding: int = 40,
     drop_down_width: int = 30,
 ) -> None:
+    combo.setProperty("flat_combo_border_color", border_color or "")
     combo.setProperty("flat_combo_text_color", text_color or "")
     combo.setProperty("flat_combo_disabled_text_color", disabled_text_color or "")
     combo.setProperty("flat_combo_arrow_color", arrow_color or "")
@@ -442,7 +444,7 @@ def build_combobox_qss(
         border: 1px solid {resolved_focus_border_color};
     }}
     QComboBox:disabled {{
-        border: none;
+        border: 1px solid {resolved_disabled_border_color};
         background: {resolved_disabled_field_bg};
         color: {resolved_disabled_text_color};
     }}
