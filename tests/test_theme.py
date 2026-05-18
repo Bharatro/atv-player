@@ -73,6 +73,19 @@ def test_build_application_stylesheet_uses_borderless_default_comboboxes() -> No
     assert "border: none;" in qss
 
 
+def test_build_application_stylesheet_styles_tooltips_with_subtle_panel_border() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = manager.build_application_stylesheet("dark")
+
+    assert "QToolTip {" in qss
+    assert f"background-color: {tokens.panel_bg};" in qss
+    assert f"color: {tokens.text_primary};" in qss
+    assert f"border: 1px solid {tokens.border_subtle};" in qss
+    assert "border-radius: 10px;" in qss
+
+
 def test_flat_combobox_avoids_native_top_border_line_when_background_is_transparent() -> None:
     app = QApplication.instance() or QApplication([])
     manager = ThemeManager(system_theme_getter=lambda: "light")

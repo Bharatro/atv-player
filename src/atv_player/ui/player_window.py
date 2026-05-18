@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QDialog,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -1223,6 +1224,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._danmaku_source_search_provider_combo is not None:
             combos.append(self._danmaku_source_search_provider_combo)
         return combos
+
+    def _set_fixed_control_height(self, widget: QWidget | None, height: int) -> None:
+        if widget is None:
+            return
+        widget.setFixedHeight(height)
+
+    def _refresh_metadata_scrape_search_row_heights(self) -> None:
+        self._set_fixed_control_height(self._metadata_scrape_title_edit, 34)
+        self._set_fixed_control_height(self._metadata_scrape_year_edit, 34)
+        self._set_fixed_control_height(self._metadata_scrape_provider_combo, 34)
+
+    def _refresh_danmaku_source_search_row_heights(self) -> None:
+        self._set_fixed_control_height(self._danmaku_source_title_edit, 34)
+        self._set_fixed_control_height(self._danmaku_source_episode_edit, 34)
+        self._set_fixed_control_height(self._danmaku_source_search_provider_combo, 34)
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
@@ -5559,25 +5575,21 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.resize(760, 480)
         layout = QVBoxLayout(dialog)
 
-        search_row = QHBoxLayout()
-        title_column = QVBoxLayout()
-        title_column.addWidget(QLabel("标题", dialog))
+        search_row = QGridLayout()
+        search_row.setHorizontalSpacing(6)
+        search_row.setVerticalSpacing(6)
+        search_row.addWidget(QLabel("标题", dialog), 0, 0)
         self._metadata_scrape_title_edit = QLineEdit(dialog)
-        title_column.addWidget(self._metadata_scrape_title_edit)
-
-        year_column = QVBoxLayout()
-        year_column.addWidget(QLabel("年份", dialog))
+        search_row.addWidget(self._metadata_scrape_title_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("年份", dialog), 0, 1)
         self._metadata_scrape_year_edit = QLineEdit(dialog)
-        year_column.addWidget(self._metadata_scrape_year_edit)
-
-        provider_column = QVBoxLayout()
-        provider_column.addWidget(QLabel("搜索来源", dialog))
+        search_row.addWidget(self._metadata_scrape_year_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("搜索来源", dialog), 0, 2)
         self._metadata_scrape_provider_combo = FlatComboBox(dialog)
-        provider_column.addWidget(self._metadata_scrape_provider_combo)
-
-        search_row.addLayout(title_column, 2)
-        search_row.addLayout(year_column, 1)
-        search_row.addLayout(provider_column, 1)
+        search_row.addWidget(self._metadata_scrape_provider_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.setColumnStretch(0, 2)
+        search_row.setColumnStretch(1, 1)
+        search_row.setColumnStretch(2, 1)
         layout.addLayout(search_row)
 
         columns = QHBoxLayout()
@@ -5609,6 +5621,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         self._metadata_scrape_dialog = dialog
         self._apply_theme()
+        self._refresh_metadata_scrape_search_row_heights()
         return dialog
 
     def _populate_metadata_scrape_provider_options(self) -> None:
@@ -5658,6 +5671,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             provider_index = max(0, self._metadata_scrape_provider_combo.findData(provider_value))
             self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
+        self._refresh_metadata_scrape_search_row_heights()
 
     def _metadata_scrape_current_title(self) -> str:
         return self._metadata_scrape_current_query()[0]
@@ -5917,24 +5931,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.setWindowTitle("弹幕源")
         dialog.resize(760, 480)
         layout = QVBoxLayout(dialog)
-        search_row = QHBoxLayout()
-        title_column = QVBoxLayout()
-        title_column.addWidget(QLabel("媒体标题", dialog))
+        search_row = QGridLayout()
+        search_row.setHorizontalSpacing(6)
+        search_row.setVerticalSpacing(6)
+        search_row.addWidget(QLabel("媒体标题", dialog), 0, 0)
         self._danmaku_source_title_edit = QLineEdit(dialog)
-        title_column.addWidget(self._danmaku_source_title_edit)
-        episode_column = QVBoxLayout()
-        episode_column.addWidget(QLabel("集数", dialog))
+        search_row.addWidget(self._danmaku_source_title_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("集数", dialog), 0, 1)
         self._danmaku_source_episode_edit = QLineEdit(dialog)
-        episode_column.addWidget(self._danmaku_source_episode_edit)
-        source_column = QVBoxLayout()
-        source_column.addWidget(QLabel("搜索来源", dialog))
+        search_row.addWidget(self._danmaku_source_episode_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("搜索来源", dialog), 0, 2)
         self._danmaku_source_search_provider_combo = FlatComboBox(dialog)
         for provider_key, provider_label in _DANMAKU_SEARCH_PROVIDER_OPTIONS:
             self._danmaku_source_search_provider_combo.addItem(provider_label, provider_key)
-        source_column.addWidget(self._danmaku_source_search_provider_combo)
-        search_row.addLayout(title_column, 2)
-        search_row.addLayout(episode_column, 1)
-        search_row.addLayout(source_column, 1)
+        search_row.addWidget(self._danmaku_source_search_provider_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.setColumnStretch(0, 2)
+        search_row.setColumnStretch(1, 1)
+        search_row.setColumnStretch(2, 1)
         layout.addLayout(search_row)
         columns = QHBoxLayout()
         self._danmaku_source_provider_list = QListWidget(dialog)
@@ -5963,6 +5976,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         )
         self._danmaku_source_dialog = dialog
         self._apply_theme()
+        self._refresh_danmaku_source_search_row_heights()
         return dialog
 
     def _set_danmaku_search_provider_combo_value(self, provider_key: str) -> None:
@@ -6096,6 +6110,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
         self._refresh_danmaku_source_dialog_actions(current_item)
         dialog.show()
+        self._refresh_danmaku_source_search_row_heights()
         dialog.raise_()
         dialog.activateWindow()
         if (

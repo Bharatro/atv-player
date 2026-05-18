@@ -3421,6 +3421,16 @@ def test_player_window_dialog_provider_combos_use_bordered_theme_after_creation(
     assert window._danmaku_source_search_provider_combo.property("flat_combo_border_color") == tokens.input_border
     assert window._metadata_scrape_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
     assert window._danmaku_source_search_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
+    assert window._metadata_scrape_title_edit.height() == 34
+    assert window._metadata_scrape_year_edit.height() == 34
+    assert window._metadata_scrape_provider_combo.height() == 34
+    assert window._metadata_scrape_title_edit.y() == window._metadata_scrape_provider_combo.y()
+    assert window._metadata_scrape_year_edit.y() == window._metadata_scrape_provider_combo.y()
+    assert window._danmaku_source_title_edit.height() == 34
+    assert window._danmaku_source_episode_edit.height() == 34
+    assert window._danmaku_source_search_provider_combo.height() == 34
+    assert window._danmaku_source_title_edit.y() == window._danmaku_source_search_provider_combo.y()
+    assert window._danmaku_source_episode_edit.y() == window._danmaku_source_search_provider_combo.y()
 
 
 def test_player_window_keeps_sidebar_route_combos_readable_on_light_surfaces(qtbot) -> None:

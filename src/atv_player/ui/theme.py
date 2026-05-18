@@ -344,6 +344,13 @@ class ThemeManager:
         QPushButton:hover {{
             border-color: {tokens.accent_hover};
         }}
+        QToolTip {{
+            background-color: {tokens.panel_bg};
+            color: {tokens.text_primary};
+            border: 1px solid {tokens.border_subtle};
+            border-radius: 10px;
+            padding: 4px 8px;
+        }}
         """
 
     @staticmethod
