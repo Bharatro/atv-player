@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
@@ -283,7 +283,7 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.volume_layout.indexOf(window.mute_button) == 0
     assert window.volume_layout.indexOf(window.volume_slider) == 1
     assert window.volume_slider.maximumWidth() == 180
-    assert window.bottom_area.maximumHeight() == 72
+    assert window.bottom_area.maximumHeight() == 88
     assert window.bottom_layout.spacing() == 4
     assert window.opening_spin.prefix() == "片头 "
     assert window.ending_spin.prefix() == "片尾 "
@@ -3151,9 +3151,24 @@ def test_player_window_uses_compact_playlist_item_density(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window.playlist.spacing() == 2
-    assert "min-height: 28px" in window.playlist.styleSheet()
-    assert "padding: 6px 10px" in window.playlist.styleSheet()
+    assert window.playlist.spacing() == 1
+    assert "min-height: 24px" in window.playlist.styleSheet()
+    assert "padding: 4px 8px" in window.playlist.styleSheet()
+
+
+def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.subtitle_combo.setEnabled(False)
+    window._apply_theme()
+
+    assert "min-height: 30px" in window.speed_combo.styleSheet()
+    assert "QComboBox {\n        min-height: 30px;\n        padding: 0 40px 0 12px;\n        border: none;" in window.speed_combo.styleSheet()
+    assert "border-left: none;" in window.speed_combo.styleSheet()
+    assert "background: #ffffff;" in window.speed_combo.styleSheet()
+    assert "QComboBox:disabled" in window.subtitle_combo.styleSheet()
+    assert "QComboBox:disabled::drop-down" in window.subtitle_combo.styleSheet()
 
 
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
@@ -6071,10 +6086,30 @@ def test_player_window_applies_strong_feedback_slider_styles(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
+    assert "QSlider {\n        background: transparent;\n        border: none;" in window.progress.styleSheet()
     assert "QSlider::sub-page:horizontal" in window.progress.styleSheet()
     assert "QSlider::handle:horizontal:hover" in window.progress.styleSheet()
-    assert "height: 8px" in window.progress.styleSheet()
-    assert "height: 6px" in window.volume_slider.styleSheet()
+    assert "QSlider::groove:horizontal {\n        height: 4px;\n        border: none;\n        border-radius: 2px;\n        background: transparent;" in window.progress.styleSheet()
+    assert "height: 4px" in window.progress.styleSheet()
+    assert "width: 12px" in window.progress.styleSheet()
+    assert "height: 4px" in window.volume_slider.styleSheet()
+
+
+def test_player_window_progress_row_background_matches_immersive_panel(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.resize(1600, 120)
+    window.show()
+    qtbot.waitExposed(window)
+    QApplication.processEvents()
+
+    sample = window.progress.mapTo(window, QPoint(window.progress.width() // 2, window.progress.height() // 2))
+    color = window.grab().toImage().pixelColor(sample)
+    tokens = ThemeManager(system_theme_getter=lambda: "light").player_tokens_for("light")
+
+    assert color.name() == QColor(tokens.player_overlay_bg).name()
 
 
 def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
@@ -6084,11 +6119,13 @@ def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
     assert window.playlist_group_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
     assert window.playlist_group_combo.minimumContentsLength() == 10
     assert window.playlist_source_combo.minimumContentsLength() == 12
-    assert window.speed_combo.minimumContentsLength() == 5
-    assert window.subtitle_combo.minimumContentsLength() == 10
-    assert window.audio_combo.minimumContentsLength() == 8
-    assert window.parse_combo.minimumContentsLength() == 7
-    assert "min-height: 32px" in window.speed_combo.styleSheet()
+    assert window.speed_combo.minimumContentsLength() == 4
+    assert window.subtitle_combo.minimumContentsLength() == 8
+    assert window.danmaku_combo.minimumContentsLength() == 4
+    assert window.video_quality_combo.minimumContentsLength() == 5
+    assert window.audio_combo.minimumContentsLength() == 6
+    assert window.parse_combo.minimumContentsLength() == 5
+    assert "min-height: 30px" in window.speed_combo.styleSheet()
 
 
 def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> None:
@@ -15458,7 +15495,15 @@ def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
     margins = window.bottom_layout.contentsMargins()
 
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (12, 6, 12, 6)
-    assert window.bottom_area.maximumHeight() == 72
+    assert window.bottom_area.maximumHeight() == 88
+
+
+def test_player_window_root_layout_has_no_gap_between_video_and_controls(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.layout() is not None
+    assert window.layout().spacing() == 0
 
 
 def test_player_window_mouse_activity_in_video_restores_cursor_and_starts_autohide(qtbot) -> None:

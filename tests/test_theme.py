@@ -46,6 +46,20 @@ def test_build_combobox_qss_uses_brand_tokens() -> None:
     assert tokens.accent in qss
     assert "QComboBox::drop-down" in qss
     assert "QAbstractItemView" in qss
+    assert "QComboBox:disabled" in qss
+    assert "QComboBox:disabled::drop-down" in qss
+
+
+def test_build_borderless_combobox_qss_blends_drop_down_with_main_field() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    qss = theme_module.build_combobox_qss(tokens, borderless=True, min_height=30)
+
+    assert "border: none;" in qss
+    assert "border-left: none;" in qss
+    assert f"background: {tokens.input_bg};" in qss
+    assert f"background: {tokens.panel_alt_bg};" in qss
 
 
 def test_build_slider_qss_uses_brand_fill_and_hover_handle() -> None:
@@ -55,8 +69,16 @@ def test_build_slider_qss_uses_brand_fill_and_hover_handle() -> None:
     qss = theme_module.build_slider_qss(tokens, groove_height=8, handle_diameter=18)
 
     assert tokens.accent in qss
+    assert "QSlider {\n        background: transparent;\n        border: none;" in qss
     assert "QSlider::sub-page:horizontal" in qss
+    assert "QSlider::groove:horizontal" in qss
+    assert "QSlider::add-page:horizontal" in qss
     assert "QSlider::handle:horizontal:hover" in qss
+    assert "QSlider::groove:horizontal {\n        height: 8px;\n        border: none;\n        border-radius: 4px;\n        background: transparent;" in qss
+    assert "QSlider::add-page:horizontal {\n        height: 8px;\n        border: none;\n        border-radius: 4px;\n        background: transparent;" in qss
+    assert f"background: {tokens.accent};" in qss
+    assert f"background: {tokens.player_text_on_dark};" in qss
+    assert "border: none;" in qss
 
 
 def test_build_player_list_qss_uses_brand_state_tokens() -> None:
@@ -68,8 +90,8 @@ def test_build_player_list_qss_uses_brand_state_tokens() -> None:
     assert tokens.accent in qss
     assert "QListWidget::item:selected" in qss
     assert "QScrollBar:vertical" in qss
-    assert "min-height: 28px" in qss
-    assert "padding: 6px 10px" in qss
+    assert "min-height: 24px" in qss
+    assert "padding: 4px 8px" in qss
 
 
 def test_build_player_text_panel_qss_uses_brand_panel_tokens() -> None:

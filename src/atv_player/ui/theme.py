@@ -270,29 +270,48 @@ def build_search_line_edit_qss(tokens: ThemeTokens, *, border_radius: int = 15, 
     """
 
 
-def build_combobox_qss(tokens: ThemeTokens, *, border_radius: int = 14, min_height: int = 34) -> str:
+def build_combobox_qss(
+    tokens: ThemeTokens,
+    *,
+    border_radius: int = 14,
+    min_height: int = 34,
+    borderless: bool = False,
+) -> str:
+    border = "none" if borderless else f"1px solid {tokens.input_border}"
+    hover_border = "none" if borderless else tokens.input_hover_border
+    focus_border = "none" if borderless else f"1px solid {tokens.input_focus_ring}"
+    disabled_border = "none" if borderless else tokens.border_subtle
+    drop_down_border_left = "none" if borderless else f"1px solid {tokens.input_border}"
+    drop_down_bg = tokens.input_bg if borderless else tokens.panel_alt_bg
+    disabled_drop_down_border_left = "none" if borderless else f"1px solid {tokens.border_subtle}"
+    disabled_drop_down_bg = tokens.panel_alt_bg if borderless else tokens.panel_bg
     return f"""
     QComboBox {{
         min-height: {min_height}px;
         padding: 0 40px 0 12px;
-        border: 1px solid {tokens.input_border};
+        border: {border};
         border-radius: {border_radius}px;
         background: {tokens.input_bg};
         color: {tokens.text_primary};
     }}
     QComboBox:hover {{
-        border-color: {tokens.input_hover_border};
+        border-color: {hover_border};
     }}
     QComboBox:focus {{
-        border: 1px solid {tokens.input_focus_ring};
+        border: {focus_border};
+    }}
+    QComboBox:disabled {{
+        border-color: {disabled_border};
+        background: {tokens.panel_alt_bg};
+        color: {tokens.text_secondary};
     }}
     QComboBox::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
         width: 30px;
         border: none;
-        border-left: 1px solid {tokens.input_border};
-        background: {tokens.panel_alt_bg};
+        border-left: {drop_down_border_left};
+        background: {drop_down_bg};
         border-top-right-radius: {max(0, border_radius - 1)}px;
         border-bottom-right-radius: {max(0, border_radius - 1)}px;
     }}
@@ -302,6 +321,13 @@ def build_combobox_qss(tokens: ThemeTokens, *, border_radius: int = 14, min_heig
         border-left: 5px solid transparent;
         border-right: 5px solid transparent;
         border-top: 6px solid {tokens.text_secondary};
+    }}
+    QComboBox:disabled::drop-down {{
+        border-left: {disabled_drop_down_border_left};
+        background: {disabled_drop_down_bg};
+    }}
+    QComboBox:disabled::down-arrow {{
+        border-top: 6px solid {tokens.border_subtle};
     }}
     QComboBox QAbstractItemView {{
         background: {tokens.menu_bg};
@@ -415,9 +441,9 @@ def build_player_list_qss(tokens: ThemeTokens) -> str:
         outline: 0;
     }}
     QListWidget::item {{
-        min-height: 28px;
+        min-height: 24px;
         margin: 1px 0;
-        padding: 6px 10px;
+        padding: 4px 8px;
         border: 1px solid transparent;
         border-radius: 10px;
         background: transparent;
@@ -521,11 +547,14 @@ def build_player_tabbar_qss(tokens: ThemeTokens) -> str:
 
 def build_player_immersive_qss(tokens: ThemeTokens) -> str:
     return f"""
+    background-color: {tokens.player_overlay_bg};
+    color: {tokens.player_text_on_dark};
     QWidget {{
-        background-color: {tokens.player_overlay_bg};
+        background-color: transparent;
         color: {tokens.player_text_on_dark};
     }}
     QLabel {{
+        background-color: transparent;
         color: {tokens.player_text_on_dark};
     }}
     QPushButton {{
@@ -588,27 +617,34 @@ def build_slider_qss(
     hover_margin = max(0, (hover_diameter - groove_height) // 2)
     fill = add_page_color or tokens.accent
     return f"""
+    QSlider {{
+        background: transparent;
+        border: none;
+    }}
     QSlider::groove:horizontal {{
         height: {groove_height}px;
+        border: none;
         border-radius: {max(1, groove_height // 2)}px;
-        background: {tokens.player_button_pressed_bg};
+        background: transparent;
     }}
     QSlider::sub-page:horizontal {{
         height: {groove_height}px;
+        border: none;
         border-radius: {max(1, groove_height // 2)}px;
         background: {fill};
     }}
     QSlider::add-page:horizontal {{
         height: {groove_height}px;
+        border: none;
         border-radius: {max(1, groove_height // 2)}px;
-        background: {tokens.player_button_border};
+        background: transparent;
     }}
     QSlider::handle:horizontal {{
         width: {handle_diameter}px;
         height: {handle_diameter}px;
         margin: -{handle_margin}px 0;
         border-radius: {max(1, handle_diameter // 2)}px;
-        border: 2px solid {fill};
+        border: none;
         background: {tokens.player_text_on_dark};
     }}
     QSlider::handle:horizontal:hover {{
@@ -616,21 +652,20 @@ def build_slider_qss(
         height: {hover_diameter}px;
         margin: -{hover_margin}px 0;
         border-radius: {max(1, hover_diameter // 2)}px;
-        border: 2px solid {tokens.accent_hover};
-        background: {tokens.player_text_on_dark};
+        border: none;
+        background: {tokens.accent};
     }}
     QSlider::handle:horizontal:pressed {{
-        border: 2px solid {tokens.accent_hover};
-        background: {fill};
+        border: none;
+        background: {tokens.accent_hover};
     }}
     QSlider:disabled::groove:horizontal {{
-        background: {tokens.player_button_pressed_bg};
+        background: transparent;
     }}
     QSlider:disabled::sub-page:horizontal {{
         background: {tokens.player_button_border};
     }}
     QSlider:disabled::handle:horizontal {{
-        border-color: {tokens.player_button_border};
         background: {tokens.text_secondary};
     }}
     """

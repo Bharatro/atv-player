@@ -204,6 +204,41 @@ class ClickableSlider(QSlider):
         super().__init__(orientation, parent)
         self._hover_tooltip_formatter: Callable[[int], str] | None = None
 
+    def paintEvent(self, event) -> None:
+        if self.orientation() != Qt.Orientation.Horizontal:
+            super().paintEvent(event)
+            return
+
+        tokens = current_theme_manager().player_tokens_for(current_resolved_theme())
+        track_height = max(1, int(self.property("track_height") or 4))
+        handle_diameter = max(1, int(self.property("handle_diameter") or 12))
+        available_width = max(1, self.width() - handle_diameter)
+        value_range = max(1, self.maximum() - self.minimum())
+        progress = (self.value() - self.minimum()) / value_range
+        handle_center_x = handle_diameter / 2 + progress * available_width
+        track_top = (self.height() - track_height) / 2
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor(tokens.player_overlay_bg))
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        if self.isEnabled() and handle_center_x > handle_diameter / 2:
+            painter.setBrush(QColor(tokens.accent))
+            painter.drawRoundedRect(0, track_top, handle_center_x, track_height, track_height / 2, track_height / 2)
+
+        handle_color = tokens.player_text_on_dark
+        if not self.isEnabled():
+            handle_color = tokens.text_secondary
+        elif self.isSliderDown():
+            handle_color = tokens.accent_hover
+        elif self.underMouse():
+            handle_color = tokens.accent
+        painter.setBrush(QColor(handle_color))
+        handle_top = (self.height() - handle_diameter) / 2
+        painter.drawEllipse(handle_center_x - handle_diameter / 2, handle_top, handle_diameter, handle_diameter)
+        painter.end()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             option = QStyleOptionSlider()
@@ -241,7 +276,7 @@ class ClickableSlider(QSlider):
 
     def _pixel_pos_to_value(self, pos: int) -> int:
         groove_rect = self.rect()
-        handle_width = 12
+        handle_width = max(1, int(self.property("handle_diameter") or 12))
         available_width = groove_rect.width() - handle_width
 
         if available_width <= 0:
@@ -637,7 +672,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_tabs.addTab("原始文件名")
         self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
-        self.playlist.setSpacing(2)
+        self.playlist.setSpacing(1)
         self.playlist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist.customContextMenuRequested.connect(lambda pos: self._show_playlist_context_menu(pos))
         self.playlist.viewport().installEventFilter(self)
@@ -706,12 +741,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.parse_combo = QComboBox()
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
-        self._configure_control_combo(self.speed_combo, minimum_contents_length=5)
-        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=10)
-        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=6)
-        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=7)
-        self._configure_control_combo(self.audio_combo, minimum_contents_length=8)
-        self._configure_control_combo(self.parse_combo, minimum_contents_length=7)
+        self._configure_control_combo(self.speed_combo, minimum_contents_length=4)
+        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=8)
+        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=4)
+        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=5)
+        self._configure_control_combo(self.audio_combo, minimum_contents_length=6)
+        self._configure_control_combo(self.parse_combo, minimum_contents_length=5)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -822,7 +857,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_actions.addWidget(self.toggle_log_button)
 
         self.bottom_area = QWidget()
-        self.bottom_area.setMaximumHeight(72)
+        self.bottom_area.setObjectName("playerBottomArea")
+        self.bottom_area.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.bottom_area.setMaximumHeight(88)
         bottom_layout = QVBoxLayout(self.bottom_area)
         self.bottom_layout = bottom_layout
         bottom_layout.setContentsMargins(12, 6, 12, 6)
@@ -916,6 +953,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.main_splitter, 1)
         layout.addWidget(self.bottom_area, 0)
         if self.config and self.config.player_window_geometry:
@@ -1004,11 +1042,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
-        combo_qss = build_combobox_qss(tokens, border_radius=12, min_height=32)
+        combo_qss = build_combobox_qss(tokens, border_radius=12, min_height=30, borderless=True)
         for combo in self._themed_comboboxes():
             combo.setStyleSheet(combo_qss)
-        self.progress.setStyleSheet(build_slider_qss(player_tokens, groove_height=8, handle_diameter=18))
-        self.volume_slider.setStyleSheet(build_slider_qss(player_tokens, groove_height=6, handle_diameter=14))
+        self.progress.setProperty("track_height", 4)
+        self.progress.setProperty("handle_diameter", 12)
+        self.volume_slider.setProperty("track_height", 4)
+        self.volume_slider.setProperty("handle_diameter", 10)
+        self.progress.setStyleSheet(build_slider_qss(player_tokens, groove_height=4, handle_diameter=12))
+        self.volume_slider.setStyleSheet(build_slider_qss(player_tokens, groove_height=4, handle_diameter=10))
         self._sync_playlist_item_styles()
         for button in self._control_buttons():
             role = str(button.property("control_role") or "secondary")
