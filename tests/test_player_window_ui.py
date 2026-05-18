@@ -3182,10 +3182,18 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
     window.subtitle_combo.setEnabled(False)
     window._apply_theme()
 
+    manager = player_window_module.current_theme_manager()
+    theme = player_window_module.current_resolved_theme()
+    player_tokens = manager.player_tokens_for(theme)
+
     assert "min-height: 30px" in window.speed_combo.styleSheet()
-    assert "QComboBox {\n        min-height: 30px;\n        padding: 0 40px 0 12px;\n        border: none;" in window.speed_combo.styleSheet()
-    assert "border-left: none;" in window.speed_combo.styleSheet()
-    assert "background: #ffffff;" in window.speed_combo.styleSheet()
+    assert (
+        "QComboBox {\n        min-height: 30px;\n        padding: 0 40px 0 12px;\n        border: 1px solid transparent;"
+        in window.speed_combo.styleSheet()
+    )
+    assert f"background: {player_tokens.player_button_bg};" in window.speed_combo.styleSheet()
+    assert "#ffffff" not in window.speed_combo.styleSheet()
+    assert f"background: {player_tokens.player_controls_bg};" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled" in window.subtitle_combo.styleSheet()
     assert "QComboBox:disabled::drop-down" in window.subtitle_combo.styleSheet()
 
