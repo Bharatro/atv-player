@@ -44,6 +44,18 @@ def assert_timestamped_log_line(line: str, message: str) -> None:
     assert re.fullmatch(pattern, line), line
 
 
+def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
+    deadline = time.perf_counter() + timeout_seconds
+    while time.perf_counter() < deadline:
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        if predicate():
+            return
+        time.sleep(0.01)
+    assert predicate()
+
+
 class FakePlayerController:
     def report_progress(
         self,
@@ -3558,8 +3570,8 @@ def test_player_window_dialog_provider_combos_use_bordered_theme_after_creation(
     assert window._danmaku_source_search_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
     assert window._metadata_scrape_title_edit.height() == 42
     assert window._metadata_scrape_year_edit.height() == 42
-    assert window._metadata_scrape_category_combo.height() == 42
-    assert window._metadata_scrape_provider_combo.height() == 42
+    assert window._metadata_scrape_category_combo.property("flat_combo_height") == 42
+    assert window._metadata_scrape_provider_combo.property("flat_combo_height") == 42
     assert window._metadata_scrape_title_edit.y() == window._metadata_scrape_category_combo.y()
     assert window._metadata_scrape_year_edit.y() == window._metadata_scrape_category_combo.y()
     assert window._metadata_scrape_category_combo.y() == window._metadata_scrape_provider_combo.y()
@@ -5227,9 +5239,9 @@ def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:
     qtbot.addWidget(window)
     window.show()
 
-    root_layout = window.layout()
+    root_layout = window.content_layout()
 
-    assert root_layout is not None
+    assert window.layout() is not None
     assert root_layout.count() == 2
     assert root_layout.itemAt(0).widget() is window.main_splitter
     assert root_layout.itemAt(1).widget() is window.bottom_area
@@ -6293,6 +6305,26 @@ def test_player_window_can_hide_only_playback_log_section(qtbot) -> None:
     assert window.log_section.isHidden() is False
 
 
+def test_player_window_uses_custom_title_bar(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.title_bar().title_label.text() == "alist-tvbox 播放器"
+
+
+def test_player_window_runtime_dialogs_use_custom_title_bars(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    danmaku_settings = window._ensure_danmaku_settings_dialog()
+    metadata_scrape = window._ensure_metadata_scrape_dialog()
+    danmaku_source = window._ensure_danmaku_source_dialog()
+
+    assert danmaku_settings.title_bar().title_label.text() == "弹幕设置"
+    assert metadata_scrape.title_bar().title_label.text() == "刮削"
+    assert danmaku_source.title_bar().title_label.text() == "弹幕源"
+
+
 def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -6302,6 +6334,7 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
 
     window.toggle_fullscreen()
     assert window.isFullScreen() is True
+    assert window.title_bar().isHidden() is True
     assert window.bottom_area.isHidden() is True
     assert window.sidebar_actions_widget.isHidden() is True
     assert window.playlist.isHidden() is True
@@ -6309,6 +6342,7 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
 
     window.toggle_fullscreen()
     assert window.isFullScreen() is False
+    assert window.title_bar().isVisible() is True
     assert window.bottom_area.isHidden() is False
     assert window.sidebar_actions_widget.isHidden() is False
     assert window.playlist.isHidden() is False
@@ -12722,7 +12756,7 @@ def test_player_window_loads_danmaku_after_async_resolution_completes(qtbot) -> 
     session.playlist[0].danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
     session.playlist[0].danmaku_pending = False
 
-    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(window.video.loaded_danmaku_paths) == 1)
     assert window.danmaku_combo.currentText() == "弹幕"
 
 
@@ -12790,7 +12824,7 @@ def test_player_window_applies_saved_danmaku_line_count_after_async_resolution(q
     session.playlist[0].danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
     session.playlist[0].danmaku_pending = False
 
-    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(window.video.loaded_danmaku_paths) == 1)
     assert window.danmaku_combo.currentText() == "3行"
 
 
@@ -13399,7 +13433,12 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
 
     window._play_clicked_item(target_item)
 
-    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 2)
+    _spin_until(
+        lambda: (
+            controller.switch_calls == ["https://v.qq.com/ep2"]
+            and "第二集弹幕" in session.playlist[1].danmaku_xml
+        )
+    )
     assert controller.load_calls[-1] == "第2集"
     assert controller.switch_calls == ["https://v.qq.com/ep2"]
     assert "第二集弹幕" in session.playlist[1].danmaku_xml

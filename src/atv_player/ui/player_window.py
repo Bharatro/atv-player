@@ -109,6 +109,7 @@ from atv_player.ui.theme import (
     current_resolved_theme,
     current_theme_manager,
 )
+from atv_player.ui.window_chrome import ThemedDialogBase, ThemedWidgetWindowBase
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("", "全部"),
@@ -442,7 +443,13 @@ class _PendingPlaybackLoader:
     hydrate_only: bool = False
 
 
-class PlayerWindow(QWidget, AsyncGuardMixin):
+class _PlayerToolDialog(ThemedDialogBase):
+    def __init__(self, *, title: str, parent: QWidget, size: tuple[int, int]) -> None:
+        super().__init__(title=title, parent=parent, allow_maximize=True)
+        self.resize(*size)
+
+
+class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
@@ -505,7 +512,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         playback_parser_service=None,
         default_video_cover_loader=None,
     ) -> None:
-        super().__init__()
+        super().__init__(
+            title="alist-tvbox 播放器",
+            allow_minimize=True,
+            allow_maximize=True,
+        )
         self._init_async_guard()
         self.controller = controller
         self.config = config
@@ -975,7 +986,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
             self.main_splitter.setSizes([1, 0])
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.main_splitter, 1)
@@ -1056,6 +1067,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         theme = current_resolved_theme()
         tokens = manager.tokens_for(theme)
         player_tokens = manager.player_tokens_for(theme)
+        self.refresh_window_chrome()
         self.details.setStyleSheet(build_player_panel_qss(tokens))
         self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
         self.playlist.setStyleSheet(build_player_list_qss(tokens))
@@ -1178,6 +1190,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             icon_name = str(button.property("icon_name") or "")
             if icon_name:
                 self._set_button_icon(button, icon_name)
+        for dialog in (
+            self._danmaku_settings_dialog,
+            self._metadata_scrape_dialog,
+            self._danmaku_source_dialog,
+            self.help_dialog,
+        ):
+            refresh_window_chrome = getattr(dialog, "refresh_window_chrome", None)
+            if callable(refresh_window_chrome):
+                refresh_window_chrome()
 
     def _control_buttons(self) -> list[QPushButton]:
         return [
@@ -5482,21 +5503,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _ensure_danmaku_settings_dialog(self) -> QDialog:
         if self._danmaku_settings_dialog is not None:
             return self._danmaku_settings_dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("弹幕设置")
-        dialog.resize(420, 320)
-        layout = QVBoxLayout(dialog)
+        dialog = _PlayerToolDialog(title="弹幕设置", parent=self, size=(420, 320))
+        host = dialog.content_widget()
+        layout = dialog.content_layout()
 
         line_count_row = QHBoxLayout()
-        line_count_row.addWidget(QLabel("显示行数", dialog))
-        self._danmaku_line_count_spin = QSpinBox(dialog)
+        line_count_row.addWidget(QLabel("显示行数", host))
+        self._danmaku_line_count_spin = QSpinBox(host)
         self._danmaku_line_count_spin.setRange(1, 10)
         line_count_row.addWidget(self._danmaku_line_count_spin, 1)
         layout.addLayout(line_count_row)
 
         render_row = QHBoxLayout()
-        render_row.addWidget(QLabel("显示模式", dialog))
-        self._danmaku_render_mode_combo = FlatComboBox(dialog)
+        render_row.addWidget(QLabel("显示模式", host))
+        self._danmaku_render_mode_combo = FlatComboBox(host)
         self._danmaku_render_mode_combo.addItem("静态", "static")
         self._danmaku_render_mode_combo.addItem("仅滚动", "scroll_only")
         self._danmaku_render_mode_combo.addItem("混合", "mixed")
@@ -5504,8 +5524,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         layout.addLayout(render_row)
 
         position_row = QHBoxLayout()
-        position_row.addWidget(QLabel("位置预设", dialog))
-        self._danmaku_position_preset_combo = FlatComboBox(dialog)
+        position_row.addWidget(QLabel("位置预设", host))
+        self._danmaku_position_preset_combo = FlatComboBox(host)
         self._danmaku_position_preset_combo.addItem("顶部", "top")
         self._danmaku_position_preset_combo.addItem("顶部偏下", "upper")
         self._danmaku_position_preset_combo.addItem("中上", "mid_upper")
@@ -5514,31 +5534,31 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         layout.addLayout(position_row)
 
         color_mode_row = QHBoxLayout()
-        color_mode_row.addWidget(QLabel("颜色模式", dialog))
-        self._danmaku_color_mode_combo = FlatComboBox(dialog)
+        color_mode_row.addWidget(QLabel("颜色模式", host))
+        self._danmaku_color_mode_combo = FlatComboBox(host)
         self._danmaku_color_mode_combo.addItem("统一颜色", "uniform")
         self._danmaku_color_mode_combo.addItem("保留原色", "source")
         color_mode_row.addWidget(self._danmaku_color_mode_combo, 1)
         layout.addLayout(color_mode_row)
 
         uniform_color_row = QHBoxLayout()
-        uniform_color_row.addWidget(QLabel("统一颜色", dialog))
+        uniform_color_row.addWidget(QLabel("统一颜色", host))
         self._danmaku_uniform_color_edit = None
-        self._danmaku_uniform_color_button = QPushButton(dialog)
+        self._danmaku_uniform_color_button = QPushButton(host)
         uniform_color_row.addWidget(self._danmaku_uniform_color_button, 1)
         layout.addLayout(uniform_color_row)
 
         font_size_row = QHBoxLayout()
-        font_size_row.addWidget(QLabel("文字大小", dialog))
-        self._danmaku_font_size_spin = QSpinBox(dialog)
+        font_size_row.addWidget(QLabel("文字大小", host))
+        self._danmaku_font_size_spin = QSpinBox(host)
         self._danmaku_font_size_spin.setRange(16, 72)
         self._danmaku_font_size_spin.setSingleStep(2)
         font_size_row.addWidget(self._danmaku_font_size_spin, 1)
         layout.addLayout(font_size_row)
 
         scroll_speed_row = QHBoxLayout()
-        scroll_speed_row.addWidget(QLabel("滚动速率", dialog))
-        self._danmaku_scroll_speed_spin = QDoubleSpinBox(dialog)
+        scroll_speed_row.addWidget(QLabel("滚动速率", host))
+        self._danmaku_scroll_speed_spin = QDoubleSpinBox(host)
         self._danmaku_scroll_speed_spin.setRange(0.5, 2.0)
         self._danmaku_scroll_speed_spin.setSingleStep(0.1)
         self._danmaku_scroll_speed_spin.setDecimals(1)
@@ -5548,8 +5568,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         actions = QHBoxLayout()
         actions.addStretch(1)
-        reset_button = QPushButton("恢复默认", dialog)
-        close_button = QPushButton("关闭", dialog)
+        reset_button = QPushButton("恢复默认", host)
+        close_button = QPushButton("关闭", host)
         actions.addWidget(reset_button)
         actions.addWidget(close_button)
         layout.addLayout(actions)
@@ -5600,25 +5620,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _ensure_metadata_scrape_dialog(self) -> QDialog:
         if self._metadata_scrape_dialog is not None:
             return self._metadata_scrape_dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("刮削")
-        dialog.resize(760, 480)
-        layout = QVBoxLayout(dialog)
+        dialog = _PlayerToolDialog(title="刮削", parent=self, size=(760, 480))
+        host = dialog.content_widget()
+        layout = dialog.content_layout()
 
         search_row = QGridLayout()
         search_row.setHorizontalSpacing(6)
         search_row.setVerticalSpacing(6)
-        search_row.addWidget(QLabel("标题", dialog), 0, 0)
-        self._metadata_scrape_title_edit = QLineEdit(dialog)
+        search_row.addWidget(QLabel("标题", host), 0, 0)
+        self._metadata_scrape_title_edit = QLineEdit(host)
         search_row.addWidget(self._metadata_scrape_title_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("年份", dialog), 0, 1)
-        self._metadata_scrape_year_edit = QLineEdit(dialog)
+        search_row.addWidget(QLabel("年份", host), 0, 1)
+        self._metadata_scrape_year_edit = QLineEdit(host)
         search_row.addWidget(self._metadata_scrape_year_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("分类", dialog), 0, 2)
-        self._metadata_scrape_category_combo = FlatComboBox(dialog)
+        search_row.addWidget(QLabel("分类", host), 0, 2)
+        self._metadata_scrape_category_combo = FlatComboBox(host)
         search_row.addWidget(self._metadata_scrape_category_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("搜索来源", dialog), 0, 3)
-        self._metadata_scrape_provider_combo = FlatComboBox(dialog)
+        search_row.addWidget(QLabel("搜索来源", host), 0, 3)
+        self._metadata_scrape_provider_combo = FlatComboBox(host)
         search_row.addWidget(self._metadata_scrape_provider_combo, 1, 3, alignment=Qt.AlignmentFlag.AlignTop)
         search_row.setColumnStretch(0, 2)
         search_row.setColumnStretch(1, 1)
@@ -5627,20 +5646,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         layout.addLayout(search_row)
 
         columns = QHBoxLayout()
-        self._metadata_scrape_group_list = QListWidget(dialog)
-        self._metadata_scrape_result_list = QListWidget(dialog)
+        self._metadata_scrape_group_list = QListWidget(host)
+        self._metadata_scrape_result_list = QListWidget(host)
         columns.addWidget(self._metadata_scrape_group_list, 1)
         columns.addWidget(self._metadata_scrape_result_list, 2)
         layout.addLayout(columns)
 
-        self._metadata_scrape_status_label = QLabel("", dialog)
+        self._metadata_scrape_status_label = QLabel("", host)
         layout.addWidget(self._metadata_scrape_status_label)
 
         actions = QHBoxLayout()
-        self._metadata_scrape_rerun_button = QPushButton("重新搜索", dialog)
-        self._metadata_scrape_reset_button = QPushButton("重置", dialog)
-        self._metadata_scrape_restore_query_button = QPushButton("恢复默认搜索词", dialog)
-        self._metadata_scrape_apply_button = QPushButton("应用结果", dialog)
+        self._metadata_scrape_rerun_button = QPushButton("重新搜索", host)
+        self._metadata_scrape_reset_button = QPushButton("重置", host)
+        self._metadata_scrape_restore_query_button = QPushButton("恢复默认搜索词", host)
+        self._metadata_scrape_apply_button = QPushButton("应用结果", host)
         actions.addWidget(self._metadata_scrape_rerun_button)
         actions.addWidget(self._metadata_scrape_reset_button)
         actions.addWidget(self._metadata_scrape_restore_query_button)
@@ -6047,21 +6066,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _ensure_danmaku_source_dialog(self) -> QDialog:
         if self._danmaku_source_dialog is not None:
             return self._danmaku_source_dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("弹幕源")
-        dialog.resize(760, 480)
-        layout = QVBoxLayout(dialog)
+        dialog = _PlayerToolDialog(title="弹幕源", parent=self, size=(760, 480))
+        host = dialog.content_widget()
+        layout = dialog.content_layout()
         search_row = QGridLayout()
         search_row.setHorizontalSpacing(6)
         search_row.setVerticalSpacing(6)
-        search_row.addWidget(QLabel("媒体标题", dialog), 0, 0)
-        self._danmaku_source_title_edit = QLineEdit(dialog)
+        search_row.addWidget(QLabel("媒体标题", host), 0, 0)
+        self._danmaku_source_title_edit = QLineEdit(host)
         search_row.addWidget(self._danmaku_source_title_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("集数", dialog), 0, 1)
-        self._danmaku_source_episode_edit = QLineEdit(dialog)
+        search_row.addWidget(QLabel("集数", host), 0, 1)
+        self._danmaku_source_episode_edit = QLineEdit(host)
         search_row.addWidget(self._danmaku_source_episode_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("搜索来源", dialog), 0, 2)
-        self._danmaku_source_search_provider_combo = FlatComboBox(dialog)
+        search_row.addWidget(QLabel("搜索来源", host), 0, 2)
+        self._danmaku_source_search_provider_combo = FlatComboBox(host)
         for provider_key, provider_label in _DANMAKU_SEARCH_PROVIDER_OPTIONS:
             self._danmaku_source_search_provider_combo.addItem(provider_label, provider_key)
         search_row.addWidget(self._danmaku_source_search_provider_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
@@ -6070,18 +6088,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         search_row.setColumnStretch(2, 1)
         layout.addLayout(search_row)
         columns = QHBoxLayout()
-        self._danmaku_source_provider_list = QListWidget(dialog)
-        self._danmaku_source_option_list = QListWidget(dialog)
+        self._danmaku_source_provider_list = QListWidget(host)
+        self._danmaku_source_option_list = QListWidget(host)
         columns.addWidget(self._danmaku_source_provider_list, 1)
         columns.addWidget(self._danmaku_source_option_list, 2)
         layout.addLayout(columns)
-        self._danmaku_source_status_label = QLabel("", dialog)
+        self._danmaku_source_status_label = QLabel("", host)
         layout.addWidget(self._danmaku_source_status_label)
         actions = QHBoxLayout()
-        rerun_button = QPushButton("重新搜索", dialog)
+        rerun_button = QPushButton("重新搜索", host)
         self._danmaku_source_rerun_button = rerun_button
-        reset_button = QPushButton("恢复默认搜索词", dialog)
-        switch_button = QPushButton("切换并加载", dialog)
+        reset_button = QPushButton("恢复默认搜索词", host)
+        switch_button = QPushButton("切换并加载", host)
         self._danmaku_source_switch_button = switch_button
         rerun_button.clicked.connect(self._rerun_current_item_danmaku_search)
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
@@ -6931,6 +6949,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _apply_visibility_state(self) -> None:
         is_fullscreen = self.isFullScreen()
+        self.set_title_bar_visible(not is_fullscreen)
         sidebar_hidden = is_fullscreen or self.wide_button.isChecked()
         metadata_visible = self.toggle_details_button.isChecked()
         log_visible = self.toggle_log_button.isChecked()

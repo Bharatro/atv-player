@@ -28,6 +28,7 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
 from atv_player.ui.theme import build_placeholder_label_qss, current_tokens
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 
 def _display_source_type(source_type: str) -> str:
@@ -42,11 +43,11 @@ class _PluginRefreshSignals(QObject):
     failed = Signal(str)
 
 
-class PluginManagerDialog(QDialog, AsyncGuardMixin):
+class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     _ACTION_RELOAD_DELAY_MS = 75
 
     def __init__(self, plugin_manager, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(title="插件管理", parent=parent, allow_maximize=True)
         self._init_async_guard()
         self.plugin_manager = plugin_manager
         self.plugin_actions = PluginActions(plugin_manager)
@@ -56,7 +57,6 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self._refresh_in_progress = False
         self._initial_plugin_snapshot: dict[int, tuple] = {}
         self._initial_plugin_snapshot_captured = False
-        self.setWindowTitle("插件管理")
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
 
@@ -123,7 +123,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         ):
             actions.addWidget(button)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout()
         layout.addWidget(self.warning_label)
         layout.addLayout(actions)
         layout.addWidget(self.plugin_actions_label)
