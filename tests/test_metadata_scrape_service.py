@@ -122,6 +122,47 @@ def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_c
     assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
 
 
+def test_metadata_scrape_service_skips_movie_classified_candidate_for_episode_title_rewrite(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="长安的荔枝",
+                year="2026",
+                raw={
+                    "category": {"value": "电影"},
+                    "episode_sites": [
+                        {
+                            "episodeInfoList": [
+                                {"title": "第01话 误匹配标题"},
+                            ]
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="长安的荔枝", vod_year="2026", category_name="电视剧"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+        preferred_candidate=MetadataScrapeCandidate(
+            provider="tencent",
+            provider_label="腾讯",
+            provider_id="tx:1",
+            title="长安的荔枝",
+            year="2026",
+            raw=provider.matches[0].raw,
+        ),
+    )
+
+    assert updated is None
+
+
 def test_metadata_scrape_service_prefers_selected_candidate_over_auto_priority(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tencent = FakeProvider(

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import re
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number, playlist_has_title_variants, seed_original_titles
 from atv_player.episode_titles import apply_episode_title_index_map
+from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import PlayItem, VodItem
 
 METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
+_MOVIE_MARKERS = ("电影", "影片", "movie")
 
 
 def build_provider_episode_playlist(
@@ -18,13 +22,61 @@ def build_provider_episode_playlist(
     source_priority: list[str],
 ) -> list[PlayItem] | None:
     provider = str(getattr(candidate, "provider", "") or "").strip()
+    provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
     raw = dict(getattr(candidate, "raw", {}) or {})
+    if not _candidate_supports_episode_title_rewrite(vod, provider, provider_id, raw):
+        return None
     copied = seed_original_titles([replace(item) for item in playlist])
     titles_by_index = _titles_by_index_for_provider(vod, copied, provider, raw)
     if not titles_by_index:
         return None
     apply_episode_title_index_map(copied, titles_by_index, source=provider, source_priority=source_priority)
     return copied if playlist_has_title_variants(copied) else None
+
+
+def _candidate_supports_episode_title_rewrite(
+    vod: VodItem,
+    provider: str,
+    provider_id: str,
+    raw: dict[str, object],
+) -> bool:
+    vod_media_type = infer_tmdb_media_type(
+        MetadataQuery(
+            title=str(vod.vod_name or "").strip(),
+            year=str(vod.vod_year or "").strip(),
+            category_name=str(vod.category_name or "").strip(),
+        )
+    )
+    if vod_media_type == "movie":
+        return False
+    if provider == "tmdb" and not provider_id.startswith("tv:"):
+        return False
+    return not _raw_indicates_movie_category(raw)
+
+
+def _raw_indicates_movie_category(raw: dict[str, object]) -> bool:
+    return any(marker in token for token in _iter_category_tokens(raw) for marker in _MOVIE_MARKERS)
+
+
+def _iter_category_tokens(raw: dict[str, object]) -> list[str]:
+    values: list[str] = []
+    for key in ("typeName", "channel", "genres", "categories", "baseTags", "category"):
+        values.extend(_category_tokens(raw.get(key)))
+    return values
+
+
+def _category_tokens(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return _category_tokens(value.get("value"))
+    if isinstance(value, list):
+        tokens: list[str] = []
+        for item in value:
+            tokens.extend(_category_tokens(item))
+        return tokens
+    text = str(value or "").strip().lower()
+    if not text:
+        return []
+    return [token for token in re.split(r"[,/|、]", text) if token.strip()]
 
 
 def _titles_by_index_for_provider(

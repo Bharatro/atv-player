@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from PySide6.QtCore import QPoint, Qt
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QComboBox
 
 ThemeMode = Literal["light", "dark", "system"]
 ResolvedTheme = Literal["light", "dark"]
+_ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
 
 
 class FlatComboBox(QComboBox):
@@ -779,10 +781,12 @@ def build_player_control_button_qss(
 
 
 def build_player_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, min_height: int = 28) -> str:
+    up_arrow_url = (_ICONS_DIR / "spinbox-step-up.svg").resolve().as_posix()
+    down_arrow_url = (_ICONS_DIR / "spinbox-step-down.svg").resolve().as_posix()
     return f"""
     QSpinBox {{
         min-height: {min_height}px;
-        padding: 0 22px 0 8px;
+        padding: 0 20px 0 8px;
         background-color: {tokens.player_button_bg};
         color: {tokens.player_text_on_dark};
         border: 1px solid {tokens.player_button_border};
@@ -801,8 +805,9 @@ def build_player_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, mi
     QSpinBox::up-button,
     QSpinBox::down-button {{
         subcontrol-origin: border;
-        width: 14px;
-        background-color: {tokens.player_button_hover_bg};
+        width: 16px;
+        height: 13px;
+        background: {tokens.player_button_hover_bg};
         border-left: 1px solid {tokens.player_button_border};
     }}
     QSpinBox::up-button {{
@@ -816,30 +821,21 @@ def build_player_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, mi
     }}
     QSpinBox::up-button:hover,
     QSpinBox::down-button:hover {{
-        background-color: {tokens.player_button_pressed_bg};
+        background: {tokens.player_button_pressed_bg};
     }}
     QSpinBox::up-button:pressed,
     QSpinBox::down-button:pressed {{
-        background-color: {tokens.player_button_bg};
-    }}
-    QSpinBox::up-button:disabled,
-    QSpinBox::down-button:disabled {{
-        background-color: {tokens.player_button_bg};
-        width: 14px;
+        background: {tokens.player_button_bg};
     }}
     QSpinBox::up-arrow {{
-        width: 0px;
-        height: 0px;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-bottom: 5px solid {tokens.player_text_on_dark};
+        width: 8px;
+        height: 5px;
+        image: url("{up_arrow_url}");
     }}
     QSpinBox::down-arrow {{
-        width: 0px;
-        height: 0px;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {tokens.player_text_on_dark};
+        width: 8px;
+        height: 5px;
+        image: url("{down_arrow_url}");
     }}
     """
 
