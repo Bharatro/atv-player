@@ -3549,6 +3549,16 @@ def test_advanced_settings_dialog_saves_theme_mode_and_calls_theme_refresh(qtbot
     assert config.theme_mode == "light"
 
 
+def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert "QComboBox::drop-down" in dialog.theme_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.styleSheet() == dialog.network_proxy_mode_combo.styleSheet()
+
+
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
+from atv_player.ui.theme import build_combobox_qss, current_tokens
 
 
 class AdvancedSettingsDialog(QDialog):
@@ -187,6 +188,17 @@ class AdvancedSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
         self._sync_network_proxy_inputs()
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        combo_qss = build_combobox_qss(current_tokens())
+        for combo in (
+            self.theme_mode_combo,
+            self.network_proxy_mode_combo,
+            self.youtube_cookie_browser_combo,
+            self.mpv_hwdec_mode_combo,
+        ):
+            combo.setStyleSheet(combo_qss)
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)

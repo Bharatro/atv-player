@@ -19,6 +19,7 @@ import httpx
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
 from PySide6.QtGui import (
     QActionGroup,
+    QBrush,
     QCloseEvent,
     QColor,
     QContextMenuEvent,
@@ -80,12 +81,19 @@ from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
-from atv_player.ui.icon_cache import load_icon
+from atv_player.ui.icon_cache import load_icon, tint_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import (
+    build_combobox_qss,
+    build_player_control_button_qss,
     build_player_immersive_qss,
+    build_player_list_qss,
     build_player_panel_qss,
+    build_player_section_heading_qss,
+    build_player_tabbar_qss,
+    build_player_text_panel_qss,
+    build_slider_qss,
     current_resolved_theme,
     current_theme_manager,
 )
@@ -350,6 +358,7 @@ class _PendingPlayItemLoad:
     start_position_seconds: int
     pause: bool
     wait_for_load: bool
+    vod_snapshot: object | None = None
 
 
 @dataclass(slots=True)
@@ -417,6 +426,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         "默认": 100,
         "大": 115,
         "很大": 130,
+    }
+    _TINTED_ICON_NAMES = {
+        "grid.svg",
+        "maximize.svg",
+        "queue.svg",
+        "info.svg",
+        "logs.svg",
+        "danmaku.svg",
+        "sliders.svg",
+        "scrape.svg",
     }
 
     def __init__(
@@ -529,7 +548,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_restore_main_scale: int | None = None
         self._danmaku_restore_secondary_position: int | None = None
         self._danmaku_restore_secondary_scale: int | None = None
-        self._active_danmaku_source_task_item_ids: set[int] = set()
+        self._active_danmaku_source_task_counts: dict[int, int] = {}
+        self._danmaku_source_task_pending_state: dict[int, bool] = {}
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals()
         self._connect_async_signal(self._poster_load_signals.loaded, self._handle_poster_load_finished)
@@ -616,27 +636,28 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist_title_tabs.addTab("原始文件名")
         self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
+        self.playlist.setSpacing(4)
         self.playlist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist.customContextMenuRequested.connect(lambda pos: self._show_playlist_context_menu(pos))
         self.playlist.viewport().installEventFilter(self)
-        self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
-        self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
-        self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn")
-        self.backward_button = self._create_icon_button("seek-backward.svg", "后退", "Left")
-        self.forward_button = self._create_icon_button("seek-forward.svg", "前进", "Right")
-        self.refresh_button = self._create_icon_button("refresh.svg", "重新播放")
-        self.mute_button = self._create_icon_button("volume-on.svg", "静音", "M")
-        self.wide_button = self._create_icon_button("grid.svg", "宽屏", "W")
-        self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏", "Enter")
+        self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space", role="primary")
+        self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp", role="secondary")
+        self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn", role="secondary")
+        self.backward_button = self._create_icon_button("seek-backward.svg", "后退", "Left", role="secondary")
+        self.forward_button = self._create_icon_button("seek-forward.svg", "前进", "Right", role="secondary")
+        self.refresh_button = self._create_icon_button("refresh.svg", "重新播放", role="secondary")
+        self.mute_button = self._create_icon_button("volume-on.svg", "静音", "M", role="secondary")
+        self.wide_button = self._create_icon_button("grid.svg", "宽屏", "W", role="secondary")
+        self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏", "Enter", role="secondary")
         self.wide_button.setCheckable(True)
         if self.config is not None:
             self.wide_button.setChecked(bool(self.config.player_wide_mode))
-        self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
-        self.toggle_details_button = self._create_icon_button("info.svg", "详情")
-        self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志")
-        self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
-        self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
-        self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削", "S")
+        self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表", role="secondary")
+        self.toggle_details_button = self._create_icon_button("info.svg", "详情", role="secondary")
+        self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志", role="secondary")
+        self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D", role="secondary")
+        self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D", role="secondary")
+        self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削", "S", role="secondary")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_log_button.setCheckable(True)
@@ -682,6 +703,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.audio_combo.addItem("自动选择", ("auto", None))
         self.audio_combo.setEnabled(False)
         self.parse_combo = QComboBox()
+        self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
+        self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
+        self._configure_control_combo(self.speed_combo, minimum_contents_length=5)
+        self._configure_control_combo(self.subtitle_combo, minimum_contents_length=10)
+        self._configure_control_combo(self.danmaku_combo, minimum_contents_length=6)
+        self._configure_control_combo(self.video_quality_combo, minimum_contents_length=7)
+        self._configure_control_combo(self.audio_combo, minimum_contents_length=8)
+        self._configure_control_combo(self.parse_combo, minimum_contents_length=7)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -718,9 +747,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_view.setReadOnly(True)
         self.metadata_view.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.metadata_view.setOpenLinks(False)
+        self.metadata_view.document().setDocumentMargin(4)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.document().setDocumentMargin(4)
         self._last_log_message: str | None = None
         self.playback_startup_widget = QWidget(self)
         self.playback_startup_widget.setObjectName("playbackStartupWidget")
@@ -738,23 +769,23 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         details_layout = QVBoxLayout(self.details)
         self.details_layout = details_layout
         details_layout.setContentsMargins(0, 0, 0, 0)
-        details_layout.setSpacing(6)
+        details_layout.setSpacing(12)
         details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.metadata_section = QWidget()
         metadata_layout = QVBoxLayout(self.metadata_section)
         metadata_layout.setContentsMargins(0, 0, 0, 0)
-        metadata_layout.setSpacing(6)
+        metadata_layout.setSpacing(10)
         metadata_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         metadata_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_actions_layout.setSpacing(6)
+        self.detail_actions_layout.setSpacing(8)
         metadata_layout.addWidget(self.detail_actions_widget)
         self.detail_fields_widget = QWidget()
         self.detail_fields_layout = QVBoxLayout(self.detail_fields_widget)
         self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_fields_layout.setSpacing(4)
+        self.detail_fields_layout.setSpacing(6)
         metadata_layout.addWidget(self.detail_fields_widget)
         self.metadata_heading = QLabel("影片详情")
         metadata_layout.addWidget(self.metadata_heading)
@@ -763,8 +794,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.log_section = QWidget()
         log_layout = QVBoxLayout(self.log_section)
         log_layout.setContentsMargins(0, 0, 0, 0)
-        log_layout.setSpacing(6)
-        log_layout.addWidget(QLabel("播放日志"))
+        log_layout.setSpacing(8)
+        self.log_heading = QLabel("播放日志")
+        log_layout.addWidget(self.log_heading)
         log_layout.addWidget(self.log_view, 1)
         details_layout.addWidget(self.playback_startup_widget)
         details_layout.addWidget(self.log_section, 1)
@@ -857,6 +889,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         sidebar_layout = QVBoxLayout()
         self.sidebar_layout = sidebar_layout
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(10)
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.playlist_source_combo)
@@ -961,20 +995,85 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         player_tokens = manager.player_tokens_for(theme)
         self.details.setStyleSheet(build_player_panel_qss(tokens))
         self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
+        self.playlist.setStyleSheet(build_player_list_qss(tokens))
+        self.playlist_title_tabs.setStyleSheet(build_player_tabbar_qss(tokens))
+        self.metadata_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="12px 14px"))
+        self.log_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="10px 12px"))
+        heading_qss = build_player_section_heading_qss(tokens)
+        self.metadata_heading.setStyleSheet(heading_qss)
+        self.log_heading.setStyleSheet(heading_qss)
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
+        combo_qss = build_combobox_qss(tokens, border_radius=12, min_height=32)
+        for combo in self._themed_comboboxes():
+            combo.setStyleSheet(combo_qss)
+        self.progress.setStyleSheet(build_slider_qss(player_tokens, groove_height=8, handle_diameter=18))
+        self.volume_slider.setStyleSheet(build_slider_qss(player_tokens, groove_height=6, handle_diameter=14))
+        self._sync_playlist_item_styles()
+        for button in self._control_buttons():
+            role = str(button.property("control_role") or "secondary")
+            border_radius = 20 if role == "primary" else 16
+            button.setStyleSheet(build_player_control_button_qss(player_tokens, role=role, border_radius=border_radius))
+            icon_name = str(button.property("icon_name") or "")
+            if icon_name:
+                self._set_button_icon(button, icon_name)
+
+    def _control_buttons(self) -> list[QPushButton]:
+        return [
+            self.play_button,
+            self.prev_button,
+            self.next_button,
+            self.backward_button,
+            self.forward_button,
+            self.refresh_button,
+            self.mute_button,
+            self.wide_button,
+            self.fullscreen_button,
+            self.toggle_playlist_button,
+            self.toggle_details_button,
+            self.toggle_log_button,
+            self.danmaku_source_button,
+            self.danmaku_settings_button,
+            self.metadata_scrape_button,
+        ]
+
+    def _themed_comboboxes(self) -> list[QComboBox]:
+        return [
+            self.playlist_group_combo,
+            self.playlist_source_combo,
+            self.speed_combo,
+            self.subtitle_combo,
+            self.danmaku_combo,
+            self.video_quality_combo,
+            self.audio_combo,
+            self.parse_combo,
+        ]
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
             return label
         return f"{label} ({shortcut})"
 
-    def _create_icon_button(self, icon_name: str, tooltip: str, shortcut: str | None = None) -> QPushButton:
+    def _create_icon_button(
+        self,
+        icon_name: str,
+        tooltip: str,
+        shortcut: str | None = None,
+        *,
+        role: str = "secondary",
+    ) -> QPushButton:
         button = QPushButton("")
         button.setToolTip(self._format_tooltip(tooltip, shortcut))
+        button.setProperty("control_role", role)
+        button.setProperty("icon_name", icon_name)
+        button.setProperty("use_tinted_icon", icon_name in self._TINTED_ICON_NAMES)
         button.setIcon(load_icon(self._icons_dir / icon_name))
-        button.setIconSize(button.iconSize())
+        if role == "primary":
+            button.setFixedSize(42, 42)
+            button.setIconSize(QSize(22, 22))
+        else:
+            button.setFixedSize(34, 34)
+            button.setIconSize(QSize(18, 18))
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setFixedHeight(28)
         return button
 
     def _create_skip_spinbox(self, prefix: str) -> QSpinBox:
@@ -985,6 +1084,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         spinbox.setFixedHeight(28)
         spinbox.setSingleStep(10)
         return spinbox
+
+    def _configure_control_combo(self, combo: QComboBox, *, minimum_contents_length: int) -> None:
+        combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumContentsLength(minimum_contents_length)
+        combo.setMaxVisibleItems(12)
 
     def _update_play_button_icon(self) -> None:
         icon_name = "pause.svg" if self.is_playing else "play.svg"
@@ -1113,6 +1218,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             widget_item.setToolTip(tooltip)
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
+        self._sync_playlist_item_styles()
+
+    def _sync_playlist_item_styles(self) -> None:
+        if self.session is None:
+            return
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        for index in range(self.playlist.count()):
+            playlist_item = self.playlist.item(index)
+            font = playlist_item.font()
+            if index == self.current_index:
+                playlist_item.setForeground(QBrush(QColor(tokens.accent)))
+                font.setBold(True)
+            elif index < self.current_index:
+                playlist_item.setForeground(QBrush(QColor(tokens.text_secondary)))
+                font.setBold(False)
+            else:
+                playlist_item.setForeground(QBrush(QColor(tokens.text_primary)))
+                font.setBold(False)
+            playlist_item.setFont(font)
 
     def _current_detail_actions(self) -> list[PlaybackDetailAction]:
         if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
@@ -1456,6 +1580,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
         icon: QIcon = load_icon(self._icons_dir / icon_name)
+        button.setProperty("icon_name", icon_name)
+        if bool(button.property("use_tinted_icon")):
+            role = str(button.property("control_role") or "secondary")
+            tokens = current_theme_manager().player_tokens_for(current_resolved_theme())
+            color = tokens.player_primary_button_icon if role == "primary" else tokens.player_button_icon
+            icon = tint_icon(icon, color, size=button.iconSize())
         button.setIcon(icon)
 
     def _update_mute_button_icon(self) -> None:
@@ -2112,6 +2242,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.current_index = index
         try:
             self.playlist.setCurrentRow(self.current_index)
+            self._sync_playlist_item_styles()
             self._refresh_danmaku_source_entry_points()
             self._render_metadata()
             self._render_detail_fields()
@@ -2518,6 +2649,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             start_position_seconds=start_position_seconds,
             pause=pause,
             wait_for_load=wait_for_load,
+            vod_snapshot=session.vod,
         )
 
         def run() -> None:
@@ -2631,6 +2763,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _restore_current_index(self, previous_index: int) -> None:
         self.current_index = previous_index
         self.playlist.setCurrentRow(previous_index)
+        self._sync_playlist_item_styles()
         self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
 
@@ -2650,6 +2783,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _restore_or_keep_current_index_after_failure(self, previous_index: int) -> None:
         if self._current_item_requires_parse():
             self.playlist.setCurrentRow(self.current_index)
+            self._sync_playlist_item_styles()
             self._refresh_window_title()
             self._refresh_parse_combo_enabled_state()
             return
@@ -2663,7 +2797,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         pending_load = self._pending_play_item_load
         self._pending_play_item_load = None
-        if resolved_vod is not None:
+        should_apply_resolved_vod = True
+        if (
+            resolved_vod is not None
+            and pending_load is not None
+            and self.session is not None
+            and self.current_index == pending_load.index
+            and self.session.vod is not pending_load.vod_snapshot
+        ):
+            should_apply_resolved_vod = False
+        if resolved_vod is not None and should_apply_resolved_vod:
             self._apply_resolved_vod(resolved_vod)
         if pending_load is None or not pending_load.wait_for_load:
             return
@@ -5639,11 +5782,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self._current_play_item()
         if current_item is None:
             return
+        applied_fallback_title = False
         if not current_item.danmaku_search_title:
             fallback_title = str(current_item.media_title or "").strip()
             if not fallback_title and self.session is not None:
                 fallback_title = str(self.session.vod.vod_name or "").strip()
             current_item.danmaku_search_title = fallback_title
+            applied_fallback_title = bool(fallback_title)
         loaded_cached_sources = False
         if (
             not current_item.danmaku_candidates
@@ -5665,9 +5810,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.raise_()
         dialog.activateWindow()
         if (
+            applied_fallback_title
+            and
             not loaded_cached_sources
             and not current_item.danmaku_candidates
-            and not current_item.danmaku_search_query
             and self.session is not None
             and self.session.danmaku_controller is not None
             and hasattr(self.session.danmaku_controller, "refresh_danmaku_sources")
@@ -5682,6 +5828,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
                     current_item,
                     query_override=None,
+                    search_title_override=current_item.danmaku_search_title,
                     playlist=self.session.playlist,
                     force_refresh=True,
                     media_duration_seconds=media_duration_seconds,
@@ -5704,7 +5851,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_danmaku_source_entry_points()
 
     def _has_active_danmaku_source_task(self, item: PlayItem | None) -> bool:
-        return item is not None and id(item) in self._active_danmaku_source_task_item_ids
+        return item is not None and self._active_danmaku_source_task_counts.get(id(item), 0) > 0
 
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
@@ -5730,12 +5877,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         task: Callable[[], None],
         configure_danmaku_on_success: bool = False,
         debug_label: str = "",
+        queue_if_active: bool = False,
     ) -> None:
         item_id = id(item)
-        if item_id in self._active_danmaku_source_task_item_ids:
+        active_count = self._active_danmaku_source_task_counts.get(item_id, 0)
+        if active_count > 0 and not queue_if_active:
             return
-        self._active_danmaku_source_task_item_ids.add(item_id)
-        was_pending_before_start = item.danmaku_pending
+        if active_count <= 0:
+            self._danmaku_source_task_pending_state[item_id] = item.danmaku_pending
+        self._active_danmaku_source_task_counts[item_id] = active_count + 1
         item.danmaku_pending = True
         self._refresh_danmaku_source_dialog_from_item(item)
 
@@ -5745,9 +5895,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 task()
                 succeeded = True
             finally:
-                self._active_danmaku_source_task_item_ids.discard(item_id)
-                item.danmaku_pending = was_pending_before_start
-                item.danmaku_status_text = ""
+                remaining = self._active_danmaku_source_task_counts.get(item_id, 1) - 1
+                if remaining > 0:
+                    self._active_danmaku_source_task_counts[item_id] = remaining
+                else:
+                    self._active_danmaku_source_task_counts.pop(item_id, None)
+                    item.danmaku_pending = self._danmaku_source_task_pending_state.pop(item_id, False)
+                    item.danmaku_status_text = ""
                 self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
 
         self._enqueue_controller_task(error_prefix, run)
@@ -5809,6 +5963,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 provider_filter=current_item.danmaku_search_provider,
             ),
             debug_label="重新搜索",
+            queue_if_active=True,
         )
 
     def _reset_current_item_danmaku_search_query(self) -> None:
@@ -5836,6 +5991,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 provider_filter=current_item.danmaku_search_provider,
             ),
             debug_label="恢复默认搜索词",
+            queue_if_active=True,
         )
 
     def _switch_current_item_danmaku_source(self) -> None:
@@ -5853,6 +6009,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             task=lambda: self.session.danmaku_controller.switch_danmaku_source(current_item, selected_url),
             configure_danmaku_on_success=True,
             debug_label="手动切换",
+            queue_if_active=True,
         )
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:

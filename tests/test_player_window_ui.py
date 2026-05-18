@@ -792,7 +792,7 @@ def test_player_window_rerun_danmaku_search_uses_fallback_current_vod_title(qtbo
     window.open_session(session)
     window.session.vod.vod_name = "深空彼岸"
     window._open_danmaku_source_dialog()
-    qtbot.waitUntil(lambda: controller.calls == [(None, None, None, session.playlist, True, 120, "")])
+    qtbot.waitUntil(lambda: controller.calls == [(None, "深空彼岸", None, session.playlist, True, 120, "")])
     qtbot.waitUntil(lambda: session.playlist[0].danmaku_pending is False)
 
     window._rerun_current_item_danmaku_search()
@@ -800,7 +800,7 @@ def test_player_window_rerun_danmaku_search_uses_fallback_current_vod_title(qtbo
     qtbot.waitUntil(
         lambda: controller.calls
         == [
-            (None, None, None, session.playlist, True, 120, ""),
+            (None, "深空彼岸", None, session.playlist, True, 120, ""),
             (None, "深空彼岸", "", session.playlist, True, 120, ""),
         ]
     )
@@ -910,9 +910,69 @@ def test_player_window_open_danmaku_source_dialog_auto_searches_when_cache_misse
     window._open_danmaku_source_dialog()
 
     qtbot.waitUntil(
-        lambda: controller.refresh_calls == [(None, None, None, session.playlist, True, 120, "")]
+        lambda: controller.refresh_calls == [(None, "深空彼岸", None, session.playlist, True, 120, "")]
     )
     assert controller.cache_titles == ["深空彼岸"]
+    assert window._danmaku_source_title_edit.text() == "深空彼岸"
+
+
+def test_player_window_open_danmaku_source_dialog_auto_searches_when_stale_query_exists_but_no_candidates(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.refresh_calls: list[tuple[str | None, str | None, str | None, list[PlayItem] | None, bool, int, str]] = []
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            return False
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.refresh_calls.append(
+                (
+                    query_override,
+                    search_title_override,
+                    search_episode_override,
+                    playlist,
+                    force_refresh,
+                    media_duration_seconds,
+                    provider_filter,
+                )
+            )
+
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://media.example/1.mp4",
+                danmaku_search_query="旧标题 1集",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window.session.vod.vod_name = "深空彼岸"
+
+    window._open_danmaku_source_dialog()
+
+    qtbot.waitUntil(
+        lambda: controller.refresh_calls == [(None, "深空彼岸", None, session.playlist, True, 120, "")]
+    )
     assert window._danmaku_source_title_edit.text() == "深空彼岸"
 
 
@@ -1019,6 +1079,67 @@ def test_player_window_metadata_scrape_apply_ignores_inflight_auto_hydration_res
 
     assert "自动简介" not in window.metadata_view.toPlainText()
     assert "豆瓣简介" in window.metadata_view.toPlainText()
+
+
+def test_player_window_metadata_hydration_survives_late_detail_resolution_overwrite(qtbot) -> None:
+    class DetailResolvingController(FakePlayerController):
+        def resolve_play_item_detail(self, session, play_item):
+            if not play_item.vod_id or session.detail_resolver is None:
+                return None
+            if play_item.vod_id in session.resolved_vod_by_id:
+                resolved_vod = session.resolved_vod_by_id[play_item.vod_id]
+            else:
+                resolved_vod = session.detail_resolver(play_item)
+                session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+            if resolved_vod is None:
+                return None
+            play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+            return resolved_vod
+
+    release_detail_resolution = threading.Event()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        assert release_detail_resolution.wait(timeout=1)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name="原始标题",
+            vod_content="原始简介",
+            items=[PlayItem(title=item.title, url=item.url, vod_id=item.vod_id)],
+        )
+
+    def metadata_hydrator(_session: PlayerSession) -> VodItem:
+        return VodItem(
+            vod_id="movie-1",
+            vod_name="刮削后的标题",
+            vod_year="2026",
+            vod_content="刮削后的简介",
+        )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_resolver=detail_resolver,
+        metadata_hydrator=metadata_hydrator,
+    )
+    window = PlayerWindow(DetailResolvingController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "刮削后的标题" in window.metadata_view.toPlainText(), timeout=1000)
+
+    release_detail_resolution.set()
+    qtbot.waitUntil(lambda: "ep-1" in window.session.resolved_vod_by_id, timeout=1000)
+    qtbot.wait(50)
+
+    assert "刮削后的标题" in window.metadata_view.toPlainText()
+    assert "刮削后的简介" in window.metadata_view.toPlainText()
+    assert "原始标题" not in window.metadata_view.toPlainText()
+    assert "原始简介" not in window.metadata_view.toPlainText()
 
 
 def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields(qtbot) -> None:
@@ -1819,7 +1940,10 @@ def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot)
     window._open_danmaku_source_dialog()
     window._reset_current_item_danmaku_search_query()
 
-    qtbot.waitUntil(lambda: controller.calls == [(None, None, None, session.playlist, 120)])
+    qtbot.waitUntil(lambda: len(controller.calls) >= 2)
+    assert controller.calls[-1][:3] == (None, None, None)
+    assert controller.calls[-1][3] is session.playlist
+    assert controller.calls[-1][4] == 120
 
 
 def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbot) -> None:
@@ -2935,9 +3059,16 @@ def test_player_window_rewrites_resolved_m3u8_after_detail_lookup(qtbot) -> None
 
 
 def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    install_theme(app, manager, "light")
+
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
+    tokens = manager.tokens_for("light")
     assert window.details is not None
     assert window.metadata_section is not None
     assert window.log_section is not None
@@ -2947,6 +3078,12 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     assert window.details.layout().indexOf(window.log_section) != -1
     assert window.metadata_section.layout().indexOf(window.metadata_view) != -1
     assert window.log_section.layout().indexOf(window.log_view) != -1
+    assert "QListWidget::item:selected" in window.playlist.styleSheet()
+    assert "QTabBar::tab:selected" in window.playlist_title_tabs.styleSheet()
+    assert "padding: 12px 14px" in window.metadata_view.styleSheet()
+    assert "padding: 10px 12px" in window.log_view.styleSheet()
+    assert tokens.accent in window.metadata_heading.styleSheet()
+    assert tokens.accent in window.log_heading.styleSheet()
 
 
 def test_player_window_limits_playback_log_height_to_one_quarter_of_details(qtbot) -> None:
@@ -2967,6 +3104,56 @@ def test_player_window_limits_playback_log_height_to_one_quarter_of_details(qtbo
     expected = max(window.details.height() // 4, 1)
 
     assert window.log_section.maximumHeight() == expected
+
+
+def test_player_window_styles_playlist_items_by_playback_state(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    install_theme(app, manager, "light")
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+
+    tokens = manager.tokens_for("light")
+    previous_item = window.playlist.item(0)
+    current_item = window.playlist.item(1)
+    upcoming_item = window.playlist.item(2)
+
+    assert previous_item.foreground().color().name() == QColor(tokens.text_secondary).name()
+    assert current_item.foreground().color().name() == QColor(tokens.accent).name()
+    assert current_item.font().bold() is True
+    assert upcoming_item.foreground().color().name() == QColor(tokens.text_primary).name()
+
+
+def test_player_window_marks_current_playlist_item_with_play_indicator(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+
+    assert window.playlist.item(0).icon().isNull() is True
+    assert window.playlist.item(1).icon().isNull() is False
+    assert window.playlist.item(2).icon().isNull() is True
+
+    window.current_index = 2
+    window.playlist.setCurrentRow(2)
+    window._sync_playlist_item_styles()
+
+    assert window.playlist.item(1).icon().isNull() is True
+    assert window.playlist.item(2).icon().isNull() is False
+
+
+def test_player_window_uses_compact_playlist_item_density(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.playlist.spacing() == 2
+    assert "min-height: 28px" in window.playlist.styleSheet()
+    assert "padding: 6px 10px" in window.playlist.styleSheet()
 
 
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
@@ -5867,6 +6054,41 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.toggle_log_button.isChecked() is True
     assert isinstance(window.speed_combo, QComboBox)
     assert window.volume_slider.maximum() == 100
+
+
+def test_player_window_uses_primary_style_for_play_button_and_tinted_icons(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.play_button.property("control_role") == "primary"
+    assert window.prev_button.property("control_role") == "secondary"
+    assert window.fullscreen_button.icon().pixmap(24, 24).toImage() != QIcon(
+        str(window._icons_dir / "maximize.svg")
+    ).pixmap(24, 24).toImage()
+
+
+def test_player_window_applies_strong_feedback_slider_styles(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert "QSlider::sub-page:horizontal" in window.progress.styleSheet()
+    assert "QSlider::handle:horizontal:hover" in window.progress.styleSheet()
+    assert "height: 8px" in window.progress.styleSheet()
+    assert "height: 6px" in window.volume_slider.styleSheet()
+
+
+def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.playlist_group_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    assert window.playlist_group_combo.minimumContentsLength() == 10
+    assert window.playlist_source_combo.minimumContentsLength() == 12
+    assert window.speed_combo.minimumContentsLength() == 5
+    assert window.subtitle_combo.minimumContentsLength() == 10
+    assert window.audio_combo.minimumContentsLength() == 8
+    assert window.parse_combo.minimumContentsLength() == 7
+    assert "min-height: 32px" in window.speed_combo.styleSheet()
 
 
 def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> None:
@@ -16384,6 +16606,63 @@ def test_player_window_resume_from_main_reloads_current_item_and_updates_state(q
     assert window.is_playing is True
     assert window.windowTitle() == "Movie - Episode 1"
     assert config.last_player_paused is False
+
+
+def test_player_window_resume_from_main_preserves_scraped_metadata_over_cached_resolved_detail(qtbot) -> None:
+    class CachedResolvedDetailController(FakePlayerController):
+        def resolve_play_item_detail(self, session, play_item):
+            resolved_vod = session.resolved_vod_by_id.get(play_item.vod_id)
+            if resolved_vod is None:
+                return None
+            play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+            return resolved_vod
+
+    class TitleReplacingMetadataScrapeService(FakeMetadataScrapeService):
+        def apply(self, vod: VodItem, candidate: MetadataScrapeCandidate) -> VodItem:
+            self.apply_calls.append((vod.vod_name, candidate.provider_id))
+            return VodItem(
+                vod_id=vod.vod_id,
+                vod_name="刮削后的标题",
+                vod_year="2026",
+                vod_content="刮削后的简介",
+                detail_fields=[PlaybackDetailField(label="TMDB ID", value="1")],
+            )
+
+    config = AppConfig(last_active_window="main", last_player_paused=True)
+    window = PlayerWindow(CachedResolvedDetailController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    service = TitleReplacingMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        resolved_vod_by_id={
+            "ep-1": VodItem(
+                vod_id="ep-1",
+                vod_name="原始标题",
+                vod_content="原始简介",
+                items=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1")],
+            )
+        },
+    )
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "刮削后的标题" in window.metadata_view.toPlainText(), timeout=1000)
+
+    window._return_to_main()
+    window.resume_from_main()
+
+    assert "刮削后的标题" in window.metadata_view.toPlainText()
+    assert "刮削后的简介" in window.metadata_view.toPlainText()
 
 
 def test_player_window_resume_from_main_reloads_active_danmaku(qtbot) -> None:
