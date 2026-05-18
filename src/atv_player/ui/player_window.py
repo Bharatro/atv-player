@@ -7273,6 +7273,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         super().closeEvent(event)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if not hasattr(self, "video_widget"):
+            if not isinstance(watched, QObject):
+                return False
+            return super().eventFilter(cast(QObject, watched), event)
         details = getattr(self, "details", None)
         if watched is details and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self._update_log_section_max_height()

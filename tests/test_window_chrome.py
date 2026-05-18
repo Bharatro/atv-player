@@ -62,6 +62,17 @@ def test_themed_dialog_keeps_resize_support_disabled(qtbot) -> None:
     assert dialog.is_window_resizable() is False
 
 
+def test_themed_widget_window_reports_resize_region_near_edges(qtbot) -> None:
+    window = DemoWindow()
+    qtbot.addWidget(window)
+    window.resize(640, 480)
+    window.show()
+    qtbot.wait(50)
+
+    assert window._resize_region_at(window.rect().topLeft()).name == "TOP_LEFT"
+    assert window._resize_region_at(window.rect().center()).name == "NONE"
+
+
 def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) -> None:
     window = DemoWindow()
     qtbot.addWidget(window)
