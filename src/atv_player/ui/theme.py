@@ -756,18 +756,32 @@ def build_combobox_popup_qss(
     """
 
 
-def build_round_icon_button_qss(tokens: ThemeTokens, *, border_radius: int = 18) -> str:
+def build_round_icon_button_qss(
+    tokens: ThemeTokens,
+    *,
+    border_radius: int = 18,
+    background: str | None = None,
+    border_color: str | None = None,
+    text_color: str | None = None,
+    hover_background: str | None = None,
+    hover_border_color: str | None = None,
+) -> str:
+    resolved_background = background or tokens.input_bg
+    resolved_border_color = border_color or tokens.input_border
+    resolved_text_color = text_color or tokens.text_primary
+    resolved_hover_background = hover_background or tokens.panel_alt_bg
+    resolved_hover_border_color = hover_border_color or tokens.accent_hover
     return f"""
     QPushButton {{
-        border: 1px solid {tokens.input_border};
+        border: 1px solid {resolved_border_color};
         border-radius: {border_radius}px;
-        background: {tokens.input_bg};
-        color: {tokens.text_primary};
+        background: {resolved_background};
+        color: {resolved_text_color};
         padding: 0;
     }}
     QPushButton:hover {{
-        background: {tokens.panel_alt_bg};
-        border-color: {tokens.accent_hover};
+        background: {resolved_hover_background};
+        border-color: {resolved_hover_border_color};
     }}
     QPushButton:disabled {{
         background: {tokens.button_disabled_bg};
