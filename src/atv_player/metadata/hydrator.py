@@ -6,7 +6,7 @@ import logging
 
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
-from atv_player.metadata.matching import is_confident_match, normalize_match_title, score_match
+from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.merge import fill_missing_metadata_record, merge_metadata_record, override_visual_metadata_record
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.models import VodItem
@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 _SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
-_TITLE_FOLLOWUP_PROVIDERS = {"local_douban", "remote_douban"}
+_LOCAL_DOUBAN_PRIME_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
+_LOCAL_DOUBAN_PROVIDER_NAMES = {"local_douban", "remote_douban"}
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
 _MOVIE_MARKERS = ("电影", "影片", "movie")
@@ -144,16 +145,6 @@ def _should_refresh_cached_detail(provider_name: str, cached: MetadataRecord, ma
     return _iqiyi_match_raw_has_detail(match)
 
 
-def _should_follow_up_with_corrected_title(provider_name: str, original_title: str, corrected_title: str) -> bool:
-    if provider_name not in _TITLE_FOLLOWUP_PROVIDERS:
-        return False
-    normalized_original = normalize_match_title(original_title)
-    normalized_corrected = normalize_match_title(corrected_title)
-    if not normalized_original or not normalized_corrected:
-        return False
-    return normalized_original != normalized_corrected
-
-
 class MetadataHydrator:
     def __init__(
         self,
@@ -238,6 +229,30 @@ class MetadataHydrator:
         self._cache.save_detail(provider.name, str(match.provider_id), record)
         return record
 
+    def _prime_local_douban_query(self, context: MetadataContext, vod: VodItem, query, eligible_providers: list[MetadataProvider]):
+        if context.source_kind not in _LOCAL_DOUBAN_PRIME_SOURCE_KINDS:
+            return query
+        local_provider = next((provider for provider in eligible_providers if provider.name in _LOCAL_DOUBAN_PROVIDER_NAMES), None)
+        if local_provider is None:
+            return query
+        matches = self._load_provider_matches(local_provider, query)
+        if not matches:
+            return query
+        best_match = max(matches, key=lambda item: item.score)
+        if not is_confident_match(best_match.score):
+            return query
+        record = self._load_detail_record(local_provider, best_match)
+        if record is None:
+            return query
+        merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
+        return replace(
+            query,
+            title=str(vod.vod_name or "").strip() or query.title,
+            year=str(vod.vod_year or "").strip() or query.year,
+            type_name=str(vod.type_name or "").strip() or query.type_name,
+            category_name=str(vod.category_name or "").strip() or query.category_name,
+        )
+
     def hydrate(self, context: MetadataContext) -> VodItem:
         vod = replace(context.vod)
         query = context.to_query()
@@ -248,6 +263,7 @@ class MetadataHydrator:
         eligible_providers = [provider for provider in self._providers if provider.can_enrich(context)]
         if not eligible_providers:
             return vod
+        query = self._prime_local_douban_query(context, vod, query, eligible_providers)
 
         with ThreadPoolExecutor(max_workers=max(1, len(eligible_providers))) as executor:
             futures = [executor.submit(self._load_provider_matches, provider, query) for provider in eligible_providers]
@@ -264,8 +280,6 @@ class MetadataHydrator:
 
         primary_applied = False
         primary_kind = ""
-        primary_provider_name = ""
-        confident_provider_names = {provider.name for _, provider, _ in ranked_candidates}
         for order, provider, match in sorted(ranked_candidates, key=lambda item: (-item[2].score, item[0])):
             del order
             current_kind = primary_kind or _vod_media_kind(vod)
@@ -284,7 +298,6 @@ class MetadataHydrator:
             if not primary_applied:
                 merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
                 primary_applied = True
-                primary_provider_name = provider.name
                 primary_kind = _record_media_kind(record) or _match_media_kind(match) or _vod_media_kind(vod)
                 continue
             current_kind = primary_kind or _vod_media_kind(vod)
@@ -299,58 +312,4 @@ class MetadataHydrator:
                 continue
             fill_missing_metadata_record(vod, record)
             override_visual_metadata_record(vod, record)
-        corrected_title = str(vod.vod_name or "").strip()
-        if (
-            primary_applied
-            and _should_follow_up_with_corrected_title(primary_provider_name, query.title, corrected_title)
-        ):
-            followup_query = replace(
-                query,
-                title=corrected_title,
-                year=str(vod.vod_year or "").strip() or query.year,
-                type_name=str(vod.type_name or "").strip() or query.type_name,
-                category_name=str(vod.category_name or "").strip() or query.category_name,
-            )
-            followup_providers = [
-                provider
-                for provider in eligible_providers
-                if provider.name != primary_provider_name and provider.name not in confident_provider_names
-            ]
-            with ThreadPoolExecutor(max_workers=max(1, len(followup_providers))) as executor:
-                followup_futures = [
-                    executor.submit(self._load_provider_matches, provider, followup_query)
-                    for provider in followup_providers
-                ]
-            for order, (provider, future) in enumerate(zip(followup_providers, followup_futures)):
-                matches = future.result()
-                if not matches:
-                    continue
-                best_match = max(matches, key=lambda item: item.score)
-                if not is_confident_match(best_match.score):
-                    continue
-                current_kind = primary_kind or _vod_media_kind(vod)
-                if not _media_kinds_compatible(current_kind, _match_media_kind(best_match)):
-                    logger.info(
-                        "Skip incompatible follow-up metadata candidate provider=%s title=%s current_kind=%s candidate_kind=%s",
-                        provider.name,
-                        best_match.title,
-                        current_kind,
-                        _match_media_kind(best_match),
-                    )
-                    continue
-                record = self._load_detail_record(provider, best_match)
-                if record is None:
-                    continue
-                current_kind = primary_kind or _vod_media_kind(vod)
-                if not _media_kinds_compatible(current_kind, _record_media_kind(record)):
-                    logger.info(
-                        "Skip incompatible follow-up metadata record provider=%s title=%s current_kind=%s candidate_kind=%s",
-                        provider.name,
-                        record.title,
-                        current_kind,
-                        _record_media_kind(record),
-                    )
-                    continue
-                fill_missing_metadata_record(vod, record)
-                override_visual_metadata_record(vod, record)
         return vod
