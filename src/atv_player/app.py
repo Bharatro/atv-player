@@ -81,6 +81,7 @@ from atv_player.ui.poster_loader import set_proxy_decider_loader
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow, load_direct_parse_detail
 from atv_player.ui.icon_cache import load_icon
+from atv_player.ui.theme import ThemeManager, install_theme
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _MAIN_THREAD_GC_INTERVAL_MS = 30_000
@@ -293,10 +294,29 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
+    install_theme(app, ThemeManager(), repo.load_config().theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
     logger.info("Application initialized data_dir=%s", data_dir)
     return app, repo
+
+
+def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str:
+    target_app = app or QApplication.instance()
+    if target_app is None:
+        return "light"
+    manager = getattr(target_app, "_theme_manager", None)
+    if manager is None:
+        manager = ThemeManager()
+        setattr(target_app, "_theme_manager", manager)
+    resolved = install_theme(target_app, manager, repo.load_config().theme_mode)
+    refresh_widgets = getattr(target_app, "topLevelWidgets", None)
+    if callable(refresh_widgets):
+        for widget in refresh_widgets():
+            apply_theme = getattr(widget, "_apply_theme", None)
+            if callable(apply_theme):
+                apply_theme()
+    return resolved
 
 
 class AppCoordinator(QObject):
@@ -333,7 +353,7 @@ class AppCoordinator(QObject):
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
-            self._plugin_loader = SpiderPluginLoader(cache_dir, get=self._proxy_http_get())
+            self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
                 self._plugin_repository,
                 self._plugin_loader,
@@ -364,6 +384,20 @@ class AppCoordinator(QObject):
             if hasattr(repo, "database_path")
             else None
         )
+
+    def _build_spider_plugin_loader(self, cache_dir: Path):
+        try:
+            parameters = inspect.signature(SpiderPluginLoader).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        kwargs = {}
+        if accepts_kwargs or "get" in parameters:
+            kwargs["get"] = self._proxy_http_get()
+        return SpiderPluginLoader(cache_dir, **kwargs)
 
     def _close_api_client(self) -> None:
         if self._api_client is None:
@@ -1212,6 +1246,7 @@ class AppCoordinator(QObject):
             player_controller=player_controller,
             config=config,
             save_config=lambda: self.repo.save_config(config),
+            apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
             bilibili_controller=bilibili_controller,

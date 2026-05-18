@@ -3378,11 +3378,11 @@ def test_main_window_shows_advanced_settings_button_after_live_source_manager(qt
 
 
 def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
-    opened: list[tuple[object, object, object]] = []
+    opened: list[tuple[object, object, object, object]] = []
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None) -> None:
-            opened.append((config, save_config, parent))
+        def __init__(self, config, save_config, parent=None, apply_theme=None) -> None:
+            opened.append((config, save_config, parent, apply_theme))
 
         def exec(self) -> int:
             return 1
@@ -3414,8 +3414,9 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
     saved: list[tuple[bool, str, str]] = []
 
     class FakeDialog:
-        def __init__(self, config_arg, save_config, parent=None) -> None:
+        def __init__(self, config_arg, save_config, parent=None, apply_theme=None) -> None:
             del parent
+            del apply_theme
             config_arg.metadata_enhancement_enabled = False
             config_arg.metadata_douban_cookie = "bid=demo;"
             config_arg.metadata_tmdb_api_key = "tmdb-key"
@@ -3516,6 +3517,38 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_adds_appearance_tab_and_populates_theme_mode(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(theme_mode="dark"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(1) == "播放设置"
+    assert dialog.theme_mode_combo.currentData() == "dark"
+
+
+def test_advanced_settings_dialog_saves_theme_mode_and_calls_theme_refresh(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[str] = []
+    refreshed: list[bool] = []
+    config = AppConfig(theme_mode="system")
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.theme_mode),
+        apply_theme=lambda: refreshed.append(True),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.theme_mode_combo.setCurrentIndex(dialog.theme_mode_combo.findData("light"))
+    dialog.save_button.click()
+
+    assert saved == ["light"]
+    assert refreshed == [True]
+    assert config.theme_mode == "light"
+
+
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
@@ -3527,9 +3560,10 @@ def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "播放设置"
-    assert dialog.settings_tabs.tabText(1) == "元数据"
-    assert dialog.settings_tabs.tabText(2) == "网络代理"
+    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(1) == "播放设置"
+    assert dialog.settings_tabs.tabText(2) == "元数据"
+    assert dialog.settings_tabs.tabText(3) == "网络代理"
     assert dialog.network_proxy_mode_combo.currentData() == "socks5"
     assert dialog.network_proxy_url_edit.text() == "socks5://user:pass@127.0.0.1:1080"
     assert dialog.network_proxy_bypass_rules_edit.toPlainText() == "localhost\n127.0.0.1"
@@ -3618,7 +3652,8 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "播放设置"
+    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(1) == "播放设置"
     assert dialog.playback_auto_switch_source_on_failure_checkbox.isChecked() is True
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
     assert dialog.mpv_cache_size_edit.text() == "1024"
@@ -3704,6 +3739,29 @@ def test_advanced_settings_dialog_saves_episode_title_enhancement_checkbox(qtbot
     dialog.save_button.click()
 
     assert saved[-1].episode_title_enhancement_enabled is True
+
+
+def test_history_page_search_styles_follow_resolved_dark_theme(qtbot) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from atv_player.ui.history_page import HistoryPage
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    class FakeHistoryController:
+        def load_page(self, **kwargs):
+            del kwargs
+            return [], 0
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    page = HistoryPage(controller=FakeHistoryController())
+    qtbot.addWidget(page)
+
+    tokens = manager.tokens_for("dark")
+    assert tokens.input_border in page.search_edit.styleSheet()
+    assert tokens.accent in page.continue_button.styleSheet()
 
 
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:

@@ -27,6 +27,7 @@ from atv_player.models import SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
+from atv_player.ui.theme import build_placeholder_label_qss, current_tokens
 
 
 def _display_source_type(source_type: str) -> str:
@@ -34,16 +35,6 @@ def _display_source_type(source_type: str) -> str:
         "local": "本地",
         "remote": "远程",
     }.get(source_type, source_type)
-
-
-_PLACEHOLDER_ACTION_STYLE = """
-QLabel {
-    border: 1px solid #d0d7de;
-    padding: 4px 14px;
-    background-color: #f6f8fa;
-    color: #8c959f;
-}
-"""
 
 
 class _PluginRefreshSignals(QObject):
@@ -273,7 +264,7 @@ class PluginManagerDialog(QDialog, AsyncGuardMixin):
         self.plugin_actions_widget.show()
         label = QLabel(text, self.plugin_actions_widget)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet(_PLACEHOLDER_ACTION_STYLE)
+        label.setStyleSheet(build_placeholder_label_qss(current_tokens()))
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.plugin_actions_layout.addWidget(label)
         self.plugin_actions_layout.addStretch(1)

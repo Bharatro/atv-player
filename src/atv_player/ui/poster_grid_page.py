@@ -30,6 +30,7 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import CategoryFilterOption
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
+from atv_player.ui.theme import build_accent_label_qss, build_pill_button_qss, current_tokens
 
 
 class _PosterGridSignals(QObject):
@@ -439,7 +440,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         font = label.font()
         font.setWeight(QFont.Weight.Bold)
         label.setFont(font)
-        label.setStyleSheet("color: #0066cc;")
+        label.setStyleSheet(build_accent_label_qss(current_tokens()))
         return label
 
     def _toggle_filters(self) -> None:
@@ -468,29 +469,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def _apply_filter_button_style(self, button: QPushButton) -> None:
-        button.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #ffffff;
-                color: #1a1a1a;
-                border: 1px solid #d0d0d0;
-                border-radius: 14px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #e8e8e8;
-            }
-            QPushButton:checked {
-                background-color: #ffffff;
-                color: #0066cc;
-                border: 1px solid #0066cc;
-            }
-            QPushButton:checked:hover {
-                color: #0080ff;
-                border: 1px solid #0080ff;
-            }
-            """
-        )
+        button.setStyleSheet(build_pill_button_qss(current_tokens(), checked_accent=True))
 
     def _update_search_action_buttons(self) -> None:
         if not self._search_enabled:

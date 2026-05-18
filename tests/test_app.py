@@ -3602,6 +3602,25 @@ def test_build_application_does_not_change_non_button_cursor(monkeypatch, tmp_pa
     line_edit.close()
 
 
+def test_build_application_installs_theme_manager_from_saved_config(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(theme_mode="dark"))
+
+    monkeypatch.setattr(app_module, "QApplication", lambda args: app)
+    monkeypatch.setattr(app_module, "SettingsRepository", lambda _path: repo)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    built_app, built_repo = app_module.build_application()
+
+    assert built_app is app
+    assert built_repo is repo
+    assert hasattr(built_app, "_theme_manager")
+    assert built_app.property("resolved_theme") == "dark"
+    assert built_app.property("theme_mode") == "dark"
+
+
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:

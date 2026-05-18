@@ -481,6 +481,12 @@ def test_poster_grid_page_renders_filter_options_as_checkable_buttons(qtbot) -> 
 
 
 def test_poster_grid_page_filter_buttons_use_light_theme_stylesheet(qtbot) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
+
+    install_theme(QApplication.instance() or QApplication([]), ThemeManager(system_theme_getter=lambda: "light"), "light")
+
     page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: page.selected_category_id == "movie")
@@ -489,18 +495,25 @@ def test_poster_grid_page_filter_buttons_use_light_theme_stylesheet(qtbot) -> No
 
     button = page.filter_buttons["sc"][0]
     stylesheet = button.styleSheet()
+    tokens = current_tokens()
 
-    assert "background-color: #ffffff;" in stylesheet
-    assert "border: 1px solid #d0d0d0;" in stylesheet
-    assert "color: #1a1a1a;" in stylesheet
+    assert f"background-color: {tokens.input_bg};" in stylesheet
+    assert f"border: 1px solid {tokens.input_border};" in stylesheet
+    assert f"color: {tokens.text_primary};" in stylesheet
     assert "QPushButton:hover" in stylesheet
-    assert "#e8e8e8" in stylesheet
+    assert tokens.panel_alt_bg in stylesheet
     assert "QPushButton:checked" in stylesheet
-    assert "#0066cc" in stylesheet
-    assert "#0080ff" in stylesheet
+    assert tokens.accent in stylesheet
+    assert tokens.accent_hover in stylesheet
 
 
 def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
+
+    install_theme(QApplication.instance() or QApplication([]), ThemeManager(system_theme_getter=lambda: "light"), "light")
+
     page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: page.selected_category_id == "movie")
@@ -513,7 +526,7 @@ def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
 
     assert label is not None
     assert label.text() == "影视类型"
-    assert "color: #0066cc;" in label.styleSheet()
+    assert f"color: {current_tokens().accent};" in label.styleSheet()
     assert label.font().bold() is True
 
 

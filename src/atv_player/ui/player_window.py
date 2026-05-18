@@ -83,6 +83,12 @@ from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dia
 from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.theme import (
+    build_player_immersive_qss,
+    build_player_panel_qss,
+    current_resolved_theme,
+    current_theme_manager,
+)
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("", "全部"),
@@ -936,6 +942,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_play_button_icon()
         self._update_mute_button_icon()
         self._populate_parse_combo()
+        self._apply_theme()
         self._apply_visibility_state()
         self._update_log_section_max_height()
         app = QApplication.instance()
@@ -946,6 +953,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _mark_app_quit_requested(self) -> None:
         self._app_quit_requested = True
+
+    def _apply_theme(self) -> None:
+        manager = current_theme_manager()
+        theme = current_resolved_theme()
+        tokens = manager.tokens_for(theme)
+        player_tokens = manager.player_tokens_for(theme)
+        self.details.setStyleSheet(build_player_panel_qss(tokens))
+        self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
+        self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
@@ -1276,7 +1292,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _external_metadata_link_html(self, url: str, label: str) -> str:
         escaped_url = html.escape(url)
         escaped_label = html.escape(label)
-        return f'<a href="{escaped_url}" style=" text-decoration:none; color:#8f5a32; font-weight:600;">{escaped_label}</a>'
+        return (
+            f'<a href="{escaped_url}" style=" text-decoration:none; '
+            f'color:{current_theme_manager().tokens_for(current_resolved_theme()).accent}; font-weight:600;">'
+            f"{escaped_label}</a>"
+        )
 
     def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
         text = str(value or "").strip()
@@ -2205,9 +2225,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.setText("")
         self.poster_label.setPixmap(pixmap)
         video_source = self._preferred_video_poster_source()
-        if video_source == self._preferred_detail_poster_source() and Path(video_source).is_file():
-            self._show_video_poster_overlay(pixmap)
         if video_source == self._preferred_detail_poster_source():
+            self._show_video_poster_overlay(pixmap)
             self._attach_audio_cover_if_available()
 
     def _handle_video_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
@@ -2262,6 +2281,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _preferred_poster_source(self) -> str:
         return self._preferred_video_poster_source()
+
+    def _should_defer_same_source_video_poster_load(self) -> bool:
+        if self.session is None:
+            return False
+        if not self.session.async_playback_loader or self.session.playback_loader is None:
+            return False
+        current_item = self._current_play_item()
+        return current_item is not None and not bool(current_item.url)
 
     def _should_use_audio_cover(self, url: str) -> bool:
         normalized_path = urlparse(url or "").path.lower()
@@ -2339,6 +2366,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self._show_video_poster_overlay(pixmap)
             else:
                 self._clear_video_poster_overlay()
+                if self._should_defer_same_source_video_poster_load():
+                    return
+            if self._should_defer_same_source_video_poster_load():
+                return
             self._start_poster_load(source, self._video_poster_request_id, target="video")
             return
         pixmap = self._load_poster_pixmap(source)
@@ -2686,7 +2717,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self._apply_playback_loader_result(load_result)
         self._render_playlist_items()
-        self._render_poster()
+        self._render_video_poster()
         self._render_metadata()
         self._render_detail_fields()
         self._refresh_window_title()

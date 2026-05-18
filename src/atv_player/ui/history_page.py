@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 import threading
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -22,6 +23,7 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.table_utils import configure_table_columns
+from atv_player.ui.theme import build_pill_button_qss, build_search_line_edit_qss, current_tokens
 
 
 class _HistoryLoadSignals(QObject):
@@ -83,20 +85,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索标题...")
         self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setStyleSheet(
-            """
-            QLineEdit {
-                min-height: 30px;
-                padding: 0 10px;
-                border: 1px solid #d0d7de;
-                border-radius: 15px;
-                background: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #409eff;
-            }
-            """
-        )
+        tokens = current_tokens()
+        self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens))
 
         self.source_combo = QComboBox()
         for label, value in (
@@ -118,25 +108,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
 
         self.continue_button = QPushButton("继续观看")
         self.continue_button.setCheckable(True)
-        self.continue_button.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #ffffff;
-                color: #1a1a1a;
-                border: 1px solid #d0d0d0;
-                border-radius: 14px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover {
-                background-color: #e8e8e8;
-            }
-            QPushButton:checked {
-                background-color: #ffffff;
-                color: #0066cc;
-                border: 1px solid #0066cc;
-            }
-            """
-        )
+        self.continue_button.setStyleSheet(build_pill_button_qss(tokens, checked_accent=True))
 
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -212,7 +184,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                records, total = self.controller.load_page(
+                records, total = self._load_page_from_controller(
                     page=page,
                     size=size,
                     keyword=keyword,
@@ -235,6 +207,41 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             self._load_signals.succeeded.emit(request_id, page, size, records, total)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _load_page_from_controller(
+        self,
+        *,
+        page: int,
+        size: int,
+        keyword: str,
+        source_kind: str,
+        time_range: str,
+        continue_watching: bool,
+    ) -> tuple[list[HistoryRecord], int]:
+        load_page = self.controller.load_page
+        parameters = inspect.signature(load_page).parameters.values()
+        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+        if accepts_var_kwargs:
+            return load_page(
+                page=page,
+                size=size,
+                keyword=keyword,
+                source_kind=source_kind,
+                time_range=time_range,
+                continue_watching=continue_watching,
+            )
+        supported_keys = {parameter.name for parameter in parameters}
+        kwargs = {"page": page, "size": size}
+        optional_kwargs = {
+            "keyword": keyword,
+            "source_kind": source_kind,
+            "time_range": time_range,
+            "continue_watching": continue_watching,
+        }
+        for key, value in optional_kwargs.items():
+            if key in supported_keys:
+                kwargs[key] = value
+        return load_page(**kwargs)
 
     def delete_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
