@@ -17,6 +17,7 @@ from atv_player.danmaku.errors import (
     DanmakuSearchError,
     ProviderNotSupportedError,
 )
+from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.models import (
     DanmakuRecord,
     DanmakuSearchItem,
@@ -34,6 +35,7 @@ __all__ = [
     "DanmakuService",
     "DanmakuEmptyResultError",
     "DanmakuError",
+    "GenericDanmakuController",
     "DanmakuRecord",
     "DanmakuResolveError",
     "DanmakuSearchError",

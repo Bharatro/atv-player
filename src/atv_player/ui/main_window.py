@@ -1136,6 +1136,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             yt_dlp_service=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
+            danmaku_controller_factory=None,
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
     ) -> None:
@@ -1148,6 +1149,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._yt_dlp_service = yt_dlp_service
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
+        self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
         self._plugin_definitions = list(spider_plugins or [])
@@ -2372,7 +2374,11 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
-        self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
+        def build_request() -> OpenPlayerRequest:
+            request = self.telegram_controller.build_request(vod_id)
+            return self._apply_request_fallback_metadata(request, item, prefer_fallback_media_title=True)
+
+        self._start_open_request(build_request)
 
     def _handle_telegram_open_requested(self, vod_id: str) -> None:
         self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
@@ -3006,7 +3012,12 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         )
 
     @staticmethod
-    def _apply_request_fallback_metadata(request: OpenPlayerRequest, item: Any) -> OpenPlayerRequest:
+    def _apply_request_fallback_metadata(
+        request: OpenPlayerRequest,
+        item: Any,
+        *,
+        prefer_fallback_media_title: bool = False,
+    ) -> OpenPlayerRequest:
         fallback_type_name = str(getattr(item, "type_name", "") or "").strip()
         fallback_category_name = str(getattr(item, "category_name", "") or "").strip()
         fallback_vod_name = str(getattr(item, "vod_name", "") or "").strip()
@@ -3016,7 +3027,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             request.vod.category_name = fallback_category_name
         if fallback_vod_name and not request.vod.vod_name:
             request.vod.vod_name = fallback_vod_name
-        resolved_media_title = (request.vod.vod_name or fallback_vod_name).strip()
+        resolved_media_title = (
+            fallback_vod_name if prefer_fallback_media_title and fallback_vod_name else request.vod.vod_name or fallback_vod_name
+        ).strip()
         playlists = list(request.playlists or [])
         if not playlists and request.playlist:
             playlists = [request.playlist]
@@ -3389,7 +3402,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None
-            and request.source_kind in {"browse", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_hydrator = self._metadata_hydrator_factory(
                 request=request,
@@ -3400,9 +3413,20 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if (
             request.metadata_scrape_service is None
             and self._metadata_scrape_service_factory is not None
-            and request.source_kind in {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_scrape_service = self._metadata_scrape_service_factory(
+                request=request,
+                source_kind=request.source_kind,
+                source_key=request.source_key,
+                vod=request.vod,
+            )
+        if (
+            request.danmaku_controller is None
+            and self._danmaku_controller_factory is not None
+            and request.source_kind in {"telegram", "emby", "jellyfin", "feiniu"}
+        ):
+            request.danmaku_controller = self._danmaku_controller_factory(
                 request=request,
                 source_kind=request.source_kind,
                 source_key=request.source_key,

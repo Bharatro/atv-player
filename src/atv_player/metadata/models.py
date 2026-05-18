@@ -30,8 +30,11 @@ class MetadataContext:
     raw_detail: "Mapping[str, object] | None" = None
 
     def to_query(self) -> MetadataQuery:
+        current_title = ""
+        if self.current_item is not None:
+            current_title = str(self.current_item.media_title or "").strip()
         return MetadataQuery(
-            title=(self.vod.vod_name or "").strip(),
+            title=current_title or (self.vod.vod_name or "").strip(),
             year=(self.vod.vod_year or "").strip(),
             source_kind=self.source_kind,
             source_key=self.source_key,

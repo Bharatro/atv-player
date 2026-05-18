@@ -4,7 +4,7 @@ from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
-from atv_player.models import VodItem
+from atv_player.models import PlayItem, VodItem
 
 
 class FakeProvider:
@@ -23,14 +23,16 @@ class FakeProvider:
         self.search_error = search_error
         self.detail_error = detail_error
         self.search_calls = 0
+        self.search_queries: list[object] = []
         self.get_detail_calls: list[MetadataMatch] = []
         self.cache_key = None
 
     def can_enrich(self, _context: MetadataContext) -> bool:
         return True
 
-    def search(self, _candidate) -> list[MetadataMatch]:
+    def search(self, candidate) -> list[MetadataMatch]:
         self.search_calls += 1
+        self.search_queries.append(candidate)
         if self.search_error is not None:
             raise self.search_error
         return list(self.matches)
@@ -187,6 +189,27 @@ def test_metadata_hydrator_keeps_official_douban_overview_but_uses_tmdb_visual_f
     assert updated.vod_year == "2026"
     assert updated.vod_content == "豆瓣简介"
     assert updated.vod_remarks == "8.1"
+
+
+def test_metadata_hydrator_prefers_current_item_media_title_for_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="36514978", title="成何体统")],
+        record=MetadataRecord(provider="local_douban", provider_id="36514978", title="成何体统", overview="豆瓣简介"),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="【C】成丨何体统"),
+            source_kind="telegram",
+            current_item=PlayItem(title="正片", url="https://media.example/movie.m3u8", media_title="成何体统 (2026)"),
+        )
+    )
+
+    assert provider.search_queries[0].title == "成何体统 (2026)"
+    assert updated.vod_content == "豆瓣简介"
 
 
 def test_metadata_hydrator_later_tmdb_overrides_existing_official_douban_poster(tmp_path: Path) -> None:

@@ -144,6 +144,8 @@ class FakePlayerController:
         detail_action_runner=None,
         detail_field_runner=None,
         metadata_hydrator=None,
+        metadata_scrape_service=None,
+        metadata_binding_repository=None,
         episode_title_enhancer=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
@@ -167,6 +169,8 @@ class FakePlayerController:
             "detail_action_runner": detail_action_runner,
             "detail_field_runner": detail_field_runner,
             "metadata_hydrator": metadata_hydrator,
+            "metadata_scrape_service": metadata_scrape_service,
+            "metadata_binding_repository": metadata_binding_repository,
             "episode_title_enhancer": episode_title_enhancer,
             "danmaku_controller": danmaku_controller,
             "playback_history_loader": playback_history_loader,
@@ -6005,6 +6009,61 @@ def test_main_window_prepares_metadata_hydrator_for_browse_request(qtbot) -> Non
     assert prepared.metadata_hydrator is marker
 
 
+def test_main_window_telegram_open_preserves_list_title_as_media_title(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            del controller, config, save_config
+            self.closed_to_main = SimpleNamespace(connect=lambda _callback: None)
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class TelegramOpenController(FakeStaticController):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request(self, vod_id: str):
+            self.calls.append(vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="【C】成丨何体统"),
+                playlist=[PlayItem(title="正片", url="https://media.example/movie.m3u8")],
+                clicked_index=0,
+                source_kind="telegram",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    controller = TelegramOpenController()
+    window = MainWindow(
+        telegram_controller=controller,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    window._handle_telegram_item_open_requested(VodItem(vod_id="vod-1", vod_name="成何体统 (2026)"))
+
+    qtbot.waitUntil(lambda: controller.calls == ["vod-1"])
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    session = window.player_window.opened[0][0]
+
+    assert session["vod"].vod_name == "【C】成丨何体统"
+    assert session["playlist"][0].media_title == "成何体统 (2026)"
+
+
 def test_main_window_prepares_episode_title_enhancer_for_browse_request(qtbot) -> None:
     marker = object()
     window = MainWindow(
@@ -6028,6 +6087,38 @@ def test_main_window_prepares_episode_title_enhancer_for_browse_request(qtbot) -
     prepared = window._prepare_request_for_open(request)
 
     assert prepared.episode_title_enhancer is marker
+
+
+@pytest.mark.parametrize("source_kind", ["telegram", "emby", "jellyfin", "feiniu"])
+def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(qtbot, source_kind: str) -> None:
+    hydrator = object()
+    scrape_service = object()
+    danmaku_controller = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **_: hydrator,
+        metadata_scrape_service_factory=lambda **_: scrape_service,
+        danmaku_controller_factory=lambda **_: danmaku_controller,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="v1", vod_name="Movie"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        clicked_index=0,
+        source_kind=source_kind,
+        source_mode="detail",
+        source_vod_id="v1",
+    )
+
+    prepared = window._prepare_request_for_open(request)
+
+    assert prepared.metadata_hydrator is hydrator
+    assert prepared.metadata_scrape_service is scrape_service
+    assert prepared.danmaku_controller is danmaku_controller
 
 
 def test_main_window_does_not_backfill_plugin_metadata_hydrator_but_keeps_scrape_service(qtbot) -> None:

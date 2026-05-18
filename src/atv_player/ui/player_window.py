@@ -1767,7 +1767,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
-        self._metadata_scrape_binding_title = str(session.vod.vod_name or "").strip()
+        initial_item = session.playlist[session.start_index] if 0 <= session.start_index < len(session.playlist) else None
+        self._metadata_scrape_binding_title = str(getattr(initial_item, "media_title", "") or session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
@@ -5418,7 +5419,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             query = None
             if self.session is not None:
                 query = MetadataQuery(
-                    title=normalize_metadata_scrape_title(self.session.vod.vod_name),
+                    title=self._metadata_scrape_current_title(),
                     year=str(self.session.vod.vod_year or "").strip(),
                     type_name=str(self.session.vod.type_name or "").strip(),
                     category_name=str(self.session.vod.category_name or "").strip(),
@@ -5433,7 +5434,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _open_metadata_scrape_dialog(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
             return
-        self._metadata_scrape_default_title = normalize_metadata_scrape_title(self.session.vod.vod_name)
+        self._metadata_scrape_default_title = self._metadata_scrape_current_title()
         self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
         if not self._metadata_scrape_binding_title:
             self._metadata_scrape_binding_title = self._metadata_scrape_default_title
@@ -5455,6 +5456,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             provider_index = max(0, self._metadata_scrape_provider_combo.findData(provider_value))
             self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
+
+    def _metadata_scrape_current_title(self) -> str:
+        current_item = None
+        if self.session is not None and 0 <= self.current_index < len(self.session.playlist):
+            current_item = self.session.playlist[self.current_index]
+        title = str(getattr(current_item, "media_title", "") or "").strip()
+        if not title and self.session is not None:
+            title = str(self.session.vod.vod_name or "").strip()
+        return normalize_metadata_scrape_title(title)
         dialog.raise_()
         dialog.activateWindow()
 

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
 from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
+from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
@@ -572,7 +573,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request
@@ -614,7 +615,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_scrape_service_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, vod
@@ -630,6 +631,17 @@ class AppCoordinator(QObject):
                 raw_detail=raw_detail,
             )
             return MetadataScrapeService(cache=cache, providers=providers)
+
+        return factory
+
+    def _build_danmaku_controller_factory(self):
+        def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
+            del request, source_key, vod, raw_detail
+            if source_kind not in {"telegram", "emby", "jellyfin", "feiniu"}:
+                return None
+            if self._danmaku_service is None:
+                return None
+            return GenericDanmakuController(self._danmaku_service)
 
         return factory
 
@@ -1142,6 +1154,7 @@ class AppCoordinator(QObject):
         self._api_client = self._build_api_client()
         metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
         metadata_scrape_service_factory = self._build_metadata_scrape_service_factory(self._api_client)
+        danmaku_controller_factory = self._build_danmaku_controller_factory()
         episode_title_enhancer_factory = self._build_episode_title_enhancer_factory(self._api_client)
         setattr(self._plugin_manager, "_metadata_hydrator_factory", metadata_hydrator_factory)
         setattr(self._plugin_manager, "_metadata_scrape_service_factory", metadata_scrape_service_factory)
@@ -1288,6 +1301,7 @@ class AppCoordinator(QObject):
             yt_dlp_service=self._yt_dlp_service,
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
+            danmaku_controller_factory=danmaku_controller_factory,
             episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,
         )
