@@ -9,7 +9,7 @@ from atv_player.ui.window_chrome import (
 
 class DemoWindow(ThemedWidgetWindowBase):
     def __init__(self) -> None:
-        super().__init__(title="Demo Window", allow_minimize=True, allow_maximize=True)
+        super().__init__(title="Demo Window", allow_minimize=True, allow_maximize=True, resizable=True)
         self.content_layout().addWidget(QLabel("body", self.content_widget()))
 
 
@@ -34,6 +34,32 @@ def test_themed_dialog_hides_maximize_button_by_default(qtbot) -> None:
 
     assert dialog.title_bar().maximize_button.isHidden() is True
     assert dialog.title_bar().minimize_button.isHidden() is True
+
+
+def test_themed_dialog_applies_default_content_padding(qtbot) -> None:
+    dialog = DemoDialog()
+    qtbot.addWidget(dialog)
+
+    margins = dialog.content_layout().contentsMargins()
+
+    assert margins.left() > 0
+    assert margins.top() > 0
+    assert margins.right() > 0
+    assert margins.bottom() > 0
+
+
+def test_themed_widget_window_can_enable_resize_support(qtbot) -> None:
+    window = DemoWindow()
+    qtbot.addWidget(window)
+
+    assert window.is_window_resizable() is True
+
+
+def test_themed_dialog_keeps_resize_support_disabled(qtbot) -> None:
+    dialog = DemoDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.is_window_resizable() is False
 
 
 def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) -> None:

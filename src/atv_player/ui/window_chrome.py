@@ -97,6 +97,7 @@ class _ThemedChromeMixin:
     _window_chrome_content: QWidget
     _window_chrome_content_layout: QVBoxLayout
     _title_bar: CustomTitleBar
+    _window_resizable: bool = False
 
     def _init_window_chrome(
         self,
@@ -104,7 +105,9 @@ class _ThemedChromeMixin:
         title: str,
         allow_minimize: bool,
         allow_maximize: bool,
+        resizable: bool = False,
     ) -> None:
+        self._window_resizable = resizable
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self._window_chrome_root = QWidget(self)
         self._window_chrome_root.setObjectName("windowChromeRoot")
@@ -143,6 +146,9 @@ class _ThemedChromeMixin:
     def content_layout(self) -> QVBoxLayout:
         return self._window_chrome_content_layout
 
+    def is_window_resizable(self) -> bool:
+        return self._window_resizable
+
     def set_title_bar_visible(self, visible: bool) -> None:
         self._title_bar.setVisible(visible)
 
@@ -178,6 +184,7 @@ class ThemedWidgetWindowBase(QWidget, _ThemedChromeMixin):
         title: str,
         allow_minimize: bool,
         allow_maximize: bool,
+        resizable: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -185,6 +192,7 @@ class ThemedWidgetWindowBase(QWidget, _ThemedChromeMixin):
             title=title,
             allow_minimize=allow_minimize,
             allow_maximize=allow_maximize,
+            resizable=resizable,
         )
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -205,7 +213,9 @@ class ThemedDialogBase(QDialog, _ThemedChromeMixin):
             title=title,
             allow_minimize=False,
             allow_maximize=allow_maximize,
+            resizable=False,
         )
+        self._window_chrome_content_layout.setContentsMargins(12, 12, 12, 12)
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
@@ -219,6 +229,7 @@ class ThemedMainWindowBase(QMainWindow, _ThemedChromeMixin):
         title: str,
         allow_minimize: bool = True,
         allow_maximize: bool = True,
+        resizable: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -226,5 +237,6 @@ class ThemedMainWindowBase(QMainWindow, _ThemedChromeMixin):
             title=title,
             allow_minimize=allow_minimize,
             allow_maximize=allow_maximize,
+            resizable=resizable,
         )
         super().setCentralWidget(self._window_chrome_root)
