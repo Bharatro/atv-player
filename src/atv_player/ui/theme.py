@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QPolygon
 from PySide6.QtWidgets import QApplication, QComboBox
 
@@ -14,6 +14,20 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
 
 
 class FlatComboBox(QComboBox):
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        desired_height = int(self.property("flat_combo_height") or 0)
+        if desired_height > 0:
+            hint.setHeight(desired_height)
+        return hint
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        desired_height = int(self.property("flat_combo_height") or 0)
+        if desired_height > 0:
+            hint.setHeight(desired_height)
+        return hint
+
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -36,6 +50,12 @@ class FlatComboBox(QComboBox):
             border = self._resolved_color("flat_combo_disabled_border_color", QColor(0, 0, 0, 0))
 
         rect = self.rect().adjusted(0, 0, -1, -1)
+        chrome_height = int(self.property("flat_combo_height") or 0)
+        if 0 < chrome_height < rect.height():
+            vertical_padding = rect.height() - chrome_height
+            top_padding = vertical_padding // 2
+            bottom_padding = vertical_padding - top_padding
+            rect = rect.adjusted(0, top_padding, 0, -bottom_padding)
         if background.alpha() > 0 or border.alpha() > 0:
             painter.setBrush(background if background.alpha() > 0 else Qt.BrushStyle.NoBrush)
             painter.setPen(border if border.alpha() > 0 else Qt.PenStyle.NoPen)
@@ -94,6 +114,7 @@ def configure_flat_combobox(
     left_padding: int = 12,
     indicator_padding: int = 40,
     drop_down_width: int = 30,
+    height: int | None = None,
 ) -> None:
     combo.setProperty("flat_combo_border_color", border_color or "")
     combo.setProperty("flat_combo_text_color", text_color or "")
@@ -110,6 +131,11 @@ def configure_flat_combobox(
     combo.setProperty("flat_combo_left_padding", left_padding)
     combo.setProperty("flat_combo_indicator_padding", indicator_padding)
     combo.setProperty("flat_combo_drop_down_width", drop_down_width)
+    combo.setProperty("flat_combo_height", height or 0)
+    if height is not None:
+        combo.setMinimumHeight(height)
+        combo.setMaximumHeight(height)
+    combo.updateGeometry()
     combo.update()
 
 
@@ -426,7 +452,9 @@ def build_combobox_qss(
     resolved_disabled_drop_down_border_left_color = disabled_drop_down_border_left_color or "transparent"
     return f"""
     QComboBox {{
+        height: {min_height}px;
         min-height: {min_height}px;
+        max-height: {min_height}px;
         padding: 0 {indicator_padding}px 0 {horizontal_padding}px;
         border: none;
         border-radius: {border_radius}px;

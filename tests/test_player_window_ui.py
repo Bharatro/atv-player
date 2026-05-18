@@ -3350,11 +3350,10 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
 
     assert "min-height: 28px" in window.speed_combo.styleSheet()
     assert (
-        "QComboBox {\n        min-height: 28px;\n        padding: 0 18px 0 4px;\n        border: none;"
+        "QComboBox {\n        height: 28px;\n        min-height: 28px;\n        max-height: 28px;\n        padding: 0 18px 0 4px;\n        border: none;"
         in window.speed_combo.styleSheet()
     )
-    assert window.speed_combo.minimumHeight() == 28
-    assert window.speed_combo.maximumHeight() == 28
+    assert window.speed_combo.property("flat_combo_height") == 28
     assert "background: transparent;" in window.speed_combo.styleSheet()
     assert "#ffffff" not in window.speed_combo.styleSheet()
     assert "background: transparent;" in window.subtitle_combo.styleSheet()
@@ -6448,7 +6447,7 @@ def test_player_window_uses_readable_density_for_control_combos(qtbot) -> None:
     assert window.video_quality_combo.maximumWidth() == 84
     assert window.audio_combo.maximumWidth() == 74
     assert window.parse_combo.maximumWidth() == 72
-    assert "min-height: 30px" in window.speed_combo.styleSheet()
+    assert "min-height: 28px" in window.speed_combo.styleSheet()
 
 
 def test_player_window_control_combo_text_fits_rendered_edit_field(qtbot) -> None:

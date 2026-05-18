@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QSplitter,
@@ -1121,6 +1122,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 hover_border_color=tokens.input_hover_border,
                 focus_border_color=tokens.input_focus_ring,
                 disabled_border_color="transparent",
+                height=34,
             )
         for combo in self._player_control_comboboxes():
             combo.setStyleSheet(combo_qss)
@@ -1142,6 +1144,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 left_padding=4,
                 indicator_padding=18,
                 drop_down_width=16,
+                height=28,
             )
         for combo in self._dialog_comboboxes():
             combo.setStyleSheet(dialog_combo_qss)
@@ -1159,6 +1162,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 hover_border_color=tokens.input_hover_border,
                 focus_border_color=tokens.input_focus_ring,
                 disabled_border_color=tokens.border_subtle,
+                height=34,
             )
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
@@ -1270,6 +1274,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         combo.setMinimumContentsLength(minimum_contents_length)
         combo.setMaxVisibleItems(12)
         if fixed_height is not None:
+            size_policy = combo.sizePolicy()
+            combo.setSizePolicy(size_policy.horizontalPolicy(), QSizePolicy.Policy.Fixed)
             combo.setFixedHeight(fixed_height)
         if maximum_width is not None:
             combo.setMaximumWidth(maximum_width)
