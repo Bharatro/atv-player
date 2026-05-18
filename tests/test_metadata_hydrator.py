@@ -300,6 +300,55 @@ def test_metadata_hydrator_local_douban_corrects_noisy_similar_title(tmp_path: P
     assert updated.type_name == "爱情 / 古装"
 
 
+def test_metadata_hydrator_reruns_other_providers_with_local_douban_corrected_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    original_title = "努力克服自卑的我们 모두가 자신의 무가치함과 싸우고 있다"
+    corrected_title = "努力克服自卑的我们"
+
+    class DynamicTMDBProvider(FakeProvider):
+        def search(self, candidate) -> list[MetadataMatch]:
+            self.search_calls += 1
+            self.search_queries.append(candidate)
+            if candidate.title == corrected_title:
+                return [MetadataMatch(provider="tmdb", provider_id="tv:42", title=corrected_title, year="2026", score=0.95)]
+            return []
+
+    local_douban = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="37335468", title=corrected_title, year="2026", score=0.95)],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="37335468",
+            title=corrected_title,
+            year="2026",
+            overview="豆瓣简介",
+        ),
+    )
+    tmdb = DynamicTMDBProvider(
+        "tmdb",
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            title=corrected_title,
+            year="2026",
+            poster="https://img.example/tmdb-poster.jpg",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, local_douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name=original_title, vod_year="2026"),
+            source_kind="browse",
+        )
+    )
+
+    assert updated.vod_name == corrected_title
+    assert updated.vod_content == "豆瓣简介"
+    assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert [query.title for query in tmdb.search_queries] == [original_title, corrected_title]
+
+
 def test_metadata_hydrator_prefers_tmdb_season_over_local_douban_overview(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(

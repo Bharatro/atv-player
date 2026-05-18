@@ -5418,9 +5418,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if callable(provider_options):
             query = None
             if self.session is not None:
+                title, year = self._metadata_scrape_current_query()
                 query = MetadataQuery(
-                    title=self._metadata_scrape_current_title(),
-                    year=str(self.session.vod.vod_year or "").strip(),
+                    title=title,
+                    year=year,
                     type_name=str(self.session.vod.type_name or "").strip(),
                     category_name=str(self.session.vod.category_name or "").strip(),
                 )
@@ -5434,8 +5435,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _open_metadata_scrape_dialog(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
             return
-        self._metadata_scrape_default_title = self._metadata_scrape_current_title()
-        self._metadata_scrape_default_year = str(self.session.vod.vod_year or "").strip()
+        self._metadata_scrape_default_title, self._metadata_scrape_default_year = self._metadata_scrape_current_query()
         if not self._metadata_scrape_binding_title:
             self._metadata_scrape_binding_title = self._metadata_scrape_default_title
         if not self._metadata_scrape_binding_year:
@@ -5458,15 +5458,32 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.show()
 
     def _metadata_scrape_current_title(self) -> str:
+        return self._metadata_scrape_current_query()[0]
+
+    def _metadata_scrape_current_query(self) -> tuple[str, str]:
         current_item = None
         if self.session is not None and 0 <= self.current_index < len(self.session.playlist):
             current_item = self.session.playlist[self.current_index]
         title = str(getattr(current_item, "media_title", "") or "").strip()
         if not title and self.session is not None:
             title = str(self.session.vod.vod_name or "").strip()
-        return normalize_metadata_scrape_title(title)
+        year = str(self.session.vod.vod_year or "").strip() if self.session is not None else ""
+        return self._normalize_metadata_scrape_query_inputs(title, year)
         dialog.raise_()
         dialog.activateWindow()
+
+    def _normalize_metadata_scrape_query_inputs(self, title: str, year: str) -> tuple[str, str]:
+        normalized_title = normalize_metadata_scrape_title(title)
+        normalized_year = str(year or "").strip()
+        year_match = re.fullmatch(r"(.*?)[\s]*[\(（]\s*((?:19|20)\d{2})\s*[\)）]\s*$", normalized_title)
+        if year_match is not None:
+            embedded_title = year_match.group(1).strip()
+            embedded_year = year_match.group(2).strip()
+            if embedded_title:
+                normalized_title = embedded_title
+            if not normalized_year:
+                normalized_year = embedded_year
+        return normalized_title.strip(), normalized_year
 
     def _metadata_scrape_provider_label(self, provider_key: str) -> str:
         return "全部" if not provider_key else _metadata_provider_label(provider_key)
@@ -5520,12 +5537,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             or self._metadata_scrape_status_label is None
         ):
             return
-        title = self._metadata_scrape_title_edit.text().strip()
-        normalized_title = normalize_metadata_scrape_title(title)
-        if normalized_title != title:
-            self._metadata_scrape_title_edit.setText(normalized_title)
-            title = normalized_title
-        year = self._metadata_scrape_year_edit.text().strip()
+        title, year = self._normalize_metadata_scrape_query_inputs(
+            self._metadata_scrape_title_edit.text().strip(),
+            self._metadata_scrape_year_edit.text().strip(),
+        )
+        if title != self._metadata_scrape_title_edit.text().strip():
+            self._metadata_scrape_title_edit.setText(title)
+        if year != self._metadata_scrape_year_edit.text().strip():
+            self._metadata_scrape_year_edit.setText(year)
         if not title:
             self._metadata_scrape_status_label.setText("当前条目缺少标题")
             return
@@ -5582,11 +5601,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 if provider and provider_id and key not in detail_keys:
                     detail_keys.append(key)
         reset_title = self._metadata_scrape_default_title
-        if self._metadata_scrape_title_edit is not None:
-            reset_title = normalize_metadata_scrape_title(self._metadata_scrape_title_edit.text().strip())
         reset_year = self._metadata_scrape_default_year
-        if self._metadata_scrape_year_edit is not None:
-            reset_year = self._metadata_scrape_year_edit.text().strip()
+        if self._metadata_scrape_title_edit is not None:
+            reset_title, reset_year = self._normalize_metadata_scrape_query_inputs(
+                self._metadata_scrape_title_edit.text().strip(),
+                self._metadata_scrape_year_edit.text().strip() if self._metadata_scrape_year_edit is not None else "",
+            )
         self.session.metadata_scrape_service.reset(
             MetadataQuery(
                 title=reset_title,

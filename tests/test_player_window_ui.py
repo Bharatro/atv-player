@@ -394,8 +394,8 @@ def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(q
 
 def test_player_window_metadata_scrape_dialog_prefills_current_media_title(qtbot) -> None:
     session = PlayerSession(
-        vod=VodItem(vod_id="v1", vod_name="【C】成丨何体统", vod_year="2026"),
-        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4", media_title="成何体统 (2026)")],
+        vod=VodItem(vod_id="v1", vod_name="我的王室死对头(2026)", vod_year="2026"),
+        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4", media_title="我的王室死对头(2026)")],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
@@ -407,7 +407,7 @@ def test_player_window_metadata_scrape_dialog_prefills_current_media_title(qtbot
 
     window._open_metadata_scrape_dialog()
 
-    assert window._metadata_scrape_title_edit.text() == "成何体统 (2026)"
+    assert window._metadata_scrape_title_edit.text() == "我的王室死对头"
     assert window._metadata_scrape_year_edit.text() == "2026"
 
 
@@ -435,7 +435,7 @@ def test_player_window_metadata_scrape_dialog_normalizes_leading_topic_marker_in
     assert service.search_calls == [("牧神记 年番2", "2024", "")]
 
 
-def test_player_window_metadata_scrape_dialog_strips_trailing_noise_but_keeps_year(qtbot) -> None:
+def test_player_window_metadata_scrape_dialog_strips_trailing_noise_but_keeps_separate_year(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(
         vod=VodItem(
@@ -455,15 +455,15 @@ def test_player_window_metadata_scrape_dialog_strips_trailing_noise_but_keeps_ye
 
     window._open_metadata_scrape_dialog()
 
-    assert window._metadata_scrape_title_edit.text() == "主角 (2026)"
+    assert window._metadata_scrape_title_edit.text() == "主角"
 
     window._rerun_metadata_scrape_search()
 
     qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
-    assert service.search_calls == [("主角 (2026)", "2026", "")]
+    assert service.search_calls == [("主角", "2026", "")]
 
 
-def test_player_window_metadata_scrape_dialog_strips_bracketed_noise_after_year(qtbot) -> None:
+def test_player_window_metadata_scrape_dialog_strips_bracketed_noise_and_uses_separate_year(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(
         vod=VodItem(
@@ -485,12 +485,12 @@ def test_player_window_metadata_scrape_dialog_strips_bracketed_noise_after_year(
 
     window._open_metadata_scrape_dialog()
 
-    assert window._metadata_scrape_title_edit.text() == "牧神记(2026)"
+    assert window._metadata_scrape_title_edit.text() == "牧神记"
 
     window._rerun_metadata_scrape_search()
 
     qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
-    assert service.search_calls == [("牧神记(2026)", "2026", "")]
+    assert service.search_calls == [("牧神记", "2026", "")]
 
 
 def test_player_window_metadata_scrape_search_passes_category_and_type_into_query(qtbot) -> None:
@@ -14505,6 +14505,55 @@ def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloa
     assert "元数据已更新" in window.log_view.toPlainText()
     assert "本地豆瓣" in window.log_view.toPlainText()
     assert "TMDB" in window.log_view.toPlainText()
+
+
+def test_player_window_async_metadata_hydration_updates_metadata_scrape_dialog_title(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    original_title = "努力克服自卑的我们 모두가 자신의 무가치함과 싸우고 있다 (2026)"
+    corrected_title = "努力克服自卑的我们"
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name=original_title, vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", media_title=original_title)],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=object(),
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=corrected_title,
+            vod_year="2026",
+            vod_content="豆瓣简介",
+            metadata_field_sources={"overview": "local_douban"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == corrected_title
+    assert window._metadata_scrape_year_edit.text() == "2026"
 
 
 def test_player_window_async_metadata_hydration_skips_update_log_when_metadata_is_unchanged(qtbot) -> None:
