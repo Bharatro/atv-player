@@ -108,6 +108,10 @@ def _title_quality_score(value: object) -> tuple[int, int]:
     return (score, -len(text))
 
 
+def _is_low_quality_title(value: object) -> bool:
+    return _title_quality_score(value)[0] < -1
+
+
 def choose_preferred_title(current_title: object, candidate_title: object) -> str:
     current_text = str(current_title or "").strip()
     candidate_text = str(candidate_title or "").strip()
@@ -115,6 +119,10 @@ def choose_preferred_title(current_title: object, candidate_title: object) -> st
         return candidate_text
     if not candidate_text:
         return current_text
+    current_score = _title_quality_score(current_text)
+    candidate_score = _title_quality_score(candidate_text)
+    if current_score[0] < -1 and candidate_score > current_score:
+        return candidate_text
     current = _normalize_title_for_correction(current_text)
     target = _normalize_title_for_correction(candidate_text)
     if not current:
@@ -123,7 +131,7 @@ def choose_preferred_title(current_title: object, candidate_title: object) -> st
         return current_text
     if current != target and current not in target and target not in current:
         return current_text
-    return candidate_text if _title_quality_score(candidate_text) > _title_quality_score(current_text) else current_text
+    return candidate_text if candidate_score > current_score else current_text
 
 
 def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
@@ -175,7 +183,7 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
     if record.title:
         if not vod.vod_name:
             vod.vod_name = record.title
-        elif record.provider in _TITLE_CORRECTION_PROVIDERS:
+        elif record.provider in _TITLE_CORRECTION_PROVIDERS or _is_low_quality_title(vod.vod_name):
             vod.vod_name = choose_preferred_title(vod.vod_name, record.title)
     if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
         vod.vod_pic = record.poster

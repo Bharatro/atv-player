@@ -1,4 +1,4 @@
-from atv_player.metadata.merge import merge_metadata_record
+from atv_player.metadata.merge import choose_preferred_title, merge_metadata_record
 from atv_player.metadata.models import MetadataRecord
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, VodItem
 
@@ -156,3 +156,33 @@ def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> N
     assert vod.vod_actor == "种崎敦美"
     assert vod.type_name == "动画 / 奇幻"
     assert vod.vod_pic == "https://img.tmdb/poster.jpg"
+
+
+def test_choose_preferred_title_overrides_garbage_title_with_clean_candidate() -> None:
+    assert choose_preferred_title("J【加@页】", "国色芳华") == "国色芳华"
+
+
+def test_choose_preferred_title_preserves_clean_title_when_candidate_too_different() -> None:
+    assert choose_preferred_title("国色芳花", "国色芳华") == "国色芳花"
+
+
+def test_choose_preferred_title_preserves_garbage_when_candidate_is_also_garbage() -> None:
+    assert choose_preferred_title("J【加@页】", "X【推@广】") == "J【加@页】"
+
+
+def test_merge_metadata_iqiyi_overrides_low_quality_title_with_record_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="J【加@页】")
+    record = MetadataRecord(provider="iqiyi", provider_id="iqiyi:1", title="国色芳华")
+
+    merge_metadata_record(vod, record, provider_priority=["iqiyi"])
+
+    assert vod.vod_name == "国色芳华"
+
+
+def test_merge_metadata_iqiyi_preserves_clean_existing_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="国色芳花")
+    record = MetadataRecord(provider="iqiyi", provider_id="iqiyi:1", title="国色芳华")
+
+    merge_metadata_record(vod, record, provider_priority=["iqiyi"])
+
+    assert vod.vod_name == "国色芳花"

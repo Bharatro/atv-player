@@ -1029,3 +1029,85 @@ def test_metadata_hydrator_uses_highest_scored_primary_match_and_only_fills_miss
     assert updated.vod_actor == "演员甲"
     assert updated.vod_pic == "https://img.example/right-poster.jpg"
     assert updated.vod_remarks == "8.8"
+
+
+def test_metadata_hydrator_bound_iqiyi_record_overrides_garbage_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("J【加@页】", "", provider="iqiyi", provider_id="iqiyi:1", matched_title="国色芳华")
+    iqiyi = FakeProvider(
+        "iqiyi",
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="iqiyi:1",
+            title="国色芳华",
+            year="2026",
+            overview="爱奇艺简介",
+            actors=["杨紫", "韩东君"],
+            genres=["古装", "励志"],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[iqiyi], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="J【加@页】"), source_kind="browse")
+    )
+
+    assert updated.vod_name == "国色芳华"
+    assert updated.vod_year == "2026"
+    assert updated.vod_content == "爱奇艺简介"
+    assert updated.vod_actor == "杨紫,韩东君"
+
+
+def test_metadata_hydrator_bound_iqiyi_record_overrides_custom_user_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("我的电视剧", "", provider="iqiyi", provider_id="iqiyi:1", matched_title="国色芳华")
+    iqiyi = FakeProvider(
+        "iqiyi",
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="iqiyi:1",
+            title="国色芳华",
+            year="2026",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[iqiyi], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="我的电视剧"), source_kind="browse")
+    )
+
+    assert updated.vod_name == "国色芳华"
+
+
+def test_metadata_hydrator_auto_iqiyi_match_corrects_garbage_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="国色芳华",
+                year="2026",
+                score=1.0,
+                raw={"channel": "电视剧,2"},
+            )
+        ],
+        record=MetadataRecord(
+            provider="iqiyi",
+            provider_id="iqiyi:1",
+            title="国色芳华",
+            year="2026",
+            overview="爱奇艺简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[iqiyi])
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="国色芳华【加@页】"), source_kind="browse")
+    )
+
+    assert updated.vod_name == "国色芳华"
+    assert updated.vod_content == "爱奇艺简介"

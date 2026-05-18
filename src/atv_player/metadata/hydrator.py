@@ -277,6 +277,8 @@ class MetadataHydrator:
         bound_record = self._load_bound_record(query)
         if bound_record is not None:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])
+            if bound_record.title:
+                vod.vod_name = bound_record.title
             return vod
         eligible_providers = [provider for provider in self._providers if provider.can_enrich(context)]
         if not eligible_providers:
