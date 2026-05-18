@@ -42,7 +42,7 @@ from atv_player.models import (
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, show_shortcut_help_dialog
-from atv_player.ui.icon_cache import load_icon
+from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
@@ -51,7 +51,12 @@ from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
-from atv_player.ui.theme import build_round_icon_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.theme import (
+    build_round_icon_button_qss,
+    build_search_line_edit_qss,
+    current_resolved_theme,
+    current_tokens,
+)
 from atv_player.ui.window_chrome import ThemedMainWindowBase
 
 
@@ -1366,12 +1371,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_edit.setClearButtonEnabled(True)
         self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
         self.global_search_button.setText("")
-        self.global_search_button.setIcon(load_icon(self._SEARCH_ICON_PATH))
         self.global_search_button.setFixedSize(36, 36)
-        self.global_search_button.setStyleSheet(build_round_icon_button_qss(tokens))
-        self.global_search_popup_button.setIcon(load_icon(self._SEARCH_POPUP_ICON_PATH))
         self.global_search_popup_button.setFixedSize(36, 36)
-        self.global_search_popup_button.setStyleSheet(build_round_icon_button_qss(tokens))
+        self._apply_global_search_button_theme()
         self.global_search_status_label.setWordWrap(True)
         self.global_search_clear_button.setEnabled(False)
         self.global_search_clear_button.hide()
@@ -1576,11 +1578,26 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._sync_global_search_action_state()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
+    def _apply_global_search_button_theme(self) -> None:
+        tokens = current_tokens()
+        is_dark = current_resolved_theme() == "dark"
+        button_qss = build_round_icon_button_qss(
+            tokens,
+            background=tokens.button_bg if is_dark else None,
+            border_color=tokens.input_hover_border if is_dark else None,
+            text_color=tokens.text_primary,
+            hover_background=tokens.panel_alt_bg if is_dark else None,
+            hover_border_color=tokens.accent_hover,
+        )
+        self.global_search_button.setStyleSheet(button_qss)
+        self.global_search_popup_button.setStyleSheet(button_qss)
+        self.global_search_button.setIcon(load_tinted_icon(self._SEARCH_ICON_PATH, tokens.text_primary))
+        self.global_search_popup_button.setIcon(load_tinted_icon(self._SEARCH_POPUP_ICON_PATH, tokens.text_primary))
+
     def _apply_theme(self) -> None:
         tokens = current_tokens()
         self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
-        self.global_search_button.setStyleSheet(build_round_icon_button_qss(tokens))
-        self.global_search_popup_button.setStyleSheet(build_round_icon_button_qss(tokens))
+        self._apply_global_search_button_theme()
         self._global_search_popup._apply_theme()
         for page in (
             self.history_page,
