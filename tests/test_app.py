@@ -1604,6 +1604,48 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
     assert opened[0][1] is False
 
 
+def test_main_window_telegram_item_open_prefers_card_title_over_obfuscated_detail_title(qtbot, monkeypatch) -> None:
+    class ObfuscatedTelegramController(FakeTelegramController):
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="8@swf2fkq3zrk@t58d"),
+                playlist=[PlayItem(title="查看", url="", vod_id="detail-ep-1")],
+                clicked_index=0,
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    controller = ObfuscatedTelegramController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+
+    window.telegram_page.item_open_requested.emit(
+        VodItem(vod_id="detail-1", vod_name="📺 电视剧：良陈美锦 (2026) S01E25", type_name="电视剧")
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0][0].vod.vod_name == "📺 电视剧：良陈美锦 (2026) S01E25"
+    assert opened[0][0].playlist[0].media_title == "📺 电视剧：良陈美锦 (2026) S01E25"
+    assert opened[0][0].playlist[0].type_name == "电视剧"
+
+
 def test_main_window_uses_latest_async_open_request(qtbot, monkeypatch) -> None:
     controller = AsyncRequestController(_make_telegram_request)
     window = MainWindow(

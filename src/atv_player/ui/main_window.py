@@ -3025,7 +3025,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             request.vod.type_name = fallback_type_name
         if fallback_category_name and not request.vod.category_name:
             request.vod.category_name = fallback_category_name
-        if fallback_vod_name and not request.vod.vod_name:
+        if prefer_fallback_media_title and fallback_vod_name:
+            request.vod.vod_name = fallback_vod_name
+        elif fallback_vod_name and not request.vod.vod_name:
             request.vod.vod_name = fallback_vod_name
         resolved_media_title = (
             fallback_vod_name if prefer_fallback_media_title and fallback_vod_name else request.vod.vod_name or fallback_vod_name

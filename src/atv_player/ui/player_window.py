@@ -3076,6 +3076,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             media_title = str(item.media_title or "").strip()
             if not media_title or media_title in stale_titles:
                 item.media_title = corrected_title
+            danmaku_title = str(item.danmaku_search_title or "").strip()
+            if item.danmaku_search_query_overridden:
+                continue
+            if not danmaku_title or danmaku_title in stale_titles:
+                item.danmaku_search_title = corrected_title
+                item.danmaku_search_query = " ".join(
+                    part for part in (corrected_title, str(item.danmaku_search_episode or "").strip()) if part
+                ).strip()
 
     @staticmethod
     def _playlist_identity_key(item: PlayItem) -> tuple[str, str, str, str, str]:

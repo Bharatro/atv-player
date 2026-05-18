@@ -14556,6 +14556,116 @@ def test_player_window_async_metadata_hydration_updates_metadata_scrape_dialog_t
     assert window._metadata_scrape_year_edit.text() == "2026"
 
 
+def test_player_window_async_metadata_hydration_updates_danmaku_source_dialog_title(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    original_title = "努力克服自卑的我们(2026) WEB-1080 简繁字幕 第10集"
+    corrected_title = "努力克服自卑的我们"
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name=original_title, vod_year="2026"),
+        playlist=[
+            PlayItem(
+                title="第10集",
+                url="https://media.example/10.mp4",
+                media_title=original_title,
+                danmaku_search_title=original_title,
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=corrected_title,
+            vod_year="2026",
+            vod_content="豆瓣简介",
+            metadata_field_sources={"overview": "local_douban"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_title_edit.text() == corrected_title
+
+
+def test_player_window_async_metadata_hydration_preserves_manual_danmaku_source_title(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    original_title = "努力克服自卑的我们(2026) WEB-1080 简繁字幕 第10集"
+    corrected_title = "努力克服自卑的我们"
+    manual_title = "手动修正标题"
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name=original_title, vod_year="2026"),
+        playlist=[
+            PlayItem(
+                title="第10集",
+                url="https://media.example/10.mp4",
+                media_title=original_title,
+                danmaku_search_title=manual_title,
+                danmaku_search_query_overridden=True,
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=corrected_title,
+            vod_year="2026",
+            vod_content="豆瓣简介",
+            metadata_field_sources={"overview": "local_douban"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_title_edit.text() == manual_title
+
+
 def test_player_window_async_metadata_hydration_skips_update_log_when_metadata_is_unchanged(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
