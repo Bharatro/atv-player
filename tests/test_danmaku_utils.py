@@ -85,6 +85,20 @@ def test_extract_episode_number_supports_quality_variant_prefix_titles() -> None
     assert extract_episode_number("160-4K.mp4(471.43 MB)") == 160
 
 
+def test_extract_episode_number_supports_tilde_quality_variant_prefix_titles() -> None:
+    assert extract_episode_number("04~4K.HQ.HEVC(2.1 GB)") == 4
+
+
+def test_extract_episode_number_supports_labeled_tilde_quality_variant_titles() -> None:
+    assert extract_episode_number("高码率 - 04~4K.HQ.HEVC(2.1 GB)") == 4
+
+
+def test_extract_episode_number_ignores_numeric_x_suffix_filenames() -> None:
+    assert extract_episode_number("70x.mp4(2.52 GB)") is None
+    assert extract_episode_number("78X.mkv(2.89 GB)") is None
+    assert extract_episode_number("82 x.mp4(1.67 GB)") is None
+
+
 def test_infer_playlist_episode_number_prefers_clean_path_over_date_like_title_suffix() -> None:
     item = PlayItem(
         title="逆丨天邪神 (2023) - 01-4K-[H265.AAC][2023-09-23(815.88 MB)",
@@ -153,6 +167,52 @@ def test_infer_playlist_episode_number_ignores_year_prefixed_media_filename() ->
     ]
 
     assert infer_playlist_episode_number(playlist[0], playlist) is None
+
+
+def test_infer_playlist_episode_number_ignores_opening_and_ending_bonus_titles() -> None:
+    playlist = [
+        PlayItem(
+            title="片头片尾 - 片头《弑神》大志Tiger [2025-12-28].mp4(64.87 MB)",
+            url="http://m/op.mp4",
+            index=0,
+        ),
+        PlayItem(
+            title="片头片尾 - 片尾《归无》段奥娟 [202512-28].mp4(59.03 MB)",
+            url="http://m/ed.mp4",
+            index=1,
+        ),
+    ]
+
+    assert infer_playlist_episode_number(playlist[0], playlist) is None
+    assert infer_playlist_episode_number(playlist[1], playlist) is None
+
+
+def test_infer_playlist_episode_number_uses_playlist_position_for_numeric_x_suffix_filenames() -> None:
+    playlist = [
+        PlayItem(title="70x.mp4(2.52 GB)", url="http://m/70.mp4", index=0),
+        PlayItem(title="71x.mp4(2.57 GB)", url="http://m/71.mp4", index=1),
+        PlayItem(title="78X.mkv(2.89 GB)", url="http://m/78.mkv", index=2),
+        PlayItem(title="82 x.mp4(1.67 GB)", url="http://m/82.mp4", index=3),
+        PlayItem(title="83 x.mp4(2.94 GB)", url="http://m/83.mp4", index=4),
+    ]
+
+    assert infer_playlist_episode_number(playlist[0], playlist) == 1
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+    assert infer_playlist_episode_number(playlist[2], playlist) == 3
+    assert infer_playlist_episode_number(playlist[3], playlist) == 4
+    assert infer_playlist_episode_number(playlist[4], playlist) == 5
+
+
+def test_infer_playlist_episode_number_uses_actual_playlist_position_when_item_index_is_unset() -> None:
+    playlist = [
+        PlayItem(title="70x.mp4(2.52 GB)", url="http://m/70.mp4"),
+        PlayItem(title="71x.mp4(2.57 GB)", url="http://m/71.mp4"),
+        PlayItem(title="82 x.mp4(1.67 GB)", url="http://m/82.mp4"),
+    ]
+
+    assert infer_playlist_episode_number(playlist[0], playlist) == 1
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+    assert infer_playlist_episode_number(playlist[2], playlist) == 3
 
 
 def test_infer_playlist_episode_number_falls_back_to_path_when_display_title_hides_numeric_filename() -> None:

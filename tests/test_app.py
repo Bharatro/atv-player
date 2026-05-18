@@ -5300,6 +5300,159 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     ]
 
 
+def test_app_coordinator_episode_title_enhancer_maps_tilde_quality_variants_and_skips_bonus_tracks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, **_: object) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "超能路人甲"
+            assert year == "2026"
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "杀，为了活着"},
+                    {"episode_number": 2, "name": "挡我者死"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="动漫"),
+            playlist=[
+                PlayItem(
+                    title="01 为了活着~[4K][HEVC.AAC][2025-12-28(616.48 MB)",
+                    original_title="01 为了活着~[4K][HEVC.AAC][2025-12-28(616.48 MB)",
+                    url="http://m/1.mp4",
+                ),
+                PlayItem(
+                    title="02 挡我者死~[4K][HEVC.AAC][2025-12-28(549.19 MB)",
+                    original_title="02 挡我者死~[4K][HEVC.AAC][2025-12-28(549.19 MB)",
+                    url="http://m/2.mp4",
+                ),
+                PlayItem(
+                    title="片头片尾 - 片头《弑神》大志Tiger [2025-12-28].mp4(64.87 MB)",
+                    original_title="片头片尾 - 片头《弑神》大志Tiger [2025-12-28].mp4(64.87 MB)",
+                    url="http://m/op.mp4",
+                ),
+                PlayItem(
+                    title="高码率 - 01~4K.HQ.HEVC(3.56 GB)",
+                    original_title="高码率 - 01~4K.HQ.HEVC(3.56 GB)",
+                    url="http://m/1-hq.mp4",
+                ),
+                PlayItem(
+                    title="高码率 - 02~4K.HQ.HEVC(3.32 GB)",
+                    original_title="高码率 - 02~4K.HQ.HEVC(3.32 GB)",
+                    url="http://m/2-hq.mp4",
+                ),
+                PlayItem(
+                    title="片头片尾 - 片尾《归无》段奥娟 [202512-28].mp4(59.03 MB)",
+                    original_title="片头片尾 - 片尾《归无》段奥娟 [202512-28].mp4(59.03 MB)",
+                    url="http://m/ed.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    mapped_titles = {item.original_title: item.episode_display_title for item in updated}
+    assert mapped_titles["01 为了活着~[4K][HEVC.AAC][2025-12-28(616.48 MB)"] == "第1集 杀，为了活着"
+    assert mapped_titles["02 挡我者死~[4K][HEVC.AAC][2025-12-28(549.19 MB)"] == "第2集 挡我者死"
+    assert mapped_titles["高码率 - 01~4K.HQ.HEVC(3.56 GB)"] == "第1集 杀，为了活着"
+    assert mapped_titles["高码率 - 02~4K.HQ.HEVC(3.32 GB)"] == "第2集 挡我者死"
+    assert mapped_titles["片头片尾 - 片头《弑神》大志Tiger [2025-12-28].mp4(64.87 MB)"] == ""
+    assert mapped_titles["片头片尾 - 片尾《归无》段奥娟 [202512-28].mp4(59.03 MB)"] == ""
+
+
+def test_app_coordinator_episode_title_enhancer_uses_playlist_position_for_numeric_x_suffix_filenames(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, **_: object) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "牧神记"
+            return [{"id": 42, "name": "牧神记", "first_air_date": "2024-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "天黑别出门"},
+                    {"episode_number": 2, "name": "我是霸体"},
+                    {"episode_number": 3, "name": "小魔崽子"},
+                    {"episode_number": 4, "name": "黑暗将至"},
+                    {"episode_number": 5, "name": "红粉骷髅"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+            playlist=[
+                PlayItem(title="70x.mp4(2.52 GB)", original_title="70x.mp4(2.52 GB)", url="http://m/70.mp4"),
+                PlayItem(title="71x.mp4(2.57 GB)", original_title="71x.mp4(2.57 GB)", url="http://m/71.mp4"),
+                PlayItem(title="78X.mkv(2.89 GB)", original_title="78X.mkv(2.89 GB)", url="http://m/78.mkv"),
+                PlayItem(title="82 x.mp4(1.67 GB)", original_title="82 x.mp4(1.67 GB)", url="http://m/82.mp4"),
+                PlayItem(title="83 x.mp4(2.94 GB)", original_title="83 x.mp4(2.94 GB)", url="http://m/83.mp4"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1集 天黑别出门",
+        "第2集 我是霸体",
+        "第3集 小魔崽子",
+        "第4集 黑暗将至",
+        "第5集 红粉骷髅",
+    ]
+
+
 def test_app_coordinator_browse_episode_title_enhancer_falls_back_to_playlist_inferred_series_title(
     tmp_path,
     monkeypatch,

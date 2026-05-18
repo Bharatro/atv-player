@@ -37,8 +37,8 @@ _EPISODE_PATTERNS = (
     r"\bS\d+\s*E0*([0-9]+)\b",
     r"\bEP\s*0*([0-9]+)\b",
     r"\bE\s*0*([0-9]+)\b",
-    r"^\s*0*(\d{1,3})\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
-    r"(?:-|—|–)\s*0*([0-9]{1,4})\s*(?:[（(][^()（）]*[)）])?\s*$",
+    r"(?:^|[\s\-_.])0*(\d{1,3})\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
+    r"(?:-|—|–|~|～|〜)\s*0*([0-9]{1,4})\s*(?:[（(][^()（）]*[)）])?\s*$",
     r"^\s*0*([0-9]{1,4})(?=\s*[丨｜|])",
     r"^\s*0*([0-9]{1,4})\b",
     r"^\s*(\d+)\s*(?:[（(][^()（）]*[)）])?\s*$",
@@ -124,6 +124,17 @@ _VARIETY_HINT_TOKENS = (
     "直拍",
 )
 
+_BONUS_TRACK_TITLE_TOKENS = (
+    "片头片尾",
+    "片头曲",
+    "片尾曲",
+)
+
+_NUMERIC_X_SUFFIX_FILENAME_RE = re.compile(
+    r"^\s*0*\d{1,4}\s*[xX]\.(?:mkv|mp4|avi|mov|m4v|ts|flv)\b",
+    re.IGNORECASE,
+)
+
 
 def normalize_name(name: str) -> str:
     value = str(name).strip()
@@ -153,8 +164,14 @@ def _cn_to_int(text: str) -> int | None:
     return total + current
 
 
+def _looks_like_numeric_x_suffix_filename(value: str) -> bool:
+    return _NUMERIC_X_SUFFIX_FILENAME_RE.search(str(value or "").strip()) is not None
+
+
 def extract_episode_number(name: str) -> int | None:
     value = normalize_name(name)
+    if _looks_like_numeric_x_suffix_filename(value):
+        return None
     for pattern in _EPISODE_PATTERNS:
         match = re.search(pattern, value, re.IGNORECASE)
         if match is None:
@@ -264,8 +281,44 @@ def _play_item_has_technical_filename(item: PlayItem) -> bool:
     return False
 
 
+def _looks_like_bonus_track_title(name: str) -> bool:
+    value = normalize_name(name)
+    if not value:
+        return False
+    return (
+        any(token in value for token in _BONUS_TRACK_TITLE_TOKENS)
+        or value.startswith("片头")
+        or value.startswith("片尾")
+    )
+
+
+def _play_item_is_bonus_track(item: PlayItem) -> bool:
+    seen: list[str] = []
+    for value in (item.original_title, item.title, _path_basename(item.path)):
+        candidate = str(value or "").strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.append(candidate)
+        if _looks_like_bonus_track_title(candidate):
+            return True
+    return False
+
+
+def _resolved_playlist_index(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int:
+    explicit_index = current_item.index
+    if playlist and 0 <= explicit_index < len(playlist) and playlist[explicit_index] is current_item:
+        return explicit_index
+    if playlist:
+        for position, candidate in enumerate(playlist):
+            if candidate is current_item:
+                return position
+    return explicit_index
+
+
 def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int | None:
     current_title = current_item.title or ""
+    if _play_item_is_bonus_track(current_item):
+        return None
     direct = _play_item_episode_number(current_item)
     if direct is not None:
         return direct
@@ -276,7 +329,7 @@ def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[Pla
         or (playlist is not None and len(playlist) <= 1)
     ):
         return None
-    current_index = current_item.index
+    current_index = _resolved_playlist_index(current_item, playlist)
     if not playlist:
         return current_index + 1 if current_index >= 0 else None
     if 0 <= current_index < len(playlist):
@@ -284,8 +337,8 @@ def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[Pla
         if indexed is not None:
             return indexed
     aligned = [
-        (item.index, episode)
-        for item in playlist
+        (position, episode)
+        for position, item in enumerate(playlist)
         if (episode := _play_item_episode_number(item)) is not None
     ]
     if aligned:

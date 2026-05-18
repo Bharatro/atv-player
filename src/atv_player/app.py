@@ -90,7 +90,10 @@ _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EPISODE_SORT_SENTINEL = 10**9
-_QUALITY_VARIANT_EPISODE_RE = re.compile(r"^\s*0*(\d{1,3})\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b", re.IGNORECASE)
+_QUALITY_VARIANT_EPISODE_RE = re.compile(
+    r"(?:^|[\s\-_.])0*(\d{1,3})\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
+    re.IGNORECASE,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -197,7 +200,7 @@ def _extract_quality_variant_episode_number(item: PlayItem) -> int | None:
         if not candidate or candidate in seen:
             continue
         seen.add(candidate)
-        match = _QUALITY_VARIANT_EPISODE_RE.match(candidate)
+        match = _QUALITY_VARIANT_EPISODE_RE.search(candidate)
         if match is None:
             continue
         try:
@@ -218,7 +221,7 @@ def _extract_series_title_candidate(value: object) -> str:
     for pattern in (
         r"[.\s_-]*S\d+\s*E\d+.*$",
         r"[.\s_-]*第\s*[0-9零一二两三四五六七八九十百千]+\s*[集话期部回].*$",
-        r"[.\s_-]*0*\d{1,4}\s*[-_. ]\s*(?:4k|2160p|1080p|720p|480p|360p)\b.*$",
+        r"[.\s_-]*0*\d{1,4}\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b.*$",
     ):
         stripped = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
         if stripped != text:
