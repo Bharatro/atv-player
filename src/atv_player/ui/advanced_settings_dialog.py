@@ -20,7 +20,12 @@ from PySide6.QtWidgets import (
 
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
-from atv_player.ui.theme import FlatComboBox, build_combobox_qss, configure_flat_combobox, current_tokens
+from atv_player.ui.theme import (
+    FlatComboBox,
+    build_form_combobox_qss,
+    configure_form_flat_combobox,
+    current_tokens,
+)
 
 
 class AdvancedSettingsDialog(QDialog):
@@ -191,7 +196,7 @@ class AdvancedSettingsDialog(QDialog):
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
-        combo_qss = build_combobox_qss(tokens)
+        combo_qss = build_form_combobox_qss(tokens)
         for combo in (
             self.theme_mode_combo,
             self.network_proxy_mode_combo,
@@ -199,19 +204,7 @@ class AdvancedSettingsDialog(QDialog):
             self.mpv_hwdec_mode_combo,
         ):
             combo.setStyleSheet(combo_qss)
-            configure_flat_combobox(
-                combo,
-                text_color=tokens.text_primary,
-                disabled_text_color=tokens.text_secondary,
-                arrow_color=tokens.text_secondary,
-                disabled_arrow_color=tokens.border_subtle,
-                field_bg=tokens.input_bg,
-                hover_field_bg=tokens.input_bg,
-                disabled_field_bg=tokens.panel_alt_bg,
-                hover_border_color=tokens.input_hover_border,
-                focus_border_color=tokens.input_focus_ring,
-                disabled_border_color="transparent",
-            )
+            configure_form_flat_combobox(combo, tokens)
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)

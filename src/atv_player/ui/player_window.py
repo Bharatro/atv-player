@@ -92,6 +92,9 @@ from atv_player.ui.theme import (
     FlatComboBox,
     build_combobox_qss,
     build_combobox_popup_qss,
+    build_form_combobox_qss,
+    build_form_line_edit_qss,
+    build_form_spinbox_qss,
     build_player_control_button_qss,
     build_player_immersive_qss,
     build_player_list_qss,
@@ -101,6 +104,7 @@ from atv_player.ui.theme import (
     build_player_tabbar_qss,
     build_player_text_panel_qss,
     build_slider_qss,
+    configure_form_flat_combobox,
     configure_flat_combobox,
     current_resolved_theme,
     current_theme_manager,
@@ -134,6 +138,13 @@ _METADATA_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("local_douban", "本地豆瓣"),
     ("douban", "豆瓣"),
     ("plugin", "插件"),
+]
+
+_METADATA_SCRAPE_CATEGORY_OPTIONS: list[tuple[str, str]] = [
+    ("", "自动"),
+    ("电影", "电影"),
+    ("剧集", "剧集"),
+    ("动漫", "动漫"),
 ]
 
 _METADATA_CHANGE_FIELDS: list[tuple[str, str, str]] = [
@@ -546,6 +557,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._danmaku_source_switch_button: QPushButton | None = None
         self._metadata_scrape_title_edit: QLineEdit | None = None
         self._metadata_scrape_year_edit: QLineEdit | None = None
+        self._metadata_scrape_category_combo: QComboBox | None = None
         self._metadata_scrape_provider_combo: QComboBox | None = None
         self._metadata_scrape_group_list: QListWidget | None = None
         self._metadata_scrape_result_list: QListWidget | None = None
@@ -562,6 +574,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
         self._metadata_scrape_saved_year = ""
+        self._metadata_scrape_saved_category = ""
         self._metadata_scrape_saved_provider = ""
         self._metadata_hydration_override_title = ""
         self._metadata_hydration_override_year = ""
@@ -1090,15 +1103,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             hover_bg=player_tokens.player_button_hover_bg,
             selected_bg=player_tokens.player_button_hover_bg,
         )
-        dialog_combo_qss = build_combobox_qss(
-            tokens,
-            border_color=tokens.input_border,
-            hover_border_color=tokens.input_hover_border,
-            focus_border_color=tokens.input_focus_ring,
-            disabled_border_color=tokens.border_subtle,
-            drop_down_border_left_color=tokens.border_subtle,
-            disabled_drop_down_border_left_color=tokens.border_subtle,
-        )
+        dialog_combo_qss = build_form_combobox_qss(tokens)
         dialog_combo_popup_qss = build_combobox_popup_qss(
             background=tokens.menu_bg,
             text_color=tokens.text_primary,
@@ -1106,6 +1111,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             hover_bg=tokens.menu_hover_bg,
             selected_bg=tokens.menu_selected_bg,
         )
+        dialog_line_edit_qss = build_form_line_edit_qss(tokens)
+        dialog_spinbox_qss = build_form_spinbox_qss(tokens)
         skip_spinbox_qss = build_player_spinbox_qss(player_tokens)
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
@@ -1150,21 +1157,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         for combo in self._dialog_comboboxes():
             combo.setStyleSheet(dialog_combo_qss)
             combo.view().setStyleSheet(dialog_combo_popup_qss)
-            configure_flat_combobox(
-                combo,
-                text_color=tokens.text_primary,
-                disabled_text_color=tokens.text_secondary,
-                arrow_color=tokens.text_secondary,
-                disabled_arrow_color=tokens.border_subtle,
-                border_color=tokens.input_border,
-                field_bg=tokens.input_bg,
-                hover_field_bg=tokens.input_bg,
-                disabled_field_bg=tokens.panel_alt_bg,
-                hover_border_color=tokens.input_hover_border,
-                focus_border_color=tokens.input_focus_ring,
-                disabled_border_color=tokens.border_subtle,
-                height=34,
-            )
+            configure_form_flat_combobox(combo, tokens)
+        for edit in self._dialog_line_edits():
+            edit.setStyleSheet(dialog_line_edit_qss)
+        for spinbox in self._dialog_spinboxes():
+            spinbox.setStyleSheet(dialog_spinbox_qss)
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
         self.progress.setProperty("track_height", 4)
@@ -1219,11 +1216,41 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _dialog_comboboxes(self) -> list[QComboBox]:
         combos: list[QComboBox] = []
+        if self._metadata_scrape_category_combo is not None:
+            combos.append(self._metadata_scrape_category_combo)
         if self._metadata_scrape_provider_combo is not None:
             combos.append(self._metadata_scrape_provider_combo)
         if self._danmaku_source_search_provider_combo is not None:
             combos.append(self._danmaku_source_search_provider_combo)
+        if self._danmaku_render_mode_combo is not None:
+            combos.append(self._danmaku_render_mode_combo)
+        if self._danmaku_position_preset_combo is not None:
+            combos.append(self._danmaku_position_preset_combo)
+        if self._danmaku_color_mode_combo is not None:
+            combos.append(self._danmaku_color_mode_combo)
         return combos
+
+    def _dialog_line_edits(self) -> list[QLineEdit]:
+        edits: list[QLineEdit] = []
+        if self._metadata_scrape_title_edit is not None:
+            edits.append(self._metadata_scrape_title_edit)
+        if self._metadata_scrape_year_edit is not None:
+            edits.append(self._metadata_scrape_year_edit)
+        if self._danmaku_source_title_edit is not None:
+            edits.append(self._danmaku_source_title_edit)
+        if self._danmaku_source_episode_edit is not None:
+            edits.append(self._danmaku_source_episode_edit)
+        return edits
+
+    def _dialog_spinboxes(self) -> list[QWidget]:
+        spinboxes: list[QWidget] = []
+        if self._danmaku_line_count_spin is not None:
+            spinboxes.append(self._danmaku_line_count_spin)
+        if self._danmaku_font_size_spin is not None:
+            spinboxes.append(self._danmaku_font_size_spin)
+        if self._danmaku_scroll_speed_spin is not None:
+            spinboxes.append(self._danmaku_scroll_speed_spin)
+        return spinboxes
 
     def _set_fixed_control_height(self, widget: QWidget | None, height: int) -> None:
         if widget is None:
@@ -1231,14 +1258,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         widget.setFixedHeight(height)
 
     def _refresh_metadata_scrape_search_row_heights(self) -> None:
-        self._set_fixed_control_height(self._metadata_scrape_title_edit, 34)
-        self._set_fixed_control_height(self._metadata_scrape_year_edit, 34)
-        self._set_fixed_control_height(self._metadata_scrape_provider_combo, 34)
+        self._set_fixed_control_height(self._metadata_scrape_title_edit, 40)
+        self._set_fixed_control_height(self._metadata_scrape_year_edit, 40)
+        self._set_fixed_control_height(self._metadata_scrape_category_combo, 42)
+        self._set_fixed_control_height(self._metadata_scrape_provider_combo, 42)
 
     def _refresh_danmaku_source_search_row_heights(self) -> None:
-        self._set_fixed_control_height(self._danmaku_source_title_edit, 34)
-        self._set_fixed_control_height(self._danmaku_source_episode_edit, 34)
-        self._set_fixed_control_height(self._danmaku_source_search_provider_combo, 34)
+        self._set_fixed_control_height(self._danmaku_source_title_edit, 40)
+        self._set_fixed_control_height(self._danmaku_source_episode_edit, 40)
+        self._set_fixed_control_height(self._danmaku_source_search_provider_combo, 42)
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
@@ -1935,6 +1963,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
         self._metadata_scrape_saved_year = ""
+        self._metadata_scrape_saved_category = ""
         self._metadata_scrape_saved_provider = ""
         self.current_index = session.start_index
         current_title = (
@@ -5542,6 +5571,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         close_button.clicked.connect(dialog.close)
 
         self._danmaku_settings_dialog = dialog
+        self._apply_theme()
         self._refresh_danmaku_settings_dialog_controls()
         return dialog
 
@@ -5584,12 +5614,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         search_row.addWidget(QLabel("年份", dialog), 0, 1)
         self._metadata_scrape_year_edit = QLineEdit(dialog)
         search_row.addWidget(self._metadata_scrape_year_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("搜索来源", dialog), 0, 2)
+        search_row.addWidget(QLabel("分类", dialog), 0, 2)
+        self._metadata_scrape_category_combo = FlatComboBox(dialog)
+        search_row.addWidget(self._metadata_scrape_category_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("搜索来源", dialog), 0, 3)
         self._metadata_scrape_provider_combo = FlatComboBox(dialog)
-        search_row.addWidget(self._metadata_scrape_provider_combo, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(self._metadata_scrape_provider_combo, 1, 3, alignment=Qt.AlignmentFlag.AlignTop)
         search_row.setColumnStretch(0, 2)
         search_row.setColumnStretch(1, 1)
         search_row.setColumnStretch(2, 1)
+        search_row.setColumnStretch(3, 1)
         layout.addLayout(search_row)
 
         columns = QHBoxLayout()
@@ -5618,13 +5652,33 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._metadata_scrape_restore_query_button.clicked.connect(self._reset_metadata_scrape_search_query)
         self._metadata_scrape_apply_button.clicked.connect(self._apply_selected_metadata_scrape_result)
         self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
+        self._metadata_scrape_category_combo.currentIndexChanged.connect(self._handle_metadata_scrape_category_changed)
 
         self._metadata_scrape_dialog = dialog
         self._apply_theme()
         self._refresh_metadata_scrape_search_row_heights()
         return dialog
 
-    def _populate_metadata_scrape_provider_options(self) -> None:
+    def _populate_metadata_scrape_category_options(self) -> None:
+        if self._metadata_scrape_category_combo is None:
+            return
+        current_value = str(self._metadata_scrape_category_combo.currentData() or "")
+        self._metadata_scrape_category_combo.clear()
+        for category_value, category_label in _METADATA_SCRAPE_CATEGORY_OPTIONS:
+            self._metadata_scrape_category_combo.addItem(category_label, category_value)
+        category_index = max(0, self._metadata_scrape_category_combo.findData(current_value))
+        self._metadata_scrape_category_combo.setCurrentIndex(category_index)
+
+    def _metadata_scrape_selected_category_name(self) -> str:
+        if self._metadata_scrape_category_combo is not None:
+            selected_category = str(self._metadata_scrape_category_combo.currentData() or "").strip()
+            if selected_category:
+                return selected_category
+        if self.session is None:
+            return ""
+        return str(self.session.vod.category_name or "").strip()
+
+    def _populate_metadata_scrape_provider_options(self, selected_provider: str = "") -> None:
         if self._metadata_scrape_provider_combo is None:
             return
         options = list(_METADATA_PROVIDER_OPTIONS)
@@ -5634,18 +5688,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             query = None
             if self.session is not None:
                 title, year = self._metadata_scrape_current_query()
+                if self._metadata_scrape_title_edit is not None:
+                    title = self._metadata_scrape_title_edit.text().strip() or title
+                if self._metadata_scrape_year_edit is not None:
+                    year = self._metadata_scrape_year_edit.text().strip()
                 query = MetadataQuery(
                     title=title,
                     year=year,
                     type_name=str(self.session.vod.type_name or "").strip(),
-                    category_name=str(self.session.vod.category_name or "").strip(),
+                    category_name=self._metadata_scrape_selected_category_name(),
                 )
             options = [(str(key or "").strip(), str(label or "").strip()) for key, label in provider_options(query)]
             options = [(key, label) for key, label in options if key and label]
+        current_provider = selected_provider or str(self._metadata_scrape_provider_combo.currentData() or "")
         self._metadata_scrape_provider_combo.clear()
         self._metadata_scrape_provider_combo.addItem("全部", "")
         for provider_key, provider_label in options:
             self._metadata_scrape_provider_combo.addItem(provider_label, provider_key)
+        provider_index = max(0, self._metadata_scrape_provider_combo.findData(current_provider))
+        self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
 
     def _open_metadata_scrape_dialog(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
@@ -5656,8 +5717,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not self._metadata_scrape_binding_year:
             self._metadata_scrape_binding_year = self._metadata_scrape_default_year
         dialog = self._ensure_metadata_scrape_dialog()
-        self._populate_metadata_scrape_provider_options()
-        self._clear_metadata_scrape_search_results()
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_title_edit.setText(
                 self._metadata_scrape_saved_title if self._metadata_scrape_query_saved else self._metadata_scrape_default_title
@@ -5666,8 +5725,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._metadata_scrape_year_edit.setText(
                 self._metadata_scrape_saved_year if self._metadata_scrape_query_saved else self._metadata_scrape_default_year
             )
+        self._populate_metadata_scrape_category_options()
+        if self._metadata_scrape_category_combo is not None:
+            category_value = self._metadata_scrape_saved_category if self._metadata_scrape_query_saved else ""
+            category_index = max(0, self._metadata_scrape_category_combo.findData(category_value))
+            self._metadata_scrape_category_combo.setCurrentIndex(category_index)
+        provider_value = self._metadata_scrape_saved_provider if self._metadata_scrape_query_saved else ""
+        self._populate_metadata_scrape_provider_options(selected_provider=provider_value)
+        self._clear_metadata_scrape_search_results()
         if self._metadata_scrape_provider_combo is not None:
-            provider_value = self._metadata_scrape_saved_provider if self._metadata_scrape_query_saved else ""
             provider_index = max(0, self._metadata_scrape_provider_combo.findData(provider_value))
             self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
@@ -5693,6 +5759,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _metadata_scrape_provider_label(self, provider_key: str) -> str:
         return "全部" if not provider_key else _metadata_provider_label(provider_key)
+
+    def _handle_metadata_scrape_category_changed(self) -> None:
+        if self._metadata_scrape_provider_combo is None:
+            return
+        self._populate_metadata_scrape_provider_options()
 
     def _clear_metadata_scrape_search_results(self) -> None:
         self._metadata_scrape_request_id += 1
@@ -5739,6 +5810,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             or self.session.metadata_scrape_service is None
             or self._metadata_scrape_title_edit is None
             or self._metadata_scrape_year_edit is None
+            or self._metadata_scrape_category_combo is None
             or self._metadata_scrape_provider_combo is None
             or self._metadata_scrape_status_label is None
         ):
@@ -5754,6 +5826,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if not title:
             self._metadata_scrape_status_label.setText("当前条目缺少标题")
             return
+        category_name = self._metadata_scrape_selected_category_name()
         provider_filter = str(self._metadata_scrape_provider_combo.currentData() or "")
         self._metadata_scrape_status_label.setText(
             f"刮削搜索中（{self._metadata_scrape_provider_label(provider_filter)}）..."
@@ -5768,7 +5841,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                     MetadataQuery(
                         title=title,
                         year=year,
-                        category_name=str(self.session.vod.category_name or "").strip(),
+                        category_name=category_name,
                         type_name=str(self.session.vod.type_name or "").strip(),
                     ),
                     provider_filter=provider_filter,
@@ -5818,7 +5891,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 title=reset_title,
                 year=reset_year,
                 type_name=str(self.session.vod.type_name or "").strip(),
-                category_name=str(self.session.vod.category_name or "").strip(),
+                category_name=self._metadata_scrape_selected_category_name(),
             ),
             bound_provider=bound_provider,
             bound_provider_id=bound_provider_id,
@@ -6964,6 +7037,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._metadata_scrape_saved_title = self._metadata_scrape_title_edit.text()
         if self._metadata_scrape_year_edit is not None:
             self._metadata_scrape_saved_year = self._metadata_scrape_year_edit.text()
+        if self._metadata_scrape_category_combo is not None:
+            self._metadata_scrape_saved_category = str(self._metadata_scrape_category_combo.currentData() or "")
         if self._metadata_scrape_provider_combo is not None:
             self._metadata_scrape_saved_provider = str(self._metadata_scrape_provider_combo.currentData() or "")
         self._metadata_scrape_query_saved = True

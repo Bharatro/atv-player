@@ -71,6 +71,8 @@ def test_build_application_stylesheet_uses_borderless_default_comboboxes() -> No
 
     assert "QComboBox {\n            background-color:" in qss
     assert "border: none;" in qss
+    assert "QLineEdit:disabled" in qss
+    assert "QPlainTextEdit:disabled" in qss
 
 
 def test_build_application_stylesheet_styles_tooltips_with_subtle_panel_border() -> None:
@@ -136,6 +138,36 @@ def test_build_combobox_qss_accepts_surface_overrides() -> None:
     assert "color: #f5f7fb;" in qss
     assert "background: #212734;" in qss
     assert "color: #b0b8c7;" in qss
+
+
+def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = theme_module.build_form_line_edit_qss(tokens)
+
+    assert f"border: 1px solid {tokens.input_border};" in qss
+    assert f"background: {tokens.input_bg};" in qss
+    assert "QLineEdit:disabled" in qss
+    assert f"background: {tokens.panel_alt_bg};" in qss
+    assert f"color: {tokens.text_secondary};" in qss
+    assert f"border: 1px solid {tokens.border_subtle};" in qss
+
+
+def test_build_form_spinbox_qss_uses_disabled_surface_tokens() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = theme_module.build_form_spinbox_qss(tokens)
+
+    assert "QSpinBox," in qss
+    assert "QDoubleSpinBox {" in qss
+    assert f"border: 1px solid {tokens.input_border};" in qss
+    assert f"background-color: {tokens.input_bg};" in qss
+    assert "QSpinBox:disabled," in qss
+    assert f"background-color: {tokens.panel_alt_bg};" in qss
+    assert f"color: {tokens.text_secondary};" in qss
+    assert f"border-color: {tokens.border_subtle};" in qss
 
 
 def test_build_slider_qss_uses_brand_fill_and_hover_handle() -> None:

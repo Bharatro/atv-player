@@ -3561,6 +3561,9 @@ def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None
 
     assert "QComboBox::drop-down" in dialog.theme_mode_combo.styleSheet()
     assert dialog.theme_mode_combo.styleSheet() == dialog.network_proxy_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.property("flat_combo_border_color") == dialog.network_proxy_mode_combo.property(
+        "flat_combo_border_color"
+    )
 
 
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:

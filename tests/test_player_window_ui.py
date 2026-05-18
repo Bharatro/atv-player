@@ -391,6 +391,7 @@ def test_player_window_metadata_scrape_dialog_prefills_title_year_and_provider(q
     assert dialog.windowTitle() == "刮削"
     assert window._metadata_scrape_title_edit.text() == "深空彼岸"
     assert window._metadata_scrape_year_edit.text() == "2026"
+    assert window._metadata_scrape_category_combo.currentData() == ""
     assert window._metadata_scrape_provider_combo.currentData() == ""
 
 
@@ -543,6 +544,28 @@ def test_player_window_metadata_scrape_search_passes_category_and_type_into_quer
 
     qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
     assert service.search_queries == [("动漫", "动画")]
+
+
+def test_player_window_metadata_scrape_search_uses_selected_category_override(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="流浪地球", vod_year="2019", category_name="剧集", type_name="连续剧"),
+        playlist=[PlayItem(title="正片", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    assert service.search_queries == [("动漫", "连续剧")]
 
 
 def test_player_window_metadata_scrape_dialog_clears_previous_results_when_reopened_for_another_item(qtbot) -> None:
@@ -1586,6 +1609,31 @@ def test_player_window_disables_danmaku_position_preset_in_static_mode(qtbot) ->
     window._danmaku_render_mode_combo.setCurrentIndex(window._danmaku_render_mode_combo.findData("mixed"))
 
     assert window._danmaku_position_preset_combo.isEnabled() is True
+
+
+def test_player_window_applies_bordered_form_styles_in_danmaku_settings_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    tokens = player_window_module.current_theme_manager().tokens_for(player_window_module.current_resolved_theme())
+
+    assert window._danmaku_render_mode_combo is not None
+    assert window._danmaku_position_preset_combo is not None
+    assert window._danmaku_line_count_spin is not None
+    assert window._danmaku_scroll_speed_spin is not None
+    assert window._danmaku_render_mode_combo.property("flat_combo_border_color") == tokens.input_border
+    assert window._danmaku_position_preset_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
+    assert f"border: 1px solid {tokens.input_border};" in window._danmaku_line_count_spin.styleSheet()
+    assert f"background-color: {tokens.input_bg};" in window._danmaku_scroll_speed_spin.styleSheet()
+
+    window._danmaku_render_mode_combo.setCurrentIndex(window._danmaku_render_mode_combo.findData("static"))
+
+    assert window._danmaku_position_preset_combo.isEnabled() is False
+    assert window._danmaku_position_preset_combo.property("flat_combo_disabled_field_bg") == tokens.panel_alt_bg
 
 
 def test_player_window_uses_color_palette_button_in_danmaku_settings_dialog(qtbot) -> None:
@@ -3415,20 +3463,25 @@ def test_player_window_dialog_provider_combos_use_bordered_theme_after_creation(
 
     tokens = player_window_module.current_theme_manager().tokens_for(player_window_module.current_resolved_theme())
 
+    assert window._metadata_scrape_category_combo is not None
     assert window._metadata_scrape_provider_combo is not None
     assert window._danmaku_source_search_provider_combo is not None
+    assert window._metadata_scrape_category_combo.property("flat_combo_border_color") == tokens.input_border
     assert window._metadata_scrape_provider_combo.property("flat_combo_border_color") == tokens.input_border
     assert window._danmaku_source_search_provider_combo.property("flat_combo_border_color") == tokens.input_border
+    assert window._metadata_scrape_category_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
     assert window._metadata_scrape_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
     assert window._danmaku_source_search_provider_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
-    assert window._metadata_scrape_title_edit.height() == 34
-    assert window._metadata_scrape_year_edit.height() == 34
-    assert window._metadata_scrape_provider_combo.height() == 34
-    assert window._metadata_scrape_title_edit.y() == window._metadata_scrape_provider_combo.y()
-    assert window._metadata_scrape_year_edit.y() == window._metadata_scrape_provider_combo.y()
-    assert window._danmaku_source_title_edit.height() == 34
-    assert window._danmaku_source_episode_edit.height() == 34
-    assert window._danmaku_source_search_provider_combo.height() == 34
+    assert window._metadata_scrape_title_edit.height() == 42
+    assert window._metadata_scrape_year_edit.height() == 42
+    assert window._metadata_scrape_category_combo.height() == 42
+    assert window._metadata_scrape_provider_combo.height() == 42
+    assert window._metadata_scrape_title_edit.y() == window._metadata_scrape_category_combo.y()
+    assert window._metadata_scrape_year_edit.y() == window._metadata_scrape_category_combo.y()
+    assert window._metadata_scrape_category_combo.y() == window._metadata_scrape_provider_combo.y()
+    assert window._danmaku_source_title_edit.height() == 42
+    assert window._danmaku_source_episode_edit.height() == 42
+    assert window._danmaku_source_search_provider_combo.height() == 42
     assert window._danmaku_source_title_edit.y() == window._danmaku_source_search_provider_combo.y()
     assert window._danmaku_source_episode_edit.y() == window._danmaku_source_search_provider_combo.y()
 

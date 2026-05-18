@@ -322,6 +322,11 @@ class ThemeManager:
             border-radius: 12px;
             color: {tokens.text_primary};
         }}
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QTableWidget:disabled {{
+            background-color: {tokens.panel_alt_bg};
+            border: 1px solid {tokens.border_subtle};
+            color: {tokens.text_secondary};
+        }}
         QComboBox {{
             background-color: {tokens.input_bg};
             border: none;
@@ -413,6 +418,30 @@ def build_search_line_edit_qss(tokens: ThemeTokens, *, border_radius: int = 15, 
     }}
     QLineEdit:focus {{
         border: 1px solid {tokens.accent};
+    }}
+    """
+
+
+def build_form_line_edit_qss(tokens: ThemeTokens, *, border_radius: int = 12, min_height: int = 40) -> str:
+    return f"""
+    QLineEdit {{
+        min-height: {min_height}px;
+        padding: 0 10px;
+        border: 1px solid {tokens.input_border};
+        border-radius: {border_radius}px;
+        background: {tokens.input_bg};
+        color: {tokens.text_primary};
+    }}
+    QLineEdit:hover {{
+        border: 1px solid {tokens.input_hover_border};
+    }}
+    QLineEdit:focus {{
+        border: 1px solid {tokens.input_focus_ring};
+    }}
+    QLineEdit:disabled {{
+        border: 1px solid {tokens.border_subtle};
+        background: {tokens.panel_alt_bg};
+        color: {tokens.text_secondary};
     }}
     """
 
@@ -527,6 +556,51 @@ def build_combobox_qss(
         background: {tokens.menu_selected_bg};
     }}
     """
+
+
+def build_form_combobox_qss(tokens: ThemeTokens, *, border_radius: int = 14, min_height: int = 42) -> str:
+    return build_combobox_qss(
+        tokens,
+        border_radius=border_radius,
+        min_height=min_height,
+        border_color=tokens.input_border,
+        hover_border_color=tokens.input_hover_border,
+        focus_border_color=tokens.input_focus_ring,
+        disabled_border_color=tokens.border_subtle,
+        drop_down_border_left_color=tokens.border_subtle,
+        disabled_drop_down_border_left_color=tokens.border_subtle,
+    )
+
+
+def configure_form_flat_combobox(
+    combo: QComboBox,
+    tokens: ThemeTokens,
+    *,
+    border_radius: int = 14,
+    left_padding: int = 12,
+    indicator_padding: int = 40,
+    drop_down_width: int = 30,
+    height: int = 42,
+) -> None:
+    configure_flat_combobox(
+        combo,
+        text_color=tokens.text_primary,
+        disabled_text_color=tokens.text_secondary,
+        arrow_color=tokens.text_secondary,
+        disabled_arrow_color=tokens.border_subtle,
+        border_color=tokens.input_border,
+        field_bg=tokens.input_bg,
+        hover_field_bg=tokens.input_bg,
+        disabled_field_bg=tokens.panel_alt_bg,
+        hover_border_color=tokens.input_hover_border,
+        focus_border_color=tokens.input_focus_ring,
+        disabled_border_color=tokens.border_subtle,
+        border_radius=border_radius,
+        left_padding=left_padding,
+        indicator_padding=indicator_padding,
+        drop_down_width=drop_down_width,
+        height=height,
+    )
 
 
 def build_combobox_popup_qss(
@@ -870,6 +944,81 @@ def build_player_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, mi
         image: url("{up_arrow_url}");
     }}
     QSpinBox::down-arrow {{
+        width: 8px;
+        height: 5px;
+        image: url("{down_arrow_url}");
+    }}
+    """
+
+
+def build_form_spinbox_qss(tokens: ThemeTokens, *, border_radius: int = 12, min_height: int = 42) -> str:
+    up_arrow_url = (_ICONS_DIR / "spinbox-step-up.svg").resolve().as_posix()
+    down_arrow_url = (_ICONS_DIR / "spinbox-step-down.svg").resolve().as_posix()
+    return f"""
+    QSpinBox,
+    QDoubleSpinBox {{
+        min-height: {min_height}px;
+        padding: 0 20px 0 10px;
+        background-color: {tokens.input_bg};
+        color: {tokens.text_primary};
+        border: 1px solid {tokens.input_border};
+        border-radius: {border_radius}px;
+    }}
+    QSpinBox:hover,
+    QDoubleSpinBox:hover {{
+        border-color: {tokens.input_hover_border};
+    }}
+    QSpinBox:focus,
+    QDoubleSpinBox:focus {{
+        border-color: {tokens.input_focus_ring};
+    }}
+    QSpinBox:disabled,
+    QDoubleSpinBox:disabled {{
+        background-color: {tokens.panel_alt_bg};
+        color: {tokens.text_secondary};
+        border-color: {tokens.border_subtle};
+    }}
+    QSpinBox::up-button,
+    QSpinBox::down-button,
+    QDoubleSpinBox::up-button,
+    QDoubleSpinBox::down-button {{
+        subcontrol-origin: border;
+        width: 16px;
+        height: 16px;
+        background: {tokens.panel_alt_bg};
+        border-left: 1px solid {tokens.border_subtle};
+    }}
+    QSpinBox::up-button,
+    QDoubleSpinBox::up-button {{
+        subcontrol-position: top right;
+        border-top-right-radius: {max(0, border_radius - 1)}px;
+        border-bottom: 1px solid {tokens.border_subtle};
+    }}
+    QSpinBox::down-button,
+    QDoubleSpinBox::down-button {{
+        subcontrol-position: bottom right;
+        border-bottom-right-radius: {max(0, border_radius - 1)}px;
+    }}
+    QSpinBox::up-button:hover,
+    QSpinBox::down-button:hover,
+    QDoubleSpinBox::up-button:hover,
+    QDoubleSpinBox::down-button:hover {{
+        background: {tokens.menu_hover_bg};
+    }}
+    QSpinBox::up-button:pressed,
+    QSpinBox::down-button:pressed,
+    QDoubleSpinBox::up-button:pressed,
+    QDoubleSpinBox::down-button:pressed {{
+        background: {tokens.menu_selected_bg};
+    }}
+    QSpinBox::up-arrow,
+    QDoubleSpinBox::up-arrow {{
+        width: 8px;
+        height: 5px;
+        image: url("{up_arrow_url}");
+    }}
+    QSpinBox::down-arrow,
+    QDoubleSpinBox::down-arrow {{
         width: 8px;
         height: 5px;
         image: url("{down_arrow_url}");
