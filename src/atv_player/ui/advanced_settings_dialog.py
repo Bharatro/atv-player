@@ -29,17 +29,27 @@ class AdvancedSettingsDialog(QDialog):
         config: AppConfig,
         save_config: Callable[[], None],
         parent: QWidget | None = None,
+        apply_theme: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
         self._save_config = save_config
+        self._apply_theme = apply_theme
         self.setWindowTitle("高级设置")
         self.resize(680, 440)
 
         self.settings_tabs = QTabWidget()
+        self.appearance_tab = QWidget()
         self.metadata_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
+        self.appearance_group = QGroupBox("外观")
+        self.theme_mode_combo = QComboBox()
+        self.theme_mode_combo.addItem("浅色", "light")
+        self.theme_mode_combo.addItem("深色", "dark")
+        self.theme_mode_combo.addItem("跟随系统", "system")
+        self.theme_hint_label = QLabel("跟随系统会在应用启动时读取当前系统浅深色；播放器播放区保持偏暗。")
+        self.theme_hint_label.setWordWrap(True)
         self.metadata_group = QGroupBox("元数据增强配置")
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
@@ -91,6 +101,7 @@ class AdvancedSettingsDialog(QDialog):
 
         self.metadata_enabled_checkbox.setChecked(config.metadata_enhancement_enabled)
         self.episode_title_enhancement_checkbox.setChecked(config.episode_title_enhancement_enabled)
+        self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
@@ -112,6 +123,14 @@ class AdvancedSettingsDialog(QDialog):
         self.mpv_network_timeout_edit.setText(str(config.mpv_network_timeout_seconds))
         self.mpv_default_readahead_edit.setText(str(config.mpv_default_readahead_secs))
         self.mpv_extra_options_edit.setPlainText(config.mpv_extra_options)
+
+        appearance_layout = QFormLayout()
+        appearance_layout.addRow("界面主题", self.theme_mode_combo)
+        appearance_layout.addRow("说明", self.theme_hint_label)
+        self.appearance_group.setLayout(appearance_layout)
+        appearance_tab_layout = QVBoxLayout(self.appearance_tab)
+        appearance_tab_layout.addWidget(self.appearance_group)
+        appearance_tab_layout.addStretch(1)
 
         metadata_layout = QFormLayout()
         metadata_layout.addRow(self.metadata_enabled_checkbox)
@@ -148,6 +167,7 @@ class AdvancedSettingsDialog(QDialog):
         playback_tab_layout.addWidget(self.playback_group)
         playback_tab_layout.addStretch(1)
 
+        self.settings_tabs.addTab(self.appearance_tab, "外观")
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
@@ -280,6 +300,7 @@ class AdvancedSettingsDialog(QDialog):
         playback_values = self._validated_playback_values()
         if playback_values is None:
             return
+        self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
         self._config.episode_title_enhancement_enabled = self.episode_title_enhancement_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
@@ -296,4 +317,6 @@ class AdvancedSettingsDialog(QDialog):
             self._config.mpv_extra_options,
         ) = playback_values
         self._save_config()
+        if self._apply_theme is not None:
+            self._apply_theme()
         self.accept()

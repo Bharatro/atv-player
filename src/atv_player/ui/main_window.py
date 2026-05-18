@@ -1036,6 +1036,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             player_controller,
             config,
             save_config=None,
+            apply_theme=None,
             douban_controller=None,
             telegram_controller=None,
             bilibili_controller=None,
@@ -1072,6 +1073,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         super().__init__()
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
+        self._apply_theme = apply_theme
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
@@ -3070,7 +3072,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
-        dialog = AdvancedSettingsDialog(self.config, self._save_config, self)
+        dialog = AdvancedSettingsDialog(self.config, self._save_config, self, apply_theme=self._apply_theme)
         dialog.exec()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:

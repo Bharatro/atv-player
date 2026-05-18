@@ -3516,6 +3516,38 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_adds_appearance_tab_and_populates_theme_mode(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(theme_mode="dark"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(1) == "播放设置"
+    assert dialog.theme_mode_combo.currentData() == "dark"
+
+
+def test_advanced_settings_dialog_saves_theme_mode_and_calls_theme_refresh(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[str] = []
+    refreshed: list[bool] = []
+    config = AppConfig(theme_mode="system")
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.theme_mode),
+        apply_theme=lambda: refreshed.append(True),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.theme_mode_combo.setCurrentIndex(dialog.theme_mode_combo.findData("light"))
+    dialog.save_button.click()
+
+    assert saved == ["light"]
+    assert refreshed == [True]
+    assert config.theme_mode == "light"
+
+
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

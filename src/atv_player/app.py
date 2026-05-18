@@ -1225,6 +1225,7 @@ class AppCoordinator(QObject):
             player_controller=player_controller,
             config=config,
             save_config=lambda: self.repo.save_config(config),
+            apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
             bilibili_controller=bilibili_controller,
