@@ -199,6 +199,34 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
     )
 
 
+def test_player_window_details_panel_uses_global_light_theme_tokens(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    install_theme(app, manager, "light")
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    tokens = manager.tokens_for("light")
+    assert tokens.panel_bg in window.details.styleSheet()
+
+
+def test_player_window_immersive_controls_remain_dark_in_light_theme(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    install_theme(app, manager, "light")
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    player_tokens = manager.player_tokens_for("light")
+    assert player_tokens.player_controls_bg in window.bottom_area.styleSheet()
+
+
 def test_player_window_can_open_placeholder_session_without_playlist(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

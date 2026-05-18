@@ -83,6 +83,12 @@ from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dia
 from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.theme import (
+    build_player_immersive_qss,
+    build_player_panel_qss,
+    current_resolved_theme,
+    current_theme_manager,
+)
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("", "全部"),
@@ -930,6 +936,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._update_play_button_icon()
         self._update_mute_button_icon()
         self._populate_parse_combo()
+        self._apply_theme()
         self._apply_visibility_state()
         self._update_log_section_max_height()
         app = QApplication.instance()
@@ -940,6 +947,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _mark_app_quit_requested(self) -> None:
         self._app_quit_requested = True
+
+    def _apply_theme(self) -> None:
+        manager = current_theme_manager()
+        theme = current_resolved_theme()
+        tokens = manager.tokens_for(theme)
+        player_tokens = manager.player_tokens_for(theme)
+        self.details.setStyleSheet(build_player_panel_qss(tokens))
+        self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
+        self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:

@@ -309,7 +309,14 @@ def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str
     if manager is None:
         manager = ThemeManager()
         setattr(target_app, "_theme_manager", manager)
-    return install_theme(target_app, manager, repo.load_config().theme_mode)
+    resolved = install_theme(target_app, manager, repo.load_config().theme_mode)
+    refresh_widgets = getattr(target_app, "topLevelWidgets", None)
+    if callable(refresh_widgets):
+        for widget in refresh_widgets():
+            apply_theme = getattr(widget, "_apply_theme", None)
+            if callable(apply_theme):
+                apply_theme()
+    return resolved
 
 
 class AppCoordinator(QObject):

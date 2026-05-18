@@ -273,3 +273,39 @@ def build_placeholder_label_qss(tokens: ThemeTokens) -> str:
         color: {tokens.text_secondary};
     }}
     """
+
+
+def build_player_panel_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QWidget {{
+        background-color: {tokens.panel_bg};
+        color: {tokens.text_primary};
+    }}
+    QLabel {{
+        color: {tokens.text_primary};
+    }}
+    QPushButton {{
+        background-color: {tokens.button_bg};
+        color: {tokens.text_primary};
+        border: 1px solid {tokens.border_subtle};
+        border-radius: 12px;
+    }}
+    """
+
+
+def build_player_immersive_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QWidget {{
+        background-color: {tokens.player_overlay_bg};
+        color: {tokens.player_text_on_dark};
+    }}
+    QLabel {{
+        color: {tokens.player_text_on_dark};
+    }}
+    QPushButton {{
+        background-color: {tokens.player_controls_bg};
+        color: {tokens.player_text_on_dark};
+        border: 1px solid {tokens.player_scrim};
+        border-radius: 12px;
+    }}
+    """
