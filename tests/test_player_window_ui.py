@@ -3333,6 +3333,23 @@ def test_player_window_uses_smaller_player_combos_and_disabled_state_styles(qtbo
     assert f"selection-background-color: {player_tokens.player_button_hover_bg};" in popup_qss
 
 
+def test_player_window_keeps_sidebar_route_combos_readable_on_light_surfaces(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window._apply_theme()
+
+    tokens = player_window_module.current_theme_manager().tokens_for(player_window_module.current_resolved_theme())
+
+    assert (
+        f"QComboBox {{\n        min-height: 34px;\n        padding: 0 40px 0 12px;\n        border: none;\n        border-radius: 14px;\n        background: {tokens.input_bg};"
+        in window.playlist_group_combo.styleSheet()
+    )
+    assert f"color: {tokens.text_primary};" in window.playlist_group_combo.styleSheet()
+    popup_qss = window.playlist_group_combo.view().styleSheet()
+    assert f"background: {tokens.menu_bg};" in popup_qss
+    assert f"color: {tokens.text_primary};" in popup_qss
+
+
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
     controller = FakePlayerController()
     window = PlayerWindow(controller)

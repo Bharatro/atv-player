@@ -63,6 +63,57 @@ def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episo
     assert item.selected_danmaku_title == "成何体统 第1集"
 
 
+def test_generic_danmaku_controller_refresh_emits_log_events(monkeypatch, tmp_path: Path) -> None:
+    class RecordingDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            assert name == "成何体统 1集"
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    controller = GenericDanmakuController(RecordingDanmakuService())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="item-1", media_title="成何体统")
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    assert logs == [
+        "弹幕搜索中: 成何体统 1集",
+        "弹幕搜索成功: 找到 1 个候选",
+    ]
+
+
 def test_generic_danmaku_controller_switches_to_cached_xml_without_refetch(monkeypatch, tmp_path: Path) -> None:
     class FailingResolveDanmakuService:
         def search_danmu_sources(
@@ -114,3 +165,39 @@ def test_generic_danmaku_controller_switches_to_cached_xml_without_refetch(monke
 
     assert resolved == xml_text
     assert item.danmaku_xml == xml_text
+
+
+def test_generic_danmaku_controller_switch_emits_log_events(monkeypatch, tmp_path: Path) -> None:
+    class ResolveDanmakuService:
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            del option
+            assert page_url == "https://v.qq.com/demo"
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="0,1,25,16777215">第一条</d></i>'
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    controller = GenericDanmakuController(ResolveDanmakuService())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        vod_id="item-1",
+        media_title="成何体统",
+        danmaku_search_query="成何体统 1集",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+    )
+
+    controller.switch_danmaku_source(item, "https://v.qq.com/demo")
+
+    assert logs == [
+        "弹幕下载中: 腾讯 - 成何体统 第1集",
+        "弹幕下载成功: 1 条弹幕",
+    ]

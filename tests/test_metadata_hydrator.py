@@ -208,7 +208,43 @@ def test_metadata_hydrator_prefers_current_item_media_title_for_query(tmp_path: 
         )
     )
 
-    assert provider.search_queries[0].title == "成何体统 (2026)"
+    assert provider.search_queries[0].title == "成何体统"
+    assert provider.search_queries[0].year == "2026"
+    assert updated.vod_name == "成何体统"
+    assert updated.vod_content == "豆瓣简介"
+
+
+def test_metadata_hydrator_cleans_noisy_current_item_media_title_for_query(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="36514978", title="主角")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="36514978",
+            title="主角",
+            year="2026",
+            overview="豆瓣简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="4K - 01"),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="4K - 01",
+                url="https://media.example/1.m3u8",
+                media_title="主角 (2026) [更新至17集] [4K高码率] [HDR] [内嵌简中] [张嘉益/刘浩存]",
+            ),
+        )
+    )
+
+    assert provider.search_queries[0].title == "主角"
+    assert provider.search_queries[0].year == "2026"
+    assert updated.vod_name == "主角"
+    assert updated.vod_year == "2026"
     assert updated.vod_content == "豆瓣简介"
 
 

@@ -3437,7 +3437,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if (
             request.episode_title_enhancer is None
             and self._episode_title_enhancer_factory is not None
-            and request.source_kind == "browse"
+            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu"}
         ):
             request.episode_title_enhancer = self._episode_title_enhancer_factory(
                 request=request,

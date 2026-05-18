@@ -1,6 +1,7 @@
 import os
 import httpx
 import logging
+import pytest
 import threading
 import time
 from types import SimpleNamespace
@@ -4425,6 +4426,29 @@ def test_app_coordinator_builds_episode_title_enhancer_for_browse_when_enabled(t
 
     factory = coordinator._build_episode_title_enhancer_factory(object())
     enhance = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert callable(enhance)
+
+
+@pytest.mark.parametrize("source_kind", ["telegram", "emby", "jellyfin", "feiniu"])
+def test_app_coordinator_builds_episode_title_enhancer_for_supported_remote_sources(
+    tmp_path,
+    monkeypatch,
+    source_kind: str,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(source_kind=source_kind, vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
 
     assert callable(enhance)
 

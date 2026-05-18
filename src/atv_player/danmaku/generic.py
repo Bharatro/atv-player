@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import logging
+import re
+from collections.abc import Callable
 from typing import Any
 
 from atv_player.danmaku.cache import (
@@ -20,6 +23,8 @@ _TITLE_ONLY_ITEM_TITLES = {
     "电影",
     "播放",
 }
+_DANMAKU_ENTRY_RE = re.compile(r"<d\b")
+logger = logging.getLogger(__name__)
 
 
 def _compose_danmaku_search_query(title: str, episode: str) -> str:
@@ -54,6 +59,28 @@ def _find_selected_option(item: PlayItem, page_url: str) -> DanmakuSourceOption 
 class GenericDanmakuController:
     def __init__(self, danmaku_service: Any) -> None:
         self._danmaku_service = danmaku_service
+        self._danmaku_log_handler: Callable[[str], None] | None = None
+
+    def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
+        self._danmaku_log_handler = handler
+
+    def _log_danmaku_event(self, event: str, item: PlayItem | None = None, detail: str = "") -> None:
+        handler = self._danmaku_log_handler
+        if handler is None:
+            return
+        label = ""
+        if item is not None:
+            label = (item.title or item.media_title or "").strip()
+        parts = [event]
+        if label:
+            parts.append(label)
+        if detail:
+            parts.append(detail)
+        message = ": ".join(parts) if len(parts) > 1 else parts[0]
+        try:
+            handler(message)
+        except Exception:
+            logger.exception("Danmaku log handler failed event=%s", event)
 
     def _search_title(self, item: PlayItem) -> str:
         return item.danmaku_search_title.strip() or item.media_title.strip() or item.title.strip()
@@ -70,6 +97,9 @@ class GenericDanmakuController:
         item.danmaku_search_episode = episode
         item.danmaku_search_query = _compose_danmaku_search_query(title, episode)
         return item.danmaku_search_query
+
+    def _count_danmaku_entries(self, xml_text: str) -> int:
+        return len(_DANMAKU_ENTRY_RE.findall(str(xml_text or "")))
 
     def _reg_src(self, item: PlayItem) -> str:
         return str(item.vod_id or item.url or "").strip()
@@ -205,11 +235,14 @@ class GenericDanmakuController:
         reg_src = self._reg_src(item)
         if not query_name:
             return
+        self._log_danmaku_event("弹幕搜索中", detail=query_name)
         if not force_refresh and not provider_filter and self.load_cached_danmaku_sources(
             item,
             playlist=playlist,
             media_duration_seconds=media_duration_seconds,
         ):
+            candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
+            self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
             return
         result = self._search_sources(
             query_name,
@@ -238,9 +271,24 @@ class GenericDanmakuController:
         if not provider_filter:
             self._save_source_search_result(query_name, reg_src, result)
         self._apply_source_search_result(item, result)
+        candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
+        self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = _find_selected_option(item, page_url)
+        selected_provider = ""
+        if selected_option is not None:
+            for group in item.danmaku_candidates:
+                if any(option.url == page_url for option in group.options):
+                    selected_provider = str(group.provider_label or "").strip()
+                    break
+        option_label = (selected_option.name if selected_option is not None else "").strip()
+        download_detail = option_label
+        if selected_provider and option_label:
+            download_detail = f"{selected_provider} - {option_label}"
+        elif selected_provider:
+            download_detail = selected_provider
+        self._log_danmaku_event("弹幕下载中", detail=download_detail)
         query_name = item.danmaku_search_query.strip() or self._search_query(item)
         reg_src = self._reg_src(item)
         cached_xml = load_cached_danmaku_xml(query_name, page_url)
@@ -261,4 +309,5 @@ class GenericDanmakuController:
             item.selected_danmaku_provider = selected_option.provider
             item.selected_danmaku_title = selected_option.name
         item.danmaku_error = ""
+        self._log_danmaku_event("弹幕下载成功", detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕")
         return xml_text

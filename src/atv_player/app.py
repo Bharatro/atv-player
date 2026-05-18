@@ -902,7 +902,7 @@ class AppCoordinator(QObject):
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
-            if source_kind not in {"plugin", "browse"} or vod is None:
+            if source_kind not in {"plugin", "browse", "telegram", "emby", "jellyfin", "feiniu"} or vod is None:
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:

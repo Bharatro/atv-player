@@ -6216,6 +6216,7 @@ def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(q
     hydrator = object()
     scrape_service = object()
     danmaku_controller = object()
+    episode_title_enhancer = object()
     window = MainWindow(
         browse_controller=FakeStaticController(),
         history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
@@ -6225,6 +6226,7 @@ def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(q
         metadata_hydrator_factory=lambda **_: hydrator,
         metadata_scrape_service_factory=lambda **_: scrape_service,
         danmaku_controller_factory=lambda **_: danmaku_controller,
+        episode_title_enhancer_factory=lambda **_: episode_title_enhancer,
     )
     qtbot.addWidget(window)
     request = OpenPlayerRequest(
@@ -6241,6 +6243,7 @@ def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(q
     assert prepared.metadata_hydrator is hydrator
     assert prepared.metadata_scrape_service is scrape_service
     assert prepared.danmaku_controller is danmaku_controller
+    assert prepared.episode_title_enhancer is episode_title_enhancer
 
 
 def test_main_window_does_not_backfill_plugin_metadata_hydrator_but_keeps_scrape_service(qtbot) -> None:

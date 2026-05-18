@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import (
@@ -1043,6 +1044,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
+        sidebar_combo_qss = build_combobox_qss(tokens)
+        sidebar_combo_popup_qss = build_combobox_popup_qss(
+            background=tokens.menu_bg,
+            text_color=tokens.text_primary,
+            border_color=tokens.input_border,
+            hover_bg=tokens.menu_hover_bg,
+            selected_bg=tokens.menu_selected_bg,
+        )
         combo_qss = build_combobox_qss(
             tokens,
             border_radius=12,
@@ -1072,7 +1081,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             hover_bg=player_tokens.player_button_hover_bg,
             selected_bg=player_tokens.player_button_hover_bg,
         )
-        for combo in self._themed_comboboxes():
+        for combo in self._sidebar_comboboxes():
+            combo.setStyleSheet(sidebar_combo_qss)
+            combo.view().setStyleSheet(sidebar_combo_popup_qss)
+        for combo in self._player_control_comboboxes():
             combo.setStyleSheet(combo_qss)
             combo.view().setStyleSheet(combo_popup_qss)
         self.progress.setProperty("track_height", 4)
@@ -1109,10 +1121,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.metadata_scrape_button,
         ]
 
-    def _themed_comboboxes(self) -> list[QComboBox]:
+    def _sidebar_comboboxes(self) -> list[QComboBox]:
         return [
             self.playlist_group_combo,
             self.playlist_source_combo,
+        ]
+
+    def _player_control_comboboxes(self) -> list[QComboBox]:
+        return [
             self.speed_combo,
             self.subtitle_combo,
             self.danmaku_combo,
@@ -5566,17 +5582,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.activateWindow()
 
     def _normalize_metadata_scrape_query_inputs(self, title: str, year: str) -> tuple[str, str]:
-        normalized_title = normalize_metadata_scrape_title(title)
-        normalized_year = str(year or "").strip()
-        year_match = re.fullmatch(r"(.*?)[\s]*[\(（]\s*((?:19|20)\d{2})\s*[\)）]\s*$", normalized_title)
-        if year_match is not None:
-            embedded_title = year_match.group(1).strip()
-            embedded_year = year_match.group(2).strip()
-            if embedded_title:
-                normalized_title = embedded_title
-            if not normalized_year:
-                normalized_year = embedded_year
-        return normalized_title.strip(), normalized_year
+        return normalize_metadata_query_inputs(title, year)
 
     def _metadata_scrape_provider_label(self, provider_key: str) -> str:
         return "全部" if not provider_key else _metadata_provider_label(provider_key)
