@@ -156,6 +156,9 @@ class ThemeTokens:
     button_bg: str
     button_primary_bg: str
     button_primary_text: str
+    button_disabled_bg: str
+    button_disabled_border: str
+    button_disabled_text: str
     menu_bg: str
     menu_hover_bg: str
     menu_selected_bg: str
@@ -200,6 +203,9 @@ LIGHT_TOKENS = ThemeTokens(
     button_bg="#fffaf5",
     button_primary_bg="#ff6a3d",
     button_primary_text="#ffffff",
+    button_disabled_bg="#f3ebe1",
+    button_disabled_border="#d8cabc",
+    button_disabled_text="#9d8f80",
     menu_bg="#fffdfa",
     menu_hover_bg="#f8ede2",
     menu_selected_bg="#ffe0d5",
@@ -244,6 +250,9 @@ DARK_TOKENS = ThemeTokens(
     button_bg="#232937",
     button_primary_bg="#ff6a3d",
     button_primary_text="#ffffff",
+    button_disabled_bg="#222836",
+    button_disabled_border="#343c4d",
+    button_disabled_text="#7f8898",
     menu_bg="#1a1f2a",
     menu_hover_bg="#262d3b",
     menu_selected_bg="#3a2b28",
@@ -288,6 +297,9 @@ PLAYER_IMMERSIVE_TOKENS = ThemeTokens(
     button_bg="#232937",
     button_primary_bg="#ff6a3d",
     button_primary_text="#ffffff",
+    button_disabled_bg="#222836",
+    button_disabled_border="#343c4d",
+    button_disabled_text="#7f8898",
     menu_bg="#1a1f2a",
     menu_hover_bg="#262d3b",
     menu_selected_bg="#3a2b28",
@@ -388,6 +400,11 @@ class ThemeManager:
         }}
         QPushButton:hover {{
             border-color: {tokens.accent_hover};
+        }}
+        QPushButton:disabled {{
+            background-color: {tokens.button_disabled_bg};
+            border: 1px solid {tokens.button_disabled_border};
+            color: {tokens.button_disabled_text};
         }}
         QToolTip {{
             background-color: {tokens.panel_bg};
@@ -752,6 +769,11 @@ def build_round_icon_button_qss(tokens: ThemeTokens, *, border_radius: int = 18)
         background: {tokens.panel_alt_bg};
         border-color: {tokens.accent_hover};
     }}
+    QPushButton:disabled {{
+        background: {tokens.button_disabled_bg};
+        border: 1px solid {tokens.button_disabled_border};
+        color: {tokens.button_disabled_text};
+    }}
     """
 
 
@@ -782,6 +804,12 @@ def build_pill_button_qss(tokens: ThemeTokens, *, checked_accent: bool = False) 
         border-color: {tokens.accent_hover};
     }}
     {checked_block}
+    QPushButton:disabled,
+    QPushButton:checked:disabled {{
+        background-color: {tokens.button_disabled_bg};
+        color: {tokens.button_disabled_text};
+        border: 1px solid {tokens.button_disabled_border};
+    }}
     """
 
 

@@ -37,6 +37,15 @@ def test_install_theme_sets_resolved_theme_property() -> None:
     assert app.property("theme_mode") == "system"
 
 
+def test_theme_tokens_expose_button_disabled_colors() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    assert tokens.button_disabled_bg.startswith("#")
+    assert tokens.button_disabled_border.startswith("#")
+    assert tokens.button_disabled_text.startswith("#")
+
+
 def test_build_combobox_qss_uses_brand_tokens() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "light")
     tokens = manager.tokens_for("light")
@@ -73,6 +82,18 @@ def test_build_application_stylesheet_uses_borderless_default_comboboxes() -> No
     assert "border: none;" in qss
     assert "QLineEdit:disabled" in qss
     assert "QPlainTextEdit:disabled" in qss
+
+
+def test_build_application_stylesheet_uses_dedicated_disabled_button_tokens() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = manager.build_application_stylesheet("dark")
+
+    assert "QPushButton:disabled" in qss
+    assert f"background-color: {tokens.button_disabled_bg};" in qss
+    assert f"border: 1px solid {tokens.button_disabled_border};" in qss
+    assert f"color: {tokens.button_disabled_text};" in qss
 
 
 def test_build_application_stylesheet_styles_tooltips_with_subtle_panel_border() -> None:
@@ -138,6 +159,21 @@ def test_build_combobox_qss_accepts_surface_overrides() -> None:
     assert "color: #f5f7fb;" in qss
     assert "background: #212734;" in qss
     assert "color: #b0b8c7;" in qss
+
+
+def test_button_helpers_emit_disabled_rules_without_opacity() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    round_qss = theme_module.build_round_icon_button_qss(tokens)
+    pill_qss = theme_module.build_pill_button_qss(tokens, checked_accent=True)
+
+    for qss in (round_qss, pill_qss):
+        assert "QPushButton:disabled" in qss
+        assert tokens.button_disabled_bg in qss
+        assert tokens.button_disabled_border in qss
+        assert tokens.button_disabled_text in qss
+        assert "opacity" not in qss
 
 
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
