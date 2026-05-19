@@ -69,6 +69,8 @@ from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
+from atv_player.log_store import AppLogService, StructuredJsonlHandler
+from atv_player.logging_utils import configure_logging
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.compat.base.spider import set_proxy_decider_loader as set_spider_proxy_decider_loader
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -298,7 +300,16 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
-    install_theme(app, ThemeManager(), repo.load_config().theme_mode)
+    config = repo.load_config()
+    app_log_service = AppLogService(
+        data_dir / "logs",
+        enabled_getter=lambda: repo.load_config().logging_enabled,
+        max_bytes=10 * 1024 * 1024,
+        max_archives=5,
+    )
+    setattr(app, "_app_log_service", app_log_service)
+    configure_logging("INFO", StructuredJsonlHandler(app_log_service))
+    install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
     logger.info("Application initialized data_dir=%s", data_dir)
@@ -468,6 +479,10 @@ class AppCoordinator(QObject):
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
+        app = QApplication.instance()
+        app_log_service = getattr(app, "_app_log_service", None) if app is not None else None
+        if app_log_service is not None:
+            configure_logging("INFO", StructuredJsonlHandler(app_log_service))
         logger.info("App start view=%s", decide_start_view(config))
         if decide_start_view(config) == "main":
             self._api_client = self._create_api_client(config)

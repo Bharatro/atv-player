@@ -3781,6 +3781,58 @@ def test_apply_saved_theme_ignores_advanced_settings_callback_storage(qtbot, tmp
     assert app.property("resolved_theme") == "dark"
 
 
+def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
+    created: dict[str, object] = {}
+
+    class FakeService:
+        def __init__(self, logs_dir, *, enabled_getter, max_bytes, max_archives) -> None:
+            created["logs_dir"] = logs_dir
+            created["enabled"] = enabled_getter()
+            created["max_bytes"] = max_bytes
+            created["max_archives"] = max_archives
+
+        def write_event(self, event) -> None:
+            created["last_event"] = event
+
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_module, "AppLogService", FakeService, raising=False)
+
+    app, repo = app_module.build_application()
+
+    assert created["logs_dir"] == tmp_path / "logs"
+    assert created["enabled"] is True
+    assert created["max_bytes"] == 10 * 1024 * 1024
+    assert created["max_archives"] == 5
+    assert getattr(app, "_app_log_service", None) is not None
+    assert repo.load_config().logging_enabled is True
+
+
+def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance()
+    assert app is not None
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(logging_enabled=False))
+
+    configure_calls: list[tuple[str, object]] = []
+
+    def record_configure(level: str, structured_handler=None) -> None:
+        configure_calls.append((level, structured_handler))
+
+    class FakeService:
+        def write_event(self, event) -> None:
+            del event
+
+    monkeypatch.setattr(app_module, "configure_logging", record_configure, raising=False)
+    monkeypatch.setattr(app_module.AppCoordinator, "_show_login", lambda self, error_message="": QDialog())
+    setattr(app, "_app_log_service", FakeService())
+
+    coordinator = app_module.AppCoordinator(repo)
+    coordinator.start()
+
+    assert configure_calls[-1][0] == "INFO"
+    assert configure_calls[-1][1] is not None
+
+
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
