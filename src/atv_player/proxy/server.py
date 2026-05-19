@@ -262,14 +262,21 @@ def _default_stream(
 
 
 class LocalHlsProxyServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 2323, get=httpx.get, stream=_default_stream) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 2323,
+        get=httpx.get,
+        stream=_default_stream,
+        segment_prefetch_size: int = 2,
+    ) -> None:
         self.host = host
         self.port = port
         self._preferred_port = port
         self._get = get
         self._stream = stream
         self._registry = ProxySessionRegistry()
-        self._segment_proxy = SegmentProxy(self._registry, get=get)
+        self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 

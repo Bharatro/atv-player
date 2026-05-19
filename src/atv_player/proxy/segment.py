@@ -20,11 +20,13 @@ class SegmentProxy:
         get=httpx.get,
         cache: ProxyCache | None = None,
         proxy_decider: ProxyDecider | None = None,
+        segment_prefetch_size: int = 2,
     ) -> None:
         self._session_registry = session_registry
         self._get = get
         self._cache = cache or ProxyCache()
         self._proxy_decider = proxy_decider
+        self._segment_prefetch_size = max(0, int(segment_prefetch_size))
 
     def fetch_segment(self, token: str, index: int, *, prefetch: bool = False) -> bytes:
         session = self._session_registry.get(token)
@@ -95,9 +97,10 @@ class SegmentProxy:
 
     def schedule_prefetch(self, token: str, current_index: int) -> None:
         session = self._session_registry.get(token)
-        if session is None:
+        if session is None or self._segment_prefetch_size <= 0:
             return
-        for next_index in range(current_index + 1, min(current_index + 3, len(session.segments))):
+        upper_bound = min(current_index + 1 + self._segment_prefetch_size, len(session.segments))
+        for next_index in range(current_index + 1, upper_bound):
             cache_key = self._segment_cache_key(session.segments[next_index].url, session.headers)
             if self._cache.get_segment(cache_key) is not None:
                 continue

@@ -54,6 +54,42 @@ def test_segment_proxy_schedules_prefetch_for_next_segments() -> None:
     assert scheduled == [(token, 1), (token, 2)]
 
 
+def test_segment_proxy_does_not_schedule_prefetch_when_prefetch_size_is_zero() -> None:
+    scheduled: list[tuple[str, int]] = []
+
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    registry.get(token).segments = [
+        PlaylistSegment(index=0, url="https://media.example/path/0001.ts", duration=5.0),
+        PlaylistSegment(index=1, url="https://media.example/path/0002.ts", duration=5.0),
+    ]
+    proxy = SegmentProxy(session_registry=registry, segment_prefetch_size=0)
+    proxy._prefetch_segment = lambda session_token, segment_index: scheduled.append((session_token, segment_index))
+
+    proxy.schedule_prefetch(token, 0)
+
+    assert scheduled == []
+
+
+def test_segment_proxy_schedules_configured_number_of_next_segments() -> None:
+    scheduled: list[tuple[str, int]] = []
+
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    registry.get(token).segments = [
+        PlaylistSegment(index=0, url="https://media.example/path/0001.ts", duration=5.0),
+        PlaylistSegment(index=1, url="https://media.example/path/0002.ts", duration=5.0),
+        PlaylistSegment(index=2, url="https://media.example/path/0003.ts", duration=5.0),
+        PlaylistSegment(index=3, url="https://media.example/path/0004.ts", duration=5.0),
+    ]
+    proxy = SegmentProxy(session_registry=registry, segment_prefetch_size=1)
+    proxy._prefetch_segment = lambda session_token, segment_index: scheduled.append((session_token, segment_index))
+
+    proxy.schedule_prefetch(token, 0)
+
+    assert scheduled == [(token, 1)]
+
+
 def test_segment_proxy_prefetch_does_not_recursively_prefetch_full_playlist() -> None:
     requests: list[str] = []
 
