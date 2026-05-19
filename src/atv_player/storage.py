@@ -189,6 +189,14 @@ def _normalize_playback_auto_switch_source_on_failure(value: object) -> bool:
     return bool(value)
 
 
+def _normalize_m3u_proxy_segment_prefetch_size(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 2
+    return max(0, min(normalized, 10))
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -229,6 +237,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
                     mpv_extra_options TEXT NOT NULL DEFAULT '',
                     playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
+                    m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -338,6 +347,10 @@ class SettingsRepository:
             if "playback_auto_switch_source_on_failure" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0"
+                )
+            if "m3u_proxy_segment_prefetch_size" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2"
                 )
             if "last_active_window" not in columns:
                 conn.execute(
@@ -488,6 +501,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs,
                     mpv_extra_options,
                     playback_auto_switch_source_on_failure,
+                    m3u_proxy_segment_prefetch_size,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -521,7 +535,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -556,6 +570,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs,
                     mpv_extra_options,
                     playback_auto_switch_source_on_failure,
+                    m3u_proxy_segment_prefetch_size,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -615,6 +630,7 @@ class SettingsRepository:
             mpv_default_readahead_secs,
             mpv_extra_options,
             playback_auto_switch_source_on_failure,
+            m3u_proxy_segment_prefetch_size,
             last_path,
             last_active_window,
             last_playback_source,
@@ -671,6 +687,9 @@ class SettingsRepository:
             mpv_extra_options=_normalize_mpv_extra_options(mpv_extra_options),
             playback_auto_switch_source_on_failure=_normalize_playback_auto_switch_source_on_failure(
                 playback_auto_switch_source_on_failure
+            ),
+            m3u_proxy_segment_prefetch_size=_normalize_m3u_proxy_segment_prefetch_size(
+                m3u_proxy_segment_prefetch_size
             ),
             last_path=last_path,
             last_active_window=last_active_window,
@@ -733,6 +752,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs = ?,
                     mpv_extra_options = ?,
                     playback_auto_switch_source_on_failure = ?,
+                    m3u_proxy_segment_prefetch_size = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -789,6 +809,7 @@ class SettingsRepository:
                     _normalize_mpv_default_readahead_secs(config.mpv_default_readahead_secs),
                     _normalize_mpv_extra_options(config.mpv_extra_options),
                     int(config.playback_auto_switch_source_on_failure),
+                    _normalize_m3u_proxy_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

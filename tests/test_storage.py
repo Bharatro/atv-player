@@ -411,6 +411,23 @@ def test_settings_repository_round_trip_persists_playback_auto_switch_source_fla
     assert saved == config
 
 
+def test_settings_repository_defaults_m3u_proxy_segment_prefetch_size_to_two(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+
+    assert repo.load_config().m3u_proxy_segment_prefetch_size == 2
+
+
+def test_settings_repository_round_trip_persists_m3u_proxy_segment_prefetch_size(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = AppConfig(m3u_proxy_segment_prefetch_size=5)
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.m3u_proxy_segment_prefetch_size == 5
+    assert saved == config
+
+
 def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
@@ -445,6 +462,35 @@ def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path
     assert config.mpv_extra_options == ""
 
 
+def test_settings_repository_migrates_missing_m3u_proxy_segment_prefetch_size_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                last_path TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO app_config (id, base_url, username, token, vod_token, last_path) VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/')"
+        )
+
+    config = SettingsRepository(db_path).load_config()
+
+    assert config.m3u_proxy_segment_prefetch_size == 2
+
+
 def test_settings_repository_migrates_missing_playback_auto_switch_source_column(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
@@ -472,6 +518,13 @@ def test_settings_repository_migrates_missing_playback_auto_switch_source_column
     config = SettingsRepository(db_path).load_config()
 
     assert config.playback_auto_switch_source_on_failure is False
+
+
+def test_settings_repository_normalizes_invalid_m3u_proxy_segment_prefetch_size_values(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(m3u_proxy_segment_prefetch_size=99))
+
+    assert repo.load_config().m3u_proxy_segment_prefetch_size == 10
 
 
 def test_settings_repository_round_trip_persists_metadata_credentials(tmp_path: Path) -> None:
