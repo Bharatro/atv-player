@@ -449,16 +449,28 @@ class AppCoordinator(QObject):
 
         return run
 
-    def start(self) -> QWidget:
-        config = self.repo.load_config()
-        logger.info("App start view=%s", decide_start_view(config))
-        if decide_start_view(config) == "main":
-            self._api_client = ApiClient(
+    def _create_api_client(self, config: AppConfig) -> ApiClient:
+        try:
+            return ApiClient(
                 config.base_url,
                 token=config.token,
                 vod_token=config.vod_token,
                 proxy_decider=self._build_proxy_decider(),
             )
+        except TypeError as exc:
+            if "proxy_decider" not in str(exc):
+                raise
+            return ApiClient(
+                config.base_url,
+                token=config.token,
+                vod_token=config.vod_token,
+            )
+
+    def start(self) -> QWidget:
+        config = self.repo.load_config()
+        logger.info("App start view=%s", decide_start_view(config))
+        if decide_start_view(config) == "main":
+            self._api_client = self._create_api_client(config)
             try:
                 self._ensure_vod_token(self._api_client)
             except UnauthorizedError:
@@ -473,12 +485,7 @@ class AppCoordinator(QObject):
 
     def _build_api_client(self) -> ApiClient:
         config = self.repo.load_config()
-        api_client = ApiClient(
-            config.base_url,
-            token=config.token,
-            vod_token=config.vod_token,
-            proxy_decider=self._build_proxy_decider(),
-        )
+        api_client = self._create_api_client(config)
         self._ensure_vod_token(api_client)
         return api_client
 
