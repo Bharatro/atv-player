@@ -367,6 +367,40 @@ class MpvWidget(QWidget):
         # Some HLS/DASH sources use fragment URLs mpv would otherwise reject by extension.
         return {"demuxer_lavf_o_add": "allowed_extensions=ALL"}
 
+    def _encode_loadfile_options(self, options: dict[str, str]) -> str:
+        return ",".join(f"{key}={value}" for key, value in options.items())
+
+    def _loadfile_index_supported(self, player: Any) -> bool:
+        mpv_version = getattr(player, "mpv_version_tuple", None)
+        return isinstance(mpv_version, tuple) and mpv_version >= (0, 38, 0)
+
+    def _load_player_media(
+        self,
+        player: Any,
+        url: str,
+        *,
+        mode: str = "replace",
+        index: int | None = None,
+        options: dict[str, str] | None = None,
+    ) -> None:
+        normalized_options = dict(options or {})
+        command_async = getattr(player, "command_async", None)
+        if callable(command_async):
+            command_args: list[object] = [url, mode]
+            encoded_options = self._encode_loadfile_options(normalized_options)
+            if self._loadfile_index_supported(player):
+                command_args.append(-1 if index is None else index)
+                if encoded_options:
+                    command_args.append(encoded_options)
+            elif encoded_options:
+                command_args.append(encoded_options)
+            command_async("loadfile", *command_args)
+            return
+        if index is not None:
+            player.loadfile(url, mode, index, **normalized_options)
+            return
+        player.loadfile(url, mode, **normalized_options)
+
     def _player_property(self, name: str, default: object | None = None) -> object | None:
         if self._player is None:
             return default
@@ -481,7 +515,7 @@ class MpvWidget(QWidget):
         if ytdl_format:
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
-        can_loadfile = hasattr(player, "loadfile")
+        can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
         try:
             self._apply_http_header_fields(player, header_fields)
             profile_name = self._apply_stream_profile(
@@ -516,11 +550,15 @@ class MpvWidget(QWidget):
                 self._load_media(player, url, start_seconds, loadfile_options)
                 self.attach_audio_cover(poster_image_path)
             elif start_seconds > 0 and can_loadfile:
-                player.loadfile(url, start=str(start_seconds), **loadfile_options)
+                self._load_player_media(
+                    player,
+                    url,
+                    options={**loadfile_options, "start": str(start_seconds)},
+                )
             elif audio_files and can_loadfile:
-                player.loadfile(url, **loadfile_options)
+                self._load_player_media(player, url, options=loadfile_options)
             elif (header_fields or loadfile_options) and can_loadfile:
-                player.loadfile(url, **loadfile_options)
+                self._load_player_media(player, url, options=loadfile_options)
             else:
                 player.play(url)
             self._attach_external_audio(player, audio_files)
@@ -547,7 +585,7 @@ class MpvWidget(QWidget):
                     profile_name,
                     bool(header_fields),
                 )
-                can_loadfile = hasattr(player, "loadfile")
+                can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
                 if poster_image_path and can_loadfile:
                     self._load_media(
                         player,
@@ -563,11 +601,15 @@ class MpvWidget(QWidget):
                     self._load_media(player, url, start_seconds, loadfile_options)
                     self.attach_audio_cover(poster_image_path)
                 elif start_seconds > 0 and can_loadfile:
-                    player.loadfile(url, start=str(start_seconds), **loadfile_options)
+                    self._load_player_media(
+                        player,
+                        url,
+                        options={**loadfile_options, "start": str(start_seconds)},
+                    )
                 elif audio_files and can_loadfile:
-                    player.loadfile(url, **loadfile_options)
+                    self._load_player_media(player, url, options=loadfile_options)
                 elif (header_fields or loadfile_options) and can_loadfile:
-                    player.loadfile(url, **loadfile_options)
+                    self._load_player_media(player, url, options=loadfile_options)
                 else:
                     player.play(url)
                 self._attach_external_audio(player, audio_files)
@@ -585,11 +627,16 @@ class MpvWidget(QWidget):
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> None:
-        if start_seconds > 0 and hasattr(player, "loadfile"):
-            player.loadfile(url, start=str(start_seconds), **loadfile_options)
+        can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
+        if start_seconds > 0 and can_loadfile:
+            self._load_player_media(
+                player,
+                url,
+                options={**loadfile_options, "start": str(start_seconds)},
+            )
             return
-        if loadfile_options and hasattr(player, "loadfile"):
-            player.loadfile(url, **loadfile_options)
+        if loadfile_options and can_loadfile:
+            self._load_player_media(player, url, options=loadfile_options)
             return
         player.play(url)
 

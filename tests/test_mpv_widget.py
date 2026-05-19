@@ -1,4 +1,5 @@
 import sys
+import time
 import types
 
 import pytest
@@ -408,6 +409,67 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
             "replace",
             None,
             {"demuxer_lavf_o_add": "allowed_extensions=ALL"},
+        )
+    ]
+
+
+def test_mpv_widget_prefers_async_loadfile_to_avoid_blocking_caller(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.command_async_calls: list[tuple[object, ...]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, mode, index, options))
+            time.sleep(0.2)
+
+        def command_async(self, *args, **kwargs):
+            self.command_async_calls.append((*args, kwargs))
+            return object()
+
+    widget._player = FakePlayer()
+
+    started_at = time.monotonic()
+    widget.load("http://127.0.0.1:2323/m3u", start_seconds=12)
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.1
+    assert widget._player.loadfile_calls == []
+    assert widget._player.command_async_calls == [
+        ("loadfile", "http://127.0.0.1:2323/m3u", "replace", "start=12", {})
+    ]
+
+
+def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.mpv_version_tuple = (0, 38, 0)
+            self.command_async_calls: list[tuple[object, ...]] = []
+
+        def command_async(self, *args, **kwargs):
+            self.command_async_calls.append((*args, kwargs))
+            return object()
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/dash/test-token.mpd", start_seconds=5)
+
+    assert widget._player.command_async_calls == [
+        (
+            "loadfile",
+            "http://127.0.0.1:2323/dash/test-token.mpd",
+            "replace",
+            -1,
+            "demuxer_lavf_o_add=allowed_extensions=ALL,start=5",
+            {},
         )
     ]
 
