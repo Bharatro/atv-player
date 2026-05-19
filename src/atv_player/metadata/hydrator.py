@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import logging
 
+from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.matching import is_confident_match, score_match
@@ -195,7 +195,8 @@ class MetadataHydrator:
         self._cache.save_detail(binding.provider, binding.provider_id, record)
         return record
 
-    def _load_provider_matches(self, provider: MetadataProvider, query) -> list[MetadataMatch]:
+    @staticmethod
+    def _provider_search_cache_key(provider: MetadataProvider, query) -> tuple[str, str]:
         search_cache_key = getattr(provider, "search_cache_key", None)
         cache_title = query.title
         cache_year = query.year
@@ -203,6 +204,14 @@ class MetadataHydrator:
             provider_cache_key = search_cache_key(query)
             if provider_cache_key is not None:
                 cache_title, cache_year = provider_cache_key
+        return cache_title, cache_year
+
+    @staticmethod
+    def _score_matches(query, matches: list[MetadataMatch]) -> list[MetadataMatch]:
+        return [replace(match, score=max(float(match.score or 0.0), score_match(query, match))) for match in matches]
+
+    def _load_provider_matches(self, provider: MetadataProvider, query) -> list[MetadataMatch]:
+        cache_title, cache_year = self._provider_search_cache_key(provider, query)
         matches = self._cache.load_search(
             provider.name,
             cache_title,
@@ -211,18 +220,18 @@ class MetadataHydrator:
             empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
         )
         if matches is None:
-            try:
-                matches = provider.search(query)
-            except Exception as exc:
+            result = run_provider_searches([provider], query, max_concurrency=1)[0]
+            if result.error is not None:
                 logger.warning(
                     "Metadata provider search failed provider=%s",
                     provider.name,
-                    exc_info=exc,
+                    exc_info=result.error,
                     extra={"log_category": "metadata", "log_source": "app"},
                 )
                 return []
+            matches = result.matches
             self._cache.save_search(provider.name, cache_title, cache_year, matches)
-        return [replace(match, score=max(float(match.score or 0.0), score_match(query, match))) for match in matches]
+        return self._score_matches(query, list(matches))
 
     def _load_detail_record(self, provider: MetadataProvider, match: MetadataMatch):
         cached = self._cache.load_detail(
@@ -233,7 +242,7 @@ class MetadataHydrator:
         if cached is not None and not _should_refresh_cached_detail(provider.name, cached, match):
             return cached
         try:
-            record = provider.get_detail(match)
+            record = run_provider_detail(provider, match)
         except Exception as exc:
             logger.warning("Metadata provider detail failed provider=%s", provider.name, exc_info=exc)
             return None
@@ -289,13 +298,49 @@ class MetadataHydrator:
         if not eligible_providers:
             return vod
         query = self._prime_local_douban_query(context, vod, query, eligible_providers)
-
-        with ThreadPoolExecutor(max_workers=max(1, len(eligible_providers))) as executor:
-            futures = [executor.submit(self._load_provider_matches, provider, query) for provider in eligible_providers]
+        providers_needing_fetch: list[MetadataProvider] = []
+        cache_keys_by_provider: list[tuple[str, str]] = []
+        matches_by_provider: dict[int, list[MetadataMatch]] = {}
+        for provider in eligible_providers:
+            cache_title, cache_year = self._provider_search_cache_key(provider, query)
+            cached_matches = self._cache.load_search(
+                provider.name,
+                cache_title,
+                cache_year,
+                ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
+                empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+            )
+            if cached_matches is None:
+                providers_needing_fetch.append(provider)
+                cache_keys_by_provider.append((cache_title, cache_year))
+                continue
+            matches_by_provider[id(provider)] = self._score_matches(query, list(cached_matches))
+        if providers_needing_fetch:
+            search_results = run_provider_searches(
+                providers_needing_fetch,
+                query,
+                max_concurrency=max(1, len(providers_needing_fetch)),
+            )
+            for provider, (cache_title, cache_year), result in zip(
+                providers_needing_fetch,
+                cache_keys_by_provider,
+                search_results,
+            ):
+                if result.error is not None:
+                    logger.warning(
+                        "Metadata provider search failed provider=%s",
+                        provider.name,
+                        exc_info=result.error,
+                        extra={"log_category": "metadata", "log_source": "app"},
+                    )
+                    matches_by_provider[id(provider)] = []
+                    continue
+                self._cache.save_search(provider.name, cache_title, cache_year, result.matches)
+                matches_by_provider[id(provider)] = self._score_matches(query, list(result.matches))
 
         ranked_candidates: list[tuple[int, MetadataProvider, MetadataMatch]] = []
-        for order, (provider, future) in enumerate(zip(eligible_providers, futures)):
-            matches = future.result()
+        for order, provider in enumerate(eligible_providers):
+            matches = matches_by_provider.get(id(provider), [])
             if not matches:
                 continue
             best_match = max(matches, key=lambda item: item.score)

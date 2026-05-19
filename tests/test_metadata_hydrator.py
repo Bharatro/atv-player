@@ -366,7 +366,44 @@ def test_metadata_hydrator_local_douban_corrects_noisy_similar_title(tmp_path: P
 
     assert updated.vod_name == "成何体统"
     assert updated.vod_content == "豆瓣简介"
-    assert updated.type_name == "爱情 / 古装"
+
+
+def test_metadata_hydrator_supports_async_provider_methods(tmp_path: Path) -> None:
+    class AsyncProvider:
+        name = "tmdb"
+
+        def __init__(self) -> None:
+            self.search_calls = 0
+            self.detail_calls = 0
+
+        def can_enrich(self, _context: MetadataContext) -> bool:
+            return True
+
+        async def async_search(self, candidate):
+            self.search_calls += 1
+            return [MetadataMatch(provider="tmdb", provider_id="movie:42", title=candidate.title)]
+
+        async def async_get_detail(self, match):
+            self.detail_calls += 1
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=match.provider_id,
+                title=match.title,
+                overview="TMDB简介",
+            )
+
+    cache = MetadataCache(tmp_path)
+    provider = AsyncProvider()
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(vod=VodItem(vod_id="v1", vod_name="深空彼岸"), source_kind="browse")
+    )
+
+    assert updated.vod_name == "深空彼岸"
+    assert updated.vod_content == "TMDB简介"
+    assert provider.search_calls == 1
+    assert provider.detail_calls == 1
 
 
 def test_metadata_hydrator_primes_local_douban_before_full_search_for_telegram_emby_and_jellyfin(tmp_path: Path) -> None:

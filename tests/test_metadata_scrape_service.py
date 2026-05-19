@@ -819,3 +819,33 @@ def test_metadata_scrape_service_apply_raises_when_provider_returns_none(tmp_pat
 
     assert len(provider.detail_calls) == 1
     assert cache.load_detail("tmdb", "movie:1", ttl_seconds=7 * 24 * 3600) is None
+
+
+def test_metadata_scrape_service_supports_async_provider_methods(tmp_path: Path) -> None:
+    class AsyncProvider:
+        name = "tmdb"
+
+        def can_enrich(self, _context) -> bool:
+            return True
+
+        async def async_search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="tmdb",
+                    provider_id="movie:1",
+                    title=candidate.title,
+                    year=candidate.year,
+                )
+            ]
+
+        async def async_get_detail(self, match: MetadataMatch) -> MetadataRecord:
+            return MetadataRecord(provider="tmdb", provider_id=match.provider_id, title=match.title)
+
+    cache = MetadataCache(tmp_path)
+    provider = AsyncProvider()
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    groups = service.search(MetadataQuery(title="深空彼岸", year="2026"), provider_filter="")
+
+    assert [group.provider for group in groups] == ["tmdb"]
+    assert groups[0].items[0].provider_id == "movie:1"
