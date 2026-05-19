@@ -45,7 +45,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._save_config = save_config
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
-        self.resize(680, 440)
+        self.resize(920, 560)
 
         self.settings_tabs = QTabWidget()
         self.appearance_tab = QWidget()

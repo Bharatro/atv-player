@@ -3702,6 +3702,16 @@ def test_advanced_settings_dialog_adds_appearance_tab_and_populates_theme_mode(q
     assert dialog.theme_mode_combo.currentData() == "dark"
 
 
+def test_advanced_settings_dialog_uses_larger_default_size(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.size().width() == 920
+    assert dialog.size().height() == 560
+
+
 def test_advanced_settings_dialog_saves_theme_mode_and_calls_theme_refresh(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

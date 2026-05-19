@@ -67,6 +67,15 @@ _MOVIE_CATEGORY_MARKERS = ("电影",)
 _SINGLE_VIDEO_GENERIC_TITLES = {"正片", "完整版", "全片"}
 
 
+def _log_spider_method_call(plugin_name: str, method_name: str, **params: object) -> None:
+    logger.debug(
+        "Spider plugin call plugin=%s method=%s params=%s",
+        plugin_name,
+        method_name,
+        params,
+    )
+
+
 def _strip_trailing_title_size_suffix(value: str) -> str:
     title = str(value or "").strip()
     if not title:
@@ -855,6 +864,14 @@ class SpiderPluginController:
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
+            _log_spider_method_call(
+                self._plugin_name,
+                "categoryContent",
+                tid=category_id,
+                pg=page,
+                filter=False,
+                extend=dict(filters or {}),
+            )
             payload = self._spider.categoryContent(category_id, page, False, dict(filters or {})) or {}
         except Exception as exc:
             logger.exception(
@@ -881,8 +898,23 @@ class SpiderPluginController:
         category = "" if category_id == "home" else str(category_id or "")
         try:
             if self._search_supports_category:
+                _log_spider_method_call(
+                    self._plugin_name,
+                    "searchContent",
+                    key=keyword,
+                    quick=False,
+                    pg=page,
+                    category=category,
+                )
                 payload = self._spider.searchContent(keyword, False, page, category)
             else:
+                _log_spider_method_call(
+                    self._plugin_name,
+                    "searchContent",
+                    key=keyword,
+                    quick=False,
+                    pg=page,
+                )
                 payload = self._spider.searchContent(keyword, False, page)
             payload = payload or {}
         except Exception as exc:
@@ -1905,6 +1937,13 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         try:
+            _log_spider_method_call(
+                self._plugin_name,
+                "playerContent",
+                flag=item.play_source,
+                id=item.vod_id,
+                vipFlags=[],
+            )
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
         except Exception as exc:
             logger.exception(
@@ -2072,6 +2111,11 @@ class SpiderPluginController:
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
+            _log_spider_method_call(
+                self._plugin_name,
+                "detailContent",
+                ids=[vod_id],
+            )
             payload = self._spider.detailContent([vod_id]) or {}
         except Exception as exc:
             logger.exception("Spider plugin detail load failed plugin=%s vod_id=%s", self._plugin_name, vod_id)
