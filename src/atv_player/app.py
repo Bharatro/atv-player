@@ -409,6 +409,16 @@ class AppCoordinator(QObject):
             else None
         )
 
+    def _apply_runtime_config(self, config: AppConfig) -> None:
+        proxy_server = getattr(self._m3u8_ad_filter, "_proxy_server", None)
+        update_segment_prefetch_size = getattr(proxy_server, "set_segment_prefetch_size", None)
+        if callable(update_segment_prefetch_size):
+            update_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size)
+
+    def _save_shared_config(self, config: AppConfig) -> None:
+        self._apply_runtime_config(config)
+        self.repo.save_config(config)
+
     def _build_spider_plugin_loader(self, cache_dir: Path):
         try:
             parameters = inspect.signature(SpiderPluginLoader).parameters
@@ -1311,7 +1321,7 @@ class AppCoordinator(QObject):
             player_controller=player_controller,
             config=config,
             app_log_service=getattr(QApplication.instance(), "_app_log_service", None),
-            save_config=lambda: self.repo.save_config(config),
+            save_config=lambda: self._save_shared_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
@@ -1371,7 +1381,7 @@ class AppCoordinator(QObject):
                 restored = self.main_window.restore_last_player()
             except Exception:
                 config.last_active_window = "main"
-                self.repo.save_config(config)
+                self._save_shared_config(config)
             else:
                 if restored is not None:
                     return restored

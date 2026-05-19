@@ -3,7 +3,7 @@ name = "atv-player"
 version = "0.1.0"
 description = "PySide6 desktop player for alist-tvbox"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 
 dependencies = [
     "pyside6>=6.11.0",

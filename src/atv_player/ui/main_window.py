@@ -3654,27 +3654,37 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._next_player_session_request_id()
         self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
 
+    def _create_player_window(self):
+        kwargs = {
+            "app_log_service": self._app_log_service,
+            "m3u8_ad_filter": self._m3u8_ad_filter,
+            "playback_parser_service": self._playback_parser_service,
+            "default_video_cover_loader": self._default_video_cover_loader,
+        }
+        try:
+            parameters = inspect.signature(PlayerWindow).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if not accepts_kwargs:
+            kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in parameters
+            }
+        return PlayerWindow(
+            self.player_controller,
+            self.config,
+            self._save_config,
+            **kwargs,
+        )
+
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:
-            try:
-                self.player_window = PlayerWindow(
-                    self.player_controller,
-                    self.config,
-                    self._save_config,
-                    app_log_service=self._app_log_service,
-                    m3u8_ad_filter=self._m3u8_ad_filter,
-                    playback_parser_service=self._playback_parser_service,
-                    default_video_cover_loader=self._default_video_cover_loader,
-                )
-            except TypeError as exc:
-                if "m3u8_ad_filter" not in str(exc) and "playback_parser_service" not in str(exc):
-                    raise
-                self.player_window = PlayerWindow(
-                    self.player_controller,
-                    self.config,
-                    self._save_config,
-                    app_log_service=self._app_log_service,
-                )
+            self.player_window = self._create_player_window()
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
         self._close_help_dialog()

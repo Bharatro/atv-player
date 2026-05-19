@@ -45,3 +45,18 @@ def test_iter_bounded_settled_collects_async_worker_errors() -> None:
     assert batches[0][0].value == 100
     assert isinstance(batches[0][1].error, RuntimeError)
     assert batches[1][0].value == 300
+
+
+def test_iter_bounded_settled_can_stop_before_starting_later_batches() -> None:
+    started: list[int] = []
+
+    def worker(value: int) -> int:
+        started.append(value)
+        return value
+
+    iterator = iter_bounded_settled([1, 2, 3, 4, 5], worker, max_workers=2)
+
+    first_batch = next(iterator)
+
+    assert [item.value for item in first_batch] == [1, 2]
+    assert sorted(started) == [1, 2]

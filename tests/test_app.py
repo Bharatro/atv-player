@@ -4109,6 +4109,48 @@ def test_app_coordinator_passes_saved_m3u_proxy_segment_prefetch_size_to_local_h
     assert captured == [7]
 
 
+def test_app_coordinator_show_main_save_config_updates_live_proxy_prefetch_size(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+                m3u_proxy_segment_prefetch_size=2,
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            config = kwargs["config"]
+            config.m3u_proxy_segment_prefetch_size = 6
+            kwargs["save_config"]()
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: object())
+    monkeypatch.setattr(coordinator, "_load_capabilities", lambda client: {"emby": False, "jellyfin": False})
+
+    coordinator._show_main()
+
+    assert repo.config.m3u_proxy_segment_prefetch_size == 6
+    assert coordinator._m3u8_ad_filter._proxy_server._segment_proxy._segment_prefetch_size == 6
+
+
 def test_app_coordinator_closes_m3u8_filter_when_shutting_down() -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

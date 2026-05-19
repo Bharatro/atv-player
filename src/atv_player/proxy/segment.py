@@ -28,6 +28,9 @@ class SegmentProxy:
         self._proxy_decider = proxy_decider
         self._segment_prefetch_size = max(0, int(segment_prefetch_size))
 
+    def set_segment_prefetch_size(self, segment_prefetch_size: int) -> None:
+        self._segment_prefetch_size = max(0, int(segment_prefetch_size))
+
     def fetch_segment(self, token: str, index: int, *, prefetch: bool = False) -> bytes:
         session = self._session_registry.get(token)
         if session is None:

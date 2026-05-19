@@ -27,10 +27,14 @@ def iter_bounded_settled(
     rows = list(items)
     if not rows:
         return
-    for batch in asyncio.run(
-        _iter_bounded_settled_async(rows, worker, max_workers=max_workers)
-    ):
-        yield batch
+    batch_size = max(1, max_workers)
+    for start in range(0, len(rows), batch_size):
+        yield asyncio.run(
+            _settle_batch_async(
+                rows[start : start + batch_size],
+                worker,
+            )
+        )
 
 
 async def _run_worker(
@@ -42,24 +46,14 @@ async def _run_worker(
     return await asyncio.to_thread(worker, row)
 
 
-async def _iter_bounded_settled_async(
+async def _settle_batch_async(
     items: list[T],
     worker: Callable[[T], R] | Callable[[T], Awaitable[R]],
-    *,
-    max_workers: int,
-) -> list[list[SettledResult[R]]]:
-    semaphore = asyncio.Semaphore(max(1, max_workers))
-
+) -> list[SettledResult[R]]:
     async def run_one(row: T) -> SettledResult[R]:
-        async with semaphore:
-            try:
-                return SettledResult(value=await _run_worker(worker, row))
-            except BaseException as exc:
-                return SettledResult(error=exc)
+        try:
+            return SettledResult(value=await _run_worker(worker, row))
+        except BaseException as exc:
+            return SettledResult(error=exc)
 
-    settled_rows = list(await asyncio.gather(*(run_one(row) for row in items)))
-    batch_size = max(1, max_workers)
-    return [
-        settled_rows[start : start + batch_size]
-        for start in range(0, len(settled_rows), batch_size)
-    ]
+    return list(await asyncio.gather(*(run_one(row) for row in items)))

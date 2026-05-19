@@ -309,6 +309,9 @@ class LocalHlsProxyServer:
         self._thread = None
         self.port = self._preferred_port
 
+    def set_segment_prefetch_size(self, segment_prefetch_size: int) -> None:
+        self._segment_proxy.set_segment_prefetch_size(segment_prefetch_size)
+
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"

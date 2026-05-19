@@ -3625,6 +3625,56 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
     assert saved == [(False, "bid=demo;", "tmdb-key")]
 
 
+def test_main_window_apply_open_player_supports_legacy_player_window_constructor(qtbot, monkeypatch) -> None:
+    opened: list[tuple[object, bool]] = []
+
+    class LegacyPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.controller = controller
+            self.config = config
+            self.save_config = save_config
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", LegacyPlayerWindow)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        app_log_service=object(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="https://media.example/1.m3u8")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id="vod-1",
+    )
+
+    window._apply_open_player(request, {"session": "ok"})
+
+    assert opened == [({"session": "ok"}, False)]
+
+
 def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
