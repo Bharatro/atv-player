@@ -475,7 +475,7 @@ Emby 和 Jellyfin 页更接近媒体库浏览体验：
 - 启用/禁用元数据增强
 - 启用/禁用剧集标题增强
 - 填写 TMDB API Key（用于 TMDB 来源）
-- 填写 Bangumi Access Token（用于 Bangumi 来源）
+- 填写 Bangumi Access Token（暂时无用）
 - 填写豆瓣 Cookie（用于豆瓣来源）
 
 启用后，打开播放器时会在后台自动搜索并补充元数据。
@@ -729,7 +729,7 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - **启用元数据增强**：打开播放器时自动搜索并补充元数据
 - **启用剧集标题增强**：从 TMDB 等来源获取更准确的剧集标题
 - **TMDB API Key**：用于 TMDB 元数据来源
-- **Bangumi Access Token**：用于 Bangumi 元数据来源
+- **Bangumi Access Token**：暂时无用
 - **豆瓣 Cookie**：用于豆瓣官方抓取；留空时跳过豆瓣官方来源
 
 ### 10.4 网络代理
@@ -757,13 +757,16 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 
 - `Emby`
 - `Jellyfin`
+- `飞牛影视`
 
 ### 11.3 网盘与分享链接
 
-- 百度网盘
-- 阿里云盘
+- 百度网盘（免费）
+- 天翼网盘（免费）
+- 迅雷网盘（免费）
 - 夸克网盘
-- `PikPak`
+- UC网盘
+- 阿里云盘
 - 常见网盘分享链接
 
 ### 11.4 本地与远程媒体
@@ -843,6 +846,8 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - `app.db`：主配置数据库
 - `plugins/`：插件缓存
 - `posters/`：海报缓存
+- `subtitles/`：弹幕缓存
+- `playlists/`：M3U8缓存
 - `danmaku-search-cache.json`：弹幕搜索缓存
 - `danmaku-series-preferences.json`：弹幕来源偏好
 - `metadata/`：元数据搜索和详情缓存
@@ -1037,7 +1042,6 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 如果某个来源始终搜不到结果，可能是对应的 API 配置不完整。在主窗口"高级设置"中检查：
 
 - TMDB 来源需要填写有效的 TMDB API Key
-- Bangumi 来源需要填写 Bangumi Access Token
 - 豆瓣来源需要填写豆瓣 Cookie
 
 ### 17.10 网络连接问题
