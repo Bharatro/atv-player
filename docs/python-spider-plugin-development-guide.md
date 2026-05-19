@@ -44,7 +44,7 @@
 - `playUrl`
 - `playerContent()["danmu"]`
 - `localProxy(...)`
-- `self.backend_parse = True`（这是 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层使用的特殊配置，`atv-player` 直加载模式不读取）
+- `self.backend_parse = True`（这是 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层使用的特殊配置，`atv-player` 直加载模式不读取）
 - `homeVideoContent(...)`
 - `liveContent(...)`
 - `isVideoFormat(...)`
@@ -55,7 +55,7 @@
 
 1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
 2. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
-3. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
+3. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
 4. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
 
 ## 2. 宿主如何调用你的插件
@@ -422,15 +422,15 @@ return {"parse": 0, "url": "https://pan.quark.cn/s/xxxx", "header": {}}
 
 ## 7. `self.backend_parse = True` 的真实情况
 
-如果你的 Spider 需要通过 `Atvp.py` 运行，可能会在 `__init__` 里写：
+如果你的 Spider 需要通过 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 运行，可能会在 `__init__` 里写：
 
 ```python
 self.backend_parse = True
 ```
 
-这个字段不是传统 Spider 约定字段，也不是随手遗留的兼容字段。它是专门给 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层使用的特殊配置。
+这个字段不是传统 Spider 约定字段，也不是随手遗留的兼容字段。它是专门给 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层使用的特殊配置。
 
-更准确地说，`Atvp.py` 不是普通内层 Spider，而是 `alist-tvbox` 后端提供的外层转换器：
+更准确地说，[Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 不是普通内层 Spider，而是 `alist-tvbox` 后端提供的外层转换器：
 
 - 它对外实现的是传统 `TvBox` 风格 `Spider` 接口
 - 它内部再去加载本项目 Spider
@@ -438,9 +438,9 @@ self.backend_parse = True
 
 `backend_parse` 就是这个外层转换器使用的模式开关之一，而且它的核心使用场景就是网盘资源和磁力资源。
 
-### `Atvp.py` 如何读取它
+### [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 如何读取它
 
-`Atvp.py` 会先加载并实例化本项目 Spider，然后用下面的逻辑读取：
+[Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 会先加载并实例化本项目 Spider，然后用下面的逻辑读取：
 
 ```python
 def _category_mode_enabled(self):
@@ -449,11 +449,11 @@ def _category_mode_enabled(self):
     return bool(getattr(self._inner, "backend_parse", False))
 ```
 
-也就是说，`backend_parse` 是本项目 Spider 向 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层声明的一个模式开关。
+也就是说，`backend_parse` 是本项目 Spider 向 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层声明的一个模式开关。
 
-### `Atvp.py` 自身是怎么工作的
+### [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 自身是怎么工作的
 
-从代码看，`Atvp.py` 的工作方式大致是：
+从代码看，[Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 的工作方式大致是：
 
 1. 解析 `extend`
 2. 读取 `source`，支持本地源码或远程源码
@@ -468,7 +468,7 @@ def _category_mode_enabled(self):
    - `localProxy(...)`
 6. 在这些对外方法里，决定是直接转发给 `self._inner`，还是先做一层 Atvp 自己的重写、拆分、后端解析和 filter 处理
 
-所以你可以把 `Atvp.py` 理解成：
+所以你可以把 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 理解成：
 
 - “由 `alist-tvbox` 后端提供、把本项目 Spider 包装成传统 TvBox 兼容代码再运行”的桥接层
 
@@ -479,7 +479,7 @@ def _category_mode_enabled(self):
 
 ### 它控制的不是 `playerContent()`，而是 Atvp 面向网盘资源和磁力资源的分类模式
 
-如果 Spider 返回的是网盘资源或磁力资源，那么在 `Atvp.py` 链路下，`self.backend_parse = True` 不是“可选优化”，而是必需配置。
+如果 Spider 返回的是网盘资源或磁力资源，那么在 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 链路下，`self.backend_parse = True` 不是“可选优化”，而是必需配置。
 
 当 `backend_parse=False` 时：
 
@@ -518,7 +518,7 @@ def _category_mode_enabled(self):
 
 所以这个字段更准确的定义是：
 
-- `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层面向网盘资源和磁力资源的“目录化后端解析模式开关”
+- `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层面向网盘资源和磁力资源的“目录化后端解析模式开关”
 
 而不是：
 
@@ -540,8 +540,8 @@ self.backend_parse = True
 
 文档建议：
 
-- 如果你的插件需要兼容 `Atvp.py`，并且返回的是网盘资源或磁力资源，就必须设置它
-- 如果你的插件需要兼容 `Atvp.py`，但返回的是普通站内直链/播放页，再根据链路决定是否需要它
+- 如果你的插件需要兼容 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py)，并且返回的是网盘资源或磁力资源，就必须设置它
+- 如果你的插件需要兼容 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py)，但返回的是普通站内直链/播放页，再根据链路决定是否需要它
 - 但不要把 `atv-player` 直加载模式里的功能是否可用，建立在这个字段上
 
 ## 8. `localProxy(...)` 的真实情况
@@ -1078,11 +1078,11 @@ def init(self, extend=""):
 
 如果你是在 `atv-player` 直加载模式下观察到这一点，这是当前宿主的预期行为，因为它不会直接读取这个字段。
 
-如果你走的是 `Atvp.py` 适配链路，则要按“分类模式/后端解析适配开关”来理解它，而不是按播放器直加载模式理解。
+如果你走的是 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 适配链路，则要按“分类模式/后端解析适配开关”来理解它，而不是按播放器直加载模式理解。
 
 ### 返回网盘资源或磁力资源却没有设置 `self.backend_parse = True`
 
-如果你在 `Atvp.py` 链路下返回的是网盘资源或磁力资源，但没有设置这个参数，Atvp 就不会切到这套目录化后端解析模式。
+如果你在 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 链路下返回的是网盘资源或磁力资源，但没有设置这个参数，Atvp 就不会切到这套目录化后端解析模式。
 
 结果通常会是：
 
