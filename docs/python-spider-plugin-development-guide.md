@@ -38,13 +38,13 @@
 - `actions`
 - `ext`
 
-### 传统字段里，当前宿主不会读取或不会产生效果的部分
+### 兼容接口和宿主特定字段里，当前 `atv-player` 直加载模式不会读取或不会产生效果的部分
 
 - `jx`
 - `playUrl`
 - `playerContent()["danmu"]`
 - `localProxy(...)`
-- `self.backend_parse = True`（`atv-player` 直加载模式不读取，但 `Atvp.py` 适配器会读取）
+- `self.backend_parse = True`（这是 `Atvp.py` 适配器的特殊配置，`atv-player` 直加载模式不读取）
 - `homeVideoContent(...)`
 - `liveContent(...)`
 - `isVideoFormat(...)`
@@ -55,7 +55,7 @@
 
 1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
 2. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
-3. `self.backend_parse = True` 在很多旧爬虫里很常见；`atv-player` 当前直加载模式不会读取它，但 `Atvp.py` 适配器会把它当作特殊配置读取
+3. `self.backend_parse = True` 不是通用传统字段，而是 `Atvp.py` 这个“把本项目 Spider 转成传统 TvBox 兼容运行时”的外层转换器读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
 4. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
 
 ## 2. 宿主如何调用你的插件
@@ -422,7 +422,7 @@ return {"parse": 0, "url": "https://pan.quark.cn/s/xxxx", "header": {}}
 
 ## 7. `self.backend_parse = True` 的真实情况
 
-很多现有爬虫会在 `__init__` 里写：
+如果你的 Spider 需要通过 `Atvp.py` 运行，可能会在 `__init__` 里写：
 
 ```python
 self.backend_parse = True
@@ -435,7 +435,120 @@ self.backend_parse = True
 - `盘聚.py`
 - `盘Ta.py`
 
-这个字段不是随手遗留的“无意义字段”，而是要区分宿主和适配层来看。
+这个字段不是传统 Spider 约定字段，也不是随手遗留的兼容字段。它是你为 `Atvp.py` 专门加的一个特殊配置。
+
+更准确地说，`Atvp.py` 不是普通内层 Spider，而是一个外层转换器：
+
+- 它对外实现的是传统 `TvBox` 风格 `Spider` 接口
+- 它内部再去加载本项目 Spider
+- 然后把本项目 Spider 的行为转换成传统 `TvBox` 兼容运行时能理解的形态
+
+`backend_parse` 就是这个外层转换器使用的模式开关之一，而且它的核心使用场景就是网盘资源和磁力资源。
+
+### `Atvp.py` 如何读取它
+
+`Atvp.py` 会先加载并实例化本项目 Spider，然后在 [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:214) 用下面的逻辑读取：
+
+```python
+def _category_mode_enabled(self):
+    if self._inner is None:
+        return False
+    return bool(getattr(self._inner, "backend_parse", False))
+```
+
+也就是说，`backend_parse` 是本项目 Spider 向 `Atvp.py` 这个外层 TvBox 转换器声明的一个模式开关。
+
+### `Atvp.py` 自身是怎么工作的
+
+从代码看，`Atvp.py` 的工作方式大致是：
+
+1. 解析 `extend`
+2. 读取 `source`，支持本地源码或远程源码
+3. 如果是 `secspider` 包，就先验签、解密
+4. 动态加载内部 `Spider` 类并实例化为 `self._inner`
+5. 对外暴露传统 `TvBox` 风格的方法：
+   - `homeContent(...)`
+   - `categoryContent(...)`
+   - `detailContent(...)`
+   - `searchContent(...)`
+   - `playerContent(...)`
+   - `localProxy(...)`
+6. 在这些对外方法里，决定是直接转发给 `self._inner`，还是先做一层 Atvp 自己的重写、拆分、后端解析和 filter 处理
+
+相关代码入口主要在：
+
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:193) 的 `init(...)`
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:930) 到 [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:1054) 这一段对外接口实现
+
+所以你可以把 `Atvp.py` 理解成：
+
+- “把本项目 Spider 包装成传统 TvBox 兼容代码再运行”的桥接层
+
+而不是：
+
+- 一个普通业务 Spider
+- 只做一点点辅助函数封装的工具类
+
+### 它控制的不是 `playerContent()`，而是 Atvp 面向网盘资源和磁力资源的分类模式
+
+如果 Spider 返回的是网盘资源或磁力资源，那么在 `Atvp.py` 链路下，`self.backend_parse = True` 不是“可选优化”，而是必需配置。
+
+当 `backend_parse=False` 时：
+
+- `categoryContent(...)` 直接走内层 Spider
+- `searchContent(...)` 直接走内层 Spider
+- 结果项保持原样
+
+当 `backend_parse=True` 时：
+
+- 分类和搜索结果会先被 Atvp 改写
+- 每个结果项的 `vod_id` 会被包装成 `atvp_detail:<原始vod_id>`
+- 每个结果项会被标记成 `folder`
+- 用户点开后，Atvp 会先调用内层 `detailContent(...)`
+- 然后把 `vod_play_from` / `vod_play_url` 拆成一个“二级目录列表”
+
+对应代码主要在：
+
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:936) 的 `categoryContent(...)`
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:958) 的 `searchContent(...)`
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:863) 的 `_split_detail_to_vods(...)`
+
+这说明 `backend_parse` 的本质不是“视频解析开关”，而是：
+
+- 是否让 Atvp 把 Spider 的分类/搜索结果当作“目录入口”
+- 是否让 Atvp 在详情阶段接管一部分资源展开逻辑
+
+这里的“资源展开逻辑”主要就是网盘资源、磁力资源、分享链接这类不能直接按普通视频详情处理的目标。
+
+换句话说：
+
+- 返回普通站内视频详情时，可以不依赖这个字段
+- 返回网盘资源或磁力资源时，必须开启这个字段
+
+### Atvp 后续会怎么接管
+
+在 `backend_parse=True` 模式下，Atvp 会在后续链路里做两类事情：
+
+1. 如果某个 `id` 看起来已经是 `http/https/magnet/ed2k`，`detailContent(...)` 会优先走 Atvp 的 `_parse(...)`
+2. `_parse(...)` 会请求 Atvp 后端的 `parse` 接口，再把返回结果过一遍 filter、缓存 detail、缓存 play context
+
+相关代码在：
+
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:646) 的 `_decode_parse(...)`
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:688) 的 `_parse(...)`
+- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:946) 的 `detailContent(...)`
+
+虽然 `_decode_parse(...)` 代码层面也识别 `http/https`、`magnet`、`ed2k`，但按你的设计意图，这个模式开关主要针对的是网盘资源和磁力资源。
+
+所以这个字段更准确的定义是：
+
+- `Atvp.py` 这个 TvBox 外层转换器面向网盘资源和磁力资源的“目录化后端解析模式开关”
+
+而不是：
+
+- 通用 Spider 规范字段
+- `playerContent()` 的解析标记
+- `atv-player` 直加载模式的功能开关
 
 ### 在 `atv-player` 直加载模式里
 
@@ -449,22 +562,10 @@ self.backend_parse = True
 
 不会给 `atv-player` 带来任何额外行为。
 
-### 在 `Atvp.py` 适配器里
-
-爬虫仓库中的 `Atvp.py` 会读取内层爬虫的 `backend_parse`，例如：
-
-```python
-return bool(getattr(self._inner, "backend_parse", False))
-```
-
-这意味着：
-
-- 这个字段对 `Atvp.py` 适配层是有效的特殊配置
-- 但在 `atv-player` 的直接 Python Spider 加载模式里，当前不会产生行为变化
-
 文档建议：
 
-- 如果你的插件同时服务 `Atvp.py` 和 `atv-player`，可以继续保留它
+- 如果你的插件需要兼容 `Atvp.py`，并且返回的是网盘资源或磁力资源，就必须设置它
+- 如果你的插件需要兼容 `Atvp.py`，但返回的是普通站内直链/播放页，再根据链路决定是否需要它
 - 但不要把 `atv-player` 直加载模式里的功能是否可用，建立在这个字段上
 
 ## 8. `localProxy(...)` 的真实情况
@@ -1018,4 +1119,16 @@ def init(self, extend=""):
 
 如果你是在 `atv-player` 直加载模式下观察到这一点，这是当前宿主的预期行为，因为它不会直接读取这个字段。
 
-如果你走的是 `Atvp.py` 适配链路，则需要按 `Atvp.py` 的语义理解它。
+如果你走的是 `Atvp.py` 适配链路，则要按“分类模式/后端解析适配开关”来理解它，而不是按播放器直加载模式理解。
+
+### 返回网盘资源或磁力资源却没有设置 `self.backend_parse = True`
+
+如果你在 `Atvp.py` 链路下返回的是网盘资源或磁力资源，但没有设置这个参数，Atvp 就不会切到这套目录化后端解析模式。
+
+结果通常会是：
+
+- 分类/搜索结果不会被包装成 `atvp_detail:...` 目录入口
+- Atvp 不会按网盘资源/磁力资源的方式拆二级目录
+- 后续详情和播放阶段不会按你为网盘资源设计的链路接管
+
+所以对网盘资源和磁力资源来说，这个参数是必填的。
