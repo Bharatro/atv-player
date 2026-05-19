@@ -390,7 +390,7 @@ class ThemedWidgetWindowBase(QWidget, _ThemedChromeMixin):
         root_layout.addWidget(self._window_chrome_root)
 
 
-class ThemedDialogBase(QDialog, _ThemedChromeMixin):
+class ThemedDialogBase(_ThemedChromeMixin, QDialog):
     def __init__(
         self,
         *,

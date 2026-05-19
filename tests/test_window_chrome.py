@@ -1,5 +1,6 @@
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from atv_player.ui.window_chrome import (
     ThemedDialogBase,
@@ -91,6 +92,55 @@ def test_themed_widget_window_reports_resize_region_near_edges(qtbot) -> None:
 
     assert window._resize_region_at(window.rect().topLeft()).name == "TOP_LEFT"
     assert window._resize_region_at(window.rect().center()).name == "NONE"
+
+
+def test_themed_dialog_dragging_right_edge_resizes_window(qtbot) -> None:
+    dialog = DemoDialog()
+    qtbot.addWidget(dialog)
+    dialog.resize(400, 300)
+    dialog.show()
+    qtbot.wait(50)
+
+    start_rect = dialog.geometry()
+    press_global = dialog.mapToGlobal(QPoint(dialog.width() - 2, dialog.height() // 2))
+    press_local = dialog._window_chrome_root.mapFromGlobal(press_global)
+    QApplication.sendEvent(
+        dialog._window_chrome_root,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            press_local,
+            press_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    move_global = press_global + QPoint(40, 0)
+    move_local = dialog._window_chrome_root.mapFromGlobal(move_global)
+    QApplication.sendEvent(
+        dialog._window_chrome_root,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            move_local,
+            move_global,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.sendEvent(
+        dialog._window_chrome_root,
+        QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            move_local,
+            move_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert dialog.geometry().width() > start_rect.width()
 
 
 def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) -> None:
