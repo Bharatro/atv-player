@@ -37,11 +37,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         save_config: Callable[[], None],
         parent: QWidget | None = None,
         apply_theme: Callable[[], None] | None = None,
+        app_log_service=None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
         self._save_config = save_config
         self._apply_application_theme = apply_theme
+        self._app_log_service = app_log_service
         self.resize(680, 440)
 
         self.settings_tabs = QTabWidget()

@@ -16859,6 +16859,60 @@ def test_player_window_persists_playback_log_visibility(qtbot) -> None:
     assert restored.log_section.isHidden() is True
 
 
+def test_player_window_mirrors_playback_logs_into_app_log_service(qtbot) -> None:
+    class RecordingLogService:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def write_event(self, event) -> None:
+            self.events.append(event)
+
+    service = RecordingLogService()
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), app_log_service=service)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+
+    window._append_log("缓冲完成", level="INFO", category="playback")
+
+    assert len(service.events) == 1
+    event = service.events[0]
+    assert event.source == "player"
+    assert event.category == "playback"
+    assert event.level == "INFO"
+    assert event.message == "缓冲完成"
+    assert event.vod_id == "movie-1"
+    assert event.vod_name == "Movie"
+    assert event.episode_title == "Episode 1"
+
+
+def test_player_window_skips_detailed_log_accumulation_when_logging_disabled(qtbot) -> None:
+    class RecordingLogService:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def write_event(self, event) -> None:
+            self.events.append(event)
+
+    service = RecordingLogService()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(logging_enabled=False),
+        app_log_service=service,
+    )
+    qtbot.addWidget(window)
+
+    window._append_log("播放地址: https://media.example/1.m3u8", level="INFO", category="playback")
+
+    assert window.log_view.toPlainText() == ""
+    assert service.events == []
+
+    window._append_log("播放失败: boom", level="ERROR", category="playback")
+
+    assert "播放失败: boom" in window.log_view.toPlainText()
+    assert service.events == []
+
+
 def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot, monkeypatch) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")

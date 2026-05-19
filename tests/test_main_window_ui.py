@@ -3520,11 +3520,11 @@ def test_main_window_shows_advanced_settings_button_after_live_source_manager(qt
 
 
 def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
-    opened: list[tuple[object, object, object, object]] = []
+    opened: list[tuple[object, object, object, object, object]] = []
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None, apply_theme=None) -> None:
-            opened.append((config, save_config, parent, apply_theme))
+        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
+            opened.append((config, save_config, parent, apply_theme, app_log_service))
 
         def exec(self) -> int:
             return 1
@@ -3551,14 +3551,46 @@ def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
     assert opened[0][2] is window
 
 
+def test_main_window_passes_log_service_to_advanced_settings_dialog(qtbot, monkeypatch) -> None:
+    opened: list[object] = []
+    log_service = object()
+
+    class FakeDialog:
+        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
+            del config, save_config, parent, apply_theme
+            opened.append(app_log_service)
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "AdvancedSettingsDialog", FakeDialog)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        app_log_service=log_service,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window._open_advanced_settings()
+
+    assert opened == [log_service]
+
+
 def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeypatch) -> None:
     config = AppConfig()
     saved: list[tuple[bool, str, str]] = []
 
     class FakeDialog:
-        def __init__(self, config_arg, save_config, parent=None, apply_theme=None) -> None:
-            del parent
-            del apply_theme
+        def __init__(self, config_arg, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
+            del parent, apply_theme, app_log_service
             config_arg.metadata_enhancement_enabled = False
             config_arg.metadata_douban_cookie = "bid=demo;"
             config_arg.metadata_tmdb_api_key = "tmdb-key"

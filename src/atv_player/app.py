@@ -1308,6 +1308,7 @@ class AppCoordinator(QObject):
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,
+            app_log_service=getattr(QApplication.instance(), "_app_log_service", None),
             save_config=lambda: self.repo.save_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,

@@ -3835,6 +3835,51 @@ def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatc
     assert configure_calls[-1][1] is not None
 
 
+def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeypatch) -> None:
+    app = QApplication.instance()
+    assert app is not None
+
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    captured_services: list[object] = []
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured_services.append(kwargs["app_log_service"])
+
+    service = object()
+    setattr(app, "_app_log_service", service)
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: object())
+    monkeypatch.setattr(coordinator, "_load_capabilities", lambda client: {"emby": False, "jellyfin": False})
+
+    coordinator._show_main()
+
+    assert captured_services == [service]
+
+
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
