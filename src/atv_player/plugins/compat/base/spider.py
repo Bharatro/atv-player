@@ -50,6 +50,11 @@ def _buffer_and_close_response(response):
     return response
 
 
+def _request_proxy_kwargs(url: str) -> dict[str, dict[str, str]]:
+    proxies = build_requests_proxies_for_url(_effective_proxy_decider(), url)
+    return {"proxies": proxies} if proxies else {}
+
+
 class Spider(metaclass=ABCMeta):
     def __init__(self) -> None:
         self.extend = ""
@@ -107,7 +112,7 @@ class Spider(metaclass=ABCMeta):
             verify=verify,
             stream=stream,
             allow_redirects=allow_redirects,
-            proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
+            **_request_proxy_kwargs(url),
         )
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)
@@ -136,7 +141,7 @@ class Spider(metaclass=ABCMeta):
             verify=verify,
             stream=stream,
             allow_redirects=allow_redirects,
-            proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
+            **_request_proxy_kwargs(url),
         )
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)
