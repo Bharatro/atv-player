@@ -536,6 +536,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._was_maximized_before_fullscreen = False
         self._quit_requested = False
         self._app_quit_requested = False
+        self._close_event_returns_to_main = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
@@ -7278,8 +7279,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if not self._quit_requested and not self._app_quit_requested and self.session is not None:
+            self._close_event_returns_to_main = True
             event.ignore()
-            self._return_to_main()
+            try:
+                self._return_to_main()
+            finally:
+                self._close_event_returns_to_main = False
             return
         self._deactivate_async_guard()
         try:

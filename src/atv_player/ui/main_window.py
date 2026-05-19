@@ -3731,7 +3731,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.show_error(message)
 
     def _show_main_again(self) -> None:
-        if self.player_window is not None and getattr(self.player_window, "session", None) is None:
+        if self.player_window is not None and (
+            getattr(self.player_window, "session", None) is None
+            or bool(getattr(self.player_window, "_close_event_returns_to_main", False))
+        ):
             self.player_window = None
         self.config.last_active_window = "main"
         self._save_config()
