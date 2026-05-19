@@ -20,7 +20,8 @@ def normalize_metadata_binding_title(value: object) -> str:
 def normalize_metadata_binding_year(value: object) -> str:
     _title, year = normalize_metadata_query_inputs("", value)
     if year:
-        return year
+        match = re.search(r"(\d{4})", year)
+        return match.group(1) if match else year
     text = str(value or "").strip()
     match = re.search(r"(\d{4})", text)
     return match.group(1) if match else ""
