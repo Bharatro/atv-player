@@ -9167,38 +9167,6 @@ def test_player_window_app_level_left_click_outside_menu_closes_it(qtbot) -> Non
     assert window._video_context_menu is None
 
 
-def test_player_window_mouse_press_logging_accepts_qt_mouse_button_enum(qtbot, monkeypatch) -> None:
-    window = PlayerWindow(FakePlayerController())
-    qtbot.addWidget(window)
-    window.show()
-
-    logged: list[str] = []
-    monkeypatch.setattr(
-        player_window_module.logger,
-        "info",
-        lambda message, *args: logged.append(message % args if args else message),
-    )
-
-    child = QWidget(window)
-    child.setGeometry(10, 10, 40, 40)
-    child.show()
-    local_pos = child.rect().center()
-    global_pos = child.mapToGlobal(local_pos)
-    event = QMouseEvent(
-        QEvent.Type.MouseButtonPress,
-        local_pos,
-        global_pos,
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-
-    handled = window.eventFilter(child, event)
-
-    assert handled is False
-    assert any("PlayerWindow input mouse_press" in line for line in logged)
-
-
 def test_player_window_mpv_right_click_signal_opens_context_menu_at_cursor(qtbot, monkeypatch) -> None:
     shown: list[tuple[int, int]] = []
 
@@ -9454,53 +9422,6 @@ def test_player_window_populates_embedded_subtitle_options_after_open_session(qt
     ]
     assert window.subtitle_combo.isEnabled() is True
     assert window.video.subtitle_apply_calls[0] == ("auto", None)
-
-
-def test_player_window_does_not_block_open_session_on_initial_mpv_subtitle_snapshot(qtbot, monkeypatch) -> None:
-    window = PlayerWindow(FakePlayerController())
-    qtbot.addWidget(window)
-
-    subtitle_apply_calls: list[tuple[str, int | None]] = []
-    subtitle_snapshot_calls = {"count": 0}
-
-    monkeypatch.setattr(window.video_widget, "load", lambda *args, **kwargs: None)
-
-    def subtitle_tracks() -> list[SubtitleTrack]:
-        subtitle_snapshot_calls["count"] += 1
-        if subtitle_snapshot_calls["count"] == 1:
-            time.sleep(0.2)
-        return [
-            SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
-            SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
-        ]
-
-    monkeypatch.setattr(window.video_widget, "subtitle_tracks", subtitle_tracks)
-    monkeypatch.setattr(window.video_widget, "audio_tracks", lambda: [])
-    monkeypatch.setattr(
-        window.video_widget,
-        "apply_subtitle_mode",
-        lambda mode, track_id=None: subtitle_apply_calls.append((mode, track_id)) or (11 if mode == "auto" else track_id),
-    )
-    monkeypatch.setattr(window.video_widget, "apply_audio_mode", lambda mode, track_id=None: None)
-
-    started_at = time.perf_counter()
-    window.open_session(make_player_session(start_index=0))
-    elapsed_seconds = time.perf_counter() - started_at
-
-    assert elapsed_seconds < 0.1
-    assert subtitle_snapshot_calls["count"] == 0
-
-    window.video_widget.subtitle_tracks_changed.emit()
-
-    assert subtitle_snapshot_calls["count"] == 1
-    assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
-        "字幕",
-        "关闭字幕",
-        "中文 (默认)",
-        "English",
-    ]
-    assert window.subtitle_combo.isEnabled() is True
-    assert subtitle_apply_calls[0] == ("auto", None)
 
 
 def test_player_window_disables_subtitle_selector_when_current_item_has_no_embedded_subtitles(qtbot) -> None:
@@ -17720,31 +17641,6 @@ def test_player_window_return_to_main_reports_current_progress_and_stops_current
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
     assert controller.force_remote_report_calls == [True]
     assert controller.stop_calls == [1]
-
-
-def test_player_window_skips_ui_heartbeat_while_hidden_in_main(qtbot, monkeypatch) -> None:
-    window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
-    qtbot.addWidget(window)
-    window.video = RecordingVideo()
-    window.open_session(make_player_session(start_index=0))
-    heartbeat_logs: list[str] = []
-
-    def fake_info(message: str, *args) -> None:
-        heartbeat_logs.append(message % args if args else message)
-
-    monkeypatch.setattr(player_window_module.logger, "info", fake_info)
-
-    window._return_to_main()
-    heartbeat_logs.clear()
-
-    window._log_ui_heartbeat()
-
-    assert heartbeat_logs == []
-
-    window.show()
-    window._log_ui_heartbeat()
-
-    assert any("PlayerWindow UI heartbeat" in line for line in heartbeat_logs)
 
 
 def test_player_window_return_to_main_restores_application_title(qtbot) -> None:

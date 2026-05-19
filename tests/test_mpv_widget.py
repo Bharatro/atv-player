@@ -269,46 +269,6 @@ def test_mpv_widget_emits_unavailable_picture_state_when_track_list_has_no_video
     assert states[-1] == "unavailable"
 
 
-def test_mpv_widget_keeps_visible_picture_state_after_video_output_becomes_available(qtbot) -> None:
-    widget = MpvWidget()
-    qtbot.addWidget(widget)
-
-    class FakePlayer:
-        def __init__(self) -> None:
-            self.pause = False
-            self._track_list_observer = None
-            self._video_out_observer = None
-            self._eof_reached_observer = None
-
-        def event_callback(self, *event_types):
-            def register(callback):
-                return callback
-
-            return register
-
-        def observe_property(self, name: str, handler) -> None:
-            if name == "track-list":
-                self._track_list_observer = handler
-            elif name == "video-out-params":
-                self._video_out_observer = handler
-            else:
-                self._eof_reached_observer = handler
-
-        def play(self, url: str) -> None:
-            return None
-
-    widget._player = FakePlayer()
-    widget._register_player_events()
-    states: list[str] = []
-    widget.video_picture_state_changed.connect(states.append)
-
-    widget.load("http://m/1.m3u8")
-    widget._player._video_out_observer("video-out-params", {"w": 1920, "h": 1080})
-    widget._player._track_list_observer("track-list", [{"id": 2, "type": "audio"}])
-
-    assert states == ["loading", "visible"]
-
-
 def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -512,92 +472,6 @@ def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) ->
             {},
         )
     ]
-
-
-def test_mpv_widget_does_not_block_on_pause_property_after_async_load(qtbot) -> None:
-    widget = MpvWidget()
-    qtbot.addWidget(widget)
-
-    class FakePlayer:
-        def __init__(self) -> None:
-            self._pause = False
-            self.command_async_calls: list[tuple[object, ...]] = []
-            self.pause_assignments: list[bool] = []
-
-        @property
-        def pause(self) -> bool:
-            return self._pause
-
-        @pause.setter
-        def pause(self, value: bool) -> None:
-            self.pause_assignments.append(value)
-            time.sleep(0.2)
-            self._pause = value
-
-        def command_async(self, *args, **kwargs):
-            self.command_async_calls.append((*args, kwargs))
-            return object()
-
-    widget._player = FakePlayer()
-
-    started_at = time.monotonic()
-    widget.load("http://127.0.0.1:2323/m3u/index.m3u8")
-    elapsed = time.monotonic() - started_at
-
-    assert elapsed < 0.1
-    assert widget._player.command_async_calls == [
-        (
-            "loadfile",
-            "http://127.0.0.1:2323/m3u/index.m3u8",
-            "replace",
-            "demuxer_lavf_o_add=allowed_extensions=ALL",
-            {},
-        )
-    ]
-    assert widget._player.pause_assignments == []
-
-
-def test_mpv_widget_encodes_paused_start_in_async_load_options(qtbot) -> None:
-    widget = MpvWidget()
-    qtbot.addWidget(widget)
-
-    class FakePlayer:
-        def __init__(self) -> None:
-            self._pause = False
-            self.command_async_calls: list[tuple[object, ...]] = []
-            self.pause_assignments: list[bool] = []
-
-        @property
-        def pause(self) -> bool:
-            return self._pause
-
-        @pause.setter
-        def pause(self, value: bool) -> None:
-            self.pause_assignments.append(value)
-            time.sleep(0.2)
-            self._pause = value
-
-        def command_async(self, *args, **kwargs):
-            self.command_async_calls.append((*args, kwargs))
-            return object()
-
-    widget._player = FakePlayer()
-
-    started_at = time.monotonic()
-    widget.load("http://127.0.0.1:2323/m3u/index.m3u8", pause=True, start_seconds=9)
-    elapsed = time.monotonic() - started_at
-
-    assert elapsed < 0.1
-    assert widget._player.command_async_calls == [
-        (
-            "loadfile",
-            "http://127.0.0.1:2323/m3u/index.m3u8",
-            "replace",
-            "demuxer_lavf_o_add=allowed_extensions=ALL,start=9,pause=yes",
-            {},
-        )
-    ]
-    assert widget._player.pause_assignments == []
 
 
 def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:

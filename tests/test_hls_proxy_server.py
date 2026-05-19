@@ -1543,7 +1543,7 @@ def test_local_hls_proxy_server_returns_502_when_playlist_fetch_fails() -> None:
     assert body == b"origin down"
 
 
-def test_local_hls_proxy_server_keeps_session_when_playlist_returns_403() -> None:
+def test_local_hls_proxy_server_deletes_session_when_playlist_returns_403() -> None:
     def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
         request = httpx.Request("GET", url)
         response = httpx.Response(403, request=request)
@@ -1558,7 +1558,7 @@ def test_local_hls_proxy_server_keeps_session_when_playlist_returns_403() -> Non
     assert status == 502
     assert headers == []
     assert body == b"forbidden"
-    assert server._registry.contains(token) is True
+    assert server._registry.contains(token) is False
 
 
 def test_local_hls_proxy_server_reuses_cached_playlist_when_origin_m3u8_becomes_403() -> None:
@@ -1603,33 +1603,6 @@ segment-0001.ts
     assert second_status == 200
     assert second_headers == [("Content-Type", "application/vnd.apple.mpegurl")]
     assert second_body == expected_body
-    assert requests == [origin_url, origin_url]
-    assert server._registry.contains(token) is True
-
-
-def test_local_hls_proxy_server_keeps_session_when_origin_m3u8_returns_403_without_cache() -> None:
-    requests: list[str] = []
-    origin_url = "https://media.example/path/index.m3u8"
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
-        requests.append(url)
-        request = httpx.Request("GET", url)
-        response = httpx.Response(403, request=request)
-        raise httpx.HTTPStatusError("forbidden", request=request, response=response)
-
-    server = LocalHlsProxyServer(get=fake_get)
-    playlist_url = server.create_playlist_url(origin_url, {})
-    token = playlist_url.rsplit("=", 1)[-1]
-
-    first_status, first_headers, first_body = server.handle_request("GET", f"/m3u?v={token}")
-    second_status, second_headers, second_body = server.handle_request("GET", f"/m3u?v={token}")
-
-    assert first_status == 502
-    assert first_headers == []
-    assert first_body == b"forbidden"
-    assert second_status == 502
-    assert second_headers == []
-    assert second_body == b"forbidden"
     assert requests == [origin_url, origin_url]
     assert server._registry.contains(token) is True
 

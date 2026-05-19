@@ -809,6 +809,7 @@ class LocalHlsProxyServer:
                                 [("Content-Type", "application/vnd.apple.mpegurl")],
                                 session.cached_playlist_text.encode("utf-8"),
                             )
+                        self._registry.delete(token)
                     raise
                 rewritten = rewrite_playlist(
                     token=token,

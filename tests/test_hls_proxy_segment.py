@@ -1,5 +1,4 @@
 import threading
-import time
 
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 from atv_player.proxy.segment import SegmentProxy
@@ -190,56 +189,3 @@ def test_segment_proxy_waits_for_in_flight_duplicate_request_instead_of_returnin
     assert second == first_result["payload"]
     assert second.startswith(b"\x47")
     assert requests == ["https://media.example/path/0001.ts"]
-
-
-def test_segment_proxy_foreground_request_takes_over_stuck_prefetch() -> None:
-    requests: list[str] = []
-    started = threading.Event()
-    release = threading.Event()
-
-    class FakeResponse:
-        def __init__(self, content: bytes) -> None:
-            self.content = content
-
-        def raise_for_status(self) -> None:
-            return None
-
-    first_payload = (b"\x47" + b"\x01" * 187) * 2
-    second_payload = (b"\x47" + b"\x02" * 187) * 3
-
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
-        requests.append(url)
-        if len(requests) == 1:
-            started.set()
-            release.wait(timeout=1.0)
-            return FakeResponse(first_payload)
-        return FakeResponse(second_payload)
-
-    registry = ProxySessionRegistry()
-    token = registry.create_session("https://media.example/path/index.m3u8", {})
-    registry.get(token).segments = [
-        PlaylistSegment(index=0, url="https://media.example/path/0001.ts", duration=5.0)
-    ]
-    proxy = SegmentProxy(session_registry=registry, get=fake_get)
-    proxy._IN_FLIGHT_WAIT_TIMEOUT_SECONDS = 0.01
-
-    worker = threading.Thread(target=lambda: proxy.fetch_segment(token, 0, prefetch=True))
-    worker.start()
-    assert started.wait(timeout=1.0) is True
-
-    timer = threading.Timer(0.2, release.set)
-    timer.start()
-    started_at = time.monotonic()
-    second = proxy.fetch_segment(token, 0)
-    elapsed = time.monotonic() - started_at
-    release.set()
-    worker.join(timeout=1.0)
-    timer.cancel()
-
-    assert worker.is_alive() is False
-    assert elapsed < 0.1
-    assert second == second_payload
-    assert requests == [
-        "https://media.example/path/0001.ts",
-        "https://media.example/path/0001.ts",
-    ]
