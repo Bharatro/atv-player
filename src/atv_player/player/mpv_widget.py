@@ -368,6 +368,11 @@ class MpvWidget(QWidget):
         return {"demuxer_lavf_o_add": "allowed_extensions=ALL"}
 
     def _encode_loadfile_options(self, options: dict[str, str]) -> str:
+        # mpv's option list uses commas between entries, so option values must stay comma-free.
+        # Values may still contain "=" because some mpv suboptions are expressed as nested key=value text.
+        for key, value in options.items():
+            if "," in key or "," in value:
+                raise ValueError(f"mpv loadfile option {key!r} cannot contain ','")
         return ",".join(f"{key}={value}" for key, value in options.items())
 
     def _loadfile_index_supported(self, player: Any) -> bool:

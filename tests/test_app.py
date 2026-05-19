@@ -3483,7 +3483,7 @@ def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_pa
     monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
-    app, repo = app_module.build_application()
+    app, repo, _service = app_module.build_application()
 
     assert app.application_name == "atv-player"
     assert not app.window_icon.isNull()
@@ -3616,7 +3616,7 @@ def test_build_application_uses_main_thread_gc_timer_on_python_3_14(monkeypatch,
     monkeypatch.setattr(app_module.gc, "collect", lambda: gc_calls.append("collect"))
     monkeypatch.setattr(app_module.sys, "version_info", (3, 14, 0))
 
-    app, _repo = app_module.build_application()
+    app, _repo, _service = app_module.build_application()
 
     assert gc_calls == ["disable"]
     assert timer_state == {
@@ -3639,7 +3639,7 @@ def test_build_application_leaves_gc_enabled_before_python_3_14(monkeypatch, tmp
     monkeypatch.setattr(app_module.gc, "disable", lambda: gc_calls.append("disable"))
     monkeypatch.setattr(app_module.sys, "version_info", (3, 13, 7))
 
-    app, _repo = app_module.build_application()
+    app, _repo, _service = app_module.build_application()
 
     assert gc_calls == []
     assert hasattr(app, "_main_thread_gc_timer") is False
@@ -3675,7 +3675,7 @@ def test_build_application_installs_pointing_hand_cursor_for_buttons(monkeypatch
     monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
-    built_app, _repo = app_module.build_application()
+    built_app, _repo, _service = app_module.build_application()
 
     assert built_app is app
 
@@ -3720,7 +3720,7 @@ def test_build_application_installs_theme_manager_from_saved_config(monkeypatch,
     monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
-    built_app, built_repo = app_module.build_application()
+    built_app, built_repo, _service = app_module.build_application()
 
     assert built_app is app
     assert built_repo is repo
@@ -3799,19 +3799,18 @@ def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(app_module, "AppLogService", FakeService, raising=False)
 
-    app, repo = app_module.build_application()
+    app, repo, service = app_module.build_application()
 
     assert created["logs_dir"] == tmp_path / "logs"
     assert created["enabled"] is True
     assert created["max_bytes"] == 10 * 1024 * 1024
     assert created["max_archives"] == 5
-    assert getattr(app, "_app_log_service", None) is not None
+    assert service is not None
+    assert getattr(app, "_app_log_service", None) is None
     assert repo.load_config().logging_enabled is True
 
 
 def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatch, tmp_path) -> None:
-    app = QApplication.instance()
-    assert app is not None
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(AppConfig(logging_enabled=False))
 
@@ -3826,9 +3825,8 @@ def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatc
 
     monkeypatch.setattr(app_module, "configure_logging", record_configure, raising=False)
     monkeypatch.setattr(app_module.AppCoordinator, "_show_login", lambda self, error_message="": QDialog())
-    setattr(app, "_app_log_service", FakeService())
 
-    coordinator = app_module.AppCoordinator(repo)
+    coordinator = app_module.AppCoordinator(repo, app_log_service=FakeService())
     coordinator.start()
 
     assert configure_calls[-1][0] == "INFO"
@@ -3836,9 +3834,6 @@ def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatc
 
 
 def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeypatch) -> None:
-    app = QApplication.instance()
-    assert app is not None
-
     class FakeRepo:
         def __init__(self) -> None:
             self.config = AppConfig(
@@ -3867,9 +3862,8 @@ def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeyp
             captured_services.append(kwargs["app_log_service"])
 
     service = object()
-    setattr(app, "_app_log_service", service)
     repo = FakeRepo()
-    coordinator = AppCoordinator(repo)
+    coordinator = AppCoordinator(repo, app_log_service=service)
 
     monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
     monkeypatch.setattr(coordinator, "_build_api_client", lambda: object())

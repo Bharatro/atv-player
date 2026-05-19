@@ -290,8 +290,11 @@ def _infer_series_year_from_playlist(playlist: list[PlayItem]) -> str:
     return max(year_scores.items(), key=lambda entry: (entry[1], entry[0]))[0]
 
 
-def build_application() -> tuple[QApplication, SettingsRepository]:
-    app = QApplication([])
+def build_application() -> tuple[QApplication, SettingsRepository, AppLogService]:
+    app_instance_getter = getattr(QApplication, "instance", None)
+    app = app_instance_getter() if callable(app_instance_getter) else None
+    if app is None:
+        app = QApplication([])
     _install_button_pointing_hand_cursor(app)
     _install_main_thread_gc_workaround(app)
     app.setApplicationName("atv-player")
@@ -307,7 +310,6 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
         max_bytes=10 * 1024 * 1024,
         max_archives=5,
     )
-    setattr(app, "_app_log_service", app_log_service)
     configure_logging("INFO", StructuredJsonlHandler(app_log_service))
     install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()
@@ -317,7 +319,7 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
         data_dir,
         extra={"log_category": "app", "log_source": "app"},
     )
-    return app, repo
+    return app, repo, app_log_service
 
 
 def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str:
@@ -342,9 +344,15 @@ def apply_saved_theme(app: QApplication | None, repo: SettingsRepository) -> str
 
 
 class AppCoordinator(QObject):
-    def __init__(self, repo: SettingsRepository) -> None:
+    def __init__(
+        self,
+        repo: SettingsRepository,
+        *,
+        app_log_service: AppLogService | None = None,
+    ) -> None:
         super().__init__()
         self.repo = repo
+        self._app_log_service = app_log_service
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
@@ -495,10 +503,8 @@ class AppCoordinator(QObject):
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
-        app = QApplication.instance()
-        app_log_service = getattr(app, "_app_log_service", None) if app is not None else None
-        if app_log_service is not None:
-            configure_logging("INFO", StructuredJsonlHandler(app_log_service))
+        if self._app_log_service is not None:
+            configure_logging("INFO", StructuredJsonlHandler(self._app_log_service))
         logger.info(
             "App start view=%s",
             decide_start_view(config),
@@ -1320,7 +1326,7 @@ class AppCoordinator(QObject):
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,
-            app_log_service=getattr(QApplication.instance(), "_app_log_service", None),
+            app_log_service=self._app_log_service,
             save_config=lambda: self._save_shared_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import threading
+import time
 
 from atv_player.log_store import AppLogEvent, AppLogFilter, AppLogService, StructuredJsonlHandler
 
@@ -123,6 +125,51 @@ def test_app_log_service_clear_removes_active_and_archives(tmp_path: Path) -> No
     service.clear()
 
     assert list((tmp_path / "logs").glob("*")) == []
+
+
+def test_app_log_service_serializes_rotate_and_append_across_threads(tmp_path: Path, monkeypatch) -> None:
+    service = AppLogService(tmp_path / "logs", enabled_getter=lambda: True, max_bytes=10_000_000, max_archives=5)
+    first_entered = threading.Event()
+    release = threading.Event()
+    active_calls = 0
+    overlaps: list[int] = []
+    guard = threading.Lock()
+
+    def blocking_rotate() -> None:
+        nonlocal active_calls
+        with guard:
+            active_calls += 1
+            current = active_calls
+        if current > 1:
+            overlaps.append(current)
+        if current == 1:
+            first_entered.set()
+            release.wait(timeout=1)
+        with guard:
+            active_calls -= 1
+
+    monkeypatch.setattr(service, "_rotate_if_needed", blocking_rotate)
+
+    event = AppLogEvent(
+        timestamp="2026-05-19T12:00:00.000",
+        level="INFO",
+        source="app",
+        category="app",
+        message="threaded",
+        module="atv_player.app",
+    )
+
+    first = threading.Thread(target=service.write_event, args=(event,))
+    second = threading.Thread(target=service.write_event, args=(event,))
+    first.start()
+    assert first_entered.wait(timeout=1)
+    second.start()
+    time.sleep(0.05)
+    release.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert overlaps == []
 
 
 def test_structured_handler_noops_when_logging_disabled(tmp_path: Path) -> None:

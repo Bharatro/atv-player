@@ -6,6 +6,7 @@ import gzip
 import json
 import logging
 from pathlib import Path
+import threading
 from typing import Iterable
 
 
@@ -50,6 +51,7 @@ class AppLogService:
         self._enabled_getter = enabled_getter
         self._max_bytes = max_bytes
         self._max_archives = max_archives
+        self._write_lock = threading.Lock()
         self._logs_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -59,12 +61,16 @@ class AppLogService:
     def write_event(self, event: AppLogEvent) -> None:
         if not self._enabled_getter():
             return
-        self._rotate_if_needed()
-        with self.active_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+        with self._write_lock:
+            self._rotate_if_needed()
+            with self.active_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
 
     def load_records(self, *, limit: int, log_filter: AppLogFilter) -> list[AppLogEvent]:
-        records = [record for record in self._iter_records_newest_first() if self._matches(record, log_filter)]
+        with self._write_lock:
+            records = [
+                record for record in self._iter_records_newest_first() if self._matches(record, log_filter)
+            ]
         return records[:limit]
 
     def export_records(self, records: list[AppLogEvent], target_path: Path) -> None:
@@ -84,9 +90,10 @@ class AppLogService:
         target_path.write_text("\n".join(lines), encoding="utf-8")
 
     def clear(self) -> None:
-        for path in self._logs_dir.glob("*"):
-            if path.is_file():
-                path.unlink()
+        with self._write_lock:
+            for path in self._logs_dir.glob("*"):
+                if path.is_file():
+                    path.unlink()
 
     def _rotate_if_needed(self) -> None:
         if not self.active_path.exists():

@@ -4,8 +4,8 @@ from atv_player.logging_utils import configure_logging
 
 def main() -> int:
     configure_logging("INFO")
-    app, repo = build_application()
-    coordinator = AppCoordinator(repo)
+    app, repo, app_log_service = build_application()
+    coordinator = AppCoordinator(repo, app_log_service=app_log_service)
     widget = coordinator.start()
     widget.show()
     try:

@@ -6,6 +6,7 @@ import logging
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.merge import (
     choose_preferred_title,
@@ -197,14 +198,7 @@ class MetadataHydrator:
 
     @staticmethod
     def _provider_search_cache_key(provider: MetadataProvider, query) -> tuple[str, str]:
-        search_cache_key = getattr(provider, "search_cache_key", None)
-        cache_title = query.title
-        cache_year = query.year
-        if callable(search_cache_key):
-            provider_cache_key = search_cache_key(query)
-            if provider_cache_key is not None:
-                cache_title, cache_year = provider_cache_key
-        return cache_title, cache_year
+        return provider_search_cache_key(provider, query)
 
     @staticmethod
     def _score_matches(query, matches: list[MetadataMatch]) -> list[MetadataMatch]:

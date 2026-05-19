@@ -474,6 +474,14 @@ def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) ->
     ]
 
 
+def test_mpv_widget_rejects_loadfile_option_values_with_commas(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    with pytest.raises(ValueError, match="cannot contain ','"):
+        widget._encode_loadfile_options({"http-header-fields": "a=b,c=d"})
+
+
 def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
