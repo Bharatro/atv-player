@@ -202,9 +202,9 @@ class TencentMetadataProvider:
     def _year_value(self, payload: dict) -> str:
         year = payload.get("year")
         if isinstance(year, int):
-            return str(year)
+            return str(year) if 1000 <= year <= 9999 else ""
         value = str(year or "").strip()
-        return value if value.isdigit() and len(value) == 4 else ""
+        return value if value.isdigit() and len(value) == 4 and value != "0000" else ""
 
     def _language_value(self, payload: object) -> str:
         if isinstance(payload, list):

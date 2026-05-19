@@ -1,4 +1,4 @@
-from atv_player.metadata.merge import choose_preferred_title, merge_metadata_record
+from atv_player.metadata.merge import choose_preferred_title, merge_metadata_record, replace_metadata_record
 from atv_player.metadata.models import MetadataRecord
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, VodItem
 
@@ -195,3 +195,23 @@ def test_merge_metadata_iqiyi_overrides_drive_folder_style_title_with_record_tit
     merge_metadata_record(vod, record, provider_priority=["iqiyi"])
 
     assert vod.vod_name == "纸上紫微"
+
+
+def test_replace_metadata_record_strips_html_tags_from_detail_fields() -> None:
+    vod = VodItem(vod_id="v1", vod_name="百炼成神")
+    record = MetadataRecord(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        detail_fields=[
+            {
+                "label": "制作信息",
+                "value": '作者：燃哉工作室 漫画：<em class="keyword">百炼成神</em> 导演：邓沐',
+            }
+        ],
+    )
+
+    replace_metadata_record(vod, record)
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("制作信息", "作者：燃哉工作室 漫画：百炼成神 导演：邓沐")
+    ]

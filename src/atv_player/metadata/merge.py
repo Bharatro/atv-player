@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 
 from atv_player.metadata.models import MetadataRecord
@@ -137,8 +138,8 @@ def choose_preferred_title(current_title: object, candidate_title: object) -> st
 
 
 def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
-    label = str(item.get("label") or "").strip()
-    value = str(item.get("value") or "").strip()
+    label = _clean_detail_text(item.get("label"))
+    value = _clean_detail_text(item.get("value"))
     if not label or not value:
         return None
     if record.provider == "tmdb" and label == "TMDB ID":
@@ -161,8 +162,8 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
     values: dict[str, str] = {}
 
     def put(label: str, value: str) -> None:
-        normalized_label = str(label or "").strip()
-        normalized_value = str(value or "").strip()
+        normalized_label = _clean_detail_text(label)
+        normalized_value = _clean_detail_text(value)
         if not normalized_label or not normalized_value:
             return
         if normalized_label not in values:
@@ -178,6 +179,12 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
     for item in record.detail_fields:
         put(str(item.get("label") or ""), str(item.get("value") or ""))
     return [{"label": label, "value": values[label]} for label in ordered_labels]
+
+
+def _clean_detail_text(value: object) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priority: list[str]) -> VodItem:

@@ -260,6 +260,44 @@ def test_tencent_metadata_provider_detail_omits_source_site_field() -> None:
     assert record.detail_fields == []
 
 
+def test_tencent_metadata_provider_ignores_zero_year_values() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "mzc-zero-year"},
+                                "videoInfo": {
+                                    "title": "百炼成神",
+                                    "year": 0,
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {"url": "https://v.qq.com/x/cover/mzc-zero-year/ep1.html"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="百炼成神", category_name="动漫"))[0]
+    record = provider.get_detail(match)
+
+    assert match.year == ""
+    assert record.year == ""
+
+
 def test_tencent_metadata_provider_search_prefers_category_matched_result_for_same_title() -> None:
     def fake_post(url: str, **kwargs):
         assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
