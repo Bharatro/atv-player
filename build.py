@@ -320,11 +320,19 @@ def build(target_platform: str) -> Path:
 
     runtime_version_file = prepare_runtime_version_file(artifact_version)
     runtime_version_hook = prepare_runtime_version_hook(artifact_version)
-    command = build_pyinstaller_command(
-        target_platform,
-        runtime_version_file=runtime_version_file,
-        runtime_version_hook=runtime_version_hook,
-    )
+    try:
+        command = build_pyinstaller_command(
+            target_platform,
+            runtime_version_file=runtime_version_file,
+            runtime_version_hook=runtime_version_hook,
+        )
+    except TypeError as exc:
+        if "runtime_version_hook" not in str(exc):
+            raise
+        command = build_pyinstaller_command(
+            target_platform,
+            runtime_version_file=runtime_version_file,
+        )
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)
 
     bundle_path = bundle_path_for_target(target_platform)
