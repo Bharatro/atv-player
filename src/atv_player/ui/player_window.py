@@ -1598,8 +1598,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _resolving_startup_message(self, current_item: PlayItem) -> str:
         source_url = self._current_item_source_address(current_item)
         if source_url:
-            return f"正在解析播放地址: {source_url}"
-        return f"正在解析播放地址： {current_item.vod_id}"
+            return f"正在解析视频详情: {source_url}"
+        return f"正在解析视频详情： {current_item.vod_id}"
 
     def _current_item_source_address(self, current_item: PlayItem) -> str:
         for candidate in (
@@ -3000,7 +3000,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         current_item = session.playlist[self.current_index]
         self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
         if wait_for_load:
-            self._append_log(f"正在加载播放地址: {current_item.title}")
+            self._append_log(f"正在加载视频详情: {current_item.title}")
         self._play_item_request_id += 1
         request_id = self._play_item_request_id
         self._pending_play_item_load = _PendingPlayItemLoad(
