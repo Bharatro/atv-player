@@ -5780,6 +5780,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             provider_index = max(0, self._metadata_scrape_provider_combo.findData(provider_value))
             self._metadata_scrape_provider_combo.setCurrentIndex(provider_index)
         dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
         self._refresh_metadata_scrape_search_row_heights()
         self._reload_metadata_scrape_cached_results()
 
@@ -5795,8 +5797,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             title = str(self.session.vod.vod_name or "").strip()
         year = str(self.session.vod.vod_year or "").strip() if self.session is not None else ""
         return self._normalize_metadata_scrape_query_inputs(title, year)
-        dialog.raise_()
-        dialog.activateWindow()
 
     def _normalize_metadata_scrape_query_inputs(self, title: str, year: str) -> tuple[str, str]:
         return normalize_metadata_query_inputs(title, year)

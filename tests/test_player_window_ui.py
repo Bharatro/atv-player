@@ -647,6 +647,35 @@ def test_player_window_metadata_scrape_dialog_preserves_user_query_when_reopened
     assert window._metadata_scrape_year_edit.text() == "2030"
 
 
+def test_player_window_metadata_scrape_dialog_reuses_existing_dialog_and_reactivates_it(qtbot, monkeypatch) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+
+    dialog = window._metadata_scrape_dialog
+    assert dialog is not None
+
+    calls: list[str] = []
+    monkeypatch.setattr(dialog, "raise_", lambda: calls.append("raise"))
+    monkeypatch.setattr(dialog, "activateWindow", lambda: calls.append("activate"))
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_dialog is dialog
+    assert calls == ["raise", "activate"]
+
+
 def test_player_window_metadata_scrape_dialog_ignores_inflight_previous_search_when_reopened(qtbot) -> None:
     class BlockingMetadataScrapeService(FakeMetadataScrapeService):
         def __init__(self) -> None:
