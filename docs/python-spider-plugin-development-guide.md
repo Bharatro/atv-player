@@ -54,9 +54,10 @@
 这几个点非常重要：
 
 1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
-2. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
-3. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
-4. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
+2. 对 Spider 插件来源，`danmaku()` 不仅控制弹幕能力，也控制自动元数据增强和播放器内刮削能力是否挂载
+3. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
+4. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
+5. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
 
 ## 2. 宿主如何调用你的插件
 
@@ -602,6 +603,24 @@ def danmaku(self):
 
 ```python
 {"danmu": True}
+```
+
+对 Spider 插件来源来说，这个开关当前还有额外含义：
+
+- `danmaku() == True` 时，插件请求会挂载自动元数据增强能力
+- `danmaku() == True` 时，播放器里的元数据刮削服务也会挂载
+- `danmaku() == False` 时，这两条能力都不会为该插件来源启用
+
+所以如果你希望这个插件来源支持：
+
+- 自动元数据增强
+- 弹幕自动解析
+
+那就必须返回：
+
+```python
+def danmaku(self):
+    return True
 ```
 
 ### 9.2 弹幕是如何触发的
