@@ -92,6 +92,10 @@ def _normalize_theme_mode(value: object) -> str:
     return text if text in _VALID_THEME_MODES else "system"
 
 
+def _normalize_logging_enabled(value: object) -> bool:
+    return bool(value)
+
+
 def _normalize_network_proxy_mode(value: object) -> str:
     text = str(value or "").strip().lower()
     return text if text in _VALID_NETWORK_PROXY_MODES else "direct"
@@ -209,6 +213,7 @@ class SettingsRepository:
                     token TEXT NOT NULL,
                     vod_token TEXT NOT NULL,
                     theme_mode TEXT NOT NULL DEFAULT 'system',
+                    logging_enabled INTEGER NOT NULL DEFAULT 1,
                     metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
@@ -269,6 +274,10 @@ class SettingsRepository:
             if "theme_mode" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN theme_mode TEXT NOT NULL DEFAULT 'system'"
+                )
+            if "logging_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN logging_enabled INTEGER NOT NULL DEFAULT 1"
                 )
             if "metadata_enhancement_enabled" not in columns:
                 conn.execute(
@@ -463,6 +472,7 @@ class SettingsRepository:
                     token,
                     vod_token,
                     theme_mode,
+                    logging_enabled,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     metadata_douban_cookie,
@@ -511,7 +521,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -529,6 +539,7 @@ class SettingsRepository:
                     token,
                     vod_token,
                     theme_mode,
+                    logging_enabled,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     metadata_douban_cookie,
@@ -587,6 +598,7 @@ class SettingsRepository:
             token,
             vod_token,
             theme_mode,
+            logging_enabled,
             metadata_enhancement_enabled,
             episode_title_enhancement_enabled,
             metadata_douban_cookie,
@@ -641,6 +653,7 @@ class SettingsRepository:
             token=token,
             vod_token=vod_token,
             theme_mode=_normalize_theme_mode(theme_mode),
+            logging_enabled=_normalize_logging_enabled(logging_enabled),
             metadata_enhancement_enabled=bool(metadata_enhancement_enabled),
             episode_title_enhancement_enabled=bool(episode_title_enhancement_enabled),
             metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
@@ -703,6 +716,7 @@ class SettingsRepository:
                     token = ?,
                     vod_token = ?,
                     theme_mode = ?,
+                    logging_enabled = ?,
                     metadata_enhancement_enabled = ?,
                     episode_title_enhancement_enabled = ?,
                     metadata_douban_cookie = ?,
@@ -758,6 +772,7 @@ class SettingsRepository:
                     config.token,
                     config.vod_token,
                     _normalize_theme_mode(config.theme_mode),
+                    int(config.logging_enabled),
                     int(config.metadata_enhancement_enabled),
                     int(config.episode_title_enhancement_enabled),
                     str(config.metadata_douban_cookie or "").strip(),
