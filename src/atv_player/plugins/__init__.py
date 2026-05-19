@@ -265,6 +265,7 @@ class SpiderPluginManager:
             episode_title_enhancer_factory=self._episode_title_enhancer_factory,
             danmaku_service=self._danmaku_service,
             danmaku_preference_store=self._danmaku_preference_store,
+            plugin_log_writer=lambda message, plugin_id=plugin.id: self._append_plugin_log(plugin_id, "info", message),
             playback_history_loader=None
             if self._playback_history_repository is None
             else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(

@@ -5388,7 +5388,7 @@ def test_controller_logs_search_failure(caplog) -> None:
 def test_controller_logs_spider_method_calls_with_params(caplog) -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="调试插件", search_enabled=True)
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.INFO):
         controller.load_items("tv", 2, {"area": "CN"})
         controller.search_items("庆余年", 3, "tv")
         request = controller.build_request("detail-1")
@@ -5397,23 +5397,23 @@ def test_controller_logs_spider_method_calls_with_params(caplog) -> None:
         request.playback_loader(request.playlist[0])
 
     assert "method=categoryContent" in caplog.text
-    assert "'tid': 'tv'" in caplog.text
-    assert "'pg': 2" in caplog.text
-    assert "'filter': False" in caplog.text
-    assert "'extend': {'area': 'CN'}" in caplog.text
+    assert "tid='tv'" in caplog.text
+    assert "pg=2" in caplog.text
+    assert "filter=False" in caplog.text
+    assert "extend={'area': 'CN'}" in caplog.text
 
     assert "method=searchContent" in caplog.text
-    assert "'key': '庆余年'" in caplog.text
-    assert "'quick': False" in caplog.text
-    assert "'category': 'tv'" in caplog.text
+    assert "key='庆余年'" in caplog.text
+    assert "quick=False" in caplog.text
+    assert "category='tv'" in caplog.text
 
     assert "method=detailContent" in caplog.text
-    assert "'ids': ['detail-1']" in caplog.text
+    assert "ids=['detail-1']" in caplog.text
 
     assert "method=playerContent" in caplog.text
-    assert "'flag': '备用线'" in caplog.text
-    assert "'id': '/play/1'" in caplog.text
-    assert "'vipFlags': []" in caplog.text
+    assert "flag='备用线'" in caplog.text
+    assert "id='/play/1'" in caplog.text
+    assert "vipFlags=[]" in caplog.text
 
 
 def test_spider_controller_keeps_numbered_legacy_routes_as_flat_playlists() -> None:

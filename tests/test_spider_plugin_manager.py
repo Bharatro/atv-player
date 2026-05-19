@@ -50,16 +50,40 @@ class FakeSpider:
     def init(self, extend: str = "") -> None:
         return None
 
+    def homeContent(self, filter):
+        return {
+            "class": [{"type_id": "tv", "type_name": "剧场"}],
+            "list": [],
+        }
+
+    def categoryContent(self, tid, pg, filter, extend):
+        return {
+            "list": [
+                {"vod_id": f"/detail/{tid}-{pg}", "vod_name": f"{tid}-{pg}"},
+            ],
+            "total": 1,
+        }
+
+    def searchContent(self, key, quick, pg=1, category=""):
+        return {
+            "list": [{"vod_id": f"/detail/{key}", "vod_name": key}],
+            "total": 1,
+        }
+
     def detailContent(self, ids):
         return {
             "list": [
                 {
                     "vod_id": ids[0],
                     "vod_name": "红果短剧",
-                    "vod_play_url": "第1集$https://media.example/1.m3u8",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "第1集$/play/1",
                 }
             ]
         }
+
+    def playerContent(self, flag, id, vipFlags):
+        return {"parse": 0, "url": f"https://stream.example{id}.m3u8"}
 
 
 class ParseRequiredSpider(FakeSpider):
@@ -98,6 +122,17 @@ class HistoryLoader(FakeLoader):
             spider=FakeSpider(),
             plugin_name="红果短剧",
             search_enabled=False,
+        )
+
+
+class SearchHistoryLoader(FakeLoader):
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=FakeSpider(),
+            plugin_name="红果短剧",
+            search_enabled=True,
         )
 
 
@@ -646,6 +681,28 @@ def test_manager_load_enabled_plugins_wires_built_in_parser_service(tmp_path: Pa
 
     assert item.url == "https://media.example/resolved.m3u8"
     assert item.headers == {"Referer": "https://page.example"}
+
+
+def test_manager_persists_spider_method_call_logs_to_plugin_logs(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    manager = SpiderPluginManager(repository, SearchHistoryLoader())
+
+    definitions = manager.load_enabled_plugins()
+    controller = definitions[0].controller
+
+    controller.load_items("tv", 2, {"area": "CN"})
+    controller.search_items("庆余年", 3, "tv")
+    request = controller.build_request("detail-1")
+    assert request.playback_loader is not None
+    request.playback_loader(request.playlist[0])
+
+    messages = [entry.message for entry in repository.list_logs(plugin.id)]
+
+    assert any("method=categoryContent" in message and "tid='tv'" in message for message in messages)
+    assert any("method=searchContent" in message and "key='庆余年'" in message for message in messages)
+    assert any("method=detailContent" in message and "ids=['detail-1']" in message for message in messages)
+    assert any("method=playerContent" in message and "id='/play/1'" in message for message in messages)
 
 
 def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> None:

@@ -67,13 +67,9 @@ _MOVIE_CATEGORY_MARKERS = ("电影",)
 _SINGLE_VIDEO_GENERIC_TITLES = {"正片", "完整版", "全片"}
 
 
-def _log_spider_method_call(plugin_name: str, method_name: str, **params: object) -> None:
-    logger.debug(
-        "Spider plugin call plugin=%s method=%s params=%s",
-        plugin_name,
-        method_name,
-        params,
-    )
+def _format_spider_method_call_message(plugin_name: str, method_name: str, **params: object) -> str:
+    args = " ".join(f"{key}={value!r}" for key, value in params.items())
+    return f"Spider plugin call plugin={plugin_name} method={method_name} {args}".rstrip()
 
 
 def _strip_trailing_title_size_suffix(value: str) -> str:
@@ -693,6 +689,7 @@ class SpiderPluginController:
         metadata_hydrator_factory: Callable[..., object] | None = None,
         metadata_scrape_service_factory: Callable[..., object] | None = None,
         episode_title_enhancer_factory: Callable[..., object] | None = None,
+        plugin_log_writer: Callable[[str], None] | None = None,
     ) -> None:
         self.uses_result_length_for_pagination = True
         self._spider = spider
@@ -709,6 +706,7 @@ class SpiderPluginController:
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
+        self._plugin_log_writer = plugin_log_writer
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
@@ -720,6 +718,16 @@ class SpiderPluginController:
         self._home_items: list[VodItem] = []
         self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
+
+    def _log_spider_method_call(self, method_name: str, **params: object) -> None:
+        message = _format_spider_method_call_message(self._plugin_name, method_name, **params)
+        logger.info(message, extra={"log_category": "plugin", "log_source": "app"})
+        if self._plugin_log_writer is None:
+            return
+        try:
+            self._plugin_log_writer(message)
+        except Exception:
+            logger.exception("Spider plugin log sink failed plugin=%s method=%s", self._plugin_name, method_name)
 
     def _map_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
@@ -864,8 +872,7 @@ class SpiderPluginController:
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
-            _log_spider_method_call(
-                self._plugin_name,
+            self._log_spider_method_call(
                 "categoryContent",
                 tid=category_id,
                 pg=page,
@@ -898,8 +905,7 @@ class SpiderPluginController:
         category = "" if category_id == "home" else str(category_id or "")
         try:
             if self._search_supports_category:
-                _log_spider_method_call(
-                    self._plugin_name,
+                self._log_spider_method_call(
                     "searchContent",
                     key=keyword,
                     quick=False,
@@ -908,8 +914,7 @@ class SpiderPluginController:
                 )
                 payload = self._spider.searchContent(keyword, False, page, category)
             else:
-                _log_spider_method_call(
-                    self._plugin_name,
+                self._log_spider_method_call(
                     "searchContent",
                     key=keyword,
                     quick=False,
@@ -1937,8 +1942,7 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         try:
-            _log_spider_method_call(
-                self._plugin_name,
+            self._log_spider_method_call(
                 "playerContent",
                 flag=item.play_source,
                 id=item.vod_id,
@@ -2111,8 +2115,7 @@ class SpiderPluginController:
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
-            _log_spider_method_call(
-                self._plugin_name,
+            self._log_spider_method_call(
                 "detailContent",
                 ids=[vod_id],
             )
