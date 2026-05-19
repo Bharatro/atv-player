@@ -2,7 +2,7 @@
 
 本文面向 `atv-player` 的 Python Spider 插件开发者，说明宿主当前真正支持的接口、数据结构、播放器扩展能力，以及哪些传统 `TVBox`/`Atvp` 习惯写法在这里并不会生效。
 
-如果你手上已经有旧爬虫，尤其是 `/home/harold/workspace/atv-spiders/py` 里的实现，这篇文档可以帮助你判断：
+如果你手上已经有旧爬虫，这篇文档可以帮助你判断：
 
 - 哪些写法可以直接复用
 - 哪些字段会被 `atv-player` 读取
@@ -44,7 +44,7 @@
 - `playUrl`
 - `playerContent()["danmu"]`
 - `localProxy(...)`
-- `self.backend_parse = True`（这是 `Atvp.py` 适配器的特殊配置，`atv-player` 直加载模式不读取）
+- `self.backend_parse = True`（这是 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层使用的特殊配置，`atv-player` 直加载模式不读取）
 - `homeVideoContent(...)`
 - `liveContent(...)`
 - `isVideoFormat(...)`
@@ -55,7 +55,7 @@
 
 1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
 2. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
-3. `self.backend_parse = True` 不是通用传统字段，而是 `Atvp.py` 这个“把本项目 Spider 转成传统 TvBox 兼容运行时”的外层转换器读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
+3. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
 4. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
 
 ## 2. 宿主如何调用你的插件
@@ -229,7 +229,7 @@ searchContent(key, quick, pg)
 
 宿主也会回退兼容。
 
-如果你的来源天然有多种搜索域，例如 `QQ音乐.py` 会按 `song`、`album`、`playlist`、`singer` 分流，建议直接使用第四个 `category` 参数。
+如果你的来源天然有多种搜索域，例如按 `song`、`album`、`playlist`、`singer` 分流，建议直接使用第四个 `category` 参数。
 
 ### 4.4 `detailContent(...)`
 
@@ -321,7 +321,7 @@ return {
 - 这时当前播放项的“解析”下拉框会变为可用
 - `url` 仍然必须是一个可交给解析器处理的字符串
 
-`七味.py`、`修罗.py` 这类站点型爬虫就是典型例子：能直接解出媒体地址就返回 `parse=0`，不能稳定解出就降级为 `parse=1`
+这类站点型 Spider 的常见做法是：能直接解出媒体地址就返回 `parse=0`，不能稳定解出就降级为 `parse=1`
 
 ### 5.4 当前宿主忽略的传统字段
 
@@ -378,7 +378,7 @@ raise ValueError("播放地址解析失败")
 - `magnet:?`
 - `ed2k://`
 
-例如 `盘聚.py`、`七味.py` 的思路就是：
+常见做法是：
 
 - 详情页把网盘资源和磁力资源组织成普通 `vod_play_from` / `vod_play_url`
 - 用户点击播放项时，宿主识别它是不是网盘分享链接或离线下载链接
@@ -428,16 +428,9 @@ return {"parse": 0, "url": "https://pan.quark.cn/s/xxxx", "header": {}}
 self.backend_parse = True
 ```
 
-例如：
+这个字段不是传统 Spider 约定字段，也不是随手遗留的兼容字段。它是专门给 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层使用的特殊配置。
 
-- `修罗.py`
-- `七味.py`
-- `盘聚.py`
-- `盘Ta.py`
-
-这个字段不是传统 Spider 约定字段，也不是随手遗留的兼容字段。它是你为 `Atvp.py` 专门加的一个特殊配置。
-
-更准确地说，`Atvp.py` 不是普通内层 Spider，而是一个外层转换器：
+更准确地说，`Atvp.py` 不是普通内层 Spider，而是 `alist-tvbox` 后端提供的外层转换器：
 
 - 它对外实现的是传统 `TvBox` 风格 `Spider` 接口
 - 它内部再去加载本项目 Spider
@@ -447,7 +440,7 @@ self.backend_parse = True
 
 ### `Atvp.py` 如何读取它
 
-`Atvp.py` 会先加载并实例化本项目 Spider，然后在 [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:214) 用下面的逻辑读取：
+`Atvp.py` 会先加载并实例化本项目 Spider，然后用下面的逻辑读取：
 
 ```python
 def _category_mode_enabled(self):
@@ -456,7 +449,7 @@ def _category_mode_enabled(self):
     return bool(getattr(self._inner, "backend_parse", False))
 ```
 
-也就是说，`backend_parse` 是本项目 Spider 向 `Atvp.py` 这个外层 TvBox 转换器声明的一个模式开关。
+也就是说，`backend_parse` 是本项目 Spider 向 `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层声明的一个模式开关。
 
 ### `Atvp.py` 自身是怎么工作的
 
@@ -475,14 +468,9 @@ def _category_mode_enabled(self):
    - `localProxy(...)`
 6. 在这些对外方法里，决定是直接转发给 `self._inner`，还是先做一层 Atvp 自己的重写、拆分、后端解析和 filter 处理
 
-相关代码入口主要在：
-
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:193) 的 `init(...)`
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:930) 到 [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:1054) 这一段对外接口实现
-
 所以你可以把 `Atvp.py` 理解成：
 
-- “把本项目 Spider 包装成传统 TvBox 兼容代码再运行”的桥接层
+- “由 `alist-tvbox` 后端提供、把本项目 Spider 包装成传统 TvBox 兼容代码再运行”的桥接层
 
 而不是：
 
@@ -507,12 +495,6 @@ def _category_mode_enabled(self):
 - 用户点开后，Atvp 会先调用内层 `detailContent(...)`
 - 然后把 `vod_play_from` / `vod_play_url` 拆成一个“二级目录列表”
 
-对应代码主要在：
-
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:936) 的 `categoryContent(...)`
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:958) 的 `searchContent(...)`
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:863) 的 `_split_detail_to_vods(...)`
-
 这说明 `backend_parse` 的本质不是“视频解析开关”，而是：
 
 - 是否让 Atvp 把 Spider 的分类/搜索结果当作“目录入口”
@@ -532,17 +514,11 @@ def _category_mode_enabled(self):
 1. 如果某个 `id` 看起来已经是 `http/https/magnet/ed2k`，`detailContent(...)` 会优先走 Atvp 的 `_parse(...)`
 2. `_parse(...)` 会请求 Atvp 后端的 `parse` 接口，再把返回结果过一遍 filter、缓存 detail、缓存 play context
 
-相关代码在：
-
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:646) 的 `_decode_parse(...)`
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:688) 的 `_parse(...)`
-- [Atvp.py](/home/harold/workspace/atv-spiders/py/Atvp.py:946) 的 `detailContent(...)`
-
 虽然 `_decode_parse(...)` 代码层面也识别 `http/https`、`magnet`、`ed2k`，但按你的设计意图，这个模式开关主要针对的是网盘资源和磁力资源。
 
 所以这个字段更准确的定义是：
 
-- `Atvp.py` 这个 TvBox 外层转换器面向网盘资源和磁力资源的“目录化后端解析模式开关”
+- `alist-tvbox` 后端提供的 `Atvp.py` 兼容运行层面向网盘资源和磁力资源的“目录化后端解析模式开关”
 
 而不是：
 
@@ -579,7 +555,7 @@ self.backend_parse = True
 - 插件控制器不会调用 `localProxy(...)`
 - 本地 HLS 代理也不会转发到插件的 `localProxy(...)`
 
-因此像 `修罗.py`、`瓜子.py` 这种传统写法：
+因此像下面这种传统写法：
 
 ```python
 def localProxy(self, params):
@@ -714,11 +690,7 @@ return {
 
 如果 `lyric` 成功转成逐字歌词，宿主会优先使用它；只有歌词无效时，才回退到 `subt`。
 
-这一块可以直接参考：
-
-- `QQ音乐.py`
-- `酷狗音乐.py`
-- `网易云音乐.py`
+这一块的典型场景是音乐类或歌词类 Spider。
 
 ## 11. 播放质量、播放封面和其他播放扩展
 
@@ -886,7 +858,7 @@ return [
 
 ### 12.7 完整动作示例
 
-这类模式可以直接参考 `QQ音乐.py`：
+这类模式常见于带收藏、关注、点赞能力的来源：
 
 ```python
 def runPlayerAction(self, action_id, context):
@@ -1030,7 +1002,7 @@ def runManagerAction(self, action_id, context):
 - 简单场景直接把 `extend` 当 cookie 文本
 - 复杂场景优先支持 JSON
 
-例如 `七味.py` 的思路就是：
+常见做法是：
 
 - 如果 `extend` 是 JSON，就解析成配置对象
 - 如果 `extend` 是普通文本且包含 `=`，就当作 cookie
@@ -1071,20 +1043,7 @@ def init(self, extend=""):
 - 只返回局部动作更新
 - 把站点类型、专辑类型等状态硬编码进前端假设
 
-## 17. 推荐参考实现
-
-如果你要从现有爬虫仓库里找样板，优先看这些文件：
-
-- `QQ音乐.py`
-  适合参考自定义动作、登录态、歌词、播放器详情扩展
-- `修罗.py`
-  适合参考复杂站点详情解析、播放页解析、`parse=1` 回退
-- `七味.py`
-  适合参考多域名切换、筛选、站内直链与宿主解析器混合策略
-- `盘聚.py`
-  适合参考网盘聚合、磁力聚合、把分享链接直接交给宿主
-
-## 18. 排障清单
+## 17. 排障清单
 
 ### 点击播放后提示“插件未返回可播放地址”
 
