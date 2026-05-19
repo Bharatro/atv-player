@@ -1919,3 +1919,18 @@ def test_spider_plugin_repository_migrates_missing_config_text_column(tmp_path: 
     )
 
     assert repo.get_plugin(1).config_text == "token=updated"
+
+
+def test_spider_plugin_repository_partial_updates_do_not_overwrite_other_fields(tmp_path: Path) -> None:
+    repo = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repo.add_plugin("local", "/plugins/demo.py", "原名称")
+
+    repo.set_plugin_enabled(plugin.id, False)
+    repo.set_plugin_config(plugin.id, "token=updated")
+    repo.rename_plugin(plugin.id, "新名称")
+
+    updated = repo.get_plugin(plugin.id)
+
+    assert updated.display_name == "新名称"
+    assert updated.enabled is False
+    assert updated.config_text == "token=updated"

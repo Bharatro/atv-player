@@ -782,3 +782,40 @@ def test_metadata_scrape_service_reset_clears_search_cache_and_selected_detail_c
     assert cache.load_search("local_douban", "黑袍纠察队第五季", "2026", ttl_seconds=7 * 24 * 3600) is None
     assert cache.load_detail("tmdb", "tv:42:season:5", ttl_seconds=7 * 24 * 3600) is None
     assert cache.load_detail("local_douban", "357", ttl_seconds=7 * 24 * 3600) is None
+
+
+def test_metadata_scrape_service_apply_raises_when_provider_returns_none(tmp_path: Path) -> None:
+    import pytest
+
+    class _NoneDetailProvider:
+        name = "tmdb"
+
+        def __init__(self) -> None:
+            self.detail_calls: list[MetadataMatch] = []
+
+        def can_enrich(self, _context) -> bool:
+            return True
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+        def get_detail(self, match: MetadataMatch):
+            self.detail_calls.append(match)
+            return None
+
+    cache = MetadataCache(tmp_path)
+    provider = _NoneDetailProvider()
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+    candidate = MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id="movie:1",
+        title="深空彼岸",
+        year="2026",
+    )
+
+    with pytest.raises(RuntimeError, match="TMDB"):
+        service.apply(VodItem(vod_id="v1", vod_name="深空彼岸"), candidate)
+
+    assert len(provider.detail_calls) == 1
+    assert cache.load_detail("tmdb", "movie:1", ttl_seconds=7 * 24 * 3600) is None

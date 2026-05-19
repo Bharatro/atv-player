@@ -121,43 +121,13 @@ class SpiderPluginManager:
         self.refresh_plugin(plugin.id)
 
     def rename_plugin(self, plugin_id: int, display_name: str) -> None:
-        plugin = self._repository.get_plugin(plugin_id)
-        self._repository.update_plugin(
-            plugin_id,
-            display_name=display_name,
-            enabled=plugin.enabled,
-            cached_file_path=plugin.cached_file_path,
-            last_loaded_at=plugin.last_loaded_at,
-            last_error=plugin.last_error,
-            config_text=plugin.config_text,
-            plugin_version=plugin.plugin_version,
-        )
+        self._repository.rename_plugin(plugin_id, display_name)
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
-        plugin = self._repository.get_plugin(plugin_id)
-        self._repository.update_plugin(
-            plugin_id,
-            display_name=plugin.display_name,
-            enabled=enabled,
-            cached_file_path=plugin.cached_file_path,
-            last_loaded_at=plugin.last_loaded_at,
-            last_error=plugin.last_error,
-            config_text=plugin.config_text,
-            plugin_version=plugin.plugin_version,
-        )
+        self._repository.set_plugin_enabled(plugin_id, enabled)
 
     def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
-        plugin = self._repository.get_plugin(plugin_id)
-        self._repository.update_plugin(
-            plugin_id,
-            display_name=plugin.display_name,
-            enabled=plugin.enabled,
-            cached_file_path=plugin.cached_file_path,
-            last_loaded_at=plugin.last_loaded_at,
-            last_error=plugin.last_error,
-            config_text=config_text,
-            plugin_version=plugin.plugin_version,
-        )
+        self._repository.set_plugin_config(plugin_id, config_text)
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self._repository.move_plugin(plugin_id, direction)

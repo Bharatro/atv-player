@@ -189,6 +189,27 @@ class SpiderPluginRepository:
                 ),
             )
 
+    def rename_plugin(self, plugin_id: int, display_name: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE spider_plugins SET display_name = ? WHERE id = ?",
+                (display_name, plugin_id),
+            )
+
+    def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE spider_plugins SET enabled = ? WHERE id = ?",
+                (int(enabled), plugin_id),
+            )
+
+    def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE spider_plugins SET config_text = ? WHERE id = ?",
+                (config_text, plugin_id),
+            )
+
     def find_plugin_by_source_value(self, source_value: str) -> SpiderPluginConfig | None:
         with self._connect() as conn:
             row = conn.execute(

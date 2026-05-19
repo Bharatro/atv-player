@@ -389,6 +389,8 @@ class MetadataScrapeService:
                 raw=dict(candidate.raw),
             )
             record = provider.get_detail(match)
+            if record is None:
+                raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
             self._cache.save_detail(candidate.provider, candidate.provider_id, record)
         updated = replace(vod)
         replace_metadata_record(updated, record)
