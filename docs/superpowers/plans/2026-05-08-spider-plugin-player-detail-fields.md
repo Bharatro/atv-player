@@ -26,7 +26,7 @@
   - Add controller coverage for `ext` normalization, fallback, and overwrite behavior.
 - `tests/test_player_window_ui.py`
   - Add UI coverage for initial render, hide behavior, item override, and fallback.
-- `docs/python-spider-player-actions.md`
+- `docs/python-spider-plugin-development-guide.md`
   - Document `detailContent().ext`, `playerContent().ext`, and override behavior.
 
 ### Task 1: Add failing controller tests for `ext` normalization
@@ -632,13 +632,13 @@ Expected:
 ### Task 5: Document the new plugin payload and run final verification
 
 **Files:**
-- Modify: `docs/python-spider-player-actions.md`
+- Modify: `docs/python-spider-plugin-development-guide.md`
 - Test: `tests/test_spider_plugin_controller.py`
 - Test: `tests/test_player_window_ui.py`
 
 - [ ] **Step 1: Update the plugin-facing documentation**
 
-Add this section to `docs/python-spider-player-actions.md` after the action-model overview:
+Add this section to `docs/python-spider-plugin-development-guide.md` after the action-model overview:
 
 ```markdown
 ## Custom Detail Fields
@@ -706,7 +706,7 @@ Expected:
 Run:
 
 ```bash
-git add docs/python-spider-player-actions.md
+git add docs/python-spider-plugin-development-guide.md
 git commit -m "docs: describe spider plugin player detail fields"
 ```
 
@@ -731,4 +731,3 @@ Expected:
   - the shared type name is `PlaybackDetailField`
   - model storage names are `VodItem.detail_fields` and `PlayItem.detail_fields`
   - player helpers use `detail_fields_widget`, `detail_fields_view`, `_current_detail_fields()`, and `_render_detail_fields()`
-

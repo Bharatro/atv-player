@@ -58,7 +58,7 @@ Primary verification should live in:
 
 Primary documentation follow-up should live in:
 
-- `docs/python-spider-player-actions.md`
+- `docs/python-spider-plugin-development-guide.md`
 
 No new top-level window or route is required. The existing right-side player detail panel should be extended in place.
 

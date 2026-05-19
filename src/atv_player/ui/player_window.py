@@ -1596,7 +1596,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         source_url = self._current_item_source_address(current_item)
         if source_url:
             return f"正在解析播放地址: {source_url}"
-        return "正在解析播放地址"
+        return f"正在解析播放地址： {current_item.vod_id}"
 
     def _current_item_source_address(self, current_item: PlayItem) -> str:
         for candidate in (

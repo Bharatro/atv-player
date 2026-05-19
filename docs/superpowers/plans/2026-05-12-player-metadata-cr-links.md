@@ -26,7 +26,7 @@
   - Add inline metadata rendering and dispatch coverage.
 - `tests/test_main_window_ui.py`
   - Add built-in Bilibili metadata-route coverage.
-- `docs/python-spider-player-actions.md`
+- `docs/python-spider-plugin-development-guide.md`
   - Document the new inline metadata markup contract and `target="bilibili"` usage.
 
 Files intentionally unchanged:
@@ -470,7 +470,7 @@ Expected:
 
 **Files:**
 - Modify: `src/atv_player/ui/main_window.py:1494-1548`
-- Modify: `docs/python-spider-player-actions.md`
+- Modify: `docs/python-spider-plugin-development-guide.md`
 - Test: `tests/test_main_window_ui.py`
 - Test: `tests/test_player_window_ui.py`
 
@@ -537,7 +537,7 @@ The implementation should continue to treat omitted `target` as the current plug
 
 - [ ] **Step 3: Document the inline metadata markup contract**
 
-In `docs/python-spider-player-actions.md`, add a short section after `## Clickable Detail Fields`:
+In `docs/python-spider-plugin-development-guide.md`, add a short section after `## Clickable Detail Fields`:
 
 ```markdown
 ## Inline Metadata CR Links
@@ -594,7 +594,7 @@ The suite should show the new inline metadata tests passing alongside the pre-ex
 Run:
 
 ```bash
-git add src/atv_player/ui/main_window.py tests/test_main_window_ui.py docs/python-spider-player-actions.md
+git add src/atv_player/ui/main_window.py tests/test_main_window_ui.py docs/python-spider-plugin-development-guide.md
 git commit -m "feat: route bilibili metadata cr links"
 ```
 

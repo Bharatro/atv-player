@@ -28,7 +28,7 @@
 - Test: `tests/test_spider_plugin_controller.py`
 - Test: `tests/test_player_window_ui.py`
 - Test: `tests/test_main_window_ui.py`
-- Modify: `docs/python-spider-player-actions.md`
+- Modify: `docs/python-spider-plugin-development-guide.md`
   - document clickable detail fields after code is working
 
 ### Task 1: Normalize Clickable Detail Field Payloads
@@ -326,7 +326,7 @@ git commit -m "feat: render clickable player detail fields"
 - Modify: `tests/test_main_window_ui.py`
 - Modify: `src/atv_player/ui/main_window.py`
 - Modify: `src/atv_player/models.py`
-- Modify: `docs/python-spider-player-actions.md`
+- Modify: `docs/python-spider-plugin-development-guide.md`
 
 - [ ] **Step 1: Write the failing main-window tests**
 
@@ -439,7 +439,7 @@ Expected: PASS with the new clickable-detail coverage and existing detail-field 
 - [ ] **Step 8: Commit the routing and docs slice**
 
 ```bash
-git add tests/test_main_window_ui.py src/atv_player/ui/main_window.py docs/python-spider-player-actions.md
+git add tests/test_main_window_ui.py src/atv_player/ui/main_window.py docs/python-spider-plugin-development-guide.md
 git commit -m "feat: route clickable player detail fields"
 ```
 

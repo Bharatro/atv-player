@@ -7,7 +7,7 @@
 ## 文档导航
 
 - [详细帮助文档](docs/help.md)
-- [Python Spider 播放器动作说明](docs/python-spider-player-actions.md)
+- [Python Spider 插件开发指南](docs/python-spider-plugin-development-guide.md)
 
 ## 核心能力
 

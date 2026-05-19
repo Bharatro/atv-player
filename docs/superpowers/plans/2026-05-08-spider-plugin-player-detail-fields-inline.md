@@ -19,7 +19,7 @@
 - `tests/test_player_window_ui.py`
   - Replace standalone-widget assertions with `metadata_view` text assertions.
   - Keep override and fallback coverage.
-- `docs/python-spider-player-actions.md`
+- `docs/python-spider-plugin-development-guide.md`
   - Update the rendering description from standalone widget language to inline metadata language.
 
 Files intentionally unchanged:
@@ -368,13 +368,13 @@ Expected:
 ### Task 3: Update docs and run focused regressions
 
 **Files:**
-- Modify: `docs/python-spider-player-actions.md`
+- Modify: `docs/python-spider-plugin-development-guide.md`
 - Test: `tests/test_spider_plugin_controller.py`
 - Test: `tests/test_player_window_ui.py`
 
 - [ ] **Step 1: Update the plugin-facing documentation to describe inline rendering**
 
-In `docs/python-spider-player-actions.md`, replace the existing custom-detail-fields rendering bullets:
+In `docs/python-spider-plugin-development-guide.md`, replace the existing custom-detail-fields rendering bullets:
 
 ```markdown
 - rows are display-only and are rendered as `label: value`
@@ -429,7 +429,7 @@ Expected:
 Run:
 
 ```bash
-git add docs/python-spider-player-actions.md
+git add docs/python-spider-plugin-development-guide.md
 git commit -m "docs: describe inline spider detail fields"
 ```
 
@@ -454,4 +454,3 @@ Expected:
   - shared type remains `PlaybackDetailField`
   - storage fields remain `VodItem.detail_fields` and `PlayItem.detail_fields`
   - new helper names are `_current_metadata_detail_fields()` and `_inline_detail_field_lines()`
-
