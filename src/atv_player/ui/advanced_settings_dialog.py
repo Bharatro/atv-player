@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
+from atv_player.ui.log_console import LogConsoleWidget
 from atv_player.ui.theme import (
     FlatComboBox,
     build_form_combobox_qss,
@@ -37,11 +38,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         save_config: Callable[[], None],
         parent: QWidget | None = None,
         apply_theme: Callable[[], None] | None = None,
+        app_log_service=None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
         self._save_config = save_config
         self._apply_application_theme = apply_theme
+        self._app_log_service = app_log_service
         self.resize(680, 440)
 
         self.settings_tabs = QTabWidget()
@@ -49,6 +52,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
+        self.logs_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
         self.theme_mode_combo = FlatComboBox()
         self.theme_mode_combo.addItem("浅色", "light")
@@ -104,6 +108,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             "说明：普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
         )
         self.playback_scope_label.setWordWrap(True)
+        self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
+        self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
         self.save_button = QPushButton("保存")
         self.cancel_button = QPushButton("取消")
 
@@ -177,10 +183,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_tab_layout.addWidget(self.playback_group)
         playback_tab_layout.addStretch(1)
 
+        logs_tab_layout = QVBoxLayout(self.logs_tab)
+        logs_tab_layout.addWidget(self.log_console)
+
         self.settings_tabs.addTab(self.appearance_tab, "外观")
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
+        self.settings_tabs.addTab(self.logs_tab, "日志")
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -221,6 +231,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         ):
             edit.setStyleSheet(line_edit_qss)
             edit.setFixedHeight(42)
+        self.log_console.apply_theme()
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)
@@ -342,6 +353,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if playback_values is None:
             return
         self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
+        self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
         self._config.episode_title_enhancement_enabled = self.episode_title_enhancement_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()

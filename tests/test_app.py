@@ -14,6 +14,8 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
+from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
@@ -3781,6 +3783,103 @@ def test_apply_saved_theme_ignores_advanced_settings_callback_storage(qtbot, tmp
     assert app.property("resolved_theme") == "dark"
 
 
+def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
+    created: dict[str, object] = {}
+
+    class FakeService:
+        def __init__(self, logs_dir, *, enabled_getter, max_bytes, max_archives) -> None:
+            created["logs_dir"] = logs_dir
+            created["enabled"] = enabled_getter()
+            created["max_bytes"] = max_bytes
+            created["max_archives"] = max_archives
+
+        def write_event(self, event) -> None:
+            created["last_event"] = event
+
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_module, "AppLogService", FakeService, raising=False)
+
+    app, repo = app_module.build_application()
+
+    assert created["logs_dir"] == tmp_path / "logs"
+    assert created["enabled"] is True
+    assert created["max_bytes"] == 10 * 1024 * 1024
+    assert created["max_archives"] == 5
+    assert getattr(app, "_app_log_service", None) is not None
+    assert repo.load_config().logging_enabled is True
+
+
+def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance()
+    assert app is not None
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(logging_enabled=False))
+
+    configure_calls: list[tuple[str, object]] = []
+
+    def record_configure(level: str, structured_handler=None) -> None:
+        configure_calls.append((level, structured_handler))
+
+    class FakeService:
+        def write_event(self, event) -> None:
+            del event
+
+    monkeypatch.setattr(app_module, "configure_logging", record_configure, raising=False)
+    monkeypatch.setattr(app_module.AppCoordinator, "_show_login", lambda self, error_message="": QDialog())
+    setattr(app, "_app_log_service", FakeService())
+
+    coordinator = app_module.AppCoordinator(repo)
+    coordinator.start()
+
+    assert configure_calls[-1][0] == "INFO"
+    assert configure_calls[-1][1] is not None
+
+
+def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeypatch) -> None:
+    app = QApplication.instance()
+    assert app is not None
+
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    captured_services: list[object] = []
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured_services.append(kwargs["app_log_service"])
+
+    service = object()
+    setattr(app, "_app_log_service", service)
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: object())
+    monkeypatch.setattr(coordinator, "_load_capabilities", lambda client: {"emby": False, "jellyfin": False})
+
+    coordinator._show_main()
+
+    assert captured_services == [service]
+
+
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
@@ -6572,6 +6671,61 @@ def test_start_live_background_refresh_refreshes_stale_epg_and_non_manual_source
 
     assert epg_service.refresh_calls == 1
     assert live_source_manager.refresh_calls == [1, 2]
+
+
+def test_start_live_background_refresh_logs_failures_with_live_category(monkeypatch, caplog) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None):
+            del daemon
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    class FailingEpgService:
+        def load_config(self):
+            return type("Config", (), {"epg_url": "https://example.com/epg.xml", "last_refreshed_at": 12})()
+
+        def refresh(self) -> None:
+            raise RuntimeError("epg boom")
+
+    class FakeLiveSourceManager:
+        def list_sources(self):
+            return []
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr("atv_player.app.time.time", lambda: 1_713_171_000)
+    coordinator = AppCoordinator(FakeRepo())
+
+    with caplog.at_level(logging.ERROR):
+        coordinator._start_live_background_refresh(FakeLiveSourceManager(), FailingEpgService())
+
+    record = caplog.records[-1]
+    assert record.message == "Background refresh failed target=epg"
+    assert getattr(record, "log_category", "") == "live"
+
+
+def test_metadata_hydrator_logs_search_failures_with_metadata_category(tmp_path, caplog) -> None:
+    class FailingProvider:
+        name = "tmdb"
+
+        def search(self, query):
+            del query
+            raise RuntimeError("search boom")
+
+    hydrator = MetadataHydrator(cache=MetadataCache(tmp_path), providers=[FailingProvider()])
+
+    with caplog.at_level(logging.WARNING):
+        matches = hydrator._load_provider_matches(FailingProvider(), MetadataQuery(title="测试剧"))
+
+    assert matches == []
+    record = caplog.records[-1]
+    assert record.message == "Metadata provider search failed provider=tmdb"
+    assert getattr(record, "log_category", "") == "metadata"
 
 
 def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(

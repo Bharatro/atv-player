@@ -79,6 +79,7 @@ from atv_player.models import (
     VodItem,
 )
 from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
+from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
@@ -508,6 +509,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         controller,
         config=None,
         save_config=None,
+        app_log_service=None,
         m3u8_ad_filter=None,
         playback_parser_service=None,
         default_video_cover_loader=None,
@@ -522,6 +524,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
+        self._app_log_service = app_log_service
         self._m3u8_ad_filter = m3u8_ad_filter or M3U8AdFilter()
         self._playback_parser_service = playback_parser_service
         self._startup_coordinator = PlaybackStartupCoordinator()
@@ -2846,10 +2849,72 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         return f"[{timestamp}] {message}"
 
-    def _append_log(self, message: str, *, dedupe: bool = False) -> None:
+    def _logging_enabled(self) -> bool:
+        return bool(getattr(self.config, "logging_enabled", True))
+
+    def _current_log_context(self) -> dict[str, str | int]:
+        session = self.session
+        if session is None:
+            return {
+                "vod_id": "",
+                "vod_name": "",
+                "episode_title": "",
+                "session_id": "",
+                "source_group_index": -1,
+                "source_index": -1,
+                "playlist_index": -1,
+                "url_summary": "",
+            }
+        playlist_index = self.current_index if 0 <= self.current_index < len(session.playlist) else -1
+        current_item = session.playlist[playlist_index] if playlist_index >= 0 else None
+        return {
+            "vod_id": str(getattr(session.vod, "vod_id", "") or ""),
+            "vod_name": str(getattr(session.vod, "vod_name", "") or ""),
+            "episode_title": str(getattr(current_item, "title", "") or ""),
+            "session_id": str(id(session)),
+            "source_group_index": int(getattr(session, "source_group_index", -1) or -1),
+            "source_index": int(getattr(session, "source_index", -1) or -1),
+            "playlist_index": playlist_index,
+            "url_summary": _summarize_media_url(str(getattr(current_item, "url", "") or "")),
+        }
+
+    def _write_structured_playback_log(self, message: str, *, level: str, category: str) -> None:
+        if not self._logging_enabled() or self._app_log_service is None:
+            return
+        context = self._current_log_context()
+        self._app_log_service.write_event(
+            AppLogEvent(
+                timestamp=datetime.now().isoformat(timespec="milliseconds"),
+                level=level,
+                source="player",
+                category=category,
+                message=message,
+                module=__name__,
+                vod_id=str(context["vod_id"]),
+                vod_name=str(context["vod_name"]),
+                episode_title=str(context["episode_title"]),
+                session_id=str(context["session_id"]),
+                url_summary=str(context["url_summary"]),
+                source_group_index=int(context["source_group_index"]),
+                source_index=int(context["source_index"]),
+                playlist_index=int(context["playlist_index"]),
+            )
+        )
+
+    def _append_log(
+        self,
+        message: str,
+        *,
+        dedupe: bool = False,
+        level: str = "INFO",
+        category: str = "playback",
+    ) -> None:
         if not message:
             return
         if dedupe and self._last_log_message == message:
+            return
+        self._write_structured_playback_log(message, level=level, category=category)
+        if not self._logging_enabled() and level not in {"WARNING", "ERROR", "CRITICAL"}:
             return
         formatted_message = self._format_log_line(message)
         existing_text = self.log_view.toPlainText()

@@ -214,7 +214,12 @@ class MetadataHydrator:
             try:
                 matches = provider.search(query)
             except Exception as exc:
-                logger.warning("Metadata provider search failed provider=%s", provider.name, exc_info=exc)
+                logger.warning(
+                    "Metadata provider search failed provider=%s",
+                    provider.name,
+                    exc_info=exc,
+                    extra={"log_category": "metadata", "log_source": "app"},
+                )
                 return []
             self._cache.save_search(provider.name, cache_title, cache_year, matches)
         return [replace(match, score=max(float(match.score or 0.0), score_match(query, match))) for match in matches]

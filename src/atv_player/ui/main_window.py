@@ -1172,6 +1172,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             history_controller,
             player_controller,
             config,
+            app_log_service=None,
             save_config=None,
             apply_theme=None,
             douban_controller=None,
@@ -1212,6 +1213,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._init_async_guard()
         self._save_config = save_config or (lambda: None)
         self._apply_application_theme = apply_theme or (lambda: None)
+        self._app_log_service = app_log_service
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
@@ -3263,6 +3265,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._save_config,
             self,
             apply_theme=self._apply_application_theme,
+            app_log_service=self._app_log_service,
         )
         dialog.exec()
 
@@ -3658,6 +3661,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     self.player_controller,
                     self.config,
                     self._save_config,
+                    app_log_service=self._app_log_service,
                     m3u8_ad_filter=self._m3u8_ad_filter,
                     playback_parser_service=self._playback_parser_service,
                     default_video_cover_loader=self._default_video_cover_loader,
@@ -3669,6 +3673,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     self.player_controller,
                     self.config,
                     self._save_config,
+                    app_log_service=self._app_log_service,
                 )
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)

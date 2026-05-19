@@ -232,6 +232,7 @@ class MetadataScrapeService:
                 tmdb_id,
                 season_number,
                 exc_info=True,
+                extra={"log_category": "metadata", "log_source": "app"},
             )
             return candidate
         episodes = season_detail.get("episodes")
@@ -275,6 +276,13 @@ class MetadataScrapeService:
         normalized_title, normalized_year = normalize_metadata_query_inputs(query.title, query.year)
         query = replace(query, title=normalized_title, year=normalized_year)
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
+        logger.info(
+            "Metadata scrape search title=%s provider=%s cache_only=%s",
+            query.title,
+            provider_filter or "all",
+            cache_only,
+            extra={"log_category": "metadata", "log_source": "app"},
+        )
 
         def run(provider: object) -> MetadataScrapeGroup:
             cache_title = query.title

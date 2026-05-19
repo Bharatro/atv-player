@@ -69,6 +69,8 @@ from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
+from atv_player.log_store import AppLogService, StructuredJsonlHandler
+from atv_player.logging_utils import configure_logging
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.compat.base.spider import set_proxy_decider_loader as set_spider_proxy_decider_loader
 from atv_player.plugins.repository import SpiderPluginRepository
@@ -298,10 +300,23 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
-    install_theme(app, ThemeManager(), repo.load_config().theme_mode)
+    config = repo.load_config()
+    app_log_service = AppLogService(
+        data_dir / "logs",
+        enabled_getter=lambda: repo.load_config().logging_enabled,
+        max_bytes=10 * 1024 * 1024,
+        max_archives=5,
+    )
+    setattr(app, "_app_log_service", app_log_service)
+    configure_logging("INFO", StructuredJsonlHandler(app_log_service))
+    install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
-    logger.info("Application initialized data_dir=%s", data_dir)
+    logger.info(
+        "Application initialized data_dir=%s",
+        data_dir,
+        extra={"log_category": "app", "log_source": "app"},
+    )
     return app, repo
 
 
@@ -468,7 +483,15 @@ class AppCoordinator(QObject):
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
-        logger.info("App start view=%s", decide_start_view(config))
+        app = QApplication.instance()
+        app_log_service = getattr(app, "_app_log_service", None) if app is not None else None
+        if app_log_service is not None:
+            configure_logging("INFO", StructuredJsonlHandler(app_log_service))
+        logger.info(
+            "App start view=%s",
+            decide_start_view(config),
+            extra={"log_category": "app", "log_source": "app"},
+        )
         if decide_start_view(config) == "main":
             self._api_client = self._create_api_client(config)
             try:
@@ -1285,6 +1308,7 @@ class AppCoordinator(QObject):
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,
+            app_log_service=getattr(QApplication.instance(), "_app_log_service", None),
             save_config=lambda: self.repo.save_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,
@@ -1357,9 +1381,15 @@ class AppCoordinator(QObject):
                 config = live_epg_service.load_config()
                 if config.epg_url.strip() and is_refresh_stale(getattr(config, "last_refreshed_at", 0)):
                     live_epg_service.refresh()
-                    logger.info("Background refresh finished target=epg")
+                    logger.info(
+                        "Background refresh finished target=epg",
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
             except Exception:
-                logger.exception("Background refresh failed target=epg")
+                logger.exception(
+                    "Background refresh failed target=epg",
+                    extra={"log_category": "live", "log_source": "app"},
+                )
                 return
 
         def refresh_sources() -> None:
@@ -1371,9 +1401,17 @@ class AppCoordinator(QObject):
                     continue
                 try:
                     live_source_manager.refresh_source(source.id)
-                    logger.info("Background refresh finished target=live-source source_id=%s", source.id)
+                    logger.info(
+                        "Background refresh finished target=live-source source_id=%s",
+                        source.id,
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
                 except Exception:
-                    logger.exception("Background refresh failed target=live-source source_id=%s", source.id)
+                    logger.exception(
+                        "Background refresh failed target=live-source source_id=%s",
+                        source.id,
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
                     continue
 
         threading.Thread(target=refresh_epg, daemon=True).start()
