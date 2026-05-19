@@ -3942,6 +3942,165 @@ def test_advanced_settings_dialog_saves_episode_title_enhancement_checkbox(qtbot
     assert saved[-1].episode_title_enhancement_enabled is True
 
 
+def test_advanced_settings_dialog_adds_logs_tab_with_logging_toggle(qtbot) -> None:
+    from atv_player.log_store import AppLogFilter
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    class FakeService:
+        def load_records(self, *, limit: int, log_filter: AppLogFilter):
+            del limit, log_filter
+            return []
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(logging_enabled=False),
+        save_config=lambda: None,
+        app_log_service=FakeService(),
+    )
+    qtbot.addWidget(dialog)
+
+    tab_labels = [dialog.settings_tabs.tabText(index) for index in range(dialog.settings_tabs.count())]
+    assert "日志" in tab_labels
+    assert dialog.logging_enabled_checkbox.isChecked() is False
+    assert "仅可查看历史日志" in dialog.log_console.status_label.text()
+
+
+def test_advanced_settings_dialog_saves_logging_enabled_toggle(qtbot) -> None:
+    from atv_player.log_store import AppLogFilter
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    class FakeService:
+        def load_records(self, *, limit: int, log_filter: AppLogFilter):
+            del limit, log_filter
+            return []
+
+    saved: list[bool] = []
+    config = AppConfig(logging_enabled=True)
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.logging_enabled),
+        app_log_service=FakeService(),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.logging_enabled_checkbox.setChecked(False)
+    dialog.save_button.click()
+
+    assert config.logging_enabled is False
+    assert saved == [False]
+
+
+def test_log_console_widget_filters_and_shows_details(qtbot) -> None:
+    from atv_player.log_store import AppLogEvent
+    from atv_player.ui.log_console import LogConsoleWidget
+
+    class FakeService:
+        def __init__(self) -> None:
+            self.loaded_filters: list[tuple[int, str, str, str, str]] = []
+
+        def load_records(self, *, limit: int, log_filter):
+            self.loaded_filters.append((limit, log_filter.query, log_filter.source, log_filter.level, log_filter.category))
+            return [
+                AppLogEvent(
+                    timestamp="2026-05-19T12:00:00.000",
+                    level="ERROR",
+                    source="player",
+                    category="playback",
+                    message="播放失败: boom",
+                    module="atv_player.ui.player_window",
+                    vod_id="vod-1",
+                    vod_name="测试剧",
+                    episode_title="第1集",
+                    session_id="session-1",
+                    url_summary="https://media.example/1.m3u8",
+                )
+            ]
+
+        def export_records(self, records, target_path):
+            del records, target_path
+
+        def clear(self) -> None:
+            return None
+
+    service = FakeService()
+    widget = LogConsoleWidget(config=AppConfig(logging_enabled=True), save_config=lambda: None, app_log_service=service)
+    qtbot.addWidget(widget)
+
+    widget.search_edit.setText("测试剧")
+    widget.source_combo.setCurrentIndex(widget.source_combo.findData("player"))
+    widget.level_combo.setCurrentIndex(widget.level_combo.findData("ERROR"))
+    widget.category_combo.setCurrentIndex(widget.category_combo.findData("playback"))
+    widget.refresh_button.click()
+
+    assert service.loaded_filters[-1] == (2000, "测试剧", "player", "ERROR", "playback")
+    assert widget.log_table.rowCount() == 1
+
+    widget.log_table.selectRow(0)
+    qtbot.waitUntil(lambda: "播放失败: boom" in widget.detail_view.toPlainText())
+
+    detail_text = widget.detail_view.toPlainText()
+    assert "测试剧" in detail_text
+    assert "第1集" in detail_text
+    assert "https://media.example/1.m3u8" in detail_text
+
+
+def test_log_console_widget_exports_and_clears_filtered_records(qtbot, monkeypatch, tmp_path) -> None:
+    from atv_player.log_store import AppLogEvent
+    from atv_player.ui import log_console as module
+    from atv_player.ui.log_console import LogConsoleWidget
+
+    class FakeService:
+        def __init__(self) -> None:
+            self.records = [
+                AppLogEvent(
+                    timestamp="2026-05-19T12:00:00.000",
+                    level="ERROR",
+                    source="player",
+                    category="playback",
+                    message="播放失败: boom",
+                    module="atv_player.ui.player_window",
+                )
+            ]
+            self.exported: list[tuple[list[object], str]] = []
+            self.clear_calls = 0
+
+        def load_records(self, *, limit: int, log_filter):
+            del limit, log_filter
+            return list(self.records)
+
+        def export_records(self, records, target_path) -> None:
+            self.exported.append((list(records), str(target_path)))
+            target_path.write_text(records[0].message, encoding="utf-8")
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+            self.records = []
+
+    export_path = tmp_path / "logs-export.log"
+    monkeypatch.setattr(
+        module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(export_path), "Log Files (*.log)"),
+    )
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: module.QMessageBox.StandardButton.Yes,
+    )
+    service = FakeService()
+    widget = LogConsoleWidget(config=AppConfig(), save_config=lambda: None, app_log_service=service)
+    qtbot.addWidget(widget)
+
+    widget.export_button.click()
+
+    assert service.exported == [([service.records[0]], str(export_path))]
+    assert export_path.read_text(encoding="utf-8") == "播放失败: boom"
+
+    widget.clear_button.click()
+
+    assert service.clear_calls == 1
+    assert widget.log_table.rowCount() == 0
+
+
 def test_history_page_search_styles_follow_resolved_dark_theme(qtbot) -> None:
     from PySide6.QtWidgets import QApplication
 
