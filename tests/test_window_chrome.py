@@ -19,6 +19,12 @@ class DemoDialog(ThemedDialogBase):
         self.content_layout().addWidget(QLabel("body", self.content_widget()))
 
 
+class FixedSizeDemoDialog(ThemedDialogBase):
+    def __init__(self) -> None:
+        super().__init__(title="Fixed Demo Dialog", resizable=False)
+        self.content_layout().addWidget(QLabel("body", self.content_widget()))
+
+
 class ActionWindow(ThemedWidgetWindowBase):
     def __init__(self) -> None:
         super().__init__(title="Action Window", allow_minimize=True, allow_maximize=True, resizable=True)
@@ -62,8 +68,15 @@ def test_themed_widget_window_can_enable_resize_support(qtbot) -> None:
     assert window.is_window_resizable() is True
 
 
-def test_themed_dialog_keeps_resize_support_disabled(qtbot) -> None:
+def test_themed_dialog_defaults_to_resize_support(qtbot) -> None:
     dialog = DemoDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.is_window_resizable() is True
+
+
+def test_themed_dialog_can_disable_resize_support_explicitly(qtbot) -> None:
+    dialog = FixedSizeDemoDialog()
     qtbot.addWidget(dialog)
 
     assert dialog.is_window_resizable() is False
