@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 import logging
 import re
@@ -8,6 +7,7 @@ import re
 logger = logging.getLogger(__name__)
 
 from atv_player.episode_titles import extract_season_number
+from atv_player.metadata.async_runner import run_provider_searches
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
@@ -201,6 +201,17 @@ class MetadataScrapeService:
             return True
         return query_kind == match_kind
 
+    @staticmethod
+    def _provider_search_cache_key(provider: object, query: MetadataQuery) -> tuple[str, str]:
+        cache_title = query.title
+        cache_year = query.year
+        search_cache_key = getattr(provider, "search_cache_key", None)
+        if callable(search_cache_key):
+            provider_cache_key = search_cache_key(query)
+            if provider_cache_key is not None:
+                cache_title, cache_year = provider_cache_key
+        return cache_title, cache_year
+
     def _hydrate_tmdb_episode_candidate(self, vod: VodItem, candidate: object) -> object:
         provider = str(getattr(candidate, "provider", "") or "").strip()
         if provider != "tmdb":
@@ -284,43 +295,79 @@ class MetadataScrapeService:
             extra={"log_category": "metadata", "log_source": "app"},
         )
 
-        def run(provider: object) -> MetadataScrapeGroup:
-            cache_title = query.title
-            cache_year = query.year
-            search_cache_key = getattr(provider, "search_cache_key", None)
-            if callable(search_cache_key):
-                provider_cache_key = search_cache_key(query)
-                if provider_cache_key is not None:
-                    cache_title, cache_year = provider_cache_key
-            try:
-                matches = self._cache.load_search(
-                    provider.name,
-                    cache_title,
-                    cache_year,
-                    ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
-                    empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+        cached_matches_by_provider: dict[int, list[MetadataMatch]] = {}
+        providers_needing_fetch: list[object] = []
+        cache_keys_by_provider: list[tuple[str, str]] = []
+        for provider in providers:
+            cache_title, cache_year = self._provider_search_cache_key(provider, query)
+            matches = self._cache.load_search(
+                provider.name,
+                cache_title,
+                cache_year,
+                ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
+                empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+            )
+            if matches is None:
+                if cache_only:
+                    cached_matches_by_provider[id(provider)] = []
+                    continue
+                providers_needing_fetch.append(provider)
+                cache_keys_by_provider.append((cache_title, cache_year))
+                continue
+            cached_matches_by_provider[id(provider)] = list(matches)
+
+        fetched_results = (
+            run_provider_searches(
+                providers_needing_fetch,
+                query,
+                max_concurrency=max(1, len(providers_needing_fetch)),
+            )
+            if providers_needing_fetch
+            else []
+        )
+        for provider, (cache_title, cache_year), result in zip(
+            providers_needing_fetch,
+            cache_keys_by_provider,
+            fetched_results,
+        ):
+            if result.error is None:
+                self._cache.save_search(provider.name, cache_title, cache_year, result.matches)
+
+        fetch_index = 0
+        groups: list[MetadataScrapeGroup] = []
+        for provider in providers:
+            cached_matches = cached_matches_by_provider.get(id(provider))
+            if cached_matches is not None:
+                matches = [match for match in cached_matches if self._is_manual_search_match_compatible(query, match)]
+                groups.append(
+                    MetadataScrapeGroup(
+                        provider=provider.name,
+                        provider_label=self._provider_label(provider.name),
+                        items=[self._candidate_from_match(match) for match in matches],
+                    )
                 )
-                if matches is None and cache_only:
-                    matches = []
-                elif matches is None:
-                    matches = provider.search(query)
-                    self._cache.save_search(provider.name, cache_title, cache_year, matches)
-            except Exception as exc:
-                return MetadataScrapeGroup(
+                continue
+
+            result = fetched_results[fetch_index]
+            fetch_index += 1
+            if result.error is not None:
+                groups.append(
+                    MetadataScrapeGroup(
+                        provider=provider.name,
+                        provider_label=self._provider_label(provider.name),
+                        error_text=str(result.error),
+                    )
+                )
+                continue
+            matches = [match for match in result.matches if self._is_manual_search_match_compatible(query, match)]
+            groups.append(
+                MetadataScrapeGroup(
                     provider=provider.name,
                     provider_label=self._provider_label(provider.name),
-                    error_text=str(exc),
+                    items=[self._candidate_from_match(match) for match in matches],
                 )
-            matches = [match for match in matches if self._is_manual_search_match_compatible(query, match)]
-            return MetadataScrapeGroup(
-                provider=provider.name,
-                provider_label=self._provider_label(provider.name),
-                items=[self._candidate_from_match(match) for match in matches],
             )
-
-        with ThreadPoolExecutor(max_workers=max(1, len(providers))) as executor:
-            futures = [executor.submit(run, provider) for provider in providers]
-        return [future.result() for future in futures]
+        return groups
 
     def build_episode_title_playlist(
         self,
