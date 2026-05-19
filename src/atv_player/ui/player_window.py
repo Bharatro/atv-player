@@ -6275,14 +6275,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_danmaku_source_search_row_heights()
         dialog.raise_()
         dialog.activateWindow()
+        has_overridden_query = current_item.danmaku_search_query_overridden and bool(
+            str(current_item.danmaku_search_query or "").strip()
+        )
+        needs_overridden_query_refresh = has_overridden_query and (
+            not str(current_item.danmaku_search_title or "").strip()
+            or not str(current_item.danmaku_search_episode or "").strip()
+        )
         if (
             not loaded_cached_sources
             and not current_item.danmaku_candidates
-            and not current_item.danmaku_search_query_overridden
-            and bool(str(current_item.danmaku_search_title or "").strip())
             and self.session is not None
             and self.session.danmaku_controller is not None
             and hasattr(self.session.danmaku_controller, "refresh_danmaku_sources")
+            and (
+                (
+                    not current_item.danmaku_search_query_overridden
+                    and bool(str(current_item.danmaku_search_title or "").strip())
+                )
+                or needs_overridden_query_refresh
+            )
         ):
             current_item.danmaku_status_text = (
                 f"搜索中（{self._danmaku_provider_label(current_item.danmaku_search_provider)}）..."
@@ -6293,8 +6305,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 error_prefix="弹幕源自动搜索失败",
                 task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
                     current_item,
-                    query_override=None,
-                    search_title_override=current_item.danmaku_search_title,
+                    query_override=current_item.danmaku_search_query if has_overridden_query else None,
+                    search_title_override=None if has_overridden_query else current_item.danmaku_search_title,
                     playlist=self.session.playlist,
                     force_refresh=True,
                     media_duration_seconds=media_duration_seconds,
