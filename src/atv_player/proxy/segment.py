@@ -40,6 +40,8 @@ class SegmentProxy:
                 waited = self._cache.wait_for_segment(cache_key, timeout=self._IN_FLIGHT_WAIT_TIMEOUT_SECONDS)
                 if waited is not None:
                     return waited
+                if not prefetch:
+                    self._cache.clear_in_flight(cache_key)
                 continue
             try:
                 response = self._get(

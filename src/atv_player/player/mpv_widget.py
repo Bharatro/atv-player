@@ -109,6 +109,7 @@ class MpvWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._player: Any | None = None
         self._video_picture_state = "idle"
+        self._video_output_ready = False
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
@@ -241,9 +242,13 @@ class MpvWidget(QWidget):
             has_video_track = any(isinstance(track, dict) and track.get("type") == "video" for track in normalized)
             if has_video_track:
                 self._audio_cover_active = False
+                if self._video_output_ready:
+                    self._set_video_picture_state("visible")
                 return
             if self._audio_cover_active:
                 self._set_video_picture_state("audio-cover")
+                return
+            if self._video_output_ready:
                 return
             self._set_video_picture_state("unavailable")
 
@@ -252,6 +257,7 @@ class MpvWidget(QWidget):
 
         def handle_video_out_params(_property_name, params) -> None:
             if params:
+                self._video_output_ready = True
                 if self._audio_cover_active:
                     self._set_video_picture_state("audio-cover")
                     return
@@ -382,7 +388,7 @@ class MpvWidget(QWidget):
         mode: str = "replace",
         index: int | None = None,
         options: dict[str, str] | None = None,
-    ) -> None:
+    ) -> bool:
         normalized_options = dict(options or {})
         command_async = getattr(player, "command_async", None)
         if callable(command_async):
@@ -395,11 +401,12 @@ class MpvWidget(QWidget):
             elif encoded_options:
                 command_args.append(encoded_options)
             command_async("loadfile", *command_args)
-            return
+            return True
         if index is not None:
             player.loadfile(url, mode, index, **normalized_options)
-            return
+            return False
         player.loadfile(url, mode, **normalized_options)
+        return False
 
     def _player_property(self, name: str, default: object | None = None) -> object | None:
         if self._player is None:
@@ -503,6 +510,7 @@ class MpvWidget(QWidget):
             ytdl_format: str = "",
     ) -> None:
         self._set_video_picture_state("loading")
+        self._video_output_ready = False
         self._audio_cover_active = False
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
@@ -516,6 +524,7 @@ class MpvWidget(QWidget):
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
         can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
+        used_async_load = False
         try:
             self._apply_http_header_fields(player, header_fields)
             profile_name = self._apply_stream_profile(
@@ -536,7 +545,7 @@ class MpvWidget(QWidget):
                 bool(header_fields),
             )
             if poster_image_path and can_loadfile:
-                self._load_media(
+                used_async_load = self._load_media(
                     player,
                     url,
                     start_seconds,
@@ -544,21 +553,34 @@ class MpvWidget(QWidget):
                         **loadfile_options,
                         "cover_art_files": poster_image_path,
                         "audio_display": "external-first",
+                        **({"pause": "yes"} if pause else {}),
                     },
                 )
             elif poster_image_path:
-                self._load_media(player, url, start_seconds, loadfile_options)
+                used_async_load = self._load_media(player, url, start_seconds, loadfile_options)
                 self.attach_audio_cover(poster_image_path)
             elif start_seconds > 0 and can_loadfile:
-                self._load_player_media(
+                used_async_load = self._load_player_media(
                     player,
                     url,
-                    options={**loadfile_options, "start": str(start_seconds)},
+                    options={
+                        **loadfile_options,
+                        "start": str(start_seconds),
+                        **({"pause": "yes"} if pause else {}),
+                    },
                 )
             elif audio_files and can_loadfile:
-                self._load_player_media(player, url, options=loadfile_options)
+                used_async_load = self._load_player_media(
+                    player,
+                    url,
+                    options={**loadfile_options, **({"pause": "yes"} if pause else {})},
+                )
             elif (header_fields or loadfile_options) and can_loadfile:
-                self._load_player_media(player, url, options=loadfile_options)
+                used_async_load = self._load_player_media(
+                    player,
+                    url,
+                    options={**loadfile_options, **({"pause": "yes"} if pause else {})},
+                )
             else:
                 player.play(url)
             self._attach_external_audio(player, audio_files)
@@ -587,7 +609,7 @@ class MpvWidget(QWidget):
                 )
                 can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
                 if poster_image_path and can_loadfile:
-                    self._load_media(
+                    used_async_load = self._load_media(
                         player,
                         url,
                         start_seconds,
@@ -595,27 +617,41 @@ class MpvWidget(QWidget):
                             **loadfile_options,
                             "cover_art_files": poster_image_path,
                             "audio_display": "external-first",
+                            **({"pause": "yes"} if pause else {}),
                         },
                     )
                 elif poster_image_path:
-                    self._load_media(player, url, start_seconds, loadfile_options)
+                    used_async_load = self._load_media(player, url, start_seconds, loadfile_options)
                     self.attach_audio_cover(poster_image_path)
                 elif start_seconds > 0 and can_loadfile:
-                    self._load_player_media(
+                    used_async_load = self._load_player_media(
                         player,
                         url,
-                        options={**loadfile_options, "start": str(start_seconds)},
+                        options={
+                            **loadfile_options,
+                            "start": str(start_seconds),
+                            **({"pause": "yes"} if pause else {}),
+                        },
                     )
                 elif audio_files and can_loadfile:
-                    self._load_player_media(player, url, options=loadfile_options)
+                    used_async_load = self._load_player_media(
+                        player,
+                        url,
+                        options={**loadfile_options, **({"pause": "yes"} if pause else {})},
+                    )
                 elif (header_fields or loadfile_options) and can_loadfile:
-                    self._load_player_media(player, url, options=loadfile_options)
+                    used_async_load = self._load_player_media(
+                        player,
+                        url,
+                        options={**loadfile_options, **({"pause": "yes"} if pause else {})},
+                    )
                 else:
                     player.play(url)
                 self._attach_external_audio(player, audio_files)
             else:
                 raise
-        player.pause = pause
+        if not used_async_load:
+            player.pause = pause
 
     def _summarize_media_url(self, url: str) -> str:
         parsed = urlparse(url or "")
@@ -626,19 +662,18 @@ class MpvWidget(QWidget):
             path = f"...{path[-96:]}"
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
-    def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> None:
+    def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> bool:
         can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
         if start_seconds > 0 and can_loadfile:
-            self._load_player_media(
+            return self._load_player_media(
                 player,
                 url,
                 options={**loadfile_options, "start": str(start_seconds)},
             )
-            return
         if loadfile_options and can_loadfile:
-            self._load_player_media(player, url, options=loadfile_options)
-            return
+            return self._load_player_media(player, url, options=loadfile_options)
         player.play(url)
+        return False
 
     def _attach_external_audio(self, player: Any, audio_files: str) -> None:
         if not audio_files:

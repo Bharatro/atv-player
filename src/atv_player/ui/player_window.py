@@ -2019,19 +2019,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if 0 <= self.current_index < len(session.playlist)
             else ""
         )
-        logger.info(
-            (
-                "PlayerWindow open session vod_id=%s start_index=%s playlist_index=%s "
-                "source_group_index=%s source_index=%s start_title=%s paused=%s"
-            ),
-            session.vod.vod_id,
-            session.start_index,
-            session.playlist_index,
-            session.source_group_index,
-            session.source_index,
-            current_title,
-            start_paused,
-        )
         self.playlist_title_mode = "episode"
         self._install_danmaku_log_handler(session)
         self._maybe_restore_cached_danmaku_for_current_item()
@@ -2086,26 +2073,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         if self.session.playback_loader is not None and not allow_with_playback_loader:
-            logger.info(
-                "Skip cached danmaku restore during open because playback_loader is active index=%s title=%s",
-                self.current_index,
-                self.session.playlist[self.current_index].title if 0 <= self.current_index < len(self.session.playlist) else "",
-            )
             return
         if not (0 <= self.current_index < len(self.session.playlist)):
             return
         current_item = self.session.playlist[self.current_index]
         if not str(current_item.url or "").strip():
-            logger.info("Skip cached danmaku restore because current item has no url index=%s title=%s", self.current_index, current_item.title)
             return
         if current_item.danmaku_xml or current_item.danmaku_pending:
-            logger.info(
-                "Skip cached danmaku restore because danmaku already present index=%s title=%s has_xml=%s pending=%s",
-                self.current_index,
-                current_item.title,
-                bool(current_item.danmaku_xml),
-                current_item.danmaku_pending,
-            )
             return
         controller = getattr(self.session, "danmaku_controller", None)
         if controller is None:
@@ -2124,25 +2098,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         except TypeError:
             restored = bool(load_cached(current_item))
-        logger.info(
-            "Attempt cached danmaku restore index=%s title=%s restored=%s selected_url=%s",
-            self.current_index,
-            current_item.title,
-            restored,
-            current_item.selected_danmaku_url,
-        )
         if not restored:
             return
         selected_url = str(current_item.selected_danmaku_url or "").strip()
         if not selected_url or current_item.danmaku_xml or current_item.danmaku_pending:
-            logger.info(
-                "Skip cached danmaku download after restore index=%s title=%s selected_url=%s has_xml=%s pending=%s",
-                self.current_index,
-                current_item.title,
-                selected_url,
-                bool(current_item.danmaku_xml),
-                current_item.danmaku_pending,
-            )
             return
         self._start_danmaku_source_task(
             current_item,
@@ -2190,12 +2149,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._render_detail_actions()
             return
         replacement = list(load_result.replacement_playlist)
-        logger.info(
-            "Apply playback loader replacement old_index=%s replacement_size=%s replacement_start_index=%s",
-            self.current_index,
-            len(replacement),
-            load_result.replacement_start_index,
-        )
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
@@ -2318,17 +2271,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         else:
             effective_start_seconds = self.opening_spin.value()
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
-        logger.info(
-            "PlayerWindow start playback index=%s quality=%s ytdl_format=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
-            self.current_index,
-            current_item.selected_playback_quality_id,
-            current_item.ytdl_format,
-            _summarize_media_url(current_item.url),
-            _summarize_media_url(current_item.audio_url),
-            effective_start_seconds,
-            pause,
-            len(current_item.external_subtitles),
-        )
         self._video_load(
             current_item.url,
             pause=pause,
@@ -2343,13 +2285,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._apply_muted_state()
-        self._refresh_subtitle_state()
+        if self._uses_event_driven_track_refresh():
+            self._reset_subtitle_combo()
+        else:
+            self._refresh_subtitle_state()
         self._schedule_followup_subtitle_refresh_if_needed(current_item)
-        self._refresh_audio_state()
+        if self._uses_event_driven_track_refresh():
+            self._reset_audio_combo()
+        else:
+            self._refresh_audio_state()
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
         if self.session is not None:
             self.controller.on_item_started(self.session, self.current_index)
+
+    def _uses_event_driven_track_refresh(self) -> bool:
+        return self.video is self.video_widget
 
     def _schedule_followup_subtitle_refresh_if_needed(
         self,
@@ -3225,19 +3176,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_detail_fields()
         self._refresh_window_title()
         self._refresh_parse_combo_enabled_state()
-        logger.info(
-            (
-                "Playback loader succeeded request_id=%s hydrate_only=%s current_index=%s "
-                "title=%s has_url=%s has_danmaku=%s pending_danmaku=%s"
-            ),
-            request_id,
-            pending_loader.hydrate_only,
-            self.current_index,
-            self.session.playlist[self.current_index].title if self.session and 0 <= self.current_index < len(self.session.playlist) else "",
-            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].url),
-            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_xml),
-            bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_pending),
-        )
         if pending_loader.hydrate_only:
             self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
             self._configure_danmaku_for_current_item()
@@ -3517,7 +3455,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 lines.append(original)
         if not has_mapping:
             return
-        logger.info("剧集标题改写:\n%s", "\n".join(f"  {line}" for line in lines))
 
     def _handle_metadata_hydration_failed(self, request_id: int, message: str) -> None:
         if request_id != self._metadata_request_id:
@@ -7149,7 +7086,41 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.config.player_main_splitter_state = self._main_splitter_state_for_persistence()
         self._save_config()
 
+    def _widget_debug_name(self, widget: object) -> str:
+        if not isinstance(widget, QWidget):
+            return type(widget).__name__
+        object_name = widget.objectName().strip()
+        if object_name:
+            return f"{type(widget).__name__}#{object_name}"
+        return type(widget).__name__
+
+    def _enum_debug_value(self, value: object) -> object:
+        return getattr(value, "value", value)
+
+    def _log_ui_heartbeat(self) -> None:
+        if not self.isVisible():
+            self._last_ui_heartbeat_at = time.monotonic()
+            return
+        now = time.monotonic()
+        delta_ms = (now - self._last_ui_heartbeat_at) * 1000
+        self._last_ui_heartbeat_at = now
+        logger.info(
+            "PlayerWindow UI heartbeat visible=%s active=%s playing=%s fullscreen=%s delta_ms=%.1f",
+            self.isVisible(),
+            self.isActiveWindow(),
+            self.is_playing,
+            self.isFullScreen(),
+            delta_ms,
+        )
+
     def _quit_application(self) -> None:
+        logger.info(
+            "PlayerWindow quit requested visible=%s playing=%s active=%s session=%s",
+            self.isVisible(),
+            self.is_playing,
+            self.isActiveWindow(),
+            self.session is not None,
+        )
         self._quit_requested = True
         self._invalidate_play_item_resolution()
         self.report_progress(force_remote_report=True)
@@ -7231,6 +7202,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return False
 
     def _return_to_main(self) -> None:
+        logger.info(
+            "PlayerWindow return_to_main requested visible=%s playing=%s active=%s session=%s",
+            self.isVisible(),
+            self.is_playing,
+            self.isActiveWindow(),
+            self.session is not None,
+        )
         self._close_help_dialog()
         self._close_danmaku_source_dialog()
         self._close_danmaku_settings_dialog()
@@ -7275,6 +7253,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._sync_video_cursor_autohide()
 
     def _handle_escape(self) -> None:
+        logger.info(
+            "PlayerWindow handle_escape visible=%s fullscreen=%s playing=%s",
+            self.isVisible(),
+            self.isFullScreen(),
+            self.is_playing,
+        )
         if self._dismiss_escape_dialog():
             return
         if self.isFullScreen():
@@ -7283,6 +7267,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._return_to_main()
 
     def toggle_playback(self) -> None:
+        logger.info(
+            "PlayerWindow toggle_playback requested currently_playing=%s visible=%s active=%s",
+            self.is_playing,
+            self.isVisible(),
+            self.isActiveWindow(),
+        )
         if self.is_playing:
             self.video.pause()
         else:
@@ -7395,6 +7385,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if watched is details and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self._update_log_section_max_height()
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            if self._belongs_to_player_window(watched):
+                logger.info(
+                    "PlayerWindow input mouse_press target=%s button=%s local=(%.1f,%.1f) global=(%s,%s)",
+                    self._widget_debug_name(watched),
+                    self._enum_debug_value(event.button()),
+                    event.position().x(),
+                    event.position().y(),
+                    event.globalPosition().toPoint().x(),
+                    event.globalPosition().toPoint().y(),
+                )
             global_pos = event.globalPosition().toPoint()
             if (
                 event.button() == Qt.MouseButton.LeftButton
@@ -7402,6 +7402,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 and not self._video_context_menu_contains_global_pos(global_pos)
             ):
                 self._close_video_context_menu()
+        if event.type() == QEvent.Type.KeyPress and self._belongs_to_player_window(watched):
+            key_event = cast(QKeyEvent, event)
+            logger.info(
+                "PlayerWindow input key_press target=%s key=%s text=%r",
+                self._widget_debug_name(watched),
+                int(key_event.key()),
+                key_event.text(),
+            )
         if event.type() == QEvent.Type.ContextMenu and isinstance(event, QContextMenuEvent):
             if self._video_context_menu_contains_global_pos(event.globalPos()):
                 return False
