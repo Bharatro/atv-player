@@ -16987,10 +16987,10 @@ def test_player_window_close_during_app_quit_preserves_player_restore_state(qtbo
     assert saved["count"] >= 1
 
 
-def test_player_window_close_as_last_visible_window_returns_to_main(qtbot) -> None:
+def test_player_window_close_button_returns_to_main_instead_of_exiting(qtbot) -> None:
     saved = {"count": 0}
     emitted = {"count": 0}
-    config = AppConfig(last_active_window="player", last_player_paused=True)
+    config = AppConfig(last_active_window="player", last_player_paused=False)
     window = PlayerWindow(
         FakePlayerController(),
         config=config,
@@ -17004,9 +17004,15 @@ def test_player_window_close_as_last_visible_window_returns_to_main(qtbot) -> No
 
     window.close()
 
-    assert config.last_active_window == "player"
-    assert emitted["count"] == 0
+    assert window.isHidden() is True
+    assert window.session is not None
+    assert config.last_active_window == "main"
+    assert config.last_player_paused is True
+    assert emitted["count"] == 1
     assert saved["count"] >= 1
+
+    window._quit_requested = True
+    window.close()
 
 
 def visible_shortcut_help_dialogs() -> list[QDialog]:
@@ -17655,11 +17661,12 @@ def test_player_window_resume_from_main_reloads_active_danmaku(qtbot) -> None:
     assert window.video.load_calls == [("http://m/1.m3u8", 0), ("http://m/1.m3u8", 30)]
 
 
-def test_player_window_close_clears_session_for_future_restore(qtbot) -> None:
+def test_player_window_close_during_quit_clears_session_for_future_restore(qtbot) -> None:
     window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
     qtbot.addWidget(window)
     window.video = RecordingVideo()
     window.open_session(make_player_session(start_index=1))
+    window._quit_requested = True
 
     window.close()
 

@@ -7254,6 +7254,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log(f"播放失败: {exc}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._quit_requested and not self._app_quit_requested and self.session is not None:
+            event.ignore()
+            self._return_to_main()
+            return
         self._deactivate_async_guard()
         try:
             self._poster_request_id += 1
