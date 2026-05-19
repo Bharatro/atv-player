@@ -12,6 +12,7 @@ from atv_player.metadata.matching import score_match
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
 _RISK_CONTROL_CODES = {-352, -412}
+_ANIME_CATEGORY_TOKENS = ("动漫", "动画", "番剧", "国创", "anime")
 _BROWSER_HEADERS = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "referer": "https://www.bilibili.com/",
@@ -111,8 +112,14 @@ class BilibiliMetadataProvider:
     def __init__(self, get=httpx.get) -> None:
         self._get = get
 
-    def can_enrich(self, _context) -> bool:
-        return True
+    def can_enrich(self, context) -> bool:
+        query = context.to_query()
+        values = " ".join(
+            value.strip().lower()
+            for value in (str(query.category_name or ""), str(query.type_name or ""))
+            if value and value.strip()
+        )
+        return any(token in values for token in _ANIME_CATEGORY_TOKENS)
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         title = str(candidate.title or "").strip()
@@ -144,6 +151,15 @@ class BilibiliMetadataProvider:
         payload = dict(match.raw)
         if not payload:
             payload = self._search_detail_payload(match)
+        season_id = self._season_id_from_payload(payload)
+        if season_id:
+            detail = self._season_detail_payload(season_id)
+            sections = self._season_section_payload(season_id)
+            payload.update(self._merge_season_payload(payload, detail))
+            normalized_episodes = self._normalize_bilibili_episodes(detail, sections)
+            if normalized_episodes:
+                payload["episodes"] = normalized_episodes
+                match.raw["episodes"] = normalized_episodes
         genres = self._genres(payload)
         detail_fields: list[dict[str, object]] = []
         for label, value in (
@@ -159,7 +175,7 @@ class BilibiliMetadataProvider:
             provider_id=str(match.provider_id or "").strip(),
             title=str(payload.get("title") or match.title or "").strip(),
             year=str(payload.get("year") or match.year or "").strip(),
-            poster="",
+            poster=str(payload.get("poster") or "").strip(),
             overview=_collapse_text(payload.get("desc") or payload.get("overview")),
             rating="",
             genres=genres,
@@ -226,9 +242,103 @@ class BilibiliMetadataProvider:
         normalized = dict(item)
         normalized["title"] = _strip_html(item.get("title") or item.get("org_title"))
         normalized["provider_id"] = self._provider_id(item)
+        normalized["season_id"] = self._season_id_from_payload(item)
         normalized["year"] = self._year_value(item)
         normalized["genres"] = self._genres(item)
         normalized["subtitle"] = self._subtitle_value(item)
+        return normalized
+
+    def _season_id_from_payload(self, payload: dict[str, object]) -> str:
+        for key in ("season_id", "pgc_season_id"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        provider_id = str(payload.get("provider_id") or payload.get("url") or "").strip()
+        match = re.search(r"/ss(\d+)", provider_id)
+        return match.group(1) if match else ""
+
+    def _season_detail_payload(self, season_id: str) -> dict[str, object]:
+        payload = self._request_json("https://api.bilibili.com/pgc/view/web/season", params={"season_id": season_id})
+        if payload.get("code") != 0:
+            raise RuntimeError(f"Bilibili season detail failed: {payload.get('code')}")
+        return dict(payload.get("result") or {})
+
+    def _season_section_payload(self, season_id: str) -> dict[str, object]:
+        payload = self._request_json("https://api.bilibili.com/pgc/web/season/section", params={"season_id": season_id})
+        if payload.get("code") != 0:
+            return {}
+        return dict(payload.get("result") or {})
+
+    def _merge_season_payload(self, current: dict[str, object], detail: dict[str, object]) -> dict[str, object]:
+        merged = dict(current)
+        title = str(detail.get("title") or "").strip()
+        if title:
+            merged["title"] = title
+        overview = _collapse_text(detail.get("evaluate") or detail.get("overview") or detail.get("desc"))
+        if overview:
+            merged["overview"] = overview
+        poster = str(detail.get("cover") or "").strip()
+        if poster:
+            merged["poster"] = poster
+        country = self._detail_areas(detail)
+        if country:
+            merged["areas"] = country
+        styles = self._detail_styles(detail)
+        if styles:
+            merged["genres"] = styles
+            merged["styles"] = styles
+        actors = _collapse_text(str(detail.get("actors") or "").replace("\n", " / "))
+        if actors:
+            merged["cv"] = actors
+        staff = _collapse_text(str(detail.get("staff") or "").replace("\n", " / "))
+        if staff:
+            merged["staff"] = staff
+        index_show = str((detail.get("new_ep") or {}).get("desc") or "").strip()
+        if index_show:
+            merged["index_show"] = index_show
+        season_type_name = str((detail.get("type") or {}).get("name") or detail.get("season_type_name") or "").strip()
+        if season_type_name:
+            merged["season_type_name"] = season_type_name
+        return merged
+
+    def _detail_areas(self, detail: dict[str, object]) -> str:
+        areas = detail.get("areas")
+        if not isinstance(areas, list):
+            return str(detail.get("areas") or "").strip()
+        names = [str(item.get("name") or "").strip() for item in areas if isinstance(item, dict)]
+        return " / ".join(name for name in names if name)
+
+    def _detail_styles(self, detail: dict[str, object]) -> list[str]:
+        styles = detail.get("styles")
+        if not isinstance(styles, list):
+            return []
+        return [str(item.get("name") or "").strip() for item in styles if isinstance(item, dict) and str(item.get("name") or "").strip()]
+
+    def _normalize_bilibili_episodes(self, detail: dict[str, object], sections: dict[str, object]) -> list[dict[str, object]]:
+        main_section = sections.get("main_section") if isinstance(sections, dict) else {}
+        rows = []
+        if isinstance(main_section, dict):
+            rows = list(main_section.get("episodes") or [])
+        if not rows:
+            rows = list(detail.get("episodes") or [])
+        normalized: list[dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                episode_number = int(str(row.get("title") or "").strip())
+            except (TypeError, ValueError):
+                continue
+            normalized.append(
+                {
+                    "episode_number": episode_number,
+                    "title": str(row.get("title") or "").strip(),
+                    "long_title": str(row.get("long_title") or row.get("share_copy") or row.get("show_title") or "").strip(),
+                    "badge": str(row.get("badge") or "").strip(),
+                    "episode_type": "main",
+                    "sort": episode_number,
+                }
+            )
         return normalized
 
     def _provider_id(self, item: dict[str, object]) -> str:

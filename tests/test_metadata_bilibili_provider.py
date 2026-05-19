@@ -132,3 +132,98 @@ def test_bilibili_metadata_provider_get_detail_maps_minimal_metadata_and_omits_r
         {"label": "声优", "value": "少年秦牧：张若瑜"},
         {"label": "制作信息", "value": "总导演：沈乐平"},
     ]
+
+
+def test_bilibili_metadata_provider_can_enrich_only_anime_context() -> None:
+    provider = BilibiliMetadataProvider(get=lambda url, **kwargs: JsonResponse({"code": 0, "result": {}}))
+
+    anime = MetadataQuery(title="牧神记", category_name="动漫")
+    movie = MetadataQuery(title="长安的荔枝", category_name="电影")
+
+    class Ctx:
+        def __init__(self, query) -> None:
+            self._query = query
+
+        def to_query(self):
+            return self._query
+
+    assert provider.can_enrich(Ctx(anime)) is True
+    assert provider.can_enrich(Ctx(movie)) is False
+
+
+def test_bilibili_metadata_provider_get_detail_fetches_season_detail_and_normalizes_main_episodes() -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        calls.append(url)
+        if "pgc/view/web/season" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "season_id": 148433,
+                        "title": "凸变英雄X",
+                        "evaluate": "这是番剧详情简介",
+                        "cover": "https://i0.hdslb.com/bfs/bangumi/image/season.png",
+                        "areas": [{"name": "中国大陆"}],
+                        "styles": [{"name": "热血"}, {"name": "战斗"}],
+                        "stat": {"followers": 12345},
+                        "up_info": {},
+                        "publish": {"is_finish": 0},
+                        "new_ep": {"desc": "更新至第28话"},
+                        "actors": "声优A\n声优B",
+                        "staff": "导演A\n编剧B",
+                        "episodes": [
+                            {"title": "1", "long_title": "启程", "badge": "", "ep_id": 1},
+                            {"title": "28", "long_title": "答案", "badge": "", "ep_id": 28},
+                        ],
+                    },
+                }
+            )
+        if "pgc/web/season/section" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "main_section": {
+                            "episodes": [
+                                {"title": "1", "long_title": "启程", "badge": "", "ep_id": 1},
+                                {"title": "28", "long_title": "答案", "badge": "", "ep_id": 28},
+                            ]
+                        },
+                        "section": [
+                            {
+                                "title": "SP",
+                                "episodes": [
+                                    {"title": "SP", "long_title": "特别篇", "badge": "SP", "ep_id": 999}
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+        raise AssertionError(url)
+
+    provider = BilibiliMetadataProvider(get=fake_get)
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss148433",
+        title="凸变英雄X",
+        year="2025",
+        raw={"title": "凸变英雄X", "season_id": 148433, "season_type_name": "国创"},
+    )
+
+    record = provider.get_detail(match)
+
+    assert any("pgc/view/web/season" in url for url in calls)
+    assert any("pgc/web/season/section" in url for url in calls)
+    assert record.title == "凸变英雄X"
+    assert record.poster == "https://i0.hdslb.com/bfs/bangumi/image/season.png"
+    assert record.country == "中国大陆"
+    assert record.genres == ["热血", "战斗"]
+    assert record.overview == "这是番剧详情简介"
+    assert {"label": "更新状态", "value": "更新至第28话"} in record.detail_fields
+    assert match.raw["episodes"] == [
+        {"episode_number": 1, "title": "1", "long_title": "启程", "badge": "", "episode_type": "main", "sort": 1},
+        {"episode_number": 28, "title": "28", "long_title": "答案", "badge": "", "episode_type": "main", "sort": 28},
+    ]
