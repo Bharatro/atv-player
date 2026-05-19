@@ -521,6 +521,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             return
         self.show_items(items, total)
 
+    def invalidate_pending_item_requests(self) -> None:
+        self._items_request_id += 1
+
     def _handle_failed(self, message: str, request_id: int, request_kind: str) -> None:
         if request_kind == "categories" and request_id != self._categories_request_id:
             return

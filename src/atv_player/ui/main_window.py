@@ -3267,6 +3267,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         dialog.exec()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
+        page.invalidate_pending_item_requests()
         self._start_media_load(
             page,
             lambda: controller.load_folder_items(item.vod_id),
@@ -3282,6 +3283,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         kind: str,
         index: int,
     ) -> None:
+        page.invalidate_pending_item_requests()
         if kind == "folder":
             self._start_media_load(
                 page,
