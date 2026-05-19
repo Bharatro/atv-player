@@ -100,6 +100,7 @@ class SpiderPluginLoader:
             plugin_name or config.display_name or source_path.stem,
             config.source_type,
             search_enabled,
+            extra={"log_category": "plugin", "log_source": "app"},
         )
         return LoadedSpiderPlugin(
             config=updated_config,
@@ -178,7 +179,12 @@ class SpiderPluginLoader:
         if not force_refresh and config.cached_file_path:
             cached = Path(config.cached_file_path)
             if cached.is_file() and cached.stat().st_size > 0:
-                logger.info("Use cached spider plugin id=%s path=%s", config.id, cached)
+                logger.info(
+                    "Use cached spider plugin id=%s path=%s",
+                    config.id,
+                    cached,
+                    extra={"log_category": "plugin", "log_source": "app"},
+                )
                 return cached
         try:
             logger.info(
@@ -186,12 +192,18 @@ class SpiderPluginLoader:
                 config.id,
                 config.source_value,
                 force_refresh,
+                extra={"log_category": "plugin", "log_source": "app"},
             )
             source_text = self._resolve_remote_source_text(config.source_value)
             cache_path.write_text(source_text, encoding="utf-8")
             return cache_path
         except Exception:
             if cache_path.is_file() and cache_path.stat().st_size > 0:
-                logger.warning("Spider plugin refresh failed, fallback to cache id=%s path=%s", config.id, cache_path)
+                logger.warning(
+                    "Spider plugin refresh failed, fallback to cache id=%s path=%s",
+                    config.id,
+                    cache_path,
+                    extra={"log_category": "plugin", "log_source": "app"},
+                )
                 return cache_path
             raise

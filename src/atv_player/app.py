@@ -312,7 +312,11 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
-    logger.info("Application initialized data_dir=%s", data_dir)
+    logger.info(
+        "Application initialized data_dir=%s",
+        data_dir,
+        extra={"log_category": "app", "log_source": "app"},
+    )
     return app, repo
 
 
@@ -483,7 +487,11 @@ class AppCoordinator(QObject):
         app_log_service = getattr(app, "_app_log_service", None) if app is not None else None
         if app_log_service is not None:
             configure_logging("INFO", StructuredJsonlHandler(app_log_service))
-        logger.info("App start view=%s", decide_start_view(config))
+        logger.info(
+            "App start view=%s",
+            decide_start_view(config),
+            extra={"log_category": "app", "log_source": "app"},
+        )
         if decide_start_view(config) == "main":
             self._api_client = self._create_api_client(config)
             try:
@@ -1372,9 +1380,15 @@ class AppCoordinator(QObject):
                 config = live_epg_service.load_config()
                 if config.epg_url.strip() and is_refresh_stale(getattr(config, "last_refreshed_at", 0)):
                     live_epg_service.refresh()
-                    logger.info("Background refresh finished target=epg")
+                    logger.info(
+                        "Background refresh finished target=epg",
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
             except Exception:
-                logger.exception("Background refresh failed target=epg")
+                logger.exception(
+                    "Background refresh failed target=epg",
+                    extra={"log_category": "live", "log_source": "app"},
+                )
                 return
 
         def refresh_sources() -> None:
@@ -1386,9 +1400,17 @@ class AppCoordinator(QObject):
                     continue
                 try:
                     live_source_manager.refresh_source(source.id)
-                    logger.info("Background refresh finished target=live-source source_id=%s", source.id)
+                    logger.info(
+                        "Background refresh finished target=live-source source_id=%s",
+                        source.id,
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
                 except Exception:
-                    logger.exception("Background refresh failed target=live-source source_id=%s", source.id)
+                    logger.exception(
+                        "Background refresh failed target=live-source source_id=%s",
+                        source.id,
+                        extra={"log_category": "live", "log_source": "app"},
+                    )
                     continue
 
         threading.Thread(target=refresh_epg, daemon=True).start()

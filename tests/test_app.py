@@ -14,6 +14,8 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
+from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
@@ -6624,6 +6626,61 @@ def test_start_live_background_refresh_refreshes_stale_epg_and_non_manual_source
 
     assert epg_service.refresh_calls == 1
     assert live_source_manager.refresh_calls == [1, 2]
+
+
+def test_start_live_background_refresh_logs_failures_with_live_category(monkeypatch, caplog) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None):
+            del daemon
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    class FailingEpgService:
+        def load_config(self):
+            return type("Config", (), {"epg_url": "https://example.com/epg.xml", "last_refreshed_at": 12})()
+
+        def refresh(self) -> None:
+            raise RuntimeError("epg boom")
+
+    class FakeLiveSourceManager:
+        def list_sources(self):
+            return []
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr("atv_player.app.time.time", lambda: 1_713_171_000)
+    coordinator = AppCoordinator(FakeRepo())
+
+    with caplog.at_level(logging.ERROR):
+        coordinator._start_live_background_refresh(FakeLiveSourceManager(), FailingEpgService())
+
+    record = caplog.records[-1]
+    assert record.message == "Background refresh failed target=epg"
+    assert getattr(record, "log_category", "") == "live"
+
+
+def test_metadata_hydrator_logs_search_failures_with_metadata_category(tmp_path, caplog) -> None:
+    class FailingProvider:
+        name = "tmdb"
+
+        def search(self, query):
+            del query
+            raise RuntimeError("search boom")
+
+    hydrator = MetadataHydrator(cache=MetadataCache(tmp_path), providers=[FailingProvider()])
+
+    with caplog.at_level(logging.WARNING):
+        matches = hydrator._load_provider_matches(FailingProvider(), MetadataQuery(title="测试剧"))
+
+    assert matches == []
+    record = caplog.records[-1]
+    assert record.message == "Metadata provider search failed provider=tmdb"
+    assert getattr(record, "log_category", "") == "metadata"
 
 
 def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(

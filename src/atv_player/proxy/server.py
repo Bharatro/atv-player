@@ -285,6 +285,7 @@ class LocalHlsProxyServer:
                 "Local HLS proxy port busy, fallback to ephemeral port host=%s port=%s",
                 self.host,
                 self._preferred_port,
+                extra={"log_category": "network", "log_source": "app"},
             )
             self._server = ThreadingHTTPServer((self.host, 0), self._handler_type())
         self.port = int(self._server.server_address[1])
