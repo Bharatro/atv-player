@@ -348,12 +348,14 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
+        initial_config = self.repo.load_config()
         set_proxy_decider_loader(self._build_proxy_decider)
         set_spider_proxy_decider_loader(self._build_proxy_decider)
         self._m3u8_ad_filter = M3U8AdFilter(
             proxy_server=LocalHlsProxyServer(
                 get=self._proxy_http_get(),
                 stream=self._proxy_http_stream(),
+                segment_prefetch_size=initial_config.m3u_proxy_segment_prefetch_size,
             ),
             get=self._proxy_http_get(),
         )

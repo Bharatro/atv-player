@@ -4085,6 +4085,30 @@ def test_app_coordinator_passes_shared_m3u8_filter_into_main_window(monkeypatch)
     assert captured_filters[0] is coordinator._m3u8_ad_filter
 
 
+def test_app_coordinator_passes_saved_m3u_proxy_segment_prefetch_size_to_local_hls_proxy_server(monkeypatch) -> None:
+    captured: list[int] = []
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(m3u_proxy_segment_prefetch_size=7)
+
+    class DummyProxyServer:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs["segment_prefetch_size"])
+
+    class DummyFilter:
+        def __init__(self, proxy_server, get) -> None:
+            self.proxy_server = proxy_server
+            self.get = get
+
+    monkeypatch.setattr(app_module, "LocalHlsProxyServer", DummyProxyServer)
+    monkeypatch.setattr(app_module, "M3U8AdFilter", DummyFilter)
+
+    app_module.AppCoordinator(FakeRepo())
+
+    assert captured == [7]
+
+
 def test_app_coordinator_closes_m3u8_filter_when_shutting_down() -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
