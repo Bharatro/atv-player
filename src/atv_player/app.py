@@ -947,9 +947,8 @@ class AppCoordinator(QObject):
                 item.index = index
             return playlist
 
-        def _episode_title_cache_item_identity(item: PlayItem) -> tuple[str, str, str, str, str]:
+        def _episode_title_cache_item_identity(item: PlayItem) -> tuple[str, str, str, str]:
             return (
-                str(item.vod_id or "").strip(),
                 str(item.original_title or item.title or "").strip(),
                 str(item.path or "").strip(),
                 str(item.title or "").strip(),
@@ -984,6 +983,13 @@ class AppCoordinator(QObject):
                 ttl_seconds=_METADATA_DETAIL_CACHE_TTL_SECONDS,
             )
             if not isinstance(payload, Mapping):
+                logger.info(
+                    "Episode title enhancer final cache miss title=%s year=%s category=%s items=%s",
+                    str(getattr(session_vod, "vod_name", "") or "").strip(),
+                    str(getattr(session_vod, "vod_year", "") or "").strip(),
+                    str(getattr(session_vod, "category_name", "") or "").strip(),
+                    len(playlist),
+                )
                 return None
             titles_payload = payload.get("titles")
             order_payload = payload.get("order")
@@ -1006,6 +1012,13 @@ class AppCoordinator(QObject):
             restored = [seeded[index] for index in order]
             for index, item in enumerate(restored):
                 item.index = index
+            logger.info(
+                "Episode title enhancer final cache hit title=%s year=%s category=%s items=%s",
+                str(getattr(session_vod, "vod_name", "") or "").strip(),
+                str(getattr(session_vod, "vod_year", "") or "").strip(),
+                str(getattr(session_vod, "category_name", "") or "").strip(),
+                len(restored),
+            )
             return restored if playlist_has_title_variants(restored) else None
 
         def _save_episode_title_playlist_cache(

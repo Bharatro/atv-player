@@ -5513,7 +5513,17 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_final_titles_acros
     factory = coordinator._build_episode_title_enhancer_factory(object())
     caplog.set_level(logging.INFO)
 
-    for _ in range(2):
+    playlists = [
+        [
+            PlayItem(title="01.mp4", original_title="01.mp4", path="/show/01.mp4", vod_id="session-a-01", url="http://m/1.mp4"),
+            PlayItem(title="02.mp4", original_title="02.mp4", path="/show/02.mp4", vod_id="session-a-02", url="http://m/2.mp4"),
+        ],
+        [
+            PlayItem(title="01.mp4", original_title="01.mp4", path="/show/01.mp4", vod_id="session-b-01", url="http://m/1.mp4"),
+            PlayItem(title="02.mp4", original_title="02.mp4", path="/show/02.mp4", vod_id="session-b-02", url="http://m/2.mp4"),
+        ],
+    ]
+    for playlist in playlists:
         enhance = factory(
             source_kind="plugin",
             vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
@@ -5521,10 +5531,7 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_final_titles_acros
         updated = enhance(
             SimpleNamespace(
                 vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
-                playlist=[
-                    PlayItem(title="01.mp4", original_title="01.mp4", path="/show/01.mp4", url="http://m/1.mp4"),
-                    PlayItem(title="02.mp4", original_title="02.mp4", path="/show/02.mp4", url="http://m/2.mp4"),
-                ],
+                playlist=playlist,
             )
         )
         assert updated is not None
