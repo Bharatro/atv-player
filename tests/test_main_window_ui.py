@@ -3901,6 +3901,56 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_loads_m3u_proxy_segment_prefetch_size(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(m3u_proxy_segment_prefetch_size=4),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.m3u_proxy_segment_prefetch_size_edit.text() == "4"
+    assert dialog.m3u_proxy_segment_prefetch_size_edit.placeholderText() == "0 - 10"
+
+
+def test_advanced_settings_dialog_saves_m3u_proxy_segment_prefetch_size(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.m3u_proxy_segment_prefetch_size_edit.setText(" 0 ")
+    dialog._save()
+
+    assert config.m3u_proxy_segment_prefetch_size == 0
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_rejects_invalid_m3u_proxy_segment_prefetch_size(qtbot, monkeypatch) -> None:
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    messages: list[str] = []
+
+    def fake_warning(_parent, _title: str, text: str) -> int:
+        messages.append(text)
+        return 0
+
+    monkeypatch.setattr(module.QMessageBox, "warning", fake_warning)
+    saved: list[AppConfig] = []
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: saved.append(dialog._config))
+    qtbot.addWidget(dialog)
+
+    dialog.m3u_proxy_segment_prefetch_size_edit.setText("11")
+    dialog._save()
+
+    assert messages == ["m3u代理分片预取大小必须在 0 到 10 之间"]
+    assert saved == []
+
+
 def test_advanced_settings_dialog_rejects_invalid_extra_mpv_options(qtbot, monkeypatch) -> None:
     from atv_player.ui import advanced_settings_dialog as module
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog

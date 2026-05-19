@@ -102,6 +102,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_network_timeout_edit.setPlaceholderText("1 - 300")
         self.mpv_default_readahead_edit = QLineEdit()
         self.mpv_default_readahead_edit.setPlaceholderText("1 - 600")
+        self.m3u_proxy_segment_prefetch_size_edit = QLineEdit()
+        self.m3u_proxy_segment_prefetch_size_edit.setPlaceholderText("0 - 10")
         self.mpv_extra_options_edit = QPlainTextEdit()
         self.mpv_extra_options_edit.setPlaceholderText("一行一个 key=value，例如 cache-pause-wait=8")
         self.playback_scope_label = QLabel(
@@ -137,6 +139,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.mpv_network_timeout_edit.setText(str(config.mpv_network_timeout_seconds))
         self.mpv_default_readahead_edit.setText(str(config.mpv_default_readahead_secs))
+        self.m3u_proxy_segment_prefetch_size_edit.setText(str(config.m3u_proxy_segment_prefetch_size))
         self.mpv_extra_options_edit.setPlainText(config.mpv_extra_options)
 
         appearance_layout = QFormLayout()
@@ -176,6 +179,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow("解码模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
         playback_layout.addRow("普通流预读时长", self.mpv_default_readahead_edit)
+        playback_layout.addRow("m3u代理分片预取大小", self.m3u_proxy_segment_prefetch_size_edit)
         playback_layout.addRow("更多 MPV 配置", self.mpv_extra_options_edit)
         playback_layout.addRow("说明", self.playback_scope_label)
         self.playback_group.setLayout(playback_layout)
@@ -228,6 +232,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.mpv_cache_size_edit,
             self.mpv_network_timeout_edit,
             self.mpv_default_readahead_edit,
+            self.m3u_proxy_segment_prefetch_size_edit,
         ):
             edit.setStyleSheet(line_edit_qss)
             edit.setFixedHeight(42)
@@ -277,7 +282,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return mode, proxy_url, bypass_rules, proxy_rules
 
-    def _validated_playback_values(self) -> tuple[bool, str, int, str, int, int, str] | None:
+    def _validated_playback_values(self) -> tuple[bool, str, int, str, int, int, int, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
         if browser not in {"", "chrome", "edge", "firefox"}:
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
@@ -316,7 +321,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             minimum=1,
             maximum=600,
         )
-        if cache_size is None or timeout is None or readahead is None:
+        prefetch_size = parse_int(
+            self.m3u_proxy_segment_prefetch_size_edit.text(),
+            label="m3u代理分片预取大小",
+            minimum=0,
+            maximum=10,
+        )
+        if cache_size is None or timeout is None or readahead is None or prefetch_size is None:
             return None
 
         normalized_lines: list[str] = []
@@ -342,6 +353,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             str(self.mpv_hwdec_mode_combo.currentData() or "auto-safe"),
             timeout,
             readahead,
+            prefetch_size,
             "\n".join(normalized_lines),
         )
 
@@ -367,6 +379,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.mpv_hwdec_mode,
             self._config.mpv_network_timeout_seconds,
             self._config.mpv_default_readahead_secs,
+            self._config.m3u_proxy_segment_prefetch_size,
             self._config.mpv_extra_options,
         ) = playback_values
         self._save_config()
