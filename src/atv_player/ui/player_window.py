@@ -1368,7 +1368,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None or not self.session.playlist:
             return self._default_window_title()
         current_item = self.session.playlist[self.current_index]
-        parts = [self.session.vod.vod_name.strip(), current_item.title.strip()]
+        parts = [self.session.vod.vod_name.strip(), playlist_item_display_title(current_item, "episode").strip()]
         parts = [part for part in parts if part]
         if not parts:
             return self._default_window_title()
@@ -2296,7 +2296,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
-        self._append_log(f"当前播放: {current_item.title}")
+        self._append_log(f"当前播放: {playlist_item_display_title(current_item, 'episode')}")
         self._append_log(f"播放地址: {current_item.url}")
         if start_position_seconds > self.opening_spin.value():
             effective_start_seconds = start_position_seconds
@@ -3419,6 +3419,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_title_mode = "episode"
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._refresh_window_title()
         self._log_episode_title_mapping()
 
     def _log_episode_title_mapping(self) -> None:

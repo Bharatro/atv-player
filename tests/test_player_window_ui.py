@@ -13466,6 +13466,30 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert "当前播放: 第2集" in log_text
 
 
+def test_player_window_logs_rewritten_episode_title_for_current_playback(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="02.mp4",
+                original_title="02.mp4",
+                episode_display_title="第2集 星火初燃",
+                url="http://m/2.m3u8",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert "当前播放: 第2集 星火初燃" in window.log_view.toPlainText()
+
+
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -13545,6 +13569,23 @@ def test_player_window_refresh_button_restores_active_playback_title(qtbot) -> N
     window.refresh_button.click()
 
     assert window.windowTitle() == "Movie - Episode 2"
+
+
+def test_player_window_refresh_button_prefers_rewritten_episode_title(qtbot) -> None:
+    session = make_player_session(start_index=1)
+    session.playlist[1].episode_display_title = "第2集 星火初燃"
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window.toggle_playback()
+
+    assert window.windowTitle() == "alist-tvbox 播放器"
+
+    window.refresh_button.click()
+
+    assert window.windowTitle() == "Movie - 第2集 星火初燃"
 
 
 def test_player_window_refresh_button_reloads_auto_spider_subtitle(qtbot, monkeypatch) -> None:
@@ -15479,6 +15520,54 @@ def test_player_window_async_episode_title_enhancer_updates_playlist_labels_late
     qtbot.waitUntil(lambda: window.playlist_title_tabs.isHidden() is False, timeout=1000)
     assert window.playlist.item(0).text() == "第1集 星门初启"
     assert window.current_index == 0
+
+
+def test_player_window_async_episode_title_enhancer_refreshes_active_window_title(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: float) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv",
+                url="https://media.example/1.mp4",
+                vod_id="ep1",
+                original_title="S01E01.mkv",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=lambda current_session: [
+            PlayItem(
+                title=current_session.playlist[0].title,
+                url=current_session.playlist[0].url,
+                vod_id=current_session.playlist[0].vod_id,
+                original_title="S01E01.mkv",
+                episode_display_title="第1集 星门初启",
+                episode_title_source="tmdb",
+            )
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 星门初启", timeout=1000)
+    assert window.windowTitle() == "示例剧集 - 第1集 星门初启"
 
 
 def test_player_window_logs_episode_title_mapping_with_source(qtbot, monkeypatch) -> None:

@@ -584,6 +584,41 @@ def test_player_controller_reports_progress_to_plugin_local_saver_without_api_hi
     assert isinstance(saved_payloads[0]["createTime"], int)
 
 
+def test_player_controller_reports_rewritten_episode_title_in_history_payload() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie", vod_pic="poster-plugin")
+    playlist = [
+        PlayItem(
+            title="Episode 1",
+            episode_display_title="第1集 星门初启",
+            url="https://media.example/1.m3u8",
+            vod_id="ep-1",
+        )
+    ]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.5,
+        opening_seconds=15,
+        ending_seconds=30,
+        paused=False,
+    )
+
+    assert saved_payloads[0]["vodRemarks"] == "第1集 星门初启"
+
+
 def test_player_controller_skips_remote_progress_reporter_for_paused_periodic_updates() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)

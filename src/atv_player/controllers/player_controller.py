@@ -16,6 +16,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VodItem,
 )
+from atv_player.episode_titles import playlist_item_display_title
 from atv_player.player.resume import resolve_resume_index
 
 
@@ -355,7 +356,7 @@ class PlayerController:
             "key": session.vod.vod_id,
             "vodName": session.vod.vod_name,
             "vodPic": session.vod.vod_pic,
-            "vodRemarks": current_item.title,
+            "vodRemarks": playlist_item_display_title(current_item, "episode"),
             "episode": current_index,
             "episodeUrl": current_item.url,
             "position": position_ms,
