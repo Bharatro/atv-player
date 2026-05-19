@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.matching import normalize_match_title
@@ -106,6 +107,8 @@ def _title_quality_score(value: object) -> tuple[int, int]:
         score -= 1
     if re.search(r"[@_~`]", text):
         score -= 1
+    if any(unicodedata.category(char).startswith("S") for char in text):
+        score -= 2
     if _FOREIGN_SCRIPT_PATTERN.search(text):
         score -= 1
     return (score, -len(text))

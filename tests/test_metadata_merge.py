@@ -197,6 +197,15 @@ def test_merge_metadata_iqiyi_overrides_drive_folder_style_title_with_record_tit
     assert vod.vod_name == "纸上紫微"
 
 
+def test_merge_metadata_tmdb_overrides_decorated_title_with_record_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="大盗毒⭐")
+    record = MetadataRecord(provider="tmdb", provider_id="tv:317320", title="大道独行", year="2026")
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert vod.vod_name == "大道独行"
+
+
 def test_replace_metadata_record_strips_html_tags_from_detail_fields() -> None:
     vod = VodItem(vod_id="v1", vod_name="百炼成神")
     record = MetadataRecord(
