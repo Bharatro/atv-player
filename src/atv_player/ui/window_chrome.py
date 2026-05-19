@@ -397,13 +397,14 @@ class ThemedDialogBase(QDialog, _ThemedChromeMixin):
         title: str,
         parent: QWidget | None = None,
         allow_maximize: bool = False,
+        resizable: bool = True,
     ) -> None:
         super().__init__(parent)
         self._init_window_chrome(
             title=title,
             allow_minimize=False,
             allow_maximize=allow_maximize,
-            resizable=False,
+            resizable=resizable,
         )
         self._window_chrome_content_layout.setContentsMargins(12, 12, 12, 12)
         root_layout = QVBoxLayout(self)
