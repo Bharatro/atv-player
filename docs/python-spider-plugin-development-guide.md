@@ -250,7 +250,7 @@ searchContent(key, quick, pg)
             "vod_pic": "https://img.example/poster.jpg",
             "type_name": "剧情",
             "vod_year": "2026",
-            "vod_area": "日本",
+            "vod_area": "中国",
             "vod_director": "导演A",
             "vod_actor": "演员A / 演员B",
             "vod_content": "简介",
