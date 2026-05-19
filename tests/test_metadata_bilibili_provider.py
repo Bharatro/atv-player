@@ -227,3 +227,54 @@ def test_bilibili_metadata_provider_get_detail_fetches_season_detail_and_normali
         {"episode_number": 1, "title": "1", "long_title": "启程", "badge": "", "episode_type": "main", "sort": 1},
         {"episode_number": 28, "title": "28", "long_title": "答案", "badge": "", "episode_type": "main", "sort": 28},
     ]
+
+
+def test_bilibili_metadata_provider_get_detail_tolerates_integer_type_field_in_season_detail() -> None:
+    def fake_get(url: str, **kwargs):
+        if "pgc/view/web/season" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "season_id": 148433,
+                        "title": "凸变英雄X",
+                        "type": 1,
+                        "evaluate": "这是番剧详情简介",
+                        "cover": "https://i0.hdslb.com/bfs/bangumi/image/season.png",
+                        "areas": [{"name": "中国大陆"}],
+                        "styles": [{"name": "热血"}],
+                        "new_ep": {"desc": "更新至第28话"},
+                        "episodes": [
+                            {"title": "28", "long_title": "答案", "badge": "", "ep_id": 28},
+                        ],
+                    },
+                }
+            )
+        if "pgc/web/season/section" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "main_section": {
+                            "episodes": [
+                                {"title": "28", "long_title": "答案", "badge": "", "ep_id": 28},
+                            ]
+                        }
+                    },
+                }
+            )
+        raise AssertionError(url)
+
+    provider = BilibiliMetadataProvider(get=fake_get)
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss148433",
+        title="凸变英雄X",
+        year="2025",
+        raw={"title": "凸变英雄X", "season_id": 148433, "season_type_name": "国创"},
+    )
+
+    record = provider.get_detail(match)
+
+    assert record.title == "凸变英雄X"
+    assert {"label": "分区", "value": "国创"} in record.detail_fields

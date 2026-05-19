@@ -936,13 +936,20 @@ class AppCoordinator(QObject):
         def _search_metadata_candidates(session_vod: VodItem, provider_source_kind: str) -> list[object]:
             query = MetadataContext(vod=session_vod, source_kind=provider_source_kind).to_query()
             candidates: list[object] = []
-            for provider in (TencentMetadataProvider(), IqiyiMetadataProvider()):
+            for provider in (BilibiliMetadataProvider(), TencentMetadataProvider(), IqiyiMetadataProvider()):
                 try:
                     matches = provider.search(query)
                 except Exception:
                     continue
                 if matches:
-                    candidates.append(matches[0])
+                    candidate = matches[0]
+                    hydrate = getattr(provider, "_hydrate_episode_candidate", None)
+                    if callable(hydrate):
+                        try:
+                            candidate = hydrate(candidate)
+                        except Exception:
+                            pass
+                    candidates.append(candidate)
             return candidates
 
         def _count_mapped_episode_titles(playlist: list[PlayItem]) -> int:
@@ -954,6 +961,15 @@ class AppCoordinator(QObject):
                 and normalize_episode_title_text(str(item.original_title or ""))
                 != normalize_episode_title_text(str(item.episode_display_title or ""))
             )
+
+        def _episode_title_snapshot(playlist: list[PlayItem]) -> list[tuple[str, str]]:
+            return [
+                (
+                    str(item.episode_display_title or "").strip(),
+                    str(item.episode_title_source or "").strip(),
+                )
+                for item in playlist
+            ]
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
@@ -1120,7 +1136,10 @@ class AppCoordinator(QObject):
                         finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
                         if finalized is None:
                             continue
-                        if _count_mapped_episode_titles(finalized) > _count_mapped_episode_titles(playlist):
+                        if (
+                            _count_mapped_episode_titles(finalized) >= _count_mapped_episode_titles(playlist)
+                            and _episode_title_snapshot(finalized) != _episode_title_snapshot(playlist)
+                        ):
                             playlist = finalized
                             season_episode_pairs = updated_pairs
                 finalized_playlist = _finalize_episode_playlist(playlist, season_episode_pairs)

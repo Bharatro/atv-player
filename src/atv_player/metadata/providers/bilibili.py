@@ -312,7 +312,7 @@ class BilibiliMetadataProvider:
         index_show = str((detail.get("new_ep") or {}).get("desc") or "").strip()
         if index_show:
             merged["index_show"] = index_show
-        season_type_name = str((detail.get("type") or {}).get("name") or detail.get("season_type_name") or "").strip()
+        season_type_name = self._detail_season_type_name(detail)
         if season_type_name:
             merged["season_type_name"] = season_type_name
         return merged
@@ -329,6 +329,14 @@ class BilibiliMetadataProvider:
         if not isinstance(styles, list):
             return []
         return [str(item.get("name") or "").strip() for item in styles if isinstance(item, dict) and str(item.get("name") or "").strip()]
+
+    def _detail_season_type_name(self, detail: dict[str, object]) -> str:
+        raw_type = detail.get("type")
+        if isinstance(raw_type, dict):
+            name = str(raw_type.get("name") or "").strip()
+            if name:
+                return name
+        return str(detail.get("season_type_name") or "").strip()
 
     def _normalize_bilibili_episodes(self, detail: dict[str, object], sections: dict[str, object]) -> list[dict[str, object]]:
         main_section = sections.get("main_section") if isinstance(sections, dict) else {}

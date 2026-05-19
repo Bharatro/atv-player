@@ -4691,8 +4691,9 @@ def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episod
             )
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "超能路人甲"
@@ -4743,8 +4744,9 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_p
             )
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
             self.requested_seasons: list[int] = []
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
@@ -4802,8 +4804,9 @@ def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_s
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen["title"] = title
@@ -4847,8 +4850,9 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen["title"] = title
@@ -4892,8 +4896,9 @@ def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_
     calls: list[tuple[str, str]] = []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             calls.append((title, year))
@@ -4938,8 +4943,9 @@ def test_app_coordinator_episode_title_enhancer_falls_back_to_raw_season_title_f
     season_calls: list[tuple[str, int]] = []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             search_calls.append((title, year))
@@ -5037,8 +5043,9 @@ def test_app_coordinator_episode_title_enhancer_uses_provider_fallback_for_unres
             return []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             if title == "成何体统":
@@ -5115,8 +5122,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for
     seen: list[tuple[str, int]] = []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             if title == "成何体统":
@@ -5174,8 +5182,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_live_action_tmdb_match_f
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "棋魂"
@@ -5921,8 +5930,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iq
             ]
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
@@ -5952,6 +5962,105 @@ def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iq
     assert updated is not None
     assert updated[0].episode_title_source == "tmdb"
     assert updated[0].episode_display_title == "第1集 TMDB标题"
+
+
+def test_app_coordinator_episode_title_enhancer_prefers_confirmed_bilibili_over_tmdb_when_mapping_count_is_equal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+    class EmptyIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+    class FakeBilibiliProvider:
+        name = "bilibili"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="bilibili",
+                    provider_id="https://www.bilibili.com/bangumi/play/ss148433",
+                    title=candidate.title,
+                    year=candidate.year,
+                    raw={"season_id": 148433, "season_type_name": "国创"},
+                )
+            ]
+
+        def _hydrate_episode_candidate(self, candidate):
+            return candidate.__class__(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                raw={
+                    **candidate.raw,
+                    "episodes": [
+                        {"episode_number": 1, "long_title": "来世，你可以找我报仇", "episode_type": "main", "sort": 1},
+                        {"episode_number": 28, "long_title": "答案", "episode_type": "main", "sort": 28},
+                    ],
+                },
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 315088, "name": title, "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "来世，你可以找我报仇"},
+                    {"episode_number": 28, "name": "第 28 集"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", EmptyIqiyiProvider)
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", FakeBilibiliProvider)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="凸变英雄X", vod_year="2025", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="凸变英雄X", vod_year="2025", category_name="动漫"),
+            playlist=[
+                PlayItem(title="S01E01.mkv", url="http://m/1.mp4", original_title="S01E01.mkv"),
+                PlayItem(title="S01E28.mkv", url="http://m/28.mp4", original_title="S01E28.mkv"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bilibili"
+    assert updated[0].episode_display_title == "第1集 来世，你可以找我报仇"
+    assert updated[1].episode_title_source == "bilibili"
+    assert updated[1].episode_display_title == "第28集 答案"
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tmp_path, monkeypatch) -> None:
@@ -5992,8 +6101,9 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tm
             ]
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
@@ -6055,8 +6165,9 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_404_to_tenc
             return []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             return [{"id": 233295, "name": title, "first_air_date": "2026-01-01"}]
