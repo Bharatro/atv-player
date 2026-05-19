@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from atv_player.metadata.cache import MetadataCache
@@ -424,9 +425,16 @@ def test_metadata_scrape_service_auto_search_prefers_bilibili_over_tmdb_tencent_
                 provider_id="https://www.bilibili.com/bangumi/play/ss45969",
                 title="牧神记",
                 year="2024",
-                raw={"eps": [{"title": "1", "index_title": "1", "long_title": "天黑别出门"}]},
+                raw={"season_id": 45969, "season_type_name": "国创"},
             )
         ],
+    )
+    bilibili._hydrate_episode_candidate = lambda candidate: replace(
+        candidate,
+        raw={
+            **candidate.raw,
+            "episodes": [{"episode_number": 1, "long_title": "天黑别出门", "episode_type": "main", "sort": 1}],
+        },
     )
     tencent = FakeProvider(
         "tencent",
@@ -474,6 +482,84 @@ def test_metadata_scrape_service_auto_search_prefers_bilibili_over_tmdb_tencent_
     assert updated is not None
     assert updated[0].episode_title_source == "bilibili"
     assert updated[0].episode_display_title == "第1集 天黑别出门"
+
+
+def test_metadata_scrape_service_auto_search_prefers_confirmed_bilibili_over_tmdb(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili = FakeProvider(
+        "bilibili",
+        matches=[
+            MetadataMatch(
+                provider="bilibili",
+                provider_id="https://www.bilibili.com/bangumi/play/ss148433",
+                title="凸变英雄X",
+                year="2025",
+                raw={"season_id": 148433, "season_type_name": "国创"},
+            )
+        ],
+    )
+    bilibili._hydrate_episode_candidate = lambda candidate: replace(
+        candidate,
+        raw={
+            **candidate.raw,
+            "episodes": [{"episode_number": 28, "long_title": "答案", "episode_type": "main", "sort": 28}],
+        },
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42:season:1", title="凸变英雄X", year="2025")],
+    )
+    tmdb._client = FakeTMDBClient([{"episode_number": 28, "name": ""}])
+    service = MetadataScrapeService(cache=cache, providers=[bilibili, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="凸变英雄X", vod_year="2025", category_name="动漫"),
+        [PlayItem(title="28.mp4", original_title="28.mp4", url="http://m/28.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bilibili"
+    assert updated[0].episode_display_title == "第28集 答案"
+
+
+def test_metadata_scrape_service_auto_search_falls_back_to_tmdb_when_bilibili_candidate_is_unconfirmed(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili = FakeProvider(
+        "bilibili",
+        matches=[
+            MetadataMatch(
+                provider="bilibili",
+                provider_id="https://www.bilibili.com/bangumi/play/ss148433",
+                title="凸变英雄X",
+                year="2025",
+                raw={"season_type_name": "国创", "eps": [{"title": "28", "long_title": "摘要标题"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:315088:season:1",
+                title="凸变英雄X",
+                year="2025",
+                raw={"episodes": [{"episode_number": 28, "name": "TMDB回退标题"}]},
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[bilibili, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="凸变英雄X", vod_year="2025", category_name="动漫"),
+        [PlayItem(title="28.mp4", original_title="28.mp4", url="http://m/28.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tmdb"
+    assert updated[0].episode_display_title == "第28集 TMDB回退标题"
 
 
 def test_metadata_scrape_service_auto_search_prefers_bangumi_over_bilibili_tmdb_tencent_and_iqiyi(tmp_path: Path) -> None:

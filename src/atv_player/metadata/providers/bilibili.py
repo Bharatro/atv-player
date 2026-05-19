@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import html
 import re
@@ -182,6 +183,21 @@ class BilibiliMetadataProvider:
             country=str(payload.get("areas") or payload.get("country") or "").strip(),
             detail_fields=detail_fields,
         )
+
+    def _hydrate_episode_candidate(self, candidate):
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        season_id = self._season_id_from_payload(raw)
+        if not season_id:
+            return candidate
+        detail = self._season_detail_payload(season_id)
+        sections = self._season_section_payload(season_id)
+        normalized_episodes = self._normalize_bilibili_episodes(detail, sections)
+        if not normalized_episodes:
+            return candidate
+        raw.update(self._merge_season_payload(raw, detail))
+        raw["season_id"] = season_id
+        raw["episodes"] = normalized_episodes
+        return replace(candidate, raw=raw)
 
     def _search_detail_payload(self, match: MetadataMatch) -> dict[str, object]:
         payload = self._search_payload(str(match.title or "").strip())

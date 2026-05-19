@@ -271,6 +271,29 @@ class MetadataScrapeService:
             return replace(candidate, raw=raw)
         return candidate
 
+    def _hydrate_bilibili_episode_candidate(self, candidate: object) -> object:
+        provider = str(getattr(candidate, "provider", "") or "").strip()
+        if provider != "bilibili":
+            return candidate
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        episodes = raw.get("episodes")
+        if isinstance(episodes, list) and episodes and str(raw.get("season_id") or "").strip():
+            return candidate
+        bilibili_provider = self._providers_by_name.get("bilibili")
+        hydrate = getattr(bilibili_provider, "_hydrate_episode_candidate", None)
+        if not callable(hydrate):
+            return candidate
+        try:
+            return hydrate(candidate)
+        except Exception:
+            logger.debug(
+                "Skip Bilibili episode candidate hydration title=%s",
+                str(getattr(candidate, "title", "") or "").strip(),
+                exc_info=True,
+                extra={"log_category": "metadata", "log_source": "app"},
+            )
+            return candidate
+
     def search(
         self,
         query: MetadataQuery,
@@ -373,7 +396,8 @@ class MetadataScrapeService:
         ordered_candidates: list[object] = []
         if preferred_candidate is not None:
             enriched = self._hydrate_tmdb_episode_candidate(vod, preferred_candidate)
-            ordered_candidates.append(self._hydrate_bangumi_episode_candidate(enriched))
+            enriched = self._hydrate_bangumi_episode_candidate(enriched)
+            ordered_candidates.append(self._hydrate_bilibili_episode_candidate(enriched))
         query = MetadataQuery(
             title=str(vod.vod_name or "").strip(),
             year=str(vod.vod_year or "").strip(),
@@ -391,7 +415,8 @@ class MetadataScrapeService:
                 continue
             if matches:
                 enriched = self._hydrate_tmdb_episode_candidate(vod, matches[0])
-                ordered_candidates.append(self._hydrate_bangumi_episode_candidate(enriched))
+                enriched = self._hydrate_bangumi_episode_candidate(enriched)
+                ordered_candidates.append(self._hydrate_bilibili_episode_candidate(enriched))
         for candidate in ordered_candidates:
             updated = build_provider_episode_playlist(
                 vod,
