@@ -1068,10 +1068,14 @@ class SpiderPluginController:
         detail: VodItem,
         play_source: str,
         media_title: str = "",
+        source_item: PlayItem | None = None,
     ) -> list[PlayItem]:
         playlist = build_detail_playlist(detail)
         resolved_media_title = media_title.strip() or detail.vod_name
-        return seed_original_titles(_mark_short_bare_numeric_playlist([
+        source_episode = ""
+        if source_item is not None:
+            source_episode = source_item.danmaku_search_episode.strip() or _extract_episode_label(source_item).strip()
+        replacement_playlist = seed_original_titles(_mark_short_bare_numeric_playlist([
             PlayItem(
                 title=item.title,
                 url=item.url,
@@ -1088,6 +1092,16 @@ class SpiderPluginController:
             for index, item in enumerate(playlist)
             if item.url or item.vod_id
         ]))
+        for item in replacement_playlist:
+            item.danmaku_search_title = _normalize_default_danmaku_search_title(item.media_title) or (
+                _normalize_default_danmaku_search_title(item.title)
+            )
+            item.danmaku_search_episode = source_episode or _extract_episode_label(item, replacement_playlist)
+            item.danmaku_search_query = _compose_danmaku_search_query(
+                item.danmaku_search_title,
+                item.danmaku_search_episode,
+            )
+        return replacement_playlist
 
     def _apply_single_offline_download_item(self, current_item: PlayItem, replacement: PlayItem) -> None:
         current_item.vod_id = replacement.vod_id
@@ -1834,6 +1848,7 @@ class SpiderPluginController:
                 detail,
                 item.play_source,
                 media_title=item.media_title,
+                source_item=item,
             )
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
@@ -1919,6 +1934,7 @@ class SpiderPluginController:
                 detail,
                 item.play_source,
                 media_title=item.media_title,
+                source_item=item,
             )
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
