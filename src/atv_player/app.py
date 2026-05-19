@@ -744,7 +744,19 @@ class AppCoordinator(QObject):
                 empty_ttl_seconds=_METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS,
             )
             if isinstance(payload, list):
-                return [dict(item) for item in payload if isinstance(item, Mapping)]
+                results = [dict(item) for item in payload if isinstance(item, Mapping)]
+                logger.info(
+                    "Episode title enhancer TMDB search cache hit title=%s year=%s results=%s",
+                    title,
+                    year,
+                    len(results),
+                )
+                return results
+            logger.info(
+                "Episode title enhancer TMDB search cache miss title=%s year=%s",
+                title,
+                year,
+            )
             results = list(client.search_tv(title, year=year))
             cache.save_payload("tmdb_episode_search", cache_key, results)
             return results
@@ -934,6 +946,99 @@ class AppCoordinator(QObject):
             for index, item in enumerate(playlist):
                 item.index = index
             return playlist
+
+        def _episode_title_cache_item_identity(item: PlayItem) -> tuple[str, str, str, str, str]:
+            return (
+                str(item.vod_id or "").strip(),
+                str(item.original_title or item.title or "").strip(),
+                str(item.path or "").strip(),
+                str(item.title or "").strip(),
+                str(item.play_source or "").strip(),
+            )
+
+        def _episode_title_cache_key(
+            provider_source_kind: str,
+            session_vod: VodItem,
+            playlist: list[PlayItem],
+        ) -> str:
+            seeded = seed_original_titles([replace(item) for item in playlist])
+            return repr(
+                (
+                    provider_source_kind,
+                    str(getattr(session_vod, "vod_name", "") or "").strip(),
+                    str(getattr(session_vod, "vod_year", "") or "").strip(),
+                    str(getattr(session_vod, "category_name", "") or "").strip(),
+                    tuple(_episode_title_cache_item_identity(item) for item in seeded),
+                )
+            )
+
+        def _restore_cached_episode_title_playlist(
+            provider_source_kind: str,
+            session_vod: VodItem,
+            playlist: list[PlayItem],
+        ) -> list[PlayItem] | None:
+            cache_key = _episode_title_cache_key(provider_source_kind, session_vod, playlist)
+            payload = cache.load_payload(
+                "episode_title_playlist",
+                cache_key,
+                ttl_seconds=_METADATA_DETAIL_CACHE_TTL_SECONDS,
+            )
+            if not isinstance(payload, Mapping):
+                return None
+            titles_payload = payload.get("titles")
+            order_payload = payload.get("order")
+            if not isinstance(titles_payload, list) or not isinstance(order_payload, list):
+                return None
+            seeded = seed_original_titles([replace(item) for item in playlist])
+            if len(titles_payload) != len(seeded) or len(order_payload) != len(seeded):
+                return None
+            try:
+                order = [int(value) for value in order_payload]
+            except (TypeError, ValueError):
+                return None
+            if sorted(order) != list(range(len(seeded))):
+                return None
+            for index, item_payload in enumerate(titles_payload):
+                if not isinstance(item_payload, Mapping):
+                    return None
+                seeded[index].episode_display_title = str(item_payload.get("display") or "").strip()
+                seeded[index].episode_title_source = str(item_payload.get("source") or "").strip()
+            restored = [seeded[index] for index in order]
+            for index, item in enumerate(restored):
+                item.index = index
+            return restored if playlist_has_title_variants(restored) else None
+
+        def _save_episode_title_playlist_cache(
+            provider_source_kind: str,
+            session_vod: VodItem,
+            original_playlist: list[PlayItem],
+            updated_playlist: list[PlayItem],
+        ) -> None:
+            seeded_original = seed_original_titles([replace(item) for item in original_playlist])
+            seeded_updated = seed_original_titles([replace(item) for item in updated_playlist])
+            indexes_by_identity: dict[tuple[str, str, str, str, str], list[int]] = {}
+            for index, item in enumerate(seeded_original):
+                indexes_by_identity.setdefault(_episode_title_cache_item_identity(item), []).append(index)
+            titles_payload = [{"display": "", "source": ""} for _ in seeded_original]
+            order: list[int] = []
+            for item in seeded_updated:
+                identity = _episode_title_cache_item_identity(item)
+                source_indexes = indexes_by_identity.get(identity)
+                if not source_indexes:
+                    return
+                source_index = source_indexes.pop(0)
+                order.append(source_index)
+                titles_payload[source_index] = {
+                    "display": str(item.episode_display_title or "").strip(),
+                    "source": str(item.episode_title_source or "").strip(),
+                }
+            if len(order) != len(seeded_original):
+                return
+            cache.save_payload(
+                "episode_title_playlist",
+                _episode_title_cache_key(provider_source_kind, session_vod, original_playlist),
+                {"order": order, "titles": titles_payload},
+            )
 
         def _search_metadata_candidates(session_vod: VodItem, provider_source_kind: str) -> list[object]:
             query = MetadataContext(vod=session_vod, source_kind=provider_source_kind).to_query()
@@ -1139,6 +1244,13 @@ class AppCoordinator(QObject):
                 if not current_playlist:
                     return None
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
+                cached_playlist = _restore_cached_episode_title_playlist(source_kind, session_vod, current_playlist)
+                if cached_playlist is not None:
+                    logger.info(
+                        "Episode title enhancer restored cached titles mapped_count=%s",
+                        _count_mapped_episode_titles(cached_playlist),
+                    )
+                    return cached_playlist
                 default_season = _guess_season_number(session_vod)
                 season_episode_pairs = _season_episode_pairs(playlist, default_season)
                 current_item = None
@@ -1169,6 +1281,7 @@ class AppCoordinator(QObject):
                                 str(bound_candidate.provider or "").strip(),
                                 _count_mapped_episode_titles(finalized),
                             )
+                            _save_episode_title_playlist_cache(source_kind, session_vod, current_playlist, finalized)
                             return finalized
                     logger.info(
                         "Episode title enhancer skipped bound candidate provider=%s reason=no_rewrite_result",
@@ -1356,6 +1469,7 @@ class AppCoordinator(QObject):
                         _count_mapped_episode_titles(finalized_playlist),
                         sorted({str(item.episode_title_source or "").strip() for item in finalized_playlist if str(item.episode_title_source or "").strip()}),
                     )
+                    _save_episode_title_playlist_cache(source_kind, session_vod, current_playlist, finalized_playlist)
                     return finalized_playlist
                 logger.info(
                     "Episode title enhancer finished without rewrite title=%s year=%s",

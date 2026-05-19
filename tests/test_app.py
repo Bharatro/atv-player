@@ -5235,8 +5235,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_closer_year_among_same_t
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "神雕侠侣"
@@ -5287,8 +5288,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_candidate_with_requested
     seen: list[tuple[str, int]] = []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "成何体统"
@@ -5339,8 +5341,9 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_acros
     calls = {"search": 0, "season": 0}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             calls["search"] += 1
@@ -5355,7 +5358,11 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_acros
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
 
-    for _ in range(2):
+    playlists = [
+        [PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv", path="/playlist/a/S02E01.mkv")],
+        [PlayItem(title="S02E01.mkv", url="http://m/202.mp4", original_title="S02E01.mkv", path="/playlist/b/S02E01.mkv")],
+    ]
+    for playlist in playlists:
         enhance = factory(
             source_kind="plugin",
             vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
@@ -5363,13 +5370,176 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_acros
         updated = enhance(
             SimpleNamespace(
                 vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
-                playlist=[PlayItem(title="S02E01.mkv", url="http://m/201.mp4", original_title="S02E01.mkv")],
+                playlist=playlist,
             )
         )
         assert updated is not None
         assert updated[0].episode_display_title == "第1集 第二季首集"
 
     assert calls == {"search": 1, "season": 1}
+
+
+def test_app_coordinator_episode_title_enhancer_logs_tmdb_search_cache_hit_and_miss(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": "掩耳盗邻", "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    caplog.set_level(logging.INFO)
+
+    playlists = [
+        [
+            PlayItem(
+                title="S02E01.mkv",
+                url="http://m/201.mp4",
+                original_title="S02E01.mkv",
+                path="/playlist/a/S02E01.mkv",
+            )
+        ],
+        [
+            PlayItem(
+                title="S02E01.mkv",
+                url="http://m/202.mp4",
+                original_title="S02E01.mkv",
+                path="/playlist/b/S02E01.mkv",
+            )
+        ],
+    ]
+    for playlist in playlists:
+        enhance = factory(
+            source_kind="plugin",
+            vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+        )
+        updated = enhance(
+            SimpleNamespace(
+                vod=VodItem(vod_id="v1", vod_name="掩耳盗邻第二季", vod_year="2026", category_name="电视剧"),
+                playlist=playlist,
+            )
+        )
+        assert updated is not None
+
+    assert "Episode title enhancer TMDB search cache miss title=掩耳盗邻 year=" in caplog.text
+    assert "Episode title enhancer TMDB search cache hit title=掩耳盗邻 year= results=1" in caplog.text
+
+
+def test_app_coordinator_episode_title_enhancer_reuses_cached_final_titles_across_reopens(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    calls = {
+        "tmdb_search": 0,
+        "tmdb_season": 0,
+        "bangumi_search": 0,
+        "bilibili_search": 0,
+        "tencent_search": 0,
+        "iqiyi_search": 0,
+    }
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            calls["tmdb_search"] += 1
+            return [{"id": 42, "name": "低智商犯罪", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            calls["tmdb_season"] += 1
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "天屎驾到真案降临"},
+                    {"episode_number": 2, "name": "怀疑的风吹到三江口"},
+                ]
+            }
+
+    class _EmptySearchProvider:
+        name = ""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def search(self, _query) -> list[MetadataMatch]:
+            calls[f"{self.name}_search"] += 1
+            return []
+
+    class FakeBangumiProvider(_EmptySearchProvider):
+        name = "bangumi"
+
+    class FakeBilibiliProvider(_EmptySearchProvider):
+        name = "bilibili"
+
+    class FakeTencentProvider(_EmptySearchProvider):
+        name = "tencent"
+
+    class FakeIqiyiProvider(_EmptySearchProvider):
+        name = "iqiyi"
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "BangumiClient", lambda *args, **kwargs: object())
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", FakeBangumiProvider)
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", FakeBilibiliProvider)
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", FakeTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    caplog.set_level(logging.INFO)
+
+    for _ in range(2):
+        enhance = factory(
+            source_kind="plugin",
+            vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
+        )
+        updated = enhance(
+            SimpleNamespace(
+                vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
+                playlist=[
+                    PlayItem(title="01.mp4", original_title="01.mp4", path="/show/01.mp4", url="http://m/1.mp4"),
+                    PlayItem(title="02.mp4", original_title="02.mp4", path="/show/02.mp4", url="http://m/2.mp4"),
+                ],
+            )
+        )
+        assert updated is not None
+        assert updated[0].episode_display_title == "第1集 天屎驾到真案降临"
+        assert updated[1].episode_display_title == "第2集 怀疑的风吹到三江口"
+
+    assert calls == {
+        "tmdb_search": 1,
+        "tmdb_season": 1,
+        "bangumi_search": 2,
+        "bilibili_search": 2,
+        "tencent_search": 2,
+        "iqiyi_search": 2,
+    }
+    assert "Episode title enhancer restored cached titles mapped_count=2" in caplog.text
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_to_vod_name_season_when_filename_has_no_season(

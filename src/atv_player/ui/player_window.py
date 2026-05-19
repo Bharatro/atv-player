@@ -222,7 +222,7 @@ def _build_metadata_update_log(previous_vod: VodItem, updated_vod: VodItem) -> s
 
 def _build_metadata_hydration_query_log(query: MetadataQuery) -> str:
     return (
-        f"元数据增强参数: 标题={str(query.title or '').strip()} "
+        f"元数据增强: {str(query.title or '').strip()} "
         f"年代={str(query.year or '').strip()} "
         f"分类={str(query.category_name or '').strip() or '自动'}"
     )
