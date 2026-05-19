@@ -52,7 +52,15 @@ def _candidate_supports_episode_title_rewrite(
         return False
     if provider == "tmdb" and not provider_id.startswith("tv:"):
         return False
+    if provider == "bilibili" and not _is_confirmed_bilibili_anime_candidate(raw):
+        return False
     return not _raw_indicates_movie_category(raw)
+
+
+def _is_confirmed_bilibili_anime_candidate(raw: dict[str, object]) -> bool:
+    season_id = str(raw.get("season_id") or "").strip()
+    episodes = raw.get("episodes")
+    return bool(season_id and isinstance(episodes, list) and episodes)
 
 
 def _raw_indicates_movie_category(raw: dict[str, object]) -> bool:
@@ -171,6 +179,22 @@ def _titles_by_index_for_tmdb(vod: VodItem, playlist: list[PlayItem], raw: dict[
 
 def _titles_by_index_for_bilibili(vod: VodItem, playlist: list[PlayItem], raw: dict[str, object]) -> dict[int, str]:
     titles_by_episode: dict[int, str] = {}
+    normalized_episodes = raw.get("episodes")
+    if isinstance(normalized_episodes, list):
+        for episode in normalized_episodes:
+            if not isinstance(episode, dict):
+                continue
+            if str(episode.get("episode_type") or "main").strip() != "main":
+                continue
+            try:
+                episode_number = int(episode.get("episode_number") or episode.get("sort") or 0)
+            except (TypeError, ValueError):
+                continue
+            episode_title = str(episode.get("long_title") or episode.get("title") or "").strip()
+            if episode_number > 0 and episode_title:
+                titles_by_episode[episode_number] = episode_title
+    if titles_by_episode:
+        return _map_episode_numbers_to_indices(vod, playlist, titles_by_episode)
     for episode in raw.get("eps") or []:
         if not isinstance(episode, dict):
             continue
