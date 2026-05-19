@@ -44,7 +44,7 @@
 - `playUrl`
 - `playerContent()["danmu"]`
 - `localProxy(...)`
-- `self.backend_parse = True`
+- `self.backend_parse = True`（`atv-player` 直加载模式不读取，但 `Atvp.py` 适配器会读取）
 - `homeVideoContent(...)`
 - `liveContent(...)`
 - `isVideoFormat(...)`
@@ -55,7 +55,7 @@
 
 1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
 2. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
-3. `self.backend_parse = True` 在很多旧爬虫里很常见，但 `atv-player` 当前不会读取它；它更多是 `Atvp.py` 这类外部包装器的兼容字段
+3. `self.backend_parse = True` 在很多旧爬虫里很常见；`atv-player` 当前直加载模式不会读取它，但 `Atvp.py` 适配器会把它当作特殊配置读取
 4. 许多旧爬虫会返回 `jx` / `playUrl`，但 `atv-player` 当前只看 `parse`、`url`、`header`
 
 ## 2. 宿主如何调用你的插件
@@ -435,9 +435,9 @@ self.backend_parse = True
 - `盘聚.py`
 - `盘Ta.py`
 
-但要区分宿主：
+这个字段不是随手遗留的“无意义字段”，而是要区分宿主和适配层来看。
 
-### 在 `atv-player` 里
+### 在 `atv-player` 直加载模式里
 
 当前不会读取这个字段。
 
@@ -449,17 +449,23 @@ self.backend_parse = True
 
 不会给 `atv-player` 带来任何额外行为。
 
-### 在其他包装器里
+### 在 `Atvp.py` 适配器里
 
-例如爬虫仓库中的 `Atvp.py`，会读取内层爬虫的 `backend_parse`。这意味着：
+爬虫仓库中的 `Atvp.py` 会读取内层爬虫的 `backend_parse`，例如：
 
-- 这个字段在“别的宿主/包装层”里可能有意义
-- 但在 `atv-player` 的直接 Python Spider 加载模式里，它只是一个兼容保留字段
+```python
+return bool(getattr(self._inner, "backend_parse", False))
+```
+
+这意味着：
+
+- 这个字段对 `Atvp.py` 适配层是有效的特殊配置
+- 但在 `atv-player` 的直接 Python Spider 加载模式里，当前不会产生行为变化
 
 文档建议：
 
-- 如果你的插件同时服务多个宿主，可以继续保留它
-- 但不要把 `atv-player` 里的功能是否可用，建立在这个字段上
+- 如果你的插件同时服务 `Atvp.py` 和 `atv-player`，可以继续保留它
+- 但不要把 `atv-player` 直加载模式里的功能是否可用，建立在这个字段上
 
 ## 8. `localProxy(...)` 的真实情况
 
@@ -960,7 +966,7 @@ def init(self, extend=""):
 - 依赖 `jx`
 - 依赖 `playUrl`
 - 依赖 `localProxy(...)`
-- 把 `self.backend_parse = True` 当成 `atv-player` 的功能开关
+- 把 `self.backend_parse = True` 当成 `atv-player` 直加载模式的功能开关
 - 只返回局部动作更新
 - 把站点类型、专辑类型等状态硬编码进前端假设
 
@@ -1010,4 +1016,6 @@ def init(self, extend=""):
 
 ### `self.backend_parse = True` 设置了也没区别
 
-这是当前宿主的预期行为，因为它不会读取这个字段。
+如果你是在 `atv-player` 直加载模式下观察到这一点，这是当前宿主的预期行为，因为它不会直接读取这个字段。
+
+如果你走的是 `Atvp.py` 适配链路，则需要按 `Atvp.py` 的语义理解它。
