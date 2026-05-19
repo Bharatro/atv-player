@@ -137,3 +137,23 @@ def test_structured_handler_noops_when_logging_disabled(tmp_path: Path) -> None:
     logger.info("disabled")
 
     assert not (tmp_path / "logs" / "application.jsonl").exists()
+
+
+def test_structured_handler_persists_exception_text(tmp_path: Path) -> None:
+    service = AppLogService(tmp_path / "logs", enabled_getter=lambda: True, max_bytes=10_000_000, max_archives=5)
+    handler = StructuredJsonlHandler(service)
+    logger = logging.getLogger("test_structured_handler_persists_exception_text")
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        logger.exception("failed")
+
+    records = service.load_records(limit=10, log_filter=AppLogFilter())
+
+    assert len(records) == 1
+    assert records[0].message == "failed"
+    assert "RuntimeError: boom" in records[0].exception

@@ -149,6 +149,12 @@ class StructuredJsonlHandler(logging.Handler):
         super().__init__()
         self._service = service
 
+    def _format_exception_text(self, exc_info) -> str:
+        if not exc_info:
+            return ""
+        formatter = self.formatter or logging.Formatter()
+        return formatter.formatException(exc_info)
+
     def emit(self, record: logging.LogRecord) -> None:
         event = AppLogEvent(
             timestamp=datetime.now().isoformat(timespec="milliseconds"),
@@ -166,6 +172,6 @@ class StructuredJsonlHandler(logging.Handler):
             source_index=int(getattr(record, "source_index", -1) or -1),
             playlist_index=int(getattr(record, "playlist_index", -1) or -1),
             proxy_mode=str(getattr(record, "proxy_mode", "") or ""),
-            exception=self.formatException(record.exc_info) if record.exc_info else "",
+            exception=self._format_exception_text(record.exc_info),
         )
         self._service.write_event(event)
