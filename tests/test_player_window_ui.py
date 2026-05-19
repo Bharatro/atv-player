@@ -15332,6 +15332,7 @@ def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloa
     assert window.video.load_calls == [("https://media.example/1.mp4", False, 0, {})]
     assert "评分: 8.1" in window.metadata_view.toPlainText()
     assert ("detail", "https://img.example/poster.jpg") in poster_sources
+    assert "元数据增强参数: 标题=原始标题 年代= 分类=自动" in window.log_view.toPlainText()
     assert "元数据已更新" in window.log_view.toPlainText()
     assert "本地豆瓣" in window.log_view.toPlainText()
     assert "TMDB" in window.log_view.toPlainText()

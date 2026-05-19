@@ -66,7 +66,7 @@ from atv_player.metadata.dialog_cache import (
     load_cached_metadata_scrape_dialog_state,
     save_cached_metadata_scrape_dialog_state,
 )
-from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.models import MetadataContext, MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
@@ -218,6 +218,14 @@ def _build_metadata_update_log(previous_vod: VodItem, updated_vod: VodItem) -> s
         for provider in provider_order
     ]
     return f"元数据已更新: {', '.join(parts)}"
+
+
+def _build_metadata_hydration_query_log(query: MetadataQuery) -> str:
+    return (
+        f"元数据增强参数: 标题={str(query.title or '').strip()} "
+        f"年代={str(query.year or '').strip()} "
+        f"分类={str(query.category_name or '').strip() or '自动'}"
+    )
 
 
 class ClickableSlider(QSlider):
@@ -2044,8 +2052,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
-        self._start_metadata_hydration()
         self._reset_log()
+        self._start_metadata_hydration()
         self.current_speed = session.speed
         self.opening_spin.blockSignals(True)
         self.ending_spin.blockSignals(True)
@@ -3321,6 +3329,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 ),
                 playlist=hydration_playlist,
             )
+        hydration_current_item = None
+        if 0 <= hydration_session.start_index < len(hydration_session.playlist):
+            hydration_current_item = hydration_session.playlist[hydration_session.start_index]
+        hydration_query = MetadataContext(
+            vod=hydration_session.vod,
+            source_kind=str(getattr(hydration_session, "source_kind", "") or ""),
+            source_key=str(getattr(hydration_session, "source_key", "") or ""),
+            current_item=hydration_current_item,
+        ).to_query()
+        self._append_log(_build_metadata_hydration_query_log(hydration_query), dedupe=True)
 
         def run() -> None:
             try:
