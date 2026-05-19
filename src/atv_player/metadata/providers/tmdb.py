@@ -5,6 +5,25 @@ import re
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
+_CHINESE_DIGIT_VALUES = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_CHINESE_UNIT_VALUES = {
+    "十": 10,
+    "百": 100,
+    "千": 1000,
+}
+
 
 def _title_has_season_marker(value: object) -> bool:
     return re.search(
@@ -46,7 +65,39 @@ def infer_tmdb_media_type(query: MetadataQuery) -> str:
 
 
 def _normalize_title(value: object) -> str:
-    return re.sub(r"\s+", "", str(value or "").strip().lower())
+    normalized = re.sub(r"\s+", "", str(value or "").strip().lower())
+    return re.sub(r"[零一二两三四五六七八九十百千]+", _replace_chinese_number_token, normalized)
+
+
+def _replace_chinese_number_token(match: re.Match[str]) -> str:
+    parsed = _parse_chinese_number(match.group(0))
+    return str(parsed) if parsed is not None else match.group(0)
+
+
+def _parse_chinese_number(value: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    total = 0
+    current = 0
+    saw_value = False
+    for char in text:
+        if char in _CHINESE_DIGIT_VALUES:
+            current = _CHINESE_DIGIT_VALUES[char]
+            saw_value = True
+            continue
+        if char in _CHINESE_UNIT_VALUES:
+            saw_value = True
+            if current == 0:
+                current = 1
+            total += current * _CHINESE_UNIT_VALUES[char]
+            current = 0
+            continue
+        return None
+    total += current
+    if not saw_value:
+        return None
+    return total
 
 
 def _strip_search_season_suffix(value: object) -> str:

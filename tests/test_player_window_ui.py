@@ -640,11 +640,13 @@ def test_player_window_metadata_scrape_dialog_preserves_user_query_when_reopened
     window._open_metadata_scrape_dialog()
     window._metadata_scrape_title_edit.setText("手动修改标题")
     window._metadata_scrape_year_edit.setText("2030")
-    window._close_metadata_scrape_dialog()
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._metadata_scrape_dialog.close()
     window._open_metadata_scrape_dialog()
 
     assert window._metadata_scrape_title_edit.text() == "手动修改标题"
     assert window._metadata_scrape_year_edit.text() == "2030"
+    assert window._metadata_scrape_category_combo.currentData() == "动漫"
 
 
 def test_player_window_metadata_scrape_dialog_reuses_existing_dialog_and_reactivates_it(qtbot, monkeypatch) -> None:
@@ -1538,6 +1540,39 @@ def test_player_window_metadata_scrape_apply_refreshes_playlist_titles_from_sele
     assert service.build_episode_title_playlist_calls == [("米小圈上学记4", "tencent")]
 
 
+def test_player_window_metadata_scrape_apply_passes_selected_category_override_to_episode_title_rewrite(qtbot) -> None:
+    class RecordingMetadataScrapeService(FakeMetadataScrapeService):
+        def __init__(self) -> None:
+            super().__init__(provider_options=[("tmdb", "TMDB")])
+            self.build_episode_title_playlist_category_names: list[str] = []
+
+        def build_episode_title_playlist(self, vod: VodItem, playlist: list[PlayItem], *, preferred_candidate=None):
+            self.build_episode_title_playlist_category_names.append(str(vod.category_name or "").strip())
+            return super().build_episode_title_playlist(vod, playlist, preferred_candidate=preferred_candidate)
+
+    service = RecordingMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="剧集", vod_content="原始简介"),
+        playlist=[PlayItem(title="01.mp4", original_title="01.mp4", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: window.session.playlist[0].episode_display_title == "第1集 第01话 金银米小圈1", timeout=1000)
+    assert service.build_episode_title_playlist_category_names == ["动漫"]
+
+
 def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_search(qtbot) -> None:
     service = FakeMetadataScrapeService()
     bindings = FakeMetadataBindingRepository()
@@ -1603,6 +1638,45 @@ def test_player_window_metadata_scrape_reset_clears_binding_and_restarts_auto_se
     assert window._metadata_scrape_title_edit.text() == "手动改过的标题"
     assert window._metadata_scrape_year_edit.text() == "2030"
     assert "已重置元数据缓存与手动绑定" in window.log_view.toPlainText()
+
+
+def test_player_window_metadata_scrape_reset_passes_selected_category_override_to_auto_hydration(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="剧集", vod_content="当前简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", media_title="仙剑奇侠传三")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    hydration_calls: list[tuple[str, str, str, str]] = []
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.metadata_hydrator = lambda current_session: (
+        hydration_calls.append(
+            (
+                current_session.vod.vod_name,
+                current_session.playlist[current_session.start_index].media_title,
+                current_session.vod.vod_year,
+                current_session.vod.category_name,
+            )
+        )
+        or current_session.vod
+    )
+    window.session.metadata_hydrated = True
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("仙剑奇侠传三")
+    window._metadata_scrape_year_edit.setText("2025")
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._reset_metadata_scrape_state()
+
+    qtbot.waitUntil(lambda: len(hydration_calls) == 1, timeout=1000)
+    assert hydration_calls == [("仙剑奇侠传三", "仙剑奇侠传三", "2025", "动漫")]
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:

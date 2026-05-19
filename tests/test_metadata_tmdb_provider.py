@@ -199,6 +199,27 @@ def test_tmdb_provider_prefers_animation_match_for_anime_category_when_same_titl
     ]
 
 
+def test_tmdb_provider_prefers_animation_match_for_anime_category_when_title_differs_only_by_chinese_numeral() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [
+        {"id": 300001, "name": "仙剑奇侠传三", "genre_ids": [18], "first_air_date": "2025-01-01"},
+        {"id": 300002, "name": "仙剑奇侠传3", "genre_ids": [16], "first_air_date": "2025-01-01"},
+    ]
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="仙剑奇侠传三", year="2025", category_name="动漫"))
+
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:300002",
+            title="仙剑奇侠传3",
+            year="2025",
+            score=1.0,
+        )
+    ]
+
+
 def test_tmdb_provider_prefers_candidate_with_requested_season_when_same_title_results_differ() -> None:
     client = FakeTMDBClient()
     client.tv_search_results = [

@@ -594,6 +594,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_saved_provider = ""
         self._metadata_hydration_override_title = ""
         self._metadata_hydration_override_year = ""
+        self._metadata_hydration_override_category = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -3292,10 +3293,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session.metadata_hydrated = True
         override_title = self._metadata_hydration_override_title
         override_year = self._metadata_hydration_override_year
+        override_category = self._metadata_hydration_override_category
         self._metadata_hydration_override_title = ""
         self._metadata_hydration_override_year = ""
+        self._metadata_hydration_override_category = ""
         hydration_session = session
-        if override_title or override_year:
+        if override_title or override_year or override_category:
             hydration_playlist = session.playlist
             if override_title and 0 <= session.start_index < len(session.playlist):
                 hydration_playlist = list(session.playlist)
@@ -3309,6 +3312,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     session.vod,
                     vod_name=override_title or session.vod.vod_name,
                     vod_year=override_year or session.vod.vod_year,
+                    category_name=override_category or session.vod.category_name,
                 ),
                 playlist=hydration_playlist,
             )
@@ -5762,6 +5766,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_apply_button.clicked.connect(self._apply_selected_metadata_scrape_result)
         self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
         self._metadata_scrape_category_combo.currentIndexChanged.connect(self._handle_metadata_scrape_category_changed)
+        dialog.finished.connect(lambda _result: self._remember_metadata_scrape_query_state())
 
         self._metadata_scrape_dialog = dialog
         self._apply_theme()
@@ -5969,6 +5974,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._metadata_scrape_status_label is not None:
                 self._metadata_scrape_status_label.setText("当前条目缺少标题")
             return
+        logger.info(
+            "Metadata scrape dialog cached reload raw_title=%s raw_year=%s normalized_title=%s normalized_year=%s category=%s provider=%s",
+            self._metadata_scrape_title_edit.text().strip(),
+            self._metadata_scrape_year_edit.text().strip() if self._metadata_scrape_year_edit is not None else "",
+            title,
+            year,
+            self._metadata_scrape_selected_category_name(),
+            str(self._metadata_scrape_provider_combo.currentData() or ""),
+            extra={"log_category": "metadata", "log_source": "app"},
+        )
         self._start_metadata_scrape_search(
             title=title,
             year=year,
@@ -6002,6 +6017,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         category_name = self._metadata_scrape_selected_category_name()
         provider_filter = str(self._metadata_scrape_provider_combo.currentData() or "")
+        logger.info(
+            "Metadata scrape dialog rerun raw_title=%s raw_year=%s normalized_title=%s normalized_year=%s category=%s provider=%s",
+            self._metadata_scrape_title_edit.text().strip(),
+            self._metadata_scrape_year_edit.text().strip(),
+            title,
+            year,
+            category_name,
+            provider_filter,
+            extra={"log_category": "metadata", "log_source": "app"},
+        )
         self._start_metadata_scrape_search(
             title=title,
             year=year,
@@ -6058,6 +6083,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._reset_metadata_scrape_search_query()
         self._metadata_hydration_override_title = reset_title
         self._metadata_hydration_override_year = reset_year
+        self._metadata_hydration_override_category = self._metadata_scrape_selected_category_name()
         self.session.metadata_hydrated = False
         self._start_metadata_hydration()
         self._append_log("已重置元数据缓存与手动绑定，重新开始自动搜索")
@@ -6108,6 +6134,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_request_id += 1
         self._pending_metadata_session = None
         previous_vod = self.session.vod
+        selected_category = self._metadata_scrape_selected_category_name()
+        if selected_category:
+            updated_vod = replace(updated_vod, category_name=selected_category)
         self.session.vod = updated_vod
         if 0 <= self.current_index < len(self.session.playlist):
             self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
@@ -6115,6 +6144,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         build_playlist = getattr(self.session.metadata_scrape_service, "build_episode_title_playlist", None)
         if callable(build_playlist):
             try:
+                logger.info(
+                    "Metadata scrape apply rebuilding episode titles title=%s year=%s category=%s preferred_provider=%s preferred_id=%s",
+                    str(updated_vod.vod_name or "").strip(),
+                    str(updated_vod.vod_year or "").strip(),
+                    str(updated_vod.category_name or "").strip(),
+                    str(getattr(candidate, "provider", "") or "").strip(),
+                    str(getattr(candidate, "provider_id", "") or "").strip(),
+                    extra={"log_category": "metadata", "log_source": "app"},
+                )
                 updated_playlist = build_playlist(updated_vod, self.session.playlist, preferred_candidate=candidate)
             except Exception as exc:
                 self._append_log(f"剧集标题增强失败: {exc}")
@@ -6126,6 +6164,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if bindings is not None and hasattr(bindings, "save"):
             binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
             binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
+            logger.info(
+                "Metadata scrape apply saving binding query_title=%s query_year=%s provider=%s provider_id=%s matched_title=%s matched_year=%s",
+                binding_title,
+                binding_year,
+                str(candidate.provider or "").strip(),
+                str(candidate.provider_id or "").strip(),
+                str(candidate.title or "").strip(),
+                str(candidate.year or "").strip(),
+                extra={"log_category": "metadata", "log_source": "app"},
+            )
             bindings.save(
                 binding_title,
                 binding_year,
@@ -7198,9 +7246,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         dialog.close()
 
     def _close_metadata_scrape_dialog(self) -> None:
+        self._remember_metadata_scrape_query_state()
         dialog = self._metadata_scrape_dialog
         if dialog is None or not dialog.isVisible():
             return
+        dialog.close()
+
+    def _remember_metadata_scrape_query_state(self) -> None:
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_saved_title = self._metadata_scrape_title_edit.text()
         if self._metadata_scrape_year_edit is not None:
@@ -7210,7 +7262,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._metadata_scrape_provider_combo is not None:
             self._metadata_scrape_saved_provider = str(self._metadata_scrape_provider_combo.currentData() or "")
         self._metadata_scrape_query_saved = True
-        dialog.close()
 
     def _dismiss_escape_dialog(self) -> bool:
         dialog = self._danmaku_settings_dialog

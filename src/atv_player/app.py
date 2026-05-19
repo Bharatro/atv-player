@@ -53,6 +53,7 @@ from atv_player.metadata import (
     MetadataHydrator,
     build_provider_episode_playlist,
 )
+from atv_player.metadata.models import MetadataMatch
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
 from atv_player.metadata.providers.bangumi_client import BangumiClient
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
@@ -703,6 +704,7 @@ class AppCoordinator(QObject):
     def _build_episode_title_enhancer_factory(self, api_client: ApiClient):
         del api_client
         cache = MetadataCache(app_cache_dir() / "metadata")
+        metadata_title_providers: list[object] = []
 
         def _normalize_title(value: object) -> str:
             return re.sub(r"\s+", "", str(value or "").strip().lower())
@@ -936,13 +938,29 @@ class AppCoordinator(QObject):
         def _search_metadata_candidates(session_vod: VodItem, provider_source_kind: str) -> list[object]:
             query = MetadataContext(vod=session_vod, source_kind=provider_source_kind).to_query()
             candidates: list[object] = []
-            for provider in (BilibiliMetadataProvider(), TencentMetadataProvider(), IqiyiMetadataProvider()):
+            for provider in metadata_title_providers:
                 try:
                     matches = provider.search(query)
                 except Exception:
                     continue
                 if matches:
                     candidate = matches[0]
+                    if getattr(provider, "name", "") == "bangumi":
+                        subject_id = ""
+                        provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+                        if provider_id.startswith("subject:"):
+                            subject_id = provider_id.split(":", 1)[1].strip()
+                        client = getattr(provider, "_client", None)
+                        if subject_id and client is not None and hasattr(client, "get_episodes"):
+                            try:
+                                episodes = client.get_episodes(subject_id) or []
+                            except Exception:
+                                episodes = []
+                            if isinstance(episodes, list) and episodes:
+                                candidate = replace(
+                                    candidate,
+                                    raw={**dict(getattr(candidate, "raw", {}) or {}), "episodes": episodes},
+                                )
                     hydrate = getattr(provider, "_hydrate_episode_candidate", None)
                     if callable(hydrate):
                         try:
@@ -985,10 +1003,135 @@ class AppCoordinator(QObject):
             query = MetadataContext(vod=vod, source_kind=source_kind).to_query()
             if infer_tmdb_media_type(query) == "movie":
                 return None
+            proxy_decider = self._build_proxy_decider()
             tmdb_client = TMDBClient(
                 api_key=config.metadata_tmdb_api_key,
-                proxy_decider=self._build_proxy_decider(),
+                proxy_decider=proxy_decider,
             )
+            bangumi_provider = BangumiMetadataProvider(
+                BangumiClient(
+                    access_token=config.metadata_bangumi_access_token,
+                    proxy_decider=proxy_decider,
+                )
+            )
+            bilibili_provider = BilibiliMetadataProvider()
+            tencent_provider = TencentMetadataProvider()
+            iqiyi_provider = IqiyiMetadataProvider()
+            metadata_title_providers[:] = [
+                bangumi_provider,
+                bilibili_provider,
+                tencent_provider,
+                iqiyi_provider,
+            ]
+
+            def _bound_episode_candidate(session_vod: VodItem, current_item: PlayItem | None = None):
+                bindings = self._metadata_binding_repository
+                if bindings is None:
+                    logger.info(
+                        "Episode title enhancer binding lookup skipped title=%s year=%s reason=no_binding_repository",
+                        str(session_vod.vod_name or "").strip(),
+                        str(session_vod.vod_year or "").strip(),
+                    )
+                    return None
+                binding_queries = []
+                if current_item is not None:
+                    binding_queries.append(
+                        MetadataContext(
+                            vod=session_vod,
+                            source_kind=source_kind,
+                            current_item=current_item,
+                        ).to_query()
+                    )
+                binding_queries.append(MetadataContext(vod=session_vod, source_kind=source_kind).to_query())
+                binding = None
+                binding_query = None
+                for candidate_query in binding_queries:
+                    logger.info(
+                        "Episode title enhancer binding lookup try query_title=%s query_year=%s current_media_title=%s vod_title=%s",
+                        candidate_query.title,
+                        candidate_query.year,
+                        str(getattr(current_item, "media_title", "") or "").strip() if current_item is not None else "",
+                        str(session_vod.vod_name or "").strip(),
+                    )
+                    binding = bindings.load(candidate_query.title, candidate_query.year)
+                    if binding is not None:
+                        binding_query = candidate_query
+                        break
+                if binding is None or binding_query is None:
+                    logger.info(
+                        "Episode title enhancer binding lookup miss current_media_title=%s vod_title=%s vod_year=%s",
+                        str(getattr(current_item, "media_title", "") or "").strip() if current_item is not None else "",
+                        str(session_vod.vod_name or "").strip(),
+                        str(session_vod.vod_year or "").strip(),
+                    )
+                    return None
+                provider_name = str(binding.provider or "").strip()
+                provider_id = str(binding.provider_id or "").strip()
+                if not provider_name or not provider_id:
+                    logger.info(
+                        "Episode title enhancer binding lookup invalid query_title=%s query_year=%s provider=%s provider_id=%s",
+                        binding_query.title,
+                        binding_query.year,
+                        provider_name,
+                        provider_id,
+                    )
+                    return None
+                logger.info(
+                    "Episode title enhancer binding lookup hit query_title=%s query_year=%s provider=%s provider_id=%s matched_title=%s matched_year=%s",
+                    binding_query.title,
+                    binding_query.year,
+                    provider_name,
+                    provider_id,
+                    str(binding.matched_title or "").strip(),
+                    str(binding.matched_year or "").strip(),
+                )
+                candidate = MetadataMatch(
+                    provider=provider_name,
+                    provider_id=provider_id,
+                    title=str(binding.matched_title or binding_query.title or "").strip(),
+                    year=str(binding.matched_year or binding_query.year or "").strip(),
+                    raw={"provider_id": provider_id} if provider_name == "bilibili" else {},
+                )
+                if provider_name == "tmdb":
+                    segments = provider_id.split(":")
+                    if len(segments) < 2 or segments[0] != "tv":
+                        return candidate
+                    tmdb_id = str(segments[1] or "").strip()
+                    season_number = None
+                    if len(segments) >= 4 and segments[2] == "season":
+                        try:
+                            season_number = int(segments[3])
+                        except (TypeError, ValueError):
+                            season_number = None
+                    if season_number is None:
+                        season_number = extract_season_number(candidate.title) or _guess_season_number(session_vod)
+                    if not tmdb_id or season_number is None:
+                        return candidate
+                    try:
+                        season_detail = _get_tv_season_detail_cached(tmdb_client, tmdb_id, season_number)
+                    except Exception:
+                        return candidate
+                    episodes = season_detail.get("episodes")
+                    if isinstance(episodes, list) and episodes:
+                        candidate.raw["season_number"] = season_number
+                        candidate.raw["episodes"] = episodes
+                    return candidate
+                if provider_name == "bangumi":
+                    subject_id = provider_id.split(":", 1)[1].strip() if provider_id.startswith("subject:") else ""
+                    client = getattr(bangumi_provider, "_client", None)
+                    if subject_id and client is not None and hasattr(client, "get_episodes"):
+                        episodes = client.get_episodes(subject_id) or []
+                        if isinstance(episodes, list) and episodes:
+                            candidate.raw["episodes"] = episodes
+                    return candidate
+                if provider_name == "bilibili":
+                    hydrate = getattr(bilibili_provider, "_hydrate_episode_candidate", None)
+                    if callable(hydrate):
+                        try:
+                            return hydrate(candidate)
+                        except Exception:
+                            return candidate
+                return candidate
 
             def enhance(session) -> list | None:
                 session_vod = getattr(session, "vod", None) or vod
@@ -998,6 +1141,39 @@ class AppCoordinator(QObject):
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
                 default_season = _guess_season_number(session_vod)
                 season_episode_pairs = _season_episode_pairs(playlist, default_season)
+                current_item = None
+                start_index = int(getattr(session, "start_index", 0) or 0)
+                if 0 <= start_index < len(current_playlist):
+                    current_item = current_playlist[start_index]
+                bound_candidate = _bound_episode_candidate(session_vod, current_item)
+                if bound_candidate is not None:
+                    logger.info(
+                        "Episode title enhancer trying bound candidate provider=%s provider_id=%s title=%s year=%s",
+                        str(bound_candidate.provider or "").strip(),
+                        str(bound_candidate.provider_id or "").strip(),
+                        str(bound_candidate.title or "").strip(),
+                        str(bound_candidate.year or "").strip(),
+                    )
+                    updated_playlist = build_provider_episode_playlist(
+                        session_vod,
+                        playlist,
+                        bound_candidate,
+                        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                    )
+                    if updated_playlist is not None:
+                        updated_pairs = _season_episode_pairs(updated_playlist, default_season)
+                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                        if finalized is not None:
+                            logger.info(
+                                "Episode title enhancer applied bound candidate provider=%s mapped_count=%s",
+                                str(bound_candidate.provider or "").strip(),
+                                _count_mapped_episode_titles(finalized),
+                            )
+                            return finalized
+                    logger.info(
+                        "Episode title enhancer skipped bound candidate provider=%s reason=no_rewrite_result",
+                        str(bound_candidate.provider or "").strip(),
+                    )
                 year = str(getattr(session_vod, "vod_year", "") or "").strip()
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
                 playlist_search_title = _infer_series_title_from_playlist(playlist)
@@ -1042,6 +1218,16 @@ class AppCoordinator(QObject):
                         session_vod,
                         requested_seasons,
                         tmdb_client,
+                    )
+                    logger.info(
+                        "Episode title enhancer TMDB search selected preferred_title=%s search_title=%s search_year=%s results=%s matched_id=%s matched_title=%s requested_seasons=%s",
+                        preferred_title,
+                        search_title,
+                        search_year,
+                        len(search_results),
+                        str((matched or {}).get("id") or "").strip(),
+                        str((matched or {}).get("name") or (matched or {}).get("title") or "").strip(),
+                        sorted(requested_seasons),
                     )
                     tmdb_id = str(matched.get("id") or "").strip()
                     if tmdb_id:
@@ -1103,6 +1289,12 @@ class AppCoordinator(QObject):
                         if titles_by_index:
                             finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
                             if finalized is not None:
+                                logger.info(
+                                    "Episode title enhancer applied TMDB titles tmdb_id=%s mapped_count=%s unresolved_pairs=%s",
+                                    tmdb_id,
+                                    _count_mapped_episode_titles(finalized),
+                                    len(unresolved_pairs),
+                                )
                                 playlist = finalized
                                 season_episode_pairs = _season_episode_pairs(playlist, default_season)
                 candidate_vods: list[VodItem] = []
@@ -1124,6 +1316,15 @@ class AppCoordinator(QObject):
                     candidate_vods.append(candidate_vod)
                 for candidate_vod in candidate_vods:
                     for candidate in _search_metadata_candidates(candidate_vod, source_kind):
+                        logger.info(
+                            "Episode title enhancer trying provider candidate provider=%s provider_id=%s candidate_title=%s candidate_year=%s query_title=%s query_year=%s",
+                            str(getattr(candidate, "provider", "") or "").strip(),
+                            str(getattr(candidate, "provider_id", "") or "").strip(),
+                            str(getattr(candidate, "title", "") or "").strip(),
+                            str(getattr(candidate, "year", "") or "").strip(),
+                            str(candidate_vod.vod_name or "").strip(),
+                            str(candidate_vod.vod_year or "").strip(),
+                        )
                         updated_playlist = build_provider_episode_playlist(
                             candidate_vod,
                             playlist,
@@ -1140,11 +1341,27 @@ class AppCoordinator(QObject):
                             _count_mapped_episode_titles(finalized) >= _count_mapped_episode_titles(playlist)
                             and _episode_title_snapshot(finalized) != _episode_title_snapshot(playlist)
                         ):
+                            logger.info(
+                                "Episode title enhancer accepted provider candidate provider=%s mapped_count=%s previous_mapped_count=%s",
+                                str(getattr(candidate, "provider", "") or "").strip(),
+                                _count_mapped_episode_titles(finalized),
+                                _count_mapped_episode_titles(playlist),
+                            )
                             playlist = finalized
                             season_episode_pairs = updated_pairs
                 finalized_playlist = _finalize_episode_playlist(playlist, season_episode_pairs)
                 if finalized_playlist is not None:
+                    logger.info(
+                        "Episode title enhancer finalized mapped_count=%s sources=%s",
+                        _count_mapped_episode_titles(finalized_playlist),
+                        sorted({str(item.episode_title_source or "").strip() for item in finalized_playlist if str(item.episode_title_source or "").strip()}),
+                    )
                     return finalized_playlist
+                logger.info(
+                    "Episode title enhancer finished without rewrite title=%s year=%s",
+                    str(session_vod.vod_name or "").strip(),
+                    str(session_vod.vod_year or "").strip(),
+                )
                 return playlist if playlist_has_title_variants(playlist) else None
             return enhance
 

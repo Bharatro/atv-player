@@ -14,6 +14,7 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
+from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
@@ -6061,6 +6062,245 @@ def test_app_coordinator_episode_title_enhancer_prefers_confirmed_bilibili_over_
     assert updated[0].episode_display_title == "第1集 来世，你可以找我报仇"
     assert updated[1].episode_title_source == "bilibili"
     assert updated[1].episode_display_title == "第28集 答案"
+
+
+def test_app_coordinator_episode_title_enhancer_prefers_bound_bangumi_over_tmdb_after_reopen(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        database_path = tmp_path / "app.db"
+
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    MetadataBindingRepository(tmp_path / "app.db").save(
+        "牧神记",
+        "2024",
+        provider="bangumi",
+        provider_id="subject:1",
+        matched_title="牧神记",
+        matched_year="2024",
+    )
+
+    class FakeBangumiClient:
+        def __init__(self, access_token: str = "", proxy_decider=None) -> None:
+            del access_token, proxy_decider
+
+        def get_episodes(self, subject_id: str) -> list[dict[str, object]]:
+            assert subject_id == "1"
+            return [
+                {"sort": 1, "type": 0, "name_cn": "天黑别出门"},
+                {"sort": 2, "type": 0, "name_cn": "我是霸体"},
+            ]
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2024-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "TMDB标题1"},
+                    {"episode_number": 2, "name": "TMDB标题2"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "BangumiClient", FakeBangumiClient)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="牧神记", vod_year="2024", category_name="动漫"),
+            playlist=[
+                PlayItem(title="01.mp4", url="http://m/1.mp4", original_title="01.mp4"),
+                PlayItem(title="02.mp4", url="http://m/2.mp4", original_title="02.mp4"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bangumi"
+    assert updated[0].episode_display_title == "第1集 天黑别出门"
+    assert updated[1].episode_title_source == "bangumi"
+    assert updated[1].episode_display_title == "第2集 我是霸体"
+
+
+def test_app_coordinator_episode_title_enhancer_loads_bound_bangumi_using_current_media_title_query(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        database_path = tmp_path / "app.db"
+
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    MetadataBindingRepository(tmp_path / "app.db").save(
+        "仙剑奇侠传三",
+        "2025",
+        provider="bangumi",
+        provider_id="subject:526975",
+        matched_title="仙剑奇侠传三",
+        matched_year="2025",
+    )
+
+    class FakeBangumiClient:
+        def __init__(self, access_token: str = "", proxy_decider=None) -> None:
+            del access_token, proxy_decider
+
+        def get_episodes(self, subject_id: str) -> list[dict[str, object]]:
+            assert subject_id == "526975"
+            return [{"sort": 1, "type": 0, "name_cn": "问心"}]
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+
+    monkeypatch.setattr(app_module, "BangumiClient", FakeBangumiClient)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="自动刮削后的标题", vod_year="2025", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="自动刮削后的标题", vod_year="2025", category_name="动漫"),
+            start_index=0,
+            playlist=[
+                PlayItem(
+                    title="01.mp4",
+                    url="http://m/1.mp4",
+                    original_title="01.mp4",
+                    media_title="仙剑奇侠传三",
+                )
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bangumi"
+    assert updated[0].episode_display_title == "第1集 问心"
+
+
+def test_app_coordinator_episode_title_enhancer_hydrates_bangumi_search_candidate_to_override_tmdb(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeBangumiClient:
+        def __init__(self, access_token: str = "", proxy_decider=None) -> None:
+            del access_token, proxy_decider
+
+        def search_subjects(self, title: str) -> list[dict[str, object]]:
+            assert title == "仙剑奇侠传三"
+            return [{"id": 395223, "type": 2, "name_cn": "仙剑奇侠传三", "date": "2025-01-01"}]
+
+        def get_episodes(self, subject_id: str) -> list[dict[str, object]]:
+            assert subject_id == "395223"
+            return [
+                {"sort": 1, "type": 0, "name_cn": "问心"},
+                {"sort": 2, "type": 0, "name_cn": "蜀山风云"},
+            ]
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            del candidate
+            return []
+
+    class EmptyIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            del candidate
+            return []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 233295, "name": title, "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "TMDB标题1"},
+                    {"episode_number": 2, "name": "TMDB标题2"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "BangumiClient", FakeBangumiClient)
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", EmptyIqiyiProvider)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="动漫"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="动漫"),
+            start_index=0,
+            playlist=[
+                PlayItem(title="S01E01.mkv", url="http://m/1.mp4", original_title="S01E01.mkv"),
+                PlayItem(title="S01E02.mkv", url="http://m/2.mp4", original_title="S01E02.mkv"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "bangumi"
+    assert updated[0].episode_display_title == "第1集 问心"
+    assert updated[1].episode_title_source == "bangumi"
+    assert updated[1].episode_display_title == "第2集 蜀山风云"
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tmp_path, monkeypatch) -> None:

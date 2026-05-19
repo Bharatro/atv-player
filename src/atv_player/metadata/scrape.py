@@ -305,8 +305,11 @@ class MetadataScrapeService:
         query = replace(query, title=normalized_title, year=normalized_year)
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
         logger.info(
-            "Metadata scrape search title=%s provider=%s cache_only=%s",
+            "Metadata scrape search title=%s year=%s category=%s type=%s provider=%s cache_only=%s",
             query.title,
+            query.year,
+            query.category_name,
+            query.type_name,
             provider_filter or "all",
             cache_only,
             extra={"log_category": "metadata", "log_source": "app"},

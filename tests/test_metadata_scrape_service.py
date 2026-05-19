@@ -61,6 +61,10 @@ def test_normalize_metadata_scrape_title_keeps_bilingual_title_but_drops_release
     assert normalize_metadata_scrape_title(value) == "木乃伊 Lee Cronin's The Mummy (2026)"
 
 
+def test_normalize_metadata_scrape_title_strips_trailing_media_kind_suffix() -> None:
+    assert normalize_metadata_scrape_title("仙剑奇侠传叁动漫") == "仙剑奇侠传叁"
+
+
 def test_metadata_scrape_service_groups_parallel_results_by_provider(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tmdb = FakeProvider(
