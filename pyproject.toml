@@ -3,31 +3,36 @@ name = "atv-player"
 version = "0.1.0"
 description = "PySide6 desktop player for alist-tvbox"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
+
 dependencies = [
-  "pyside6>=6.11.0",
-  "beautifulsoup4>=4.14.3",
-  "cachetools>=5.5",
-  "httpx>=0.28",
-  "lxml>=6.0.4",
-  "mpv>=1.0.6",
-  "pillow-heif>=1.1.1",
-  "pillow>=11.3.0",
-  "pycdlib>=1.14.0",
-  "pycryptodome>=3.23.0",
-  "pyquery>=2.0.1",
-  "requests>=2.33.1",
+    "pyside6>=6.11.0",
+    "beautifulsoup4>=4.14.3",
+    "cachetools>=5.5",
+    "httpx>=0.28",
+    "lxml>=6.0.4",
+    "mpv>=1.0.6",
+    "pillow-heif>=1.1.1",
+    "pillow>=11.3.0",
+    "pycdlib>=1.14.0",
+    "pycryptodome>=3.23.0",
+    "pyquery>=2.0.1",
+    "requests>=2.33.1",
 ]
+
+[project.scripts]
+atv-player = "atv_player.main:main"
 
 [dependency-groups]
 dev = [
-  "pyright>=1.1.409",
-  "pytest>=8.3",
-  "pytest-qt>=4.4",
-  "ruff>=0.11",
+    "pytest>=8.3",
+    "pytest-qt>=4.4",
+    "ruff>=0.11",
+    "pyright>=1.1",
 ]
+
 build = [
-  "pyinstaller>=6.16",
+    "pyinstaller>=6.16",
 ]
 
 [build-system]
@@ -52,14 +57,11 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = [
-  "E",
-  "F",
-  "I",
-  "UP",
-  "B",
-]
+select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv]
+default-groups = ["dev"]
