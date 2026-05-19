@@ -649,6 +649,206 @@ def test_player_window_metadata_scrape_dialog_preserves_user_query_when_reopened
     assert window._metadata_scrape_category_combo.currentData() == "动漫"
 
 
+def test_player_window_metadata_scrape_dialog_rerun_persists_query_state_in_file_cache(qtbot, monkeypatch, tmp_path) -> None:
+    import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
+
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("手动修改标题")
+    window._metadata_scrape_year_edit.setText("2030")
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._rerun_metadata_scrape_search()
+
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    restarted = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(restarted)
+    restarted.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    restarted._open_metadata_scrape_dialog()
+
+    assert restarted._metadata_scrape_title_edit.text() == "手动修改标题"
+    assert restarted._metadata_scrape_year_edit.text() == "2030"
+    assert restarted._metadata_scrape_category_combo.currentData() == "动漫"
+
+
+def test_player_window_metadata_scrape_dialog_reset_persists_query_state_in_file_cache(qtbot, monkeypatch, tmp_path) -> None:
+    import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
+
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传叁", vod_year="2025"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("仙剑奇侠传三")
+    window._metadata_scrape_year_edit.setText("2025")
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._reset_metadata_scrape_state()
+
+    assert service.reset_calls == [("仙剑奇侠传三", "2025", "", "", [])]
+
+    restarted = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(restarted)
+    restarted.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="仙剑奇侠传叁", vod_year="2025"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    restarted._open_metadata_scrape_dialog()
+
+    assert restarted._metadata_scrape_title_edit.text() == "仙剑奇侠传三"
+    assert restarted._metadata_scrape_year_edit.text() == "2025"
+    assert restarted._metadata_scrape_category_combo.currentData() == "动漫"
+
+
+def test_player_window_metadata_scrape_dialog_apply_persists_query_state_in_file_cache(qtbot, monkeypatch, tmp_path) -> None:
+    import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
+
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    service = FakeMetadataScrapeService()
+    service.cached_groups = list(service.groups)
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    window._metadata_scrape_title_edit.setText("手动绑定标题")
+    window._metadata_scrape_year_edit.setText("2031")
+    window._metadata_scrape_category_combo.setCurrentIndex(window._metadata_scrape_category_combo.findData("动漫"))
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: len(service.apply_calls) == 1, timeout=1000)
+
+    restarted = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(restarted)
+    restarted.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    restarted._open_metadata_scrape_dialog()
+
+    assert restarted._metadata_scrape_title_edit.text() == "手动绑定标题"
+    assert restarted._metadata_scrape_year_edit.text() == "2031"
+    assert restarted._metadata_scrape_category_combo.currentData() == "动漫"
+
+
+def test_player_window_metadata_scrape_dialog_restore_default_resets_title_year_and_category_in_file_cache(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
+
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    first = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(first)
+    first.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    first._open_metadata_scrape_dialog()
+    first._metadata_scrape_title_edit.setText("手动修改标题")
+    first._metadata_scrape_year_edit.setText("2030")
+    first._metadata_scrape_category_combo.setCurrentIndex(first._metadata_scrape_category_combo.findData("动漫"))
+    first._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: first._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    second = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(second)
+    second.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    second._open_metadata_scrape_dialog()
+
+    assert second._metadata_scrape_restore_query_button.text() == "恢复默认"
+
+    second._metadata_scrape_restore_query_button.click()
+
+    assert second._metadata_scrape_title_edit.text() == "深空彼岸"
+    assert second._metadata_scrape_year_edit.text() == "2026"
+    assert second._metadata_scrape_category_combo.currentData() == ""
+
+    restarted = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(restarted)
+    restarted.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            metadata_scrape_service=FakeMetadataScrapeService(),
+        )
+    )
+    restarted._open_metadata_scrape_dialog()
+
+    assert restarted._metadata_scrape_title_edit.text() == "深空彼岸"
+    assert restarted._metadata_scrape_year_edit.text() == "2026"
+    assert restarted._metadata_scrape_category_combo.currentData() == ""
+
+
 def test_player_window_metadata_scrape_dialog_reuses_existing_dialog_and_reactivates_it(qtbot, monkeypatch) -> None:
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),

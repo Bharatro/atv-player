@@ -61,6 +61,11 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.metadata.dialog_cache import (
+    MetadataScrapeDialogState,
+    load_cached_metadata_scrape_dialog_state,
+    save_cached_metadata_scrape_dialog_state,
+)
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
@@ -5752,7 +5757,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         actions = QHBoxLayout()
         self._metadata_scrape_rerun_button = QPushButton("重新搜索", host)
         self._metadata_scrape_reset_button = QPushButton("重置", host)
-        self._metadata_scrape_restore_query_button = QPushButton("恢复默认搜索词", host)
+        self._metadata_scrape_restore_query_button = QPushButton("恢复默认", host)
         self._metadata_scrape_apply_button = QPushButton("应用结果", host)
         actions.addWidget(self._metadata_scrape_rerun_button)
         actions.addWidget(self._metadata_scrape_reset_button)
@@ -5762,7 +5767,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         self._metadata_scrape_rerun_button.clicked.connect(self._rerun_metadata_scrape_search)
         self._metadata_scrape_reset_button.clicked.connect(self._reset_metadata_scrape_state)
-        self._metadata_scrape_restore_query_button.clicked.connect(self._reset_metadata_scrape_search_query)
+        self._metadata_scrape_restore_query_button.clicked.connect(self._restore_default_metadata_scrape_query)
         self._metadata_scrape_apply_button.clicked.connect(self._apply_selected_metadata_scrape_result)
         self._metadata_scrape_group_list.currentRowChanged.connect(self._populate_metadata_scrape_results)
         self._metadata_scrape_category_combo.currentIndexChanged.connect(self._handle_metadata_scrape_category_changed)
@@ -5830,6 +5835,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._metadata_scrape_binding_title = self._metadata_scrape_default_title
         if not self._metadata_scrape_binding_year:
             self._metadata_scrape_binding_year = self._metadata_scrape_default_year
+        if not self._metadata_scrape_query_saved:
+            self._restore_metadata_scrape_query_state_from_cache()
         dialog = self._ensure_metadata_scrape_dialog()
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_title_edit.setText(
@@ -6012,6 +6019,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._metadata_scrape_title_edit.setText(title)
         if year != self._metadata_scrape_year_edit.text().strip():
             self._metadata_scrape_year_edit.setText(year)
+        self._remember_metadata_scrape_query_state()
         if not title:
             self._metadata_scrape_status_label.setText("当前条目缺少标题")
             return
@@ -6039,9 +6047,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _reset_metadata_scrape_search_query(self) -> None:
         self._rerun_metadata_scrape_search()
 
+    def _restore_default_metadata_scrape_query(self) -> None:
+        if self._metadata_scrape_title_edit is not None:
+            self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
+        if self._metadata_scrape_year_edit is not None:
+            self._metadata_scrape_year_edit.setText(self._metadata_scrape_default_year)
+        if self._metadata_scrape_category_combo is not None:
+            self._metadata_scrape_category_combo.setCurrentIndex(max(0, self._metadata_scrape_category_combo.findData("")))
+        if self._metadata_scrape_provider_combo is not None:
+            self._metadata_scrape_provider_combo.setCurrentIndex(max(0, self._metadata_scrape_provider_combo.findData("")))
+        self._rerun_metadata_scrape_search()
+
     def _reset_metadata_scrape_state(self) -> None:
         if self.session is None or self.session.metadata_scrape_service is None:
             return
+        self._remember_metadata_scrape_query_state()
         binding_title = self._metadata_scrape_binding_title or str(self.session.vod.vod_name or "").strip()
         binding_year = self._metadata_scrape_binding_year or str(self.session.vod.vod_year or "").strip()
         bound_provider = ""
@@ -6102,6 +6122,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         candidate = self._selected_metadata_scrape_candidate()
         if candidate is None:
             return
+        self._remember_metadata_scrape_query_state()
         self._metadata_scrape_request_id += 1
         request_id = self._metadata_scrape_request_id
         service = self.session.metadata_scrape_service
@@ -7252,16 +7273,52 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         dialog.close()
 
+    def _metadata_scrape_cache_binding(self) -> tuple[str, str]:
+        binding_title = str(self._metadata_scrape_binding_title or self._metadata_scrape_default_title).strip()
+        binding_year = str(self._metadata_scrape_binding_year or self._metadata_scrape_default_year).strip()
+        if binding_title:
+            return binding_title, binding_year
+        if self.session is None:
+            return "", ""
+        return self._metadata_scrape_current_query()
+
+    def _restore_metadata_scrape_query_state_from_cache(self) -> None:
+        binding_title, binding_year = self._metadata_scrape_cache_binding()
+        if not binding_title:
+            return
+        state = load_cached_metadata_scrape_dialog_state(binding_title, binding_year)
+        if state is None:
+            return
+        self._metadata_scrape_saved_title = state.title
+        self._metadata_scrape_saved_year = state.year
+        self._metadata_scrape_saved_category = state.category
+        self._metadata_scrape_saved_provider = ""
+        self._metadata_scrape_query_saved = True
+
     def _remember_metadata_scrape_query_state(self) -> None:
+        title = self._metadata_scrape_saved_title
+        year = self._metadata_scrape_saved_year
+        category = self._metadata_scrape_saved_category
         if self._metadata_scrape_title_edit is not None:
-            self._metadata_scrape_saved_title = self._metadata_scrape_title_edit.text()
+            title = self._metadata_scrape_title_edit.text()
         if self._metadata_scrape_year_edit is not None:
-            self._metadata_scrape_saved_year = self._metadata_scrape_year_edit.text()
+            year = self._metadata_scrape_year_edit.text()
         if self._metadata_scrape_category_combo is not None:
-            self._metadata_scrape_saved_category = str(self._metadata_scrape_category_combo.currentData() or "")
+            category = str(self._metadata_scrape_category_combo.currentData() or "")
         if self._metadata_scrape_provider_combo is not None:
             self._metadata_scrape_saved_provider = str(self._metadata_scrape_provider_combo.currentData() or "")
+        self._metadata_scrape_saved_title = title
+        self._metadata_scrape_saved_year = year
+        self._metadata_scrape_saved_category = category
         self._metadata_scrape_query_saved = True
+        binding_title, binding_year = self._metadata_scrape_cache_binding()
+        if not binding_title:
+            return
+        save_cached_metadata_scrape_dialog_state(
+            binding_title,
+            binding_year,
+            MetadataScrapeDialogState(title=title, year=year, category=category),
+        )
 
     def _dismiss_escape_dialog(self) -> bool:
         dialog = self._danmaku_settings_dialog
