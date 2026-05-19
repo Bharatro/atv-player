@@ -11,7 +11,7 @@ class FakeApiClient:
         self.item_calls: list[tuple[str, int]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
-        self.resolve_calls: list[str] = []
+        self.get_detail_calls: list[str] = []
 
     def list_telegram_search_categories(self) -> dict:
         return self.category_payload
@@ -29,7 +29,7 @@ class FakeApiClient:
         return self.detail_payload
 
     def get_detail(self, vod_id: str) -> dict:
-        self.resolve_calls.append(vod_id)
+        self.get_detail_calls.append(vod_id)
         return {
             "list": [
                 {
@@ -154,11 +154,11 @@ def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> 
     assert request.clicked_index == 0
     assert request.source_kind == "telegram"
     assert request.source_mode == "detail"
-    assert request.source_vod_id == source_vod_id
+    assert request.source_vod_id == "1$91792$1"
 
     resolved = request.detail_resolver(request.playlist[1])
 
-    assert api.resolve_calls == ["1@91794@0@1"]
+    assert api.get_detail_calls == ["1@91794@0@1"]
     assert resolved is not None
     assert resolved.vod_name == "Resolved 1@91794@0@1"
 
@@ -182,7 +182,7 @@ def test_build_request_exposes_local_telegram_history_hooks() -> None:
         playback_history_saver=lambda vod_id, payload: save_calls.append((vod_id, payload)),
     )
 
-    request = controller.build_request("tg-detail-1")
+    request = controller.build_request("https://pan.quark.cn/s/tg-detail-1")
 
     assert request.use_local_history is False
     assert request.restore_history is False
@@ -192,11 +192,11 @@ def test_build_request_exposes_local_telegram_history_hooks() -> None:
     request.playback_history_loader()
     request.playback_history_saver({"position": 45000})
 
-    assert load_calls == ["tg-detail-1", "1$91792$1"]
-    assert save_calls == [("tg-detail-1", {"position": 45000})]
+    assert load_calls == ["1$91792$1", "https://pan.quark.cn/s/tg-detail-1"]
+    assert save_calls == [("1$91792$1", {"position": 45000})]
 
 
-def test_build_request_falls_back_to_detail_vod_id_when_original_telegram_history_key_is_missing() -> None:
+def test_build_request_falls_back_to_original_share_link_when_backend_history_key_is_missing() -> None:
     api = FakeApiClient()
     api.detail_payload = {
         "list": [
@@ -211,14 +211,26 @@ def test_build_request_falls_back_to_detail_vod_id_when_original_telegram_histor
 
     def load_history(vod_id: str):
         load_calls.append(vod_id)
-        if vod_id == "1$91792$1":
+        if vod_id == "https://pan.quark.cn/s/tg-detail-1":
             return {"position": 45000}
         return None
 
     controller = TelegramSearchController(api, playback_history_loader=load_history)
 
-    request = controller.build_request("tg-detail-1")
+    request = controller.build_request("https://pan.quark.cn/s/tg-detail-1")
 
     assert request.playback_history_loader is not None
     assert request.playback_history_loader() == {"position": 45000}
-    assert load_calls == ["tg-detail-1", "1$91792$1"]
+    assert load_calls == ["1$91792$1", "https://pan.quark.cn/s/tg-detail-1"]
+
+
+def test_build_request_uses_backend_detail_endpoint_for_backend_vod_id() -> None:
+    api = FakeApiClient()
+    controller = TelegramSearchController(api)
+
+    request = controller.build_request("1$125208$1")
+
+    assert api.detail_calls == []
+    assert api.get_detail_calls == ["1$125208$1"]
+    assert request.vod.vod_id == "1$125208$1"
+    assert request.source_vod_id == "1$125208$1"

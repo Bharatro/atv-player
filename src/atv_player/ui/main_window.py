@@ -1,6 +1,7 @@
 from __future__ import annotations
 import inspect
 import json
+import re
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -1335,6 +1336,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self._skip_next_telegram_open_request_vod_id = ""
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
@@ -1522,6 +1524,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
+        self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
         if self.bilibili_page is not None:
             bilibili_page = self.bilibili_page
             bilibili_page.item_open_requested.connect(self._handle_bilibili_item_open_requested)
@@ -2453,6 +2456,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
+        self._skip_next_telegram_open_request_vod_id = str(vod_id or "")
         def build_request() -> OpenPlayerRequest:
             request = self.telegram_controller.build_request(vod_id)
             return self._apply_request_fallback_metadata(request, item, prefer_fallback_media_title=True)
@@ -2460,6 +2464,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_open_request(build_request)
 
     def _handle_telegram_open_requested(self, vod_id: str) -> None:
+        normalized_vod_id = str(vod_id or "")
+        if normalized_vod_id and normalized_vod_id == self._skip_next_telegram_open_request_vod_id:
+            self._skip_next_telegram_open_request_vod_id = ""
+            return
         self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
 
     def _handle_bilibili_item_open_requested(self, item) -> None:
@@ -3091,6 +3099,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
 
     @staticmethod
+    def _should_override_request_vod_name_with_fallback(current_name: str, fallback_name: str) -> bool:
+        if not current_name or not fallback_name:
+            return False
+        current_has_cjk = re.search(r"[\u3400-\u9fff]", current_name) is not None
+        fallback_has_cjk = re.search(r"[\u3400-\u9fff]", fallback_name) is not None
+        return fallback_has_cjk and not current_has_cjk
+
+    @staticmethod
     def _apply_request_fallback_metadata(
         request: OpenPlayerRequest,
         item: Any,
@@ -3104,7 +3120,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             request.vod.type_name = fallback_type_name
         if fallback_category_name and not request.vod.category_name:
             request.vod.category_name = fallback_category_name
-        if fallback_vod_name and not request.vod.vod_name:
+        if fallback_vod_name and (
+            not request.vod.vod_name
+            or (
+                prefer_fallback_media_title
+                and MainWindow._should_override_request_vod_name_with_fallback(request.vod.vod_name, fallback_vod_name)
+            )
+        ):
             request.vod.vod_name = fallback_vod_name
         resolved_media_title = (
             fallback_vod_name if prefer_fallback_media_title and fallback_vod_name else request.vod.vod_name or fallback_vod_name
@@ -3305,16 +3327,23 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._start_open_request(build_request)
             return
         if record.source_kind == "emby":
-            self._start_open_request(lambda: self.emby_controller.build_request(record.key))
+            self._start_open_request(lambda: self._apply_request_playback_history_title(self.emby_controller.build_request(record.key)))
+            return
+        if record.source_kind == "telegram":
+            self._start_open_request(lambda: self._apply_request_playback_history_title(self.telegram_controller.build_request(record.key)))
             return
         if record.source_kind == "bilibili":
-            self._start_open_request(lambda: self.bilibili_controller.build_request(record.key))
+            self._start_open_request(
+                lambda: self._apply_request_playback_history_title(self.bilibili_controller.build_request(record.key))
+            )
             return
         if record.source_kind == "jellyfin":
-            self._start_open_request(lambda: self.jellyfin_controller.build_request(record.key))
+            self._start_open_request(
+                lambda: self._apply_request_playback_history_title(self.jellyfin_controller.build_request(record.key))
+            )
             return
         if record.source_kind == "feiniu":
-            self._start_open_request(lambda: self.feiniu_controller.build_request(record.key))
+            self._start_open_request(lambda: self._apply_request_playback_history_title(self.feiniu_controller.build_request(record.key)))
             return
         self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
 

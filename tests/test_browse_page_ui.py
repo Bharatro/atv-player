@@ -1604,6 +1604,48 @@ def test_history_page_formats_emby_jellyfin_feiniu_bilibili_and_direct_parse_sou
     assert page.table.item(4, 5).text() == "全局解析"
 
 
+def test_history_page_formats_telegram_source_label(qtbot) -> None:
+    class Controller:
+        def load_page(self, page: int, size: int):
+            return [
+                HistoryRecord(
+                    id=0,
+                    key="tg-1",
+                    vod_name="电报影视剧",
+                    vod_pic="",
+                    vod_remarks="第1集",
+                    episode=0,
+                    episode_url="",
+                    position=5000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1,
+                    source_kind="telegram",
+                    source_name="电报影视",
+                ),
+            ], 1
+
+    page = HistoryPage(Controller())
+    qtbot.addWidget(page)
+
+    page.load_history()
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1, timeout=1000)
+
+    assert page.table.item(0, 5).text() == "电报影视"
+
+
+def test_history_page_source_filter_includes_telegram(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+
+    values = [page.source_combo.itemData(index) for index in range(page.source_combo.count())]
+    labels = [page.source_combo.itemText(index) for index in range(page.source_combo.count())]
+
+    assert "telegram" in values
+    assert "电报影视" in labels
+
+
 def test_history_page_uses_latest_async_load_result(qtbot) -> None:
     controller = AsyncHistoryPageController()
     page = HistoryPage(controller)

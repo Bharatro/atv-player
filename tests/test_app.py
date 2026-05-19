@@ -2922,6 +2922,64 @@ def test_main_window_opens_remote_history_detail_asynchronously(qtbot, monkeypat
     assert opened[0].source_vod_id == "history-vod-1"
 
 
+def test_main_window_opens_telegram_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(lambda vod_id: _make_telegram_request(vod_id, vod_name="电报影视剧"))
+
+    class BrowseController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request_from_detail(self, vod_id: str):
+            self.calls.append(vod_id)
+            return _make_telegram_request(vod_id, vod_name="不应走到这里")
+
+    browse_controller = BrowseController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=browse_controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=9,
+            key="1$125208$1",
+            vod_name="电报影视剧",
+            vod_pic="",
+            vod_remarks="第1集",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="telegram",
+            source_name="电报影视",
+        )
+    )
+    _wait_for_request_call(qtbot, controller, "1$125208$1")
+    controller.finish_request("1$125208$1", request=_make_telegram_request("1$125208$1", vod_name="电报影视剧"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert browse_controller.calls == []
+    assert opened[0].vod.vod_name == "电报影视剧"
+    assert opened[0].source_vod_id == "1$125208$1"
+
+
 def test_main_window_opens_direct_parse_history_detail_asynchronously(qtbot, monkeypatch) -> None:
     class FakeParserService:
         def __init__(self) -> None:

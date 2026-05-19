@@ -14,6 +14,11 @@ def _looks_like_media_url(value: str) -> bool:
     )
 
 
+def _looks_like_backend_vod_id(value: str) -> bool:
+    candidate = value.strip()
+    return "$" in candidate and not candidate.startswith(("http://", "https://"))
+
+
 def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
     playlist: list[PlayItem] = []
     for chunk in (vod_play_url or "").split("#"):
@@ -104,7 +109,10 @@ class TelegramSearchController:
             return None
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
-        payload = self._api_client.get_telegram_search_detail(vod_id)
+        if _looks_like_backend_vod_id(vod_id):
+            payload = self._api_client.get_detail(vod_id)
+        else:
+            payload = self._api_client.get_telegram_search_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
         playlist = build_detail_playlist(detail)
         if not playlist:
@@ -116,12 +124,13 @@ class TelegramSearchController:
                     item.media_title = media_title
         history_loader = None
         history_saver = None
-        source_vod_id = vod_id or detail.vod_id
+        source_vod_id = str(detail.vod_id or vod_id or "").strip()
+        legacy_history_vod_id = str(vod_id or "").strip()
         if self._playback_history_loader is not None:
-            def history_loader(source_vod_id=source_vod_id, detail_vod_id=detail.vod_id):
+            def history_loader(source_vod_id=source_vod_id, legacy_history_vod_id=legacy_history_vod_id):
                 history = self._playback_history_loader(source_vod_id)
-                if history is None and detail_vod_id and detail_vod_id != source_vod_id:
-                    history = self._playback_history_loader(detail_vod_id)
+                if history is None and legacy_history_vod_id and legacy_history_vod_id != source_vod_id:
+                    history = self._playback_history_loader(legacy_history_vod_id)
                 return history
         if self._playback_history_saver is not None:
             history_saver = lambda payload, source_vod_id=source_vod_id: self._playback_history_saver(source_vod_id, payload)
