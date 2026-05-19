@@ -1351,6 +1351,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
+        self._main_window_geometry_before_player = QRect()
         self._main_window_was_maximized_before_player = False
         self._open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
@@ -3738,12 +3739,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _remember_main_window_state_for_player(self) -> None:
         self._main_window_was_maximized_before_player = self.isMaximized()
+        geometry = self.normalGeometry() if self._main_window_was_maximized_before_player else self.geometry()
+        if geometry.isValid():
+            self._main_window_geometry_before_player = QRect(geometry)
+        else:
+            self._main_window_geometry_before_player = QRect()
 
     def _restore_main_window_after_player(self) -> None:
+        geometry = QRect(self._main_window_geometry_before_player)
+        if geometry.isValid():
+            self.setGeometry(geometry)
+            if self._main_window_was_maximized_before_player:
+                self.showMaximized()
+                QTimer.singleShot(0, self.showMaximized)
+            else:
+                self.showNormal()
+            self._refresh_main_window_layout()
+            QTimer.singleShot(0, self._refresh_main_window_layout)
+            return
         self._restore_saved_geometry()
         self.show()
-        if self._main_window_was_maximized_before_player:
+        if self._main_window_was_maximized_before_player or self._saved_main_window_geometry_is_maximized():
             self.showMaximized()
+            QTimer.singleShot(0, self.showMaximized)
         self._refresh_main_window_layout()
         QTimer.singleShot(0, self._refresh_main_window_layout)
 
@@ -3784,6 +3802,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self.showMaximized()
             return
         self.restoreGeometry(to_qbytearray(geometry))
+
+    def _saved_main_window_geometry_is_maximized(self) -> bool:
+        geometry = self.config.main_window_geometry
+        if not geometry or not geometry.startswith(_CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX):
+            return False
+        try:
+            payload = json.loads(geometry[len(_CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX) :].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        return bool(payload.get("maximized", False))
 
     def _refresh_main_window_layout(self) -> None:
         central_widget = self.centralWidget()

@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from atv_player.ui.window_chrome import (
     ThemedDialogBase,
@@ -17,6 +17,13 @@ class DemoDialog(ThemedDialogBase):
     def __init__(self) -> None:
         super().__init__(title="Demo Dialog")
         self.content_layout().addWidget(QLabel("body", self.content_widget()))
+
+
+class ActionWindow(ThemedWidgetWindowBase):
+    def __init__(self) -> None:
+        super().__init__(title="Action Window", allow_minimize=True, allow_maximize=True, resizable=True)
+        self.return_button = QPushButton("返回", self.title_bar())
+        self.title_bar().set_extra_action_buttons([self.return_button])
 
 
 def test_themed_widget_window_exposes_custom_title_bar_and_frameless_flag(qtbot) -> None:
@@ -82,3 +89,12 @@ def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) 
 
     assert window.title_bar().isHidden() is True
     assert window.content_widget().isVisible() is True
+
+
+def test_themed_widget_window_title_bar_can_insert_extra_action_buttons(qtbot) -> None:
+    window = ActionWindow()
+    qtbot.addWidget(window)
+
+    buttons = [button.text() for button in window.title_bar().action_buttons()]
+
+    assert buttons == ["返回", "—", "□", "✕"]

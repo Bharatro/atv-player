@@ -6312,6 +6312,15 @@ def test_player_window_uses_custom_title_bar(qtbot) -> None:
     assert window.title_bar().title_label.text() == "alist-tvbox 播放器"
 
 
+def test_player_window_title_bar_exposes_return_to_main_button(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.title_bar_return_button.text() == ""
+    assert window.title_bar_return_button.property("icon_name") == "home.svg"
+    assert window.title_bar_return_button.toolTip() == "返回主窗口 (Ctrl+P)"
+
+
 def test_player_window_enables_resize_support(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -16987,7 +16996,7 @@ def test_player_window_close_during_app_quit_preserves_player_restore_state(qtbo
     assert saved["count"] >= 1
 
 
-def test_player_window_close_button_returns_to_main_instead_of_exiting(qtbot) -> None:
+def test_player_window_close_event_returns_to_main_instead_of_exiting(qtbot) -> None:
     saved = {"count": 0}
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player", last_player_paused=False)
@@ -17013,6 +17022,55 @@ def test_player_window_close_button_returns_to_main_instead_of_exiting(qtbot) ->
 
     window._quit_requested = True
     window.close()
+
+
+def test_player_window_title_bar_return_button_returns_to_main(qtbot) -> None:
+    saved = {"count": 0}
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player", last_player_paused=False)
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+    window.session = object()
+    window.video = FakeVideo()
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+
+    window.title_bar_return_button.click()
+
+    assert emitted["count"] == 1
+    assert pauses["count"] == 1
+    assert config.last_active_window == "main"
+    assert saved["count"] >= 1
+
+
+def test_player_window_title_bar_close_button_quits_application(qtbot, monkeypatch) -> None:
+    quit_calls = {"count": 0}
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+
+    monkeypatch.setattr(
+        QApplication,
+        "quit",
+        lambda *args, **kwargs: quit_calls.__setitem__("count", quit_calls["count"] + 1),
+    )
+
+    window.title_bar().close_button.click()
+
+    assert quit_calls["count"] == 1
+    assert emitted["count"] == 0
+    assert config.last_active_window == "player"
 
 
 def visible_shortcut_help_dialogs() -> list[QDialog]:

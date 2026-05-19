@@ -698,6 +698,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
+        self.title_bar_return_button = QPushButton("", self.title_bar())
+        self.title_bar_return_button.setObjectName("customTitleBarReturnButton")
+        self.title_bar_return_button.setProperty("icon_name", "home.svg")
+        self.title_bar_return_button.setIcon(load_icon(self._icons_dir / "home.svg"))
+        self.title_bar_return_button.setIconSize(QSize(16, 16))
+        self.title_bar_return_button.setToolTip(self._format_tooltip("返回主窗口", "Ctrl+P"))
+        self.title_bar_return_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.title_bar_return_button.clicked.connect(self._return_to_main)
+        self.title_bar().set_extra_action_buttons([self.title_bar_return_button])
+        self.title_bar().close_requested.disconnect()
+        self.title_bar().close_requested.connect(self._quit_application)
         self.playlist_title_mode = "episode"
         self.playlist_group_combo = FlatComboBox()
         self.playlist_group_combo.setHidden(True)

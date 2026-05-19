@@ -62,18 +62,43 @@ class CustomTitleBar(QWidget):
         self.close_button = QPushButton("✕", self)
         self.close_button.setObjectName("customTitleBarCloseButton")
         self.close_button.clicked.connect(self.close_requested.emit)
+        self._extra_action_buttons: list[QPushButton] = []
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 8, 8, 8)
         layout.setSpacing(8)
         layout.addWidget(self.title_label)
         layout.addStretch(1)
-        for button in (self.minimize_button, self.maximize_button, self.close_button):
-            button.setFixedSize(30, 30)
-            layout.addWidget(button)
+        self._actions_layout = QHBoxLayout()
+        self._actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._actions_layout.setSpacing(8)
+        layout.addLayout(self._actions_layout)
+        self._rebuild_action_buttons()
 
     def set_title(self, title: str) -> None:
         self.title_label.setText(title)
+
+    def set_extra_action_buttons(self, buttons: list[QPushButton]) -> None:
+        self._extra_action_buttons = list(buttons)
+        self._rebuild_action_buttons()
+
+    def action_buttons(self) -> list[QPushButton]:
+        return [
+            *self._extra_action_buttons,
+            self.minimize_button,
+            self.maximize_button,
+            self.close_button,
+        ]
+
+    def _rebuild_action_buttons(self) -> None:
+        while self._actions_layout.count():
+            item = self._actions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self)
+        for button in self.action_buttons():
+            button.setFixedSize(30, 30)
+            self._actions_layout.addWidget(button)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

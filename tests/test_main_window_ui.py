@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -6132,6 +6133,34 @@ def test_main_window_remaximizes_when_returning_from_player(qtbot, monkeypatch) 
     assert calls.index(("show", None)) < calls.index(("showMaximized", None))
 
 
+def test_main_window_restores_in_memory_geometry_before_saved_geometry_when_returning_from_player(qtbot, monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    config = AppConfig(last_active_window="player", main_window_geometry=b"saved-geometry")
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window._main_window_was_maximized_before_player = True
+    window._main_window_geometry_before_player = main_window_module.QRect(40, 50, 800, 600)
+
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: calls.append(("singleShot", callback)))
+    monkeypatch.setattr(window, "_restore_saved_geometry", lambda *args, **kwargs: calls.append(("restore_saved_geometry", None)))
+    monkeypatch.setattr(window, "setGeometry", lambda rect: calls.append(("setGeometry", rect)))
+    monkeypatch.setattr(window, "showMaximized", lambda: calls.append(("showMaximized", None)))
+    monkeypatch.setattr(window, "showNormal", lambda: calls.append(("showNormal", None)))
+
+    window._show_main_again()
+
+    assert ("restore_saved_geometry", None) not in calls
+    assert ("setGeometry", main_window_module.QRect(40, 50, 800, 600)) in calls
+    assert ("showMaximized", None) in calls
+    assert ("showNormal", None) not in calls
+
+
 def test_main_window_reapplies_saved_geometry_when_no_player_return_state(qtbot, monkeypatch) -> None:
     restore_calls: list[bytes] = []
 
@@ -6154,6 +6183,78 @@ def test_main_window_reapplies_saved_geometry_when_no_player_return_state(qtbot,
     window._show_main_again()
 
     assert restore_calls == [b"saved-geometry"]
+
+
+def test_main_window_remaximizes_when_saved_geometry_marks_maximized(qtbot, monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    payload = {
+        "x": 10,
+        "y": 20,
+        "width": 1280,
+        "height": 720,
+        "maximized": True,
+    }
+    config = AppConfig(
+        last_active_window="player",
+        main_window_geometry=(
+            main_window_module._CUSTOM_MAIN_WINDOW_GEOMETRY_PREFIX
+            + json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ),
+    )
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window._main_window_was_maximized_before_player = False
+
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: calls.append(("singleShot", callback)))
+    monkeypatch.setattr(window, "showMaximized", lambda: calls.append(("showMaximized", None)))
+    monkeypatch.setattr(window, "show", lambda: calls.append(("show", None)))
+    monkeypatch.setattr(window, "setGeometry", lambda _rect: calls.append(("setGeometry", None)))
+
+    window._show_main_again()
+
+    assert ("setGeometry", None) in calls
+    assert ("show", None) in calls
+    assert ("showMaximized", None) in calls
+    assert calls.index(("show", None)) < calls.index(("showMaximized", None))
+
+
+def test_main_window_retries_maximize_on_next_event_loop_when_returning_from_player(qtbot, monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    scheduled: list[tuple[int, object]] = []
+    config = AppConfig(last_active_window="player", main_window_geometry=b"saved-geometry")
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window._main_window_was_maximized_before_player = True
+
+    def fake_show_maximized() -> None:
+        calls.append(("showMaximized", None))
+
+    def fake_refresh() -> None:
+        calls.append(("refresh", None))
+
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    monkeypatch.setattr(window, "showMaximized", fake_show_maximized)
+    monkeypatch.setattr(window, "_refresh_main_window_layout", fake_refresh)
+    monkeypatch.setattr(window, "show", lambda: calls.append(("show", None)))
+    monkeypatch.setattr(window, "restoreGeometry", lambda _geometry: calls.append(("restoreGeometry", None)) or True)
+
+    window._show_main_again()
+
+    assert ("showMaximized", None) in calls
+    assert (0, fake_show_maximized) in scheduled
+    assert (0, fake_refresh) in scheduled
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
