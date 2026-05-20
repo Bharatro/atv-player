@@ -4905,6 +4905,100 @@ def test_player_window_prefers_video_cover_override_before_session_poster_and_de
     assert video_started == ["https://img.example/video.jpg"]
 
 
+def test_player_window_shows_poster_navigation_for_multiple_candidates(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        del request_id, on_loaded
+        if target == "detail":
+            detail_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            vod_pic="https://img.example/main.jpg",
+            poster_candidates=[
+                "https://img.example/main.jpg",
+                "https://img.example/alt.jpg",
+            ],
+        ),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window._poster_previous_button.isHidden() is False
+    assert window._poster_next_button.isHidden() is False
+
+    qtbot.mouseClick(window._poster_next_button, Qt.MouseButton.LeftButton)
+
+    assert detail_started[-1] == "https://img.example/alt.jpg"
+
+
+def test_player_window_hides_poster_navigation_for_single_candidate(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img.example/main.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert window._poster_previous_button.isHidden() is True
+    assert window._poster_next_button.isHidden() is True
+
+
+def test_player_window_poster_navigation_loops_at_boundaries(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        del request_id, on_loaded
+        if target == "detail":
+            detail_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(
+                vod_id="movie-1",
+                vod_name="Movie",
+                vod_pic="https://img.example/main.jpg",
+                poster_candidates=[
+                    "https://img.example/main.jpg",
+                    "https://img.example/alt.jpg",
+                ],
+            ),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    qtbot.mouseClick(window._poster_previous_button, Qt.MouseButton.LeftButton)
+
+    assert detail_started[-1] == "https://img.example/alt.jpg"
+
+
 def test_player_window_refreshes_only_video_poster_after_async_playback_loader_updates_cover_override(qtbot, monkeypatch) -> None:
     detail_started: list[str] = []
     video_started: list[str] = []

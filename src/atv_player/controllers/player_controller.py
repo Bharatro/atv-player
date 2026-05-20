@@ -53,6 +53,7 @@ class PlayerSession:
     episode_titles_hydrated: bool = False
     original_vod: VodItem | None = None
     show_original_metadata: bool = False
+    current_metadata_poster_index: int = 0
     original_item_detail_fields_by_key: dict[tuple[str, str, str, str, str], list[PlaybackDetailField]] = field(
         default_factory=dict
     )

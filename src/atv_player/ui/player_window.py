@@ -847,6 +847,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
         self.poster_label.setMaximumSize(self._POSTER_SIZE)
         self.poster_label.setText("")
+        self._poster_previous_button = self._create_icon_button("previous.svg", "上一张海报", role="secondary")
+        self._poster_previous_button.setHidden(True)
+        self._poster_next_button = self._create_icon_button("next.svg", "下一张海报", role="secondary")
+        self._poster_next_button.setHidden(True)
         self.video_poster_overlay = QLabel()
         self.video_poster_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_poster_overlay.setText("")
@@ -887,6 +891,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_layout.setSpacing(10)
         metadata_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         metadata_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._poster_navigation_widget = QWidget()
+        self._poster_navigation_layout = QHBoxLayout(self._poster_navigation_widget)
+        self._poster_navigation_layout.setContentsMargins(0, 0, 0, 0)
+        self._poster_navigation_layout.setSpacing(8)
+        self._poster_navigation_layout.addStretch(1)
+        self._poster_navigation_layout.addWidget(self._poster_previous_button)
+        self._poster_navigation_layout.addWidget(self._poster_next_button)
+        self._poster_navigation_layout.addStretch(1)
+        metadata_layout.addWidget(self._poster_navigation_widget)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1062,6 +1075,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
         self.playlist_title_tabs.currentChanged.connect(self._change_playlist_title_mode)
         self._metadata_original_toggle.toggled.connect(self._toggle_original_metadata_view)
+        self._poster_previous_button.clicked.connect(lambda: self._step_metadata_poster(-1))
+        self._poster_next_button.clicked.connect(lambda: self._step_metadata_poster(1))
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -2806,9 +2821,39 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return self._default_video_cover_source
 
     def _preferred_detail_poster_source(self) -> str:
-        if self.session is None:
+        sources = self._current_metadata_poster_sources()
+        if self.session is None or not sources:
             return ""
-        return self.session.vod.vod_pic or ""
+        index = self.session.current_metadata_poster_index % len(sources)
+        return sources[index]
+
+    def _current_metadata_poster_sources(self) -> list[str]:
+        vod = self._current_metadata_vod()
+        if vod is None:
+            return []
+        candidates = [str(source or "").strip() for source in vod.poster_candidates if str(source or "").strip()]
+        if candidates:
+            return candidates
+        fallback = str(vod.vod_pic or "").strip()
+        return [fallback] if fallback else []
+
+    def _refresh_poster_navigation(self) -> None:
+        visible = len(self._current_metadata_poster_sources()) > 1
+        self._poster_navigation_widget.setHidden(not visible)
+        self._poster_previous_button.setHidden(not visible)
+        self._poster_next_button.setHidden(not visible)
+
+    def _step_metadata_poster(self, offset: int) -> None:
+        if self.session is None:
+            return
+        sources = self._current_metadata_poster_sources()
+        if len(sources) <= 1:
+            self.session.current_metadata_poster_index = 0
+            self._refresh_poster_navigation()
+            return
+        self.session.current_metadata_poster_index = (self.session.current_metadata_poster_index + offset) % len(sources)
+        self._refresh_poster_navigation()
+        self._render_detail_poster()
 
     def _preferred_video_poster_source(self) -> str:
         if self.session is None:
@@ -2923,6 +2968,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._start_poster_load(source, self._video_poster_request_id, target="video")
 
     def _render_poster(self) -> None:
+        self._refresh_poster_navigation()
         self._render_detail_poster()
         self._render_video_poster()
 
