@@ -1,6 +1,7 @@
 import os
 import httpx
 import logging
+from pathlib import Path
 import pytest
 import threading
 import time
@@ -3582,6 +3583,31 @@ def test_build_application_starts_async_danmaku_cache_cleanup(monkeypatch, tmp_p
     app_module.build_application()
 
     assert cleanup_calls == ["started", "cleaned"]
+
+
+def test_build_application_installs_crash_diagnostics(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    installed_paths: list[Path] = []
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(app_module, "install_crash_diagnostics", lambda path: installed_paths.append(Path(path)))
+
+    app_module.build_application()
+
+    assert installed_paths == [tmp_path / "app-data" / "logs"]
 
 
 def test_build_application_uses_main_thread_gc_timer_on_python_3_14(monkeypatch, tmp_path) -> None:

@@ -33,6 +33,7 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
+from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
@@ -313,6 +314,7 @@ def build_application() -> tuple[QApplication, SettingsRepository, AppLogService
         max_bytes=10 * 1024 * 1024,
         max_archives=5,
     )
+    install_crash_diagnostics(app_log_service.active_path.parent)
     configure_logging("INFO", StructuredJsonlHandler(app_log_service))
     install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()

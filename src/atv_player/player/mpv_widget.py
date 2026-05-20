@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import glob
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -71,6 +73,61 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 }
 
 logger = logging.getLogger(__name__)
+_NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
+_LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
+
+
+def _version_sort_key(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in value.split("."))
+
+
+def _extract_nvidia_version(text: str) -> str:
+    match = _NVIDIA_VERSION_RE.search(text)
+    return match.group(1) if match is not None else ""
+
+
+def _read_linux_nvidia_kernel_version() -> str:
+    try:
+        with open("/proc/driver/nvidia/version", encoding="utf-8") as handle:
+            return _extract_nvidia_version(handle.read())
+    except Exception:
+        return ""
+
+
+def _read_linux_nvidia_userspace_version() -> str:
+    versions: set[str] = set()
+    for pattern in (
+        "/lib*/x86_64-linux-gnu/libnvidia-glcore.so.*",
+        "/usr/lib*/x86_64-linux-gnu/libnvidia-glcore.so.*",
+        "/lib*/x86_64-linux-gnu/libEGL_nvidia.so.*",
+        "/usr/lib*/x86_64-linux-gnu/libEGL_nvidia.so.*",
+    ):
+        for candidate in glob.glob(pattern):
+            version = _extract_nvidia_version(os.path.basename(candidate))
+            if version:
+                versions.add(version)
+    if not versions:
+        return ""
+    return max(versions, key=_version_sort_key)
+
+
+def detect_linux_nvidia_driver_mismatch() -> tuple[str, str] | None:
+    global _LINUX_NVIDIA_DRIVER_MISMATCH
+
+    if _LINUX_NVIDIA_DRIVER_MISMATCH is False:
+        return None
+    if isinstance(_LINUX_NVIDIA_DRIVER_MISMATCH, tuple):
+        return _LINUX_NVIDIA_DRIVER_MISMATCH
+    if not sys.platform.startswith("linux"):
+        _LINUX_NVIDIA_DRIVER_MISMATCH = False
+        return None
+    kernel_version = _read_linux_nvidia_kernel_version()
+    userspace_version = _read_linux_nvidia_userspace_version()
+    if kernel_version and userspace_version and kernel_version != userspace_version:
+        _LINUX_NVIDIA_DRIVER_MISMATCH = (userspace_version, kernel_version)
+        return _LINUX_NVIDIA_DRIVER_MISMATCH
+    _LINUX_NVIDIA_DRIVER_MISMATCH = False
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +189,7 @@ class MpvWidget(QWidget):
         self.playback_finished.emit()
 
     def _base_player_options(self) -> dict[str, object]:
-        return dict(
+        options = dict(
             wid=str(int(self.winId())),
             hwdec=str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe"),
             force_window="yes",
@@ -149,6 +206,17 @@ class MpvWidget(QWidget):
             stream_buffer_size="4M",
             network_timeout=int(getattr(self._config, "mpv_network_timeout_seconds", 15) or 15),
         )
+        mismatch = detect_linux_nvidia_driver_mismatch()
+        if mismatch is not None:
+            userspace_version, kernel_version = mismatch
+            options["hwdec"] = "no"
+            options["vo"] = "wlshm" if os.getenv("WAYLAND_DISPLAY") and not os.getenv("DISPLAY") else "x11"
+            logger.warning(
+                "Detected NVIDIA driver mismatch userspace=%s kernel=%s forcing software video output",
+                userspace_version,
+                kernel_version,
+            )
+        return options
 
     def _create_player(self):
         import mpv

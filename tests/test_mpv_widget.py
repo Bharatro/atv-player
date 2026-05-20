@@ -992,12 +992,36 @@ def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_nam
     qtbot.addWidget(widget)
     monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
     monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
 
     widget._create_player()
 
     assert "vo" not in captured
     assert captured["ao"] == "pulse,pipewire,alsa,"
     assert "audio_device" not in captured
+
+
+def test_mpv_widget_forces_software_video_output_when_nvidia_driver_versions_mismatch(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch",
+        lambda: ("580.159.03", "580.142"),
+    )
+
+    widget._create_player()
+
+    assert captured["hwdec"] == "no"
+    assert captured["vo"] == "x11"
+    assert captured["ao"] == "pulse,pipewire,alsa,"
 
 
 def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypatch) -> None:
