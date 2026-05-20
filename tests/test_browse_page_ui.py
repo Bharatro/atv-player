@@ -2,7 +2,7 @@ import threading
 
 import pytest
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHeaderView, QSizePolicy, QSplitter, QTableWidgetItem
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
@@ -1644,6 +1644,42 @@ def test_history_page_source_filter_includes_telegram(qtbot) -> None:
 
     assert "telegram" in values
     assert "电报影视" in labels
+
+
+def test_history_page_filter_combos_reserve_readable_text_width(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+
+    assert page.source_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    assert page.source_combo.minimumContentsLength() == 8
+    assert page.time_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    assert page.time_combo.minimumContentsLength() == 6
+
+
+def test_history_page_filter_combos_reserve_minimum_width_for_longest_label(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+    page.show()
+    qtbot.waitUntil(page.isVisible)
+
+    for combo in (page.source_combo, page.time_combo):
+        longest_label_width = max(combo.fontMetrics().horizontalAdvance(combo.itemText(index)) for index in range(combo.count()))
+        left_padding = int(combo.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(combo.property("flat_combo_indicator_padding") or 40)
+        assert combo.minimumWidth() >= longest_label_width + left_padding + indicator_padding
+
+
+def test_history_page_keeps_search_edit_as_primary_flexible_filter_control(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+    page.resize(1200, 700)
+    page.show()
+    qtbot.waitUntil(page.isVisible)
+
+    assert page.search_edit.width() > page.source_combo.width()
+    assert page.search_edit.width() > page.time_combo.width()
+    assert page.source_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
+    assert page.time_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
 
 
 def test_history_page_uses_latest_async_load_result(qtbot) -> None:

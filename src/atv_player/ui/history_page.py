@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -105,6 +106,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.time_combo.addItem("全部时间", "")
         self.time_combo.addItem("最近7天", "7d")
         self.time_combo.addItem("最近30天", "30d")
+        self._configure_filter_combo(self.source_combo, minimum_contents_length=8)
+        self._configure_filter_combo(self.time_combo, minimum_contents_length=6)
 
         self.continue_button = QPushButton("继续观看")
         self.continue_button.setCheckable(True)
@@ -135,7 +138,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         content_layout.setContentsMargins(0, 0, 0, 0)
 
         filters = QHBoxLayout()
-        filters.addWidget(self.search_edit, 3)
+        filters.addWidget(self.search_edit, 1)
         filters.addWidget(self.source_combo)
         filters.addWidget(self.time_combo)
         filters.addWidget(self.continue_button)
@@ -164,6 +167,16 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.continue_button.toggled.connect(self._on_continue_watching_toggled)
         self._update_pagination_controls()
         self._sync_action_state()
+
+    def _configure_filter_combo(self, combo: QComboBox, *, minimum_contents_length: int) -> None:
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumContentsLength(minimum_contents_length)
+        combo.setMaxVisibleItems(12)
+        longest_label_width = max(combo.fontMetrics().horizontalAdvance(combo.itemText(index)) for index in range(combo.count()))
+        left_padding = int(combo.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(combo.property("flat_combo_indicator_padding") or 40)
+        combo.setMinimumWidth(longest_label_width + left_padding + indicator_padding)
+        combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
