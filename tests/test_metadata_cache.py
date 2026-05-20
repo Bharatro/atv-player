@@ -99,3 +99,20 @@ def test_metadata_cache_expires_empty_generic_payload_with_shorter_ttl(tmp_path:
         )
         is None
     )
+
+
+def test_metadata_cache_delete_payload_namespace_removes_only_target_namespace(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+
+    cache.save_payload("tmdb_episode_search", "家业\x1f2026", [{"id": 275966}])
+    cache.save_payload("episode_title_playlist", "playlist", {"order": [0], "titles": [{"display": "第7集"}]})
+    cache.save_payload("other_namespace", "keep-me", {"ok": True})
+
+    cache.delete_payload_namespace("tmdb_episode_search")
+
+    assert cache.load_payload("tmdb_episode_search", "家业\x1f2026", ttl_seconds=86400) is None
+    assert cache.load_payload("episode_title_playlist", "playlist", ttl_seconds=86400) == {
+        "order": [0],
+        "titles": [{"display": "第7集"}],
+    }
+    assert cache.load_payload("other_namespace", "keep-me", ttl_seconds=86400) == {"ok": True}

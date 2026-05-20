@@ -199,6 +199,61 @@ def test_iqiyi_metadata_provider_search_preserves_album_videos_in_raw() -> None:
     assert match.raw["videos"][0]["itemTitle"] == "终局开篇"
 
 
+def test_iqiyi_metadata_provider_search_normalizes_search_videoinfos_into_videos() -> None:
+    provider = IqiyiMetadataProvider(
+        get=lambda url, **kwargs: JsonResponse(
+            {
+                "data": {
+                    "templates": [
+                        {
+                            "template": 101,
+                            "albumInfo": {
+                                "title": "家业",
+                                "siteId": "iqiyi",
+                                "siteName": "爱奇艺",
+                                "pageUrl": "https://www.iqiyi.com/v_demo.html",
+                                "year": {"value": "2026"},
+                                "videos": [],
+                            },
+                            "videoinfos": [
+                                {
+                                    "number": 7,
+                                    "subtitle": "超品？成了！",
+                                    "title": "家业 第7集",
+                                    "pageUrl": "https://www.iqiyi.com/v_ep7.html",
+                                },
+                                {
+                                    "number": 8,
+                                    "subtitle": "当街竞价，怕了吗！",
+                                    "title": "家业 第8集",
+                                    "pageUrl": "https://www.iqiyi.com/v_ep8.html",
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    match = provider.search(MetadataQuery(title="家业", year="2026"))[0]
+
+    assert match.raw["videos"] == [
+        {
+            "number": 7,
+            "subtitle": "超品？成了！",
+            "title": "家业 第7集",
+            "pageUrl": "https://www.iqiyi.com/v_ep7.html",
+        },
+        {
+            "number": 8,
+            "subtitle": "当街竞价，怕了吗！",
+            "title": "家业 第8集",
+            "pageUrl": "https://www.iqiyi.com/v_ep8.html",
+        },
+    ]
+
+
 def test_iqiyi_metadata_provider_search_penalizes_non_native_site_results() -> None:
     def fake_get(url: str, **kwargs):
         assert url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"

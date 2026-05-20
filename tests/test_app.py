@@ -6165,6 +6165,97 @@ def test_app_coordinator_episode_title_enhancer_prefers_high_confidence_iqiyi_ov
     assert updated[0].episode_display_title == "第1集 终局开篇"
 
 
+def test_app_coordinator_episode_title_enhancer_prefers_iqiyi_when_search_videoinfos_are_present(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider as RealIqiyiMetadataProvider
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            del candidate
+            return []
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+
+    def fake_iqiyi_get(url: str, **kwargs):
+        assert url == "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3"
+        del kwargs
+        return type(
+            "Resp",
+            (),
+            {
+                "json": lambda self: {
+                    "data": {
+                        "templates": [
+                            {
+                                "template": 101,
+                                "albumInfo": {
+                                    "title": "家业",
+                                    "siteId": "iqiyi",
+                                    "siteName": "爱奇艺",
+                                    "pageUrl": "https://www.iqiyi.com/v_demo.html",
+                                    "year": {"value": "2026"},
+                                    "videos": [],
+                                },
+                                "videoinfos": [
+                                    {
+                                        "number": 1,
+                                        "subtitle": "终局开篇",
+                                        "title": "家业 第1集",
+                                        "pageUrl": "https://www.iqiyi.com/v_ep1.html",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+        )()
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: RealIqiyiMetadataProvider(get=fake_iqiyi_get))
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="家业", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="家业", vod_year="2026", category_name="电视剧"),
+            playlist=[PlayItem(title="01.mp4", url="http://m/1.mp4", original_title="01.mp4")],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "iqiyi"
+    assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
 def test_app_coordinator_episode_title_enhancer_keeps_tmdb_when_iqiyi_title_confidence_is_low(
     tmp_path,
     monkeypatch,

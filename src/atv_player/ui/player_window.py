@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
     MetadataScrapeDialogState,
     load_cached_metadata_scrape_dialog_state,
@@ -89,6 +90,7 @@ from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
+from atv_player.paths import app_cache_dir
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon, tint_icon
@@ -608,6 +610,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_hydration_override_title = ""
         self._metadata_hydration_override_year = ""
         self._metadata_hydration_override_category = ""
+        self._restart_episode_title_after_next_metadata_hydration = False
+        self._force_episode_title_restart_on_metadata_request_id = 0
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -3304,6 +3308,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session = self.session
         self._pending_metadata_session = session
         session.metadata_hydrated = True
+        if self._restart_episode_title_after_next_metadata_hydration:
+            self._force_episode_title_restart_on_metadata_request_id = request_id
+            self._restart_episode_title_after_next_metadata_hydration = False
         override_title = self._metadata_hydration_override_title
         override_year = self._metadata_hydration_override_year
         override_category = self._metadata_hydration_override_category
@@ -3356,6 +3363,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _start_episode_title_enhancement(self) -> None:
         if self.session is None or self.session.episode_title_enhancer is None or self.session.episode_titles_hydrated:
             return
+        if (
+            self.session.async_playback_loader
+            and self._pending_playback_loader is not None
+            and 0 <= self.current_index < len(self.session.playlist)
+            and not str(self.session.playlist[self.current_index].url or "").strip()
+        ):
+            logger.info(
+                "Delay episode title enhancement until playback loader resolves index=%s title=%s",
+                self.current_index,
+                self.session.playlist[self.current_index].title,
+            )
+            return
         self._episode_title_request_id += 1
         request_id = self._episode_title_request_id
         session = self.session
@@ -3380,6 +3399,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         pending_session = self._pending_metadata_session
         self._pending_metadata_session = None
+        force_restart_episode_titles = request_id == self._force_episode_title_restart_on_metadata_request_id
+        if force_restart_episode_titles:
+            self._force_episode_title_restart_on_metadata_request_id = 0
         if updated_vod is None or pending_session is None:
             return
         if self.session is not pending_session:
@@ -3394,7 +3416,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
-        if self._should_restart_episode_title_enhancement(previous_vod, updated_vod):
+        if force_restart_episode_titles or self._should_restart_episode_title_enhancement(previous_vod, updated_vod):
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
 
@@ -3550,6 +3572,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if request_id != self._metadata_request_id:
             return
         self._pending_metadata_session = None
+        if request_id == self._force_episode_title_restart_on_metadata_request_id:
+            self._force_episode_title_restart_on_metadata_request_id = 0
         self._append_log(f"元数据补全失败: {message}")
 
     def _handle_episode_title_enhancement_failed(self, request_id: int, message: str) -> None:
@@ -5855,18 +5879,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._metadata_scrape_binding_year = self._metadata_scrape_default_year
         if not self._metadata_scrape_query_saved:
             self._restore_metadata_scrape_query_state_from_cache()
+        saved_title = self._metadata_scrape_saved_title if self._metadata_scrape_query_saved else ""
+        saved_year = self._metadata_scrape_saved_year if self._metadata_scrape_query_saved else ""
+        saved_category = self._metadata_scrape_saved_category if self._metadata_scrape_query_saved else ""
+        title_value = saved_title if saved_title.strip() else self._metadata_scrape_default_title
+        year_value = saved_year if (saved_title.strip() or saved_year.strip()) else self._metadata_scrape_default_year
         dialog = self._ensure_metadata_scrape_dialog()
         if self._metadata_scrape_title_edit is not None:
-            self._metadata_scrape_title_edit.setText(
-                self._metadata_scrape_saved_title if self._metadata_scrape_query_saved else self._metadata_scrape_default_title
-            )
+            self._metadata_scrape_title_edit.setText(title_value)
         if self._metadata_scrape_year_edit is not None:
-            self._metadata_scrape_year_edit.setText(
-                self._metadata_scrape_saved_year if self._metadata_scrape_query_saved else self._metadata_scrape_default_year
-            )
+            self._metadata_scrape_year_edit.setText(year_value)
         self._populate_metadata_scrape_category_options()
         if self._metadata_scrape_category_combo is not None:
-            category_value = self._metadata_scrape_saved_category if self._metadata_scrape_query_saved else ""
+            category_value = saved_category
             category_index = max(0, self._metadata_scrape_category_combo.findData(category_value))
             self._metadata_scrape_category_combo.setCurrentIndex(category_index)
         provider_value = self._metadata_scrape_saved_provider if self._metadata_scrape_query_saved else ""
@@ -6116,14 +6141,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             bound_provider_id=bound_provider_id,
             detail_keys=detail_keys,
         )
+        cache = MetadataCache(app_cache_dir() / "metadata")
+        for namespace in ("tmdb_episode_search", "tmdb_episode_season_detail", "episode_title_playlist"):
+            cache.delete_payload_namespace(namespace)
         if bindings is not None and hasattr(bindings, "delete"):
             bindings.delete(binding_title, binding_year)
         self._reset_metadata_scrape_search_query()
         self._metadata_hydration_override_title = reset_title
         self._metadata_hydration_override_year = reset_year
         self._metadata_hydration_override_category = self._metadata_scrape_selected_category_name()
+        if self.session.metadata_hydrator is not None:
+            self._restart_episode_title_after_next_metadata_hydration = True
         self.session.metadata_hydrated = False
         self._start_metadata_hydration()
+        if self.session.metadata_hydrator is None and self.session.episode_title_enhancer is not None:
+            self.session.episode_titles_hydrated = False
+            self._start_episode_title_enhancement()
         self._append_log("已重置元数据缓存与手动绑定，重新开始自动搜索")
 
     def _selected_metadata_scrape_candidate(self):

@@ -849,6 +849,36 @@ def test_player_window_metadata_scrape_dialog_restore_default_resets_title_year_
     assert restarted._metadata_scrape_category_combo.currentData() == ""
 
 
+def test_player_window_metadata_scrape_dialog_ignores_blank_cached_query_and_falls_back_to_current_media(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
+
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    metadata_dialog_cache_module.save_cached_metadata_scrape_dialog_state(
+        "家业",
+        "2026",
+        metadata_dialog_cache_module.MetadataScrapeDialogState(title="", year="", category=""),
+    )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="家业", vod_year="2026"),
+        playlist=[PlayItem(title="05-(1.09 GB)", url="https://media.example/5.mp4", media_title="家业")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=FakeMetadataScrapeService(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == "家业"
+    assert window._metadata_scrape_year_edit.text() == "2026"
+
+
 def test_player_window_metadata_scrape_dialog_reuses_existing_dialog_and_reactivates_it(qtbot, monkeypatch) -> None:
     session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026"),
@@ -1877,6 +1907,86 @@ def test_player_window_metadata_scrape_reset_passes_selected_category_override_t
 
     qtbot.waitUntil(lambda: len(hydration_calls) == 1, timeout=1000)
     assert hydration_calls == [("仙剑奇侠传三", "仙剑奇侠传三", "2025", "动漫")]
+
+
+def test_player_window_metadata_scrape_reset_clears_episode_title_payload_caches(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(player_window_module, "app_cache_dir", lambda: tmp_path / "app-cache", raising=False)
+    cache = MetadataCache((tmp_path / "app-cache") / "metadata")
+    cache.save_payload("tmdb_episode_search", "家业\x1f2026", [{"id": 275966, "name": "家业"}])
+    cache.save_payload("tmdb_episode_season_detail", "275966:1", {"episodes": [{"episode_number": 7, "name": "旧标题"}]})
+    cache.save_payload(
+        "episode_title_playlist",
+        "playlist-cache-key",
+        {"order": [0], "titles": [{"display": "第7集 第 7 集", "source": "tmdb"}]},
+    )
+    cache.save_payload("other_namespace", "keep-me", {"ok": True})
+
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="家业", vod_year="2026", category_name="剧集"),
+        playlist=[PlayItem(title="07-(0.99 GB)", url="https://media.example/7.mp4", media_title="家业")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.session.metadata_hydrator = lambda current_session: current_session.vod
+    window.session.metadata_hydrated = True
+    window._open_metadata_scrape_dialog()
+
+    window._reset_metadata_scrape_state()
+
+    assert cache.load_payload("tmdb_episode_search", "家业\x1f2026", ttl_seconds=86400) is None
+    assert cache.load_payload("tmdb_episode_season_detail", "275966:1", ttl_seconds=86400) is None
+    assert cache.load_payload("episode_title_playlist", "playlist-cache-key", ttl_seconds=86400) is None
+    assert cache.load_payload("other_namespace", "keep-me", ttl_seconds=86400) == {"ok": True}
+
+
+def test_player_window_metadata_scrape_reset_restarts_episode_title_enhancement_even_when_signature_is_unchanged(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    hydration_calls: list[int] = []
+    enhancement_calls: list[str] = []
+
+    def hydrate(current_session: PlayerSession) -> VodItem:
+        hydration_calls.append(len(hydration_calls) + 1)
+        return VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=current_session.vod.vod_name,
+            vod_year=current_session.vod.vod_year,
+            category_name=current_session.vod.category_name,
+            vod_content="重置后简介" if len(hydration_calls) > 1 else "首次简介",
+        )
+
+    def enhance(current_session: PlayerSession) -> list[PlayItem] | None:
+        enhancement_calls.append(str(current_session.vod.vod_name or "").strip())
+        return None
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="家业", vod_year="2026", category_name="剧集", vod_content="原始简介"),
+        playlist=[PlayItem(title="07-(0.99 GB)", url="https://media.example/7.mp4", media_title="家业")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=hydrate,
+        metadata_scrape_service=service,
+        episode_title_enhancer=enhance,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "首次简介" in window.metadata_view.toPlainText(), timeout=1000)
+    qtbot.waitUntil(lambda: enhancement_calls == ["家业"], timeout=1000)
+
+    window._open_metadata_scrape_dialog()
+    window._reset_metadata_scrape_state()
+
+    qtbot.waitUntil(lambda: "重置后简介" in window.metadata_view.toPlainText(), timeout=1000)
+    qtbot.waitUntil(lambda: len(hydration_calls) == 2, timeout=1000)
+    assert enhancement_calls == ["家业", "家业"]
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
@@ -16076,7 +16186,7 @@ def test_player_window_async_episode_title_enhancer_reorders_playlist_and_keeps_
     assert window.session.playlist[window.current_index].original_title == "1-1080P.mp4"
 
 
-def test_player_window_async_route_replacement_restarts_episode_title_enhancement(qtbot) -> None:
+def test_player_window_async_route_replacement_delays_episode_title_enhancement_until_playlist_ready(qtbot) -> None:
     ready = threading.Event()
 
     class FakeVideo:
@@ -16149,8 +16259,7 @@ def test_player_window_async_route_replacement_restarts_episode_title_enhancemen
     qtbot.waitUntil(lambda: window.playlist.count() == 2, timeout=1000)
     qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 超能路人甲", timeout=1000)
 
-    assert enhancement_inputs[0] == ["百度"]
-    assert enhancement_inputs[-1] == ["01(2.49 GB)", "02(2.51 GB)"]
+    assert enhancement_inputs == [["01(2.49 GB)", "02(2.51 GB)"]]
 
 
 def test_player_window_ignores_stale_metadata_hydration_results(qtbot) -> None:

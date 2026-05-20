@@ -273,6 +273,30 @@ def test_iqiyi_confidence_succeeds_for_matching_title_year_and_season() -> None:
     assert is_high_confidence_iqiyi_episode_candidate(vod, playlist, candidate) is True
 
 
+def test_iqiyi_confidence_accepts_native_site_candidate_with_episode_videos() -> None:
+    vod = VodItem(vod_id="v1", vod_name="家业", vod_year="2026", category_name="电视剧")
+    playlist = [
+        PlayItem(title="01 (1.24 GB)", original_title="01 (1.24 GB)", url="http://m/1.mp4"),
+        PlayItem(title="02 (1.14 GB)", original_title="02 (1.14 GB)", url="http://m/2.mp4"),
+    ]
+    candidate = MetadataMatch(
+        provider="iqiyi",
+        provider_id="https://www.iqiyi.com/v_227sdi27y7k.html",
+        title="家业 正片",
+        year="2026",
+        raw={
+            "siteId": "iqiyi",
+            "siteName": "爱奇艺",
+            "videos": [
+                {"number": "1", "title": "家业第1集", "subtitle": "那我就不做李家人了！"},
+                {"number": "2", "title": "家业第2集", "subtitle": "家人才是我的底气"},
+            ],
+        },
+    )
+
+    assert is_high_confidence_iqiyi_episode_candidate(vod, playlist, candidate) is True
+
+
 def test_iqiyi_confidence_rejects_conflicting_year_or_season() -> None:
     vod = VodItem(vod_id="v1", vod_name="临江仙 第一季", vod_year="2025", category_name="电视剧")
     playlist = [PlayItem(title="S01E01.mkv", original_title="S01E01.mkv", url="http://m/1.mp4")]

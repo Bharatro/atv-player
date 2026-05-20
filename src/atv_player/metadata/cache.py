@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from time import time
@@ -83,6 +84,9 @@ class MetadataCache:
 
     def save_payload(self, namespace: str, key: str, payload: Any) -> None:
         self._save_json(self._detail_path(namespace, key), {"payload": payload})
+
+    def delete_payload_namespace(self, namespace: str) -> None:
+        shutil.rmtree(self._root / "detail" / namespace, ignore_errors=True)
 
     def _search_path(self, provider: str, title: str, year: str) -> Path:
         digest = self._hash_key(provider, title, year)

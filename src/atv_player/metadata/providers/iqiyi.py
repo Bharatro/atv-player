@@ -105,11 +105,28 @@ class IqiyiMetadataProvider:
                 continue
             album_info = template.get("albumInfo")
             if isinstance(album_info, dict):
-                album_infos.append(album_info)
+                album_infos.append(self._merge_search_episode_rows(album_info, template.get("videoinfos")))
             intent_album_infos = template.get("intentAlbumInfos")
             if isinstance(intent_album_infos, list):
-                album_infos.extend(item for item in intent_album_infos if isinstance(item, dict))
+                album_infos.extend(
+                    self._merge_search_episode_rows(item, item.get("videoinfos"))
+                    for item in intent_album_infos
+                    if isinstance(item, dict)
+                )
         return album_infos
+
+    def _merge_search_episode_rows(self, album_info: dict, fallback_videoinfos: object) -> dict:
+        merged = dict(album_info)
+        existing_videos = merged.get("videos")
+        if isinstance(existing_videos, list) and existing_videos:
+            return merged
+        videoinfos = merged.get("videoinfos")
+        if isinstance(videoinfos, list) and videoinfos:
+            merged["videos"] = list(videoinfos)
+            return merged
+        if isinstance(fallback_videoinfos, list) and fallback_videoinfos:
+            merged["videos"] = list(fallback_videoinfos)
+        return merged
 
     def _provider_id(self, payload: dict) -> str:
         page_url = str(payload.get("pageUrl") or "").strip()

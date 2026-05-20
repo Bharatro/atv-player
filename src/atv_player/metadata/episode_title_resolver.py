@@ -26,7 +26,12 @@ def is_high_confidence_iqiyi_episode_candidate(
     provider = str(getattr(candidate, "provider", "") or "").strip()
     if provider != "iqiyi":
         return False
-    if str(preferred_provider or "").strip() != "iqiyi" and not _iqiyi_titles_match_vod(vod, candidate):
+    native_iqiyi_site = _is_native_iqiyi_site_candidate(candidate)
+    if (
+        str(preferred_provider or "").strip() != "iqiyi"
+        and not native_iqiyi_site
+        and not _iqiyi_titles_match_vod(vod, candidate)
+    ):
         return False
     return (
         build_provider_episode_playlist(
@@ -328,6 +333,13 @@ def _iqiyi_titles_match_vod(vod: VodItem, candidate) -> bool:
     if candidate_season is not None and candidate_season != _guess_default_season(vod):
         return False
     return True
+
+
+def _is_native_iqiyi_site_candidate(candidate) -> bool:
+    raw = dict(getattr(candidate, "raw", {}) or {})
+    site_name = str(raw.get("siteName") or "").strip()
+    site_id = str(raw.get("siteId") or "").strip().lower()
+    return site_name == "爱奇艺" or site_id == "iqiyi"
 
 
 def _bilibili_episode_number(episode: dict[str, object]) -> int | None:
