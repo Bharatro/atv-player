@@ -403,7 +403,7 @@ class MpvWidget(QWidget):
         )
         if ytdl_raw_options:
             common["ytdl_raw_options"] = ytdl_raw_options
-        if sys.platform.startswith("win") or os.getenv("ATV_MPV_DEBUG"):
+        if os.getenv("ATV_MPV_DEBUG"):
             common["log_handler"] = print
             common["loglevel"] = "debug"
 
@@ -489,18 +489,23 @@ class MpvWidget(QWidget):
 
         @event_callback("end-file")
         def handle_end_file(event) -> None:
+            event_data = getattr(event, "data", None)
+            if event_data is None:
+                return
+            reason = getattr(event_data, "reason", None)
+            eof_reason = getattr(type(event_data), "EOF", 0)
+            error_reason = getattr(type(event_data), "ERROR", 4)
+            error_text = self._format_mpv_error(getattr(event_data, "error", ""))
+
             def emit_event() -> None:
-                event_data = getattr(event, "data", None)
-                if event_data is None:
-                    return
-                reason = getattr(event_data, "reason", None)
-                eof_reason = getattr(type(event_data), "EOF", 0)
                 if reason == eof_reason:
                     self._emit_playback_finished_once()
                     return
-                error_reason = getattr(type(event_data), "ERROR", 4)
                 if reason == error_reason:
-                    self.playback_failed.emit(self._format_end_file_failure_message(event_data))
+                    if error_text:
+                        self.playback_failed.emit(f"播放失败: {error_text}")
+                    else:
+                        self.playback_failed.emit("播放失败: 未知错误")
 
             self._post_to_widget_thread(emit_event)
 
