@@ -257,12 +257,44 @@ def test_player_window_can_open_placeholder_session_without_playlist(qtbot) -> N
     )
 
     window.open_session(session)
-
     assert window.session is session
     assert window.playlist.count() == 0
     assert window.metadata_view.toPlainText().startswith("名称: 占位电影")
     assert_timestamped_log_line(window.log_view.toPlainText(), "正在加载详情...")
     assert window.video.load_calls == []
+
+
+def test_player_window_does_not_sync_refresh_track_state_immediately_for_embedded_mpv(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window.current_index = 0
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(window, "_video_load", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window, "_configure_video_surface_widgets", lambda: None)
+    monkeypatch.setattr(window.video, "set_speed", lambda value: None)
+    monkeypatch.setattr(window.video, "set_volume", lambda value: None)
+    monkeypatch.setattr(window, "_apply_muted_state", lambda: None)
+    monkeypatch.setattr(window, "_refresh_subtitle_state", lambda: calls.append("refresh-subtitle"))
+    monkeypatch.setattr(window, "_schedule_followup_subtitle_refresh_if_needed", lambda current_item: None)
+    monkeypatch.setattr(window, "_refresh_audio_state", lambda: calls.append("refresh-audio"))
+    monkeypatch.setattr(window, "_refresh_video_quality_state", lambda: None)
+    monkeypatch.setattr(window, "_configure_danmaku_for_current_item", lambda: None)
+    monkeypatch.setattr(window, "_reset_subtitle_combo", lambda: calls.append("reset-subtitle"))
+    monkeypatch.setattr(window, "_reset_audio_combo", lambda: calls.append("reset-audio"))
+
+    window._start_current_item_playback()
+
+    assert calls == ["reset-subtitle", "reset-audio"]
 
 
 def send_key(window: PlayerWindow, key: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, text: str = "") -> None:

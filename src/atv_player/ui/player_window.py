@@ -2497,13 +2497,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._apply_muted_state()
-        self._refresh_subtitle_state()
+        if self._uses_event_driven_track_refresh():
+            self._reset_subtitle_combo()
+        else:
+            self._refresh_subtitle_state()
         self._schedule_followup_subtitle_refresh_if_needed(current_item)
-        self._refresh_audio_state()
+        if self._uses_event_driven_track_refresh():
+            self._reset_audio_combo()
+        else:
+            self._refresh_audio_state()
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
         if self.session is not None:
             self.controller.on_item_started(self.session, self.current_index)
+
+    def _uses_event_driven_track_refresh(self) -> bool:
+        return self.video is self.video_widget
 
     def _schedule_followup_subtitle_refresh_if_needed(
         self,
