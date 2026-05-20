@@ -736,6 +736,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
         self._pending_post_load_item: PlayItem | None = None
+        self._pending_post_load_pause = False
         self._danmaku_render_request_id = 0
         self._pending_danmaku_render_item: PlayItem | None = None
         self.title_bar_return_button = QPushButton("", self.title_bar())
@@ -2488,6 +2489,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
         if defer_post_load_configuration:
             self._pending_post_load_item = current_item
+            self._pending_post_load_pause = pause
         logger.info(
             "PlayerWindow start playback index=%s quality=%s ytdl_format=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
             self.current_index,
@@ -2512,6 +2514,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception:
             if defer_post_load_configuration:
                 self._pending_post_load_item = None
+                self._pending_post_load_pause = False
             raise
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()
@@ -2530,6 +2533,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return self.video is self.video_widget and sys.platform.startswith("win")
 
     def _apply_post_load_player_configuration(self, current_item: PlayItem) -> None:
+        if self._pending_post_load_pause:
+            self._pending_post_load_pause = False
+            self.video.pause()
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._apply_muted_state()
@@ -2553,9 +2559,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         def apply_if_still_current() -> None:
             if self.session is None:
                 self._pending_post_load_item = None
+                self._pending_post_load_pause = False
                 return
             if not (0 <= self.current_index < len(self.session.playlist)):
                 self._pending_post_load_item = None
+                self._pending_post_load_pause = False
                 return
             if self.session.playlist[self.current_index] is not pending_item:
                 return

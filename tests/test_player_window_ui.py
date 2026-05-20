@@ -18024,6 +18024,64 @@ def test_player_window_defers_windows_post_load_configuration_until_file_loaded(
     )
 
 
+def test_player_window_clears_pending_paused_start_when_deferred_file_load_is_stale(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(player_window_module.sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+
+    monkeypatch.setattr(window.video_widget, "load", lambda *_args, **_kwargs: None)
+
+    window._start_current_item_playback(pause=True)
+    window.session = None
+
+    window.video_widget.file_loaded.emit()
+    qtbot.waitUntil(lambda: window._pending_post_load_item is None, timeout=1000)
+
+    assert window._pending_post_load_pause is False
+
+
+def test_player_window_defers_windows_paused_start_until_file_loaded(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(player_window_module.sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+
+    calls: list[tuple[str, object | None]] = []
+    monkeypatch.setattr(
+        window.video_widget,
+        "load",
+        lambda url, pause=False, start_seconds=0, **_kwargs: calls.append(("load", url)),
+    )
+    monkeypatch.setattr(window.video_widget, "pause", lambda: calls.append(("pause", None)))
+    monkeypatch.setattr(window.video_widget, "set_speed", lambda value: calls.append(("speed", value)))
+    monkeypatch.setattr(window.video_widget, "set_volume", lambda value: calls.append(("volume", value)))
+    monkeypatch.setattr(window.video_widget, "set_muted", lambda value: calls.append(("mute", value)))
+    monkeypatch.setattr(window, "_configure_danmaku_for_current_item", lambda: calls.append(("danmaku", None)))
+
+    window._start_current_item_playback(pause=True)
+
+    assert calls == [("load", "http://m/1.m3u8")]
+
+    window.video_widget.file_loaded.emit()
+    qtbot.waitUntil(
+        lambda: calls
+        == [
+            ("load", "http://m/1.m3u8"),
+            ("pause", None),
+            ("speed", 1.0),
+            ("volume", 100),
+            ("mute", False),
+            ("danmaku", None),
+        ],
+        timeout=1000,
+    )
+
+
 def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:
     called = {"count": 0}
     config = AppConfig(last_active_window="player")

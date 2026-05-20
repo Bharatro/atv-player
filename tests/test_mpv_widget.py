@@ -1662,6 +1662,50 @@ def test_mpv_widget_skips_redundant_windows_property_sets(qtbot, monkeypatch) ->
     ]
 
 
+def test_mpv_widget_skips_startup_property_churn_on_windows_safe_load_path(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+            self.command_calls: list[tuple[object, ...]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, mode, index, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+    widget._player = FakePlayer()
+
+    widget.load(
+        "http://m/1.m3u8",
+        pause=True,
+        headers={
+            "User-Agent": "Yamby/1.5.7.18(Android",
+            "Referer": "https://site.example",
+        },
+    )
+
+    assert widget._player.loadfile_calls == [
+        (
+            "http://m/1.m3u8",
+            "replace",
+            None,
+            {"demuxer_lavf_o_add": "allowed_extensions=ALL"},
+        )
+    ]
+    assert widget._player.options == {}
+    assert widget._player.command_calls == []
+
+
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:

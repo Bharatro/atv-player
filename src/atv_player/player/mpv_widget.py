@@ -588,6 +588,9 @@ class MpvWidget(QWidget):
             return
         player["http-header-fields"] = header_fields
 
+    def _use_windows_safe_load_path(self) -> bool:
+        return sys.platform.startswith("win")
+
     def _is_local_iso_proxy_url(self, url: str) -> bool:
         parsed = urlparse(url)
         return parsed.scheme in {"http", "https"} and parsed.path.startswith("/iso/")
@@ -858,15 +861,19 @@ class MpvWidget(QWidget):
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
         can_loadfile = hasattr(player, "loadfile")
+        use_windows_safe_load_path = self._use_windows_safe_load_path()
         try:
-            self._apply_http_header_fields(player, header_fields)
-            profile_name = self._apply_stream_profile(
-                player,
-                url,
-                audio_files=audio_files,
-                ytdl_format=ytdl_format,
-            )
-            self._apply_extra_mpv_options(player)
+            if use_windows_safe_load_path:
+                profile_name = "windows-safe"
+            else:
+                self._apply_http_header_fields(player, header_fields)
+                profile_name = self._apply_stream_profile(
+                    player,
+                    url,
+                    audio_files=audio_files,
+                    ytdl_format=ytdl_format,
+                )
+                self._apply_extra_mpv_options(player)
             logger.info(
                 "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                 self._summarize_media_url(url),
@@ -909,14 +916,17 @@ class MpvWidget(QWidget):
                 player = self._create_player()
                 self._player = player
                 self._register_player_events()
-                self._apply_http_header_fields(player, header_fields)
-                profile_name = self._apply_stream_profile(
-                    player,
-                    url,
-                    audio_files=audio_files,
-                    ytdl_format=ytdl_format,
-                )
-                self._apply_extra_mpv_options(player)
+                if use_windows_safe_load_path:
+                    profile_name = "windows-safe"
+                else:
+                    self._apply_http_header_fields(player, header_fields)
+                    profile_name = self._apply_stream_profile(
+                        player,
+                        url,
+                        audio_files=audio_files,
+                        ytdl_format=ytdl_format,
+                    )
+                    self._apply_extra_mpv_options(player)
                 logger.info(
                     "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),
@@ -958,7 +968,6 @@ class MpvWidget(QWidget):
             else:
                 raise
         if sys.platform.startswith("win"):
-            self._set_player_property("pause", pause)
             self._windows_file_loaded_timer.start(100)
         else:
             player.pause = pause
