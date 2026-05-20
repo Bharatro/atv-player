@@ -48,6 +48,49 @@ def test_loader_loads_local_plugin_and_installs_base_spider_alias(tmp_path: Path
     assert loaded.search_enabled is False
 
 
+def test_loader_can_defer_plugin_init_until_explicit_initialization(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "懒加载插件.py"
+    plugin_path.write_text(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    init_calls = 0
+
+    def init(self, extend=""):
+        type(self).init_calls += 1
+        self.extend = extend
+
+    def getName(self):
+        return "懒加载插件"
+""".strip(),
+        encoding="utf-8",
+    )
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache")
+    config = SpiderPluginConfig(
+        id=101,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+        config_text="hello",
+    )
+
+    loaded = loader.load(config, initialize=False)
+
+    assert loaded.plugin_name == "懒加载插件"
+    assert type(loaded.spider).init_calls == 0
+    assert getattr(loaded.spider, "extend", "") != "hello"
+
+    assert loaded.initialize_spider is not None
+    loaded.initialize_spider()
+    loaded.initialize_spider()
+
+    assert type(loaded.spider).init_calls == 1
+    assert loaded.spider.extend == "hello"
+
+
 def test_loader_downloads_remote_plugin_and_reuses_cached_file_on_refresh_failure(tmp_path: Path) -> None:
     calls: list[str] = []
 

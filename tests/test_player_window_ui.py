@@ -18043,6 +18043,25 @@ def test_player_window_clears_pending_paused_start_when_deferred_file_load_is_st
     assert window._pending_post_load_pause is False
 
 
+def test_player_window_deferred_file_loaded_callback_does_not_run_after_window_is_deleted(qtbot, monkeypatch) -> None:
+    destroyed = {"count": 0}
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    monkeypatch.setattr(player_window_module.sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    window._pending_post_load_item = window.session.playlist[0]
+    window._pending_post_load_pause = True
+
+    window._handle_video_file_loaded()
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+    qtbot.wait(50)
+
+    assert destroyed["count"] == 1
+
+
 def test_player_window_defers_windows_paused_start_until_file_loaded(qtbot, monkeypatch) -> None:
     window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
     qtbot.addWidget(window)
@@ -18080,6 +18099,73 @@ def test_player_window_defers_windows_paused_start_until_file_loaded(qtbot, monk
         ],
         timeout=1000,
     )
+
+
+def test_player_window_followup_subtitle_refresh_does_not_run_after_window_is_deleted(qtbot, tmp_path) -> None:
+    destroyed = {"count": 0}
+    subtitle_path = tmp_path / "song.ass"
+    subtitle_path.write_text("dummy", encoding="utf-8")
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def set_muted(self, value: bool) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def current_subtitle_track_id(self) -> int | None:
+            return None
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            return 1
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="Episode 1",
+                url="http://m/1.m3u8",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="外挂字幕",
+                        lang="zh",
+                        url=str(subtitle_path),
+                        format="text/x-ass",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+    window.video = FakeVideo()
+    window.session = session
+    window.current_index = 0
+
+    window._schedule_followup_subtitle_refresh_if_needed(session.playlist[0])
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+    qtbot.wait(200)
+
+    assert destroyed["count"] == 1
 
 
 def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:

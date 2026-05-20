@@ -3,7 +3,9 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
+import threading
 import types
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +36,7 @@ class LoadedSpiderPlugin:
     spider: object
     plugin_name: str
     search_enabled: bool
+    initialize_spider: Callable[[], None] | None = None
 
 
 class SpiderPluginLoader:
@@ -51,7 +54,13 @@ class SpiderPluginLoader:
         self._runtime = SecSpiderRuntime(keyring) if keyring is not None else None
         self._proxy_decider = proxy_decider
 
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        *,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
         compat_spider_module.set_cache_root(self._cache_dir / "spider-cache")
         self._install_compat_modules()
         source_path = self._resolve_source_path(config, force_refresh=force_refresh)
@@ -78,8 +87,22 @@ class SpiderPluginLoader:
         if spider_cls is None:
             raise ValueError("缺少 Spider 类")
         spider = spider_cls()
-        if hasattr(spider, "init"):
-            spider.init(config.config_text)
+        initialized = False
+        initialize_lock = threading.Lock()
+
+        def initialize_spider() -> None:
+            nonlocal initialized
+            if initialized:
+                return
+            with initialize_lock:
+                if initialized:
+                    return
+                if hasattr(spider, "init"):
+                    spider.init(config.config_text)
+                initialized = True
+
+        if initialize:
+            initialize_spider()
         plugin_name = str(getattr(spider, "getName", lambda: "")() or "")
         search_enabled = type(spider).searchContent is not CompatSpider.searchContent
         updated_config = SpiderPluginConfig(
@@ -107,6 +130,7 @@ class SpiderPluginLoader:
             spider=spider,
             plugin_name=plugin_name,
             search_enabled=search_enabled,
+            initialize_spider=initialize_spider,
         )
 
     def _install_compat_modules(self) -> None:

@@ -690,11 +690,15 @@ class SpiderPluginController:
         metadata_scrape_service_factory: Callable[..., object] | None = None,
         episode_title_enhancer_factory: Callable[..., object] | None = None,
         plugin_log_writer: Callable[[str], None] | None = None,
+        spider_initializer: Callable[[], None] | None = None,
     ) -> None:
         self.uses_result_length_for_pagination = True
         self._spider = spider
         self._plugin_name = plugin_name
         self.supports_search = bool(search_enabled and callable(getattr(self._spider, "searchContent", None)))
+        self._spider_initializer = spider_initializer
+        self._spider_initialized = spider_initializer is None
+        self._spider_init_lock = threading.Lock()
         self._drive_detail_loader = drive_detail_loader
         self._offline_download_detail_loader = offline_download_detail_loader
         self._playback_history_loader = playback_history_loader
@@ -709,7 +713,9 @@ class SpiderPluginController:
         self._plugin_log_writer = plugin_log_writer
         self._danmaku_service = danmaku_service
         self._danmaku_preference_store = danmaku_preference_store
-        self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
+        self._danmaku_enabled = (
+            bool(getattr(self._spider, "danmaku", lambda: False)()) if self._spider_initialized else False
+        )
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
         self._danmaku_log_handler: Callable[[str], None] | None = None
@@ -718,6 +724,17 @@ class SpiderPluginController:
         self._home_items: list[VodItem] = []
         self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
+
+    def _ensure_spider_initialized(self) -> None:
+        if self._spider_initialized:
+            return
+        with self._spider_init_lock:
+            if self._spider_initialized:
+                return
+            if self._spider_initializer is not None:
+                self._spider_initializer()
+            self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
+            self._spider_initialized = True
 
     def _log_spider_method_call(self, method_name: str, **params: object) -> None:
         message = _format_spider_method_call_message(self._plugin_name, method_name, **params)
@@ -775,6 +792,7 @@ class SpiderPluginController:
         return "category" in params
 
     def _ensure_home_loaded(self) -> None:
+        self._ensure_spider_initialized()
         if self._home_loaded:
             return
         try:
@@ -900,6 +918,7 @@ class SpiderPluginController:
         page: int,
         category_id: str = "",
     ) -> tuple[list[VodItem], int]:
+        self._ensure_spider_initialized()
         if not self.supports_search:
             raise ApiError("当前插件不支持搜索")
         category = "" if category_id == "home" else str(category_id or "")
@@ -1749,6 +1768,7 @@ class SpiderPluginController:
         item: PlayItem,
         playlist: list[PlayItem],
     ) -> None:
+        self._ensure_spider_initialized()
         if not _should_prefetch_danmaku(item, playlist):
             return
         url = (item.url or item.vod_id or "").strip()
@@ -1830,6 +1850,7 @@ class SpiderPluginController:
         item: PlayItem,
         action_id: str,
     ) -> list[PlaybackDetailAction]:
+        self._ensure_spider_initialized()
         runner = getattr(self._spider, "runPlayerAction", None)
         if not callable(runner):
             raise ValueError(f"详情动作未注册[{action_id}]")
@@ -1856,6 +1877,7 @@ class SpiderPluginController:
         return _merge_playback_detail_actions(item.detail_actions, refreshed_actions)
 
     def _resolve_play_item(self, session: PlayerSession, item: PlayItem) -> PlaybackLoadResult | None:
+        self._ensure_spider_initialized()
         current_playlist = session.playlist if item in session.playlist else None
         if item.url:
             self._maybe_hydrate_ytdlp_item(item, item.url, vod=session.vod)
@@ -2114,6 +2136,7 @@ class SpiderPluginController:
         return True
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
+        self._ensure_spider_initialized()
         try:
             self._log_spider_method_call(
                 "detailContent",

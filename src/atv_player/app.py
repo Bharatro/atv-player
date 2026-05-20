@@ -1559,6 +1559,7 @@ class AppCoordinator(QObject):
         drive_detail_loader,
         offline_download_detail_loader,
         prioritized_plugin_ids: tuple[str, ...] = (),
+        initialize_plugins: bool = True,
     ):
         try:
             parameters = inspect.signature(loader).parameters
@@ -1575,6 +1576,8 @@ class AppCoordinator(QObject):
             kwargs["offline_download_detail_loader"] = offline_download_detail_loader
         if accepts_kwargs or "prioritized_plugin_ids" in parameters:
             kwargs["prioritized_plugin_ids"] = prioritized_plugin_ids
+        if accepts_kwargs or "initialize_plugins" in parameters:
+            kwargs["initialize_plugins"] = initialize_plugins
         return loader(**kwargs)
 
     def _startup_prioritized_plugin_ids(self, config: AppConfig) -> tuple[str, ...]:
@@ -1602,11 +1605,13 @@ class AppCoordinator(QObject):
                 drive_detail_loader=drive_detail_loader,
                 offline_download_detail_loader=offline_download_detail_loader,
                 prioritized_plugin_ids=prioritized_plugin_ids,
+                initialize_plugins=not sys.platform.startswith("win"),
             )
         return self._call_plugin_loader(
             self._plugin_manager.load_enabled_plugins,
             drive_detail_loader=drive_detail_loader,
             offline_download_detail_loader=offline_download_detail_loader,
+            initialize_plugins=not sys.platform.startswith("win"),
         )
 
     def _show_main(self):

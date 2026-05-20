@@ -265,6 +265,7 @@ class SpiderPluginManager:
             episode_title_enhancer_factory=self._episode_title_enhancer_factory,
             danmaku_service=self._danmaku_service,
             danmaku_preference_store=self._danmaku_preference_store,
+            spider_initializer=loaded.initialize_spider,
             plugin_log_writer=lambda message, plugin_id=plugin.id: self._append_plugin_log(plugin_id, "info", message),
             playback_history_loader=None
             if self._playback_history_repository is None
@@ -423,6 +424,7 @@ class SpiderPluginManager:
         offline_download_detail_loader=None,
         *,
         prioritized_plugin_ids: tuple[str, ...] | list[str] = (),
+        initialize_plugins: bool = True,
     ):
         prioritized_order = {str(plugin_id): index for index, plugin_id in enumerate(prioritized_plugin_ids)}
         plugins = [plugin for plugin in self._repository.list_plugins() if plugin.enabled]
@@ -435,7 +437,7 @@ class SpiderPluginManager:
         )
         for plugin in plugins:
             try:
-                loaded = self._loader.load(plugin)
+                loaded = self._loader.load(plugin, initialize=initialize_plugins)
             except Exception as exc:
                 self._repository.update_plugin(
                     plugin.id,
@@ -451,16 +453,23 @@ class SpiderPluginManager:
                 continue
             yield self._build_plugin_definition(
                 plugin,
-                loaded,
-                drive_detail_loader=drive_detail_loader,
-                offline_download_detail_loader=offline_download_detail_loader,
-            )
+                    loaded,
+                    drive_detail_loader=drive_detail_loader,
+                    offline_download_detail_loader=offline_download_detail_loader,
+                )
 
-    def load_enabled_plugins(self, drive_detail_loader=None, offline_download_detail_loader=None) -> list[SpiderPluginDefinition]:
+    def load_enabled_plugins(
+        self,
+        drive_detail_loader=None,
+        offline_download_detail_loader=None,
+        *,
+        initialize_plugins: bool = True,
+    ) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
         for definition in self.iter_enabled_plugins(
             drive_detail_loader=drive_detail_loader,
             offline_download_detail_loader=offline_download_detail_loader,
+            initialize_plugins=initialize_plugins,
         ):
             definitions.append(definition)
         return definitions

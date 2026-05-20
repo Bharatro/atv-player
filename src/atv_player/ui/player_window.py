@@ -2532,6 +2532,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _should_defer_post_load_player_configuration(self) -> bool:
         return self.video is self.video_widget and sys.platform.startswith("win")
 
+    def _schedule_window_single_shot(self, delay_ms: int, callback: Callable[[], None]) -> None:
+        if not self._can_deliver_async_result():
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def run() -> None:
+            timer.deleteLater()
+            if self._can_deliver_async_result():
+                callback()
+
+        timer.timeout.connect(run)
+        timer.start(max(0, int(delay_ms)))
+
     def _apply_post_load_player_configuration(self, current_item: PlayItem) -> None:
         if self._pending_post_load_pause:
             self._pending_post_load_pause = False
@@ -2570,7 +2584,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._pending_post_load_item = None
             self._apply_post_load_player_configuration(pending_item)
 
-        QTimer.singleShot(0, apply_if_still_current)
+        self._schedule_window_single_shot(0, apply_if_still_current)
 
     def _schedule_followup_subtitle_refresh_if_needed(
         self,
@@ -2596,7 +2610,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 retries_remaining=retries_remaining - 1,
             )
 
-        QTimer.singleShot(150, refresh_if_still_current)
+        self._schedule_window_single_shot(150, refresh_if_still_current)
 
     def _load_current_item(
         self,
@@ -3925,7 +3939,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():
             if retries_remaining > 0:
-                QTimer.singleShot(
+                self._schedule_window_single_shot(
                     300,
                     lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
                 )
@@ -3936,7 +3950,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.video.seek(seconds)
         except Exception as exc:
             if retries_remaining > 0:
-                QTimer.singleShot(
+                self._schedule_window_single_shot(
                     300,
                     lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
                 )

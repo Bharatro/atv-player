@@ -98,6 +98,22 @@ class FakeSpider:
         }
 
 
+class DeferredInitSpider(FakeSpider):
+    def __init__(self) -> None:
+        self.init_calls = 0
+        self.initialized = False
+
+    def init(self, extend=""):
+        self.init_calls += 1
+        self.initialized = True
+        self.extend = extend
+
+    def homeContent(self, filter):
+        if not self.initialized:
+            raise AssertionError("spider init should run before homeContent")
+        return super().homeContent(filter)
+
+
 class JsonHeaderSpider(FakeSpider):
     def playerContent(self, flag, id, vipFlags):
         return {
@@ -620,6 +636,27 @@ def test_controller_load_categories_prepends_home_when_home_list_exists() -> Non
     categories = controller.load_categories()
     items, total = controller.load_items("home", 1)
 
+    assert [item.type_name for item in categories] == ["推荐", "热门", "剧场"]
+    assert [item.vod_name for item in items] == ["首页推荐"]
+    assert total == 1
+
+
+def test_controller_initializes_spider_lazily_before_first_plugin_call() -> None:
+    spider = DeferredInitSpider()
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="懒加载插件",
+        search_enabled=True,
+        spider_initializer=lambda: spider.init("cfg"),
+    )
+
+    assert spider.init_calls == 0
+
+    categories = controller.load_categories()
+    items, total = controller.load_items("home", 1)
+
+    assert spider.init_calls == 1
+    assert spider.extend == "cfg"
     assert [item.type_name for item in categories] == ["推荐", "热门", "剧场"]
     assert [item.vod_name for item in items] == ["首页推荐"]
     assert total == 1
