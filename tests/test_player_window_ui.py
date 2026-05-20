@@ -17527,6 +17527,37 @@ def test_player_window_polling_hides_cursor_after_three_seconds_without_events(q
     assert window.cursor().shape() == Qt.CursorShape.BlankCursor
 
 
+def test_player_window_resize_edge_keeps_resize_cursor_while_playing(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    window.is_playing = True
+    window.video.set_cursor_autohide = lambda value: None
+    edge_local = QPoint(2, window.height() // 2)
+    edge_global = window.mapToGlobal(edge_local)
+    video_local = window.video_widget.mapFromGlobal(edge_global)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: edge_global))
+
+    QApplication.sendEvent(
+        window.video_widget,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            video_local,
+            edge_global,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert window.cursor().shape() == Qt.CursorShape.SizeHorCursor
+
+    window._poll_cursor_idle_state(now_ms=window._last_cursor_activity_ms + 4000)
+
+    assert window.cursor().shape() == Qt.CursorShape.SizeHorCursor
+    assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+
 def test_player_window_cursor_idle_hides_video_cursor_only_when_playing_and_inside(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

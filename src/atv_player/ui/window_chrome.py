@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import IntFlag, auto
 
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QCursor, QMouseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -228,6 +228,14 @@ class _ThemedChromeMixin:
 
     def is_window_resizable(self) -> bool:
         return self._window_resizable
+
+    def is_window_resize_active(self) -> bool:
+        return self._active_resize_region != _ResizeRegion.NONE
+
+    def is_pointer_on_window_resize_edge(self, global_pos: QPoint | None = None) -> bool:
+        if global_pos is None:
+            global_pos = QCursor.pos()
+        return self._resize_region_at(self.mapFromGlobal(global_pos)) != _ResizeRegion.NONE
 
     def set_title_bar_visible(self, visible: bool) -> None:
         self._title_bar.setVisible(visible)
