@@ -13,6 +13,7 @@ from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
+    resolve_episode_title_source_priority,
 )
 from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
@@ -164,6 +165,11 @@ def _match_type_subtitle(match: MetadataMatch) -> str:
         if tokens:
             return tokens[0]
     return _media_kind_label(_match_media_kind(match))
+
+
+def _source_rank(candidate: object, source_priority: list[str]) -> int:
+    provider = str(getattr(candidate, "provider", "") or "").strip()
+    return source_priority.index(provider) if provider in source_priority else len(source_priority) + 100
 
 
 class MetadataScrapeService:
@@ -420,12 +426,22 @@ class MetadataScrapeService:
                 enriched = self._hydrate_tmdb_episode_candidate(vod, matches[0])
                 enriched = self._hydrate_bangumi_episode_candidate(enriched)
                 ordered_candidates.append(self._hydrate_bilibili_episode_candidate(enriched))
+        source_priority = resolve_episode_title_source_priority(
+            vod,
+            playlist,
+            ordered_candidates,
+            preferred_provider=str(getattr(preferred_candidate, "provider", "") or "").strip(),
+        )
+        if preferred_candidate is not None and ordered_candidates:
+            ordered_candidates = [ordered_candidates[0], *sorted(ordered_candidates[1:], key=lambda candidate: _source_rank(candidate, source_priority))]
+        else:
+            ordered_candidates = sorted(ordered_candidates, key=lambda candidate: _source_rank(candidate, source_priority))
         for candidate in ordered_candidates:
             updated = build_provider_episode_playlist(
                 vod,
                 playlist,
                 candidate,
-                source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+                source_priority=source_priority,
             )
             if updated is not None:
                 return updated

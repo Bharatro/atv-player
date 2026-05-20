@@ -369,7 +369,7 @@ def test_metadata_scrape_service_prefers_selected_candidate_over_auto_priority(t
     assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
 
 
-def test_metadata_scrape_service_auto_search_prefers_tmdb_over_tencent_and_iqiyi(tmp_path: Path) -> None:
+def test_metadata_scrape_service_auto_search_prefers_high_confidence_iqiyi_over_tmdb_and_tencent(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     tencent = FakeProvider(
         "tencent",
@@ -411,6 +411,68 @@ def test_metadata_scrape_service_auto_search_prefers_tmdb_over_tencent_and_iqiyi
 
     updated = service.build_episode_title_playlist(
         VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", category_name="少儿"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "iqiyi"
+    assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
+def test_metadata_scrape_service_prefers_high_confidence_iqiyi_over_tmdb(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="临江仙",
+                year="2025",
+                raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42:season:1", title="临江仙", year="2025")],
+    )
+    tmdb._client = FakeTMDBClient([{"episode_number": 1, "name": "TMDB标题"}])
+    service = MetadataScrapeService(cache=cache, providers=[iqiyi, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "iqiyi"
+    assert updated[0].episode_display_title == "第1集 缘起"
+
+
+def test_metadata_scrape_service_keeps_tmdb_ahead_when_iqiyi_title_confidence_is_low(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    iqiyi = FakeProvider(
+        "iqiyi",
+        matches=[
+            MetadataMatch(
+                provider="iqiyi",
+                provider_id="iqiyi:1",
+                title="临江仙 特别篇",
+                year="2025",
+                raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42:season:1", title="临江仙", year="2025")],
+    )
+    tmdb._client = FakeTMDBClient([{"episode_number": 1, "name": "TMDB标题"}])
+    service = MetadataScrapeService(cache=cache, providers=[iqiyi, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧"),
         [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
     )
 
