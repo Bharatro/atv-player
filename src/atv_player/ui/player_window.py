@@ -2530,7 +2530,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return self.video is self.video_widget
 
     def _should_defer_post_load_player_configuration(self) -> bool:
-        return False
+        return self.video is self.video_widget and sys.platform.startswith("win")
 
     def _schedule_window_single_shot(self, delay_ms: int, callback: Callable[[], None]) -> None:
         if not self._can_deliver_async_result():
@@ -4668,12 +4668,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._primary_external_subtitle_track_id = loaded_track_id
         self._primary_external_subtitle_path = subtitle_path
         if loaded_track_id is None:
+            if sys.platform.startswith("win"):
+                self._stop_primary_external_subtitle_retry()
+                return True
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
         return True
 
     def _apply_primary_external_subtitle_track(self, track_id: int | None) -> bool:
         if track_id is None:
+            if sys.platform.startswith("win") and self._primary_external_subtitle_path is not None:
+                self._stop_primary_external_subtitle_retry()
+                return True
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
         try:
@@ -5217,7 +5223,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
         track_id = self._load_primary_danmaku_subtitle(subtitle_path)
-        if track_id is None:
+        if track_id is None and not sys.platform.startswith("win"):
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id
         self._danmaku_active = True
