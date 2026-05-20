@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import glob
 import logging
 import os
+import platform
 import re
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -75,6 +79,8 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 logger = logging.getLogger(__name__)
 _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
+_WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
+_WINDOWS_MPV_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv.dll")
 
 
 def _version_sort_key(value: str) -> tuple[int, ...]:
@@ -128,6 +134,64 @@ def detect_linux_nvidia_driver_mismatch() -> tuple[str, str] | None:
         return _LINUX_NVIDIA_DRIVER_MISMATCH
     _LINUX_NVIDIA_DRIVER_MISMATCH = False
     return None
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _existing_windows_mpv_dll_candidates() -> list[str]:
+    if not sys.platform.startswith("win"):
+        return []
+    search_dirs = [
+        os.getcwd(),
+        os.path.dirname(sys.executable),
+        str(os.getenv("MPV_DYLIB_PATH") or ""),
+    ]
+    search_dirs.extend(str(os.getenv("PATH") or "").split(os.pathsep))
+    found: list[str] = []
+    for directory in _dedupe_preserve_order(search_dirs):
+        for dll_name in _WINDOWS_MPV_DLL_NAMES:
+            candidate = Path(directory) / dll_name
+            if candidate.is_file():
+                found.append(str(candidate))
+    return _dedupe_preserve_order(found)
+
+
+def _loaded_windows_module_path(module_name: str) -> str:
+    if not sys.platform.startswith("win"):
+        return ""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_module_handle = kernel32.GetModuleHandleW
+        get_module_handle.argtypes = [ctypes.c_wchar_p]
+        get_module_handle.restype = ctypes.c_void_p
+        module_handle = get_module_handle(module_name)
+        if not module_handle:
+            return ""
+        buffer = ctypes.create_unicode_buffer(4096)
+        get_module_filename = kernel32.GetModuleFileNameW
+        get_module_filename.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_module_filename.restype = ctypes.c_uint32
+        length = get_module_filename(ctypes.c_void_p(module_handle), buffer, len(buffer))
+        if not length:
+            return ""
+        return buffer.value[:length]
+    except Exception:
+        return ""
+
+
+def _loaded_windows_mpv_dll_paths() -> list[str]:
+    loaded = [_loaded_windows_module_path(dll_name) for dll_name in _WINDOWS_MPV_DLL_NAMES]
+    return _dedupe_preserve_order([path for path in loaded if path])
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +282,68 @@ class MpvWidget(QWidget):
             )
         return options
 
+    def _collect_windows_mpv_runtime_diagnostics(self, mpv_module: Any | None = None) -> dict[str, object]:
+        diagnostics: dict[str, object] = {
+            "python_version": sys.version.splitlines()[0],
+            "python_executable": sys.executable,
+            "platform": platform.platform(),
+            "find_library_mpv": ctypes.util.find_library("mpv") or "",
+            "mpv_dylib_path": str(os.getenv("MPV_DYLIB_PATH") or ""),
+            "path_entry_count": len([entry for entry in str(os.getenv("PATH") or "").split(os.pathsep) if entry]),
+            "candidate_mpv_dlls": _existing_windows_mpv_dll_candidates(),
+            "loaded_mpv_dlls": _loaded_windows_mpv_dll_paths(),
+        }
+        if mpv_module is not None:
+            diagnostics["mpv_module_file"] = str(getattr(mpv_module, "__file__", "") or "")
+            diagnostics["mpv_module_name"] = str(getattr(mpv_module, "__name__", "") or "")
+            backend = getattr(mpv_module, "_mpv", None)
+            if backend is not None:
+                diagnostics["mpv_backend_name"] = str(getattr(backend, "_name", "") or "")
+                handle = getattr(backend, "_handle", 0) or 0
+                diagnostics["mpv_backend_handle"] = hex(handle) if isinstance(handle, int) else str(handle)
+        return diagnostics
+
+    def _log_windows_mpv_runtime_diagnostics(
+        self,
+        stage: str,
+        *,
+        mpv_module: Any | None = None,
+        exc: BaseException | None = None,
+        force: bool = False,
+    ) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        if not force and stage in _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED:
+            return
+        _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED.add(stage)
+        diagnostics = self._collect_windows_mpv_runtime_diagnostics(mpv_module)
+        if exc is None:
+            logger.info(
+                "MPV runtime diagnostics stage=%s data=%s",
+                stage,
+                diagnostics,
+                extra={"log_category": "player", "log_source": "app"},
+            )
+            return
+        diagnostics["error"] = repr(exc)
+        logger.warning(
+            "MPV runtime diagnostics stage=%s data=%s",
+            stage,
+            diagnostics,
+            extra={"log_category": "player", "log_source": "app"},
+        )
+
     def _create_player(self):
-        import mpv
+        if sys.platform.startswith("win"):
+            self._log_windows_mpv_runtime_diagnostics("before-import")
+        try:
+            import mpv
+        except Exception as exc:
+            if sys.platform.startswith("win"):
+                self._log_windows_mpv_runtime_diagnostics("import-failed", exc=exc, force=True)
+            raise
+        if sys.platform.startswith("win"):
+            self._log_windows_mpv_runtime_diagnostics("after-import", mpv_module=mpv)
 
         common = self._base_player_options()
         ytdlp_path = resolve_mpv_ytdlp_path()
@@ -235,25 +359,38 @@ class MpvWidget(QWidget):
             common["loglevel"] = "warn"
 
         if sys.platform.startswith("win"):
-            return mpv.MPV(
-                **common,
-                audio_device="auto",
-                audio_exclusive="no",
-            )
-
-        elif sys.platform == "darwin":
-            return mpv.MPV(
-                **common,
-                # macOS 👉 不指定最稳
-                # audio_device="auto" 也可以
-                audio_exclusive="no",
-            )
-
-        else:
-            return mpv.MPV(
-                **common,
-                ao="pulse,pipewire,alsa,",
-            )
+            self._log_windows_mpv_runtime_diagnostics("before-create", mpv_module=mpv)
+        try:
+            if sys.platform.startswith("win"):
+                player = mpv.MPV(
+                    **common,
+                    audio_device="auto",
+                    audio_exclusive="no",
+                )
+            elif sys.platform == "darwin":
+                player = mpv.MPV(
+                    **common,
+                    # macOS 👉 不指定最稳
+                    # audio_device="auto" 也可以
+                    audio_exclusive="no",
+                )
+            else:
+                player = mpv.MPV(
+                    **common,
+                    ao="pulse,pipewire,alsa,",
+                )
+        except Exception as exc:
+            if sys.platform.startswith("win"):
+                self._log_windows_mpv_runtime_diagnostics(
+                    "create-player-failed",
+                    mpv_module=mpv,
+                    exc=exc,
+                    force=True,
+                )
+            raise
+        if sys.platform.startswith("win"):
+            self._log_windows_mpv_runtime_diagnostics("after-create", mpv_module=mpv)
+        return player
 
     def _ensure_player(self) -> None:
         if self._player is not None and not getattr(self._player, "core_shutdown", False):

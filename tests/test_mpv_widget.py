@@ -4,6 +4,7 @@ import types
 
 import pytest
 
+from atv_player.player import mpv_widget as mpv_widget_module
 from atv_player.models import AppConfig
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 
@@ -49,6 +50,80 @@ def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeyp
     widget._create_player()
 
     assert recorded["script_opts"] == "ytdl_hook-ytdl_path=/tmp/tools/linux/yt-dlp"
+
+
+def test_mpv_widget_logs_windows_runtime_diagnostics_around_player_creation(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    mpv_widget_module._WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED.clear()
+
+    recorded_stages: list[tuple[str, object | None, object | None, bool]] = []
+
+    class FakeMpvModule:
+        @staticmethod
+        def MPV(**_kwargs):
+            return object()
+
+    monkeypatch.setitem(sys.modules, "mpv", FakeMpvModule)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdlp_path", lambda: "")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options", lambda **_kwargs: "")
+    monkeypatch.setattr(
+        widget,
+        "_log_windows_mpv_runtime_diagnostics",
+        lambda stage, *, mpv_module=None, exc=None, force=False: recorded_stages.append(
+            (stage, mpv_module, exc, force)
+        ),
+    )
+
+    widget._create_player()
+
+    assert [stage for stage, *_rest in recorded_stages] == [
+        "before-import",
+        "after-import",
+        "before-create",
+        "after-create",
+    ]
+    assert recorded_stages[1][1] is FakeMpvModule
+    assert recorded_stages[2][1] is FakeMpvModule
+    assert recorded_stages[3][1] is FakeMpvModule
+
+
+def test_mpv_widget_logs_windows_runtime_diagnostics_when_player_creation_fails(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    mpv_widget_module._WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED.clear()
+
+    recorded_stages: list[tuple[str, object | None, object | None, bool]] = []
+
+    class FakeMpvModule:
+        @staticmethod
+        def MPV(**_kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setitem(sys.modules, "mpv", FakeMpvModule)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdlp_path", lambda: "")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options", lambda **_kwargs: "")
+    monkeypatch.setattr(
+        widget,
+        "_log_windows_mpv_runtime_diagnostics",
+        lambda stage, *, mpv_module=None, exc=None, force=False: recorded_stages.append(
+            (stage, mpv_module, exc, force)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        widget._create_player()
+
+    assert [stage for stage, *_rest in recorded_stages] == [
+        "before-import",
+        "after-import",
+        "before-create",
+        "create-player-failed",
+    ]
+    assert isinstance(recorded_stages[-1][2], RuntimeError)
+    assert recorded_stages[-1][3] is True
 
 
 def test_mpv_widget_create_player_passes_ytdlp_raw_cookie_options(qtbot, monkeypatch) -> None:

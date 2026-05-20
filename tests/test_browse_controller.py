@@ -143,6 +143,32 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.clicked_index == 0
 
 
+def test_build_request_from_detail_preserves_original_filename_separately_from_rewritten_title() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "detail-1",
+                "vod_name": "极地恶灵 第三季",
+                "items": [
+                    {
+                        "name": "S02E03.mp4",
+                        "title": "03(688.11 MB)",
+                        "url": "http://m/3.m3u8",
+                        "path": "/show/s01-s02/极地恶灵.第二季.2019.英语中字.1080/S02E03.mp4",
+                    }
+                ],
+            }
+        ]
+    }
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.playlist[0].title == "03(688.11 MB)"
+    assert request.playlist[0].original_title == "S02E03.mp4"
+
+
 def test_build_request_from_detail_maps_title_metadata_fields() -> None:
     api = FakeApiClient()
     api.detail_payload = {

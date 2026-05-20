@@ -11,8 +11,11 @@ def build_vod_list_path(path: str) -> str:
 
 
 def _map_play_item(payload: dict, index: int) -> PlayItem:
+    title = str(payload.get("title") or payload.get("name") or "")
+    original_title = str(payload.get("name") or payload.get("title") or "")
     return PlayItem(
-        title=str(payload.get("title") or payload.get("name") or ""),
+        title=title,
+        original_title=original_title,
         url=str(payload.get("url") or ""),
         path=str(payload.get("path") or ""),
         index=index,
