@@ -1629,7 +1629,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         self.session.show_original_metadata = checked
+        self._reset_metadata_poster_index()
         self._refresh_metadata_original_toggle()
+        self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
 
@@ -1669,6 +1671,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if item_fields:
                 return list(item_fields)
         return list(self.session.vod.detail_fields)
+
+    def _reset_metadata_poster_index(self) -> None:
+        if self.session is None:
+            return
+        self.session.current_metadata_poster_index = 0
+        self._refresh_poster_navigation()
 
     def _clear_detail_action_buttons(self) -> None:
         while self.detail_actions_layout.count():
@@ -2132,6 +2140,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._snapshot_item_detail_fields(initial_item)
         session.original_vod = self._build_original_metadata_snapshot(session.vod)
         session.show_original_metadata = False
+        session.current_metadata_poster_index = 0
         self._metadata_scrape_binding_title = str(getattr(initial_item, "media_title", "") or session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self._metadata_scrape_query_saved = False
@@ -2640,6 +2649,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self.session.vod = resolved_vod
         self._update_original_metadata_snapshot(resolved_vod)
+        self._reset_metadata_poster_index()
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -3554,6 +3564,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self.session.vod = updated_vod
         self._sync_playlist_media_title_from_metadata(previous_vod, updated_vod)
+        self._reset_metadata_poster_index()
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -6355,6 +6366,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if selected_category:
             updated_vod = replace(updated_vod, category_name=selected_category)
         self.session.vod = updated_vod
+        self._reset_metadata_poster_index()
         if 0 <= self.current_index < len(self.session.playlist):
             current_item = self.session.playlist[self.current_index]
             self._snapshot_item_detail_fields(current_item)

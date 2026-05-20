@@ -4999,6 +4999,104 @@ def test_player_window_poster_navigation_loops_at_boundaries(qtbot, monkeypatch)
     assert detail_started[-1] == "https://img.example/alt.jpg"
 
 
+def test_player_window_toggling_original_metadata_resets_detail_poster_to_first_candidate(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        del request_id, on_loaded
+        if target == "detail":
+            detail_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="v1",
+            vod_name="原始标题",
+            vod_pic="https://img.example/original-1.jpg",
+            poster_candidates=[
+                "https://img.example/original-1.jpg",
+                "https://img.example/original-2.jpg",
+            ],
+            vod_content="原始简介",
+        ),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda _session: VodItem(
+            vod_id="v1",
+            vod_name="增强标题",
+            vod_pic="https://img.example/enhanced-1.jpg",
+            poster_candidates=[
+                "https://img.example/enhanced-1.jpg",
+                "https://img.example/enhanced-2.jpg",
+            ],
+            vod_content="增强简介",
+        ),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: "增强简介" in window.metadata_view.toPlainText(), timeout=1000)
+
+    qtbot.mouseClick(window._poster_next_button, Qt.MouseButton.LeftButton)
+    assert detail_started[-1] == "https://img.example/enhanced-2.jpg"
+
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
+
+    assert detail_started[-1] == "https://img.example/original-1.jpg"
+    assert window.session.current_metadata_poster_index == 0
+
+
+def test_player_window_metadata_scrape_apply_resets_detail_poster_index(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        del request_id, on_loaded
+        if target == "detail":
+            detail_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="v1",
+            vod_name="深空彼岸",
+            vod_pic="https://img.example/original-1.jpg",
+            poster_candidates=[
+                "https://img.example/original-1.jpg",
+                "https://img.example/original-2.jpg",
+            ],
+            vod_content="原始简介",
+        ),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.mouseClick(window._poster_next_button, Qt.MouseButton.LeftButton)
+    assert window.session.current_metadata_poster_index == 1
+
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert detail_started[-1] == "https://img.example/poster.jpg"
+    assert window.session.current_metadata_poster_index == 0
+
+
 def test_player_window_refreshes_only_video_poster_after_async_playback_loader_updates_cover_override(qtbot, monkeypatch) -> None:
     detail_started: list[str] = []
     video_started: list[str] = []
