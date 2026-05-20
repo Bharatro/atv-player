@@ -1,6 +1,8 @@
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
+    is_high_confidence_iqiyi_episode_candidate,
+    resolve_episode_title_source_priority,
 )
 from atv_player.metadata.models import MetadataMatch
 from atv_player.models import PlayItem, VodItem
@@ -236,3 +238,81 @@ def test_build_provider_episode_playlist_skips_movie_vod_when_only_type_name_mar
     )
 
     assert updated is None
+
+
+def test_iqiyi_confidence_succeeds_for_bound_iqiyi_candidate() -> None:
+    vod = VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧")
+    playlist = [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")]
+    candidate = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:bound",
+        title="临江仙",
+        year="2025",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+    )
+
+    assert is_high_confidence_iqiyi_episode_candidate(
+        vod,
+        playlist,
+        candidate,
+        preferred_provider="iqiyi",
+    ) is True
+
+
+def test_iqiyi_confidence_succeeds_for_matching_title_year_and_season() -> None:
+    vod = VodItem(vod_id="v1", vod_name="临江仙 第一季", vod_year="2025", category_name="电视剧")
+    playlist = [PlayItem(title="S01E01.mkv", original_title="S01E01.mkv", url="http://m/1.mp4")]
+    candidate = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:match",
+        title="临江仙 第一季",
+        year="2025",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+    )
+
+    assert is_high_confidence_iqiyi_episode_candidate(vod, playlist, candidate) is True
+
+
+def test_iqiyi_confidence_rejects_conflicting_year_or_season() -> None:
+    vod = VodItem(vod_id="v1", vod_name="临江仙 第一季", vod_year="2025", category_name="电视剧")
+    playlist = [PlayItem(title="S01E01.mkv", original_title="S01E01.mkv", url="http://m/1.mp4")]
+    wrong_year = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:wrong-year",
+        title="临江仙 第一季",
+        year="2024",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+    )
+    wrong_season = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:wrong-season",
+        title="临江仙 第二季",
+        year="2025",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+    )
+
+    assert is_high_confidence_iqiyi_episode_candidate(vod, playlist, wrong_year) is False
+    assert is_high_confidence_iqiyi_episode_candidate(vod, playlist, wrong_season) is False
+
+
+def test_resolve_episode_title_source_priority_moves_iqiyi_ahead_of_tmdb_only_for_high_confidence_match() -> None:
+    vod = VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧")
+    playlist = [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")]
+    iqiyi = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:1",
+        title="临江仙",
+        year="2025",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+    )
+    tmdb = MetadataMatch(provider="tmdb", provider_id="tv:42:season:1", title="临江仙", year="2025")
+
+    assert resolve_episode_title_source_priority(vod, playlist, [iqiyi, tmdb]) == [
+        "plugin",
+        "bangumi",
+        "bilibili",
+        "iqiyi",
+        "tmdb",
+        "tencent",
+    ]
+    assert resolve_episode_title_source_priority(vod, playlist, [tmdb]) == METADATA_EPISODE_TITLE_SOURCE_PRIORITY

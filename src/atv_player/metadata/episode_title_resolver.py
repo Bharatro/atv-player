@@ -7,11 +7,54 @@ from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number, playlist_has_title_variants, seed_original_titles
 from atv_player.episode_titles import apply_episode_title_index_map
 from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.query import normalize_metadata_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import PlayItem, VodItem
 
 METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
+_IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "iqiyi", "tmdb", "tencent"]
 _MOVIE_MARKERS = ("电影", "影片", "movie")
+
+
+def is_high_confidence_iqiyi_episode_candidate(
+    vod: VodItem,
+    playlist: list[PlayItem],
+    candidate,
+    *,
+    preferred_provider: str = "",
+) -> bool:
+    provider = str(getattr(candidate, "provider", "") or "").strip()
+    if provider != "iqiyi":
+        return False
+    if str(preferred_provider or "").strip() != "iqiyi" and not _iqiyi_titles_match_vod(vod, candidate):
+        return False
+    return (
+        build_provider_episode_playlist(
+            vod,
+            playlist,
+            candidate,
+            source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+        )
+        is not None
+    )
+
+
+def resolve_episode_title_source_priority(
+    vod: VodItem,
+    playlist: list[PlayItem],
+    candidates: list[object],
+    *,
+    preferred_provider: str = "",
+) -> list[str]:
+    for candidate in candidates:
+        if is_high_confidence_iqiyi_episode_candidate(
+            vod,
+            playlist,
+            candidate,
+            preferred_provider=preferred_provider,
+        ):
+            return list(_IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY)
+    return list(METADATA_EPISODE_TITLE_SOURCE_PRIORITY)
 
 
 def build_provider_episode_playlist(
@@ -270,6 +313,21 @@ def _guess_default_season(vod: VodItem) -> int:
         if season_number is not None:
             return season_number
     return 1
+
+
+def _iqiyi_titles_match_vod(vod: VodItem, candidate) -> bool:
+    vod_title = normalize_metadata_title(str(vod.vod_name or "").strip())
+    candidate_title = normalize_metadata_title(str(getattr(candidate, "title", "") or "").strip())
+    if not vod_title or not candidate_title or vod_title != candidate_title:
+        return False
+    vod_year = str(vod.vod_year or "").strip()
+    candidate_year = str(getattr(candidate, "year", "") or "").strip()
+    if vod_year and candidate_year and vod_year != candidate_year:
+        return False
+    candidate_season = extract_season_number(getattr(candidate, "title", ""))
+    if candidate_season is not None and candidate_season != _guess_default_season(vod):
+        return False
+    return True
 
 
 def _bilibili_episode_number(episode: dict[str, object]) -> int | None:

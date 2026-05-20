@@ -3,6 +3,8 @@ from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
+    is_high_confidence_iqiyi_episode_candidate,
+    resolve_episode_title_source_priority,
 )
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery, MetadataRecord
@@ -22,4 +24,6 @@ __all__ = [
     "MetadataScrapeGroup",
     "MetadataScrapeService",
     "build_provider_episode_playlist",
+    "is_high_confidence_iqiyi_episode_candidate",
+    "resolve_episode_title_source_priority",
 ]
