@@ -827,6 +827,30 @@ def build_pill_button_qss(tokens: ThemeTokens, *, checked_accent: bool = False) 
     """
 
 
+def build_navigation_tabbar_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QTabBar::tab {{
+        background: transparent;
+        color: {tokens.text_primary};
+        padding: 8px 14px;
+        margin-right: 6px;
+        border: 1px solid transparent;
+        border-radius: 14px;
+    }}
+    QTabBar::tab:hover {{
+        background: {tokens.panel_alt_bg};
+        border-color: {tokens.input_hover_border};
+        color: {tokens.text_primary};
+    }}
+    QTabBar::tab:selected {{
+        background: {tokens.panel_alt_bg};
+        border-color: {tokens.accent};
+        color: {tokens.accent};
+        font-weight: 600;
+    }}
+    """
+
+
 def build_accent_label_qss(tokens: ThemeTokens) -> str:
     return f"color: {tokens.accent};"
 

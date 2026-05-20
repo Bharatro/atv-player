@@ -53,6 +53,8 @@ from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import (
+    build_navigation_tabbar_qss,
+    build_pill_button_qss,
     build_round_icon_button_qss,
     build_search_line_edit_qss,
     current_resolved_theme,
@@ -1644,6 +1646,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._refresh_navigation_tabs()
         self._sync_startup_plugin_loading_ui()
         self._sync_global_search_action_state()
+        self._apply_theme()
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
     def _apply_global_search_button_theme(self) -> None:
@@ -1662,10 +1665,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_button.setIcon(load_tinted_icon(self._SEARCH_ICON_PATH, tokens.text_primary))
         self.global_search_popup_button.setIcon(load_tinted_icon(self._SEARCH_POPUP_ICON_PATH, tokens.text_primary))
 
+    def _apply_navigation_tab_theme(self) -> None:
+        tokens = current_tokens()
+        self.nav_tabs.tab_bar.setStyleSheet(build_navigation_tabbar_qss(tokens))
+        self.plugin_overflow_button.setStyleSheet(build_pill_button_qss(tokens))
+
     def _apply_theme(self) -> None:
         tokens = current_tokens()
         self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
         self._apply_global_search_button_theme()
+        self._apply_navigation_tab_theme()
         self._global_search_popup._apply_theme()
         for page in (
             self.history_page,

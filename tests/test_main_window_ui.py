@@ -298,6 +298,29 @@ def test_main_window_global_search_icon_buttons_use_dark_theme_contrast_treatmen
     assert window.global_search_popup_button.width() == 36
 
 
+def test_main_window_navigation_tabs_use_explicit_dark_theme_text_colors(qtbot) -> None:
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    tokens = manager.tokens_for("dark")
+    stylesheet = window.nav_tabs.tab_bar.styleSheet()
+
+    assert f"color: {tokens.text_primary};" in stylesheet
+    assert f"color: {tokens.accent};" in stylesheet
+    assert f"background: {tokens.panel_alt_bg};" in stylesheet
+
+
 def test_global_search_popup_action_button_qss_uses_disabled_button_text_token() -> None:
     from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
 

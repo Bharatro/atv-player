@@ -202,6 +202,18 @@ def test_build_round_icon_button_qss_accepts_surface_overrides() -> None:
     assert "QPushButton:disabled" in qss
 
 
+def test_build_navigation_tabbar_qss_uses_explicit_dark_theme_text_colors() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    tokens = manager.tokens_for("dark")
+
+    qss = theme_module.build_navigation_tabbar_qss(tokens)
+
+    assert f"color: {tokens.text_primary};" in qss
+    assert f"color: {tokens.accent};" in qss
+    assert f"background: {tokens.panel_alt_bg};" in qss
+    assert f"border-color: {tokens.input_hover_border};" in qss
+
+
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "dark")
     tokens = manager.tokens_for("dark")
