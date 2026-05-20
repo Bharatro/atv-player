@@ -21,6 +21,10 @@ class MetadataQuery:
     vod_dbid: int = 0
     type_name: str = ""
     category_name: str = ""
+    vod_area: str = ""
+    vod_lang: str = ""
+    vod_director: str = ""
+    vod_actor: str = ""
 
 
 @dataclass(slots=True)
@@ -50,6 +54,10 @@ class MetadataContext:
             vod_dbid=int(self.vod.dbid or 0),
             type_name=(self.vod.type_name or "").strip(),
             category_name=category_name,
+            vod_area=(self.vod.vod_area or "").strip(),
+            vod_lang=(self.vod.vod_lang or "").strip(),
+            vod_director=(self.vod.vod_director or "").strip(),
+            vod_actor=(self.vod.vod_actor or "").strip(),
         )
 
 

@@ -17,7 +17,7 @@ from atv_player.app import AppCoordinator, decide_start_view
 from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
-from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
 from atv_player.ui.theme import DARK_TOKENS
@@ -7198,6 +7198,26 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     assert service is not None
     assert [provider.name for provider in service._providers] == ["bangumi", "bilibili", "iqiyi", "tencent", "remote_douban"]
     assert bangumi_tokens == [""]
+
+
+def test_metadata_context_to_query_includes_original_base_match_fields() -> None:
+    vod = VodItem(
+        vod_id="vod-1",
+        vod_name="深空彼岸",
+        vod_year="2026",
+        vod_area="中国大陆",
+        vod_lang="汉语普通话",
+        vod_director="周琛,赵禹晴",
+        vod_actor="梁达伟,唐雅菁",
+        category_name="动漫",
+    )
+
+    query = MetadataContext(vod=vod, source_kind="spider").to_query()
+
+    assert query.vod_area == "中国大陆"
+    assert query.vod_lang == "汉语普通话"
+    assert query.vod_director == "周琛,赵禹晴"
+    assert query.vod_actor == "梁达伟,唐雅菁"
 
 
 def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -> None:

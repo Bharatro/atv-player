@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 _MIN_CONFIDENT_MATCH_SCORE = 0.45
 _CATEGORY_MATCH_BONUS = 0.12
 _CATEGORY_MISMATCH_PENALTY = 0.08
+_AREA_MATCH_BONUS = 0.03
+_LANGUAGE_MATCH_BONUS = 0.03
+_DIRECTOR_MATCH_BONUS = 0.05
+_ACTOR_MATCH_BONUS = 0.04
 
 _CATEGORY_SYNONYMS = {
     "动漫": {"动漫", "动画", "番剧", "anime"},
@@ -99,6 +103,7 @@ def score_match(query: MetadataQuery, match: MetadataMatch) -> float:
                 score -= 0.08
 
     score += _category_score(query.category_name, query.type_name, match.raw)
+    score += _original_detail_field_score(query, match.raw)
 
     if _is_full_exact_match(query.title, match.title):
         if match.provider == "bilibili":
@@ -158,6 +163,19 @@ def _category_score(query_category_name: str, query_type_name: str, raw: Mapping
     return -_CATEGORY_MISMATCH_PENALTY
 
 
+def _original_detail_field_score(query: MetadataQuery, raw: Mapping[str, object]) -> float:
+    score = 0.0
+    if _text_value_tokens(query.vod_area) & _raw_text_tokens(raw, "country", "region", "areas", "area"):
+        score += _AREA_MATCH_BONUS
+    if _text_value_tokens(query.vod_lang) & _raw_text_tokens(raw, "language", "lang"):
+        score += _LANGUAGE_MATCH_BONUS
+    if _person_tokens(query.vod_director) & _raw_people_tokens(raw, "directors", "director"):
+        score += _DIRECTOR_MATCH_BONUS
+    if _person_tokens(query.vod_actor) & _raw_people_tokens(raw, "actors", "actor", "cv"):
+        score += _ACTOR_MATCH_BONUS
+    return score
+
+
 def _expanded_categories(values: Iterable[str]) -> set[str]:
     expanded: set[str] = set()
     for value in values:
@@ -184,6 +202,32 @@ def _raw_category_tokens(raw: Mapping[str, object]) -> list[str]:
     else:
         values.extend(_category_tokens(category))
     return values
+
+
+def _raw_text_tokens(raw: Mapping[str, object], *keys: str) -> set[str]:
+    tokens: set[str] = set()
+    for key in keys:
+        tokens.update(_text_value_tokens(raw.get(key)))
+    return tokens
+
+
+def _raw_people_tokens(raw: Mapping[str, object], *keys: str) -> set[str]:
+    tokens: set[str] = set()
+    for key in keys:
+        tokens.update(_person_tokens(raw.get(key)))
+    return tokens
+
+
+def _text_value_tokens(value: object) -> set[str]:
+    return {
+        normalized
+        for token in _category_tokens(value)
+        if (normalized := normalize_match_title(token))
+    }
+
+
+def _person_tokens(value: object) -> set[str]:
+    return _text_value_tokens(value)
 
 
 def _category_tokens(value: object) -> list[str]:
