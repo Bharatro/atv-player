@@ -1354,7 +1354,7 @@ def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
 def test_default_service_has_fixed_provider_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
+    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu"]
 
 
 def test_danmaku_search_item_accepts_bilibili_metadata() -> None:
@@ -1387,13 +1387,28 @@ def test_match_provider_maps_bilibili_domains() -> None:
 def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
+    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu"]
 
 
 def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
     assert "iqiyi" in service.provider_order
+
+
+def test_search_danmu_sources_uses_sohu_provider_label() -> None:
+    sohu = FakeProvider(
+        "sohu",
+        [DanmakuSearchItem(provider="sohu", name="剑来 第1集", url="https://tv.sohu.com/v/demo.html", ratio=0.8, simi=0.8)],
+        [],
+    )
+    service = DanmakuService({"sohu": sohu}, provider_order=["sohu"])
+
+    result = service.search_danmu_sources("剑来 第1集")
+
+    assert result.groups[0].provider == "sohu"
+    assert result.groups[0].provider_label == "搜狐"
+    assert result.default_option_url == "https://tv.sohu.com/v/demo.html"
 
 
 def test_default_service_raises_clear_error_for_invalid_mgtv_resolution_url() -> None:
