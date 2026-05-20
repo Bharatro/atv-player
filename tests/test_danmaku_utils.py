@@ -81,6 +81,10 @@ def test_extract_episode_number_ignores_range_only_prefix_titles() -> None:
     assert extract_episode_number("01-99集") is None
 
 
+def test_extract_episode_number_ignores_complete_series_count_marker() -> None:
+    assert extract_episode_number("24集全") is None
+
+
 def test_extract_episode_number_supports_quality_variant_prefix_titles() -> None:
     assert extract_episode_number("160-4K.mp4(471.43 MB)") == 160
 
@@ -128,6 +132,18 @@ def test_infer_playlist_episode_number_prefers_trailing_episode_over_range_prefi
     ]
 
     assert infer_playlist_episode_number(playlist[1], playlist) == 2
+
+
+def test_infer_playlist_episode_number_prefers_trailing_episode_over_complete_series_count() -> None:
+    playlist = [
+        PlayItem(title="第一季 1080P 6集全 - 01(3.67 GB)", url="http://m/1.mp4", index=0),
+        PlayItem(title="第二季 1080P 6集全 - 02(2.76 GB)", url="http://m/2.mp4", index=1),
+        PlayItem(title="第一季 1080P 6集全 - 06(3.68 GB)", url="http://m/6.mp4", index=2),
+    ]
+
+    assert infer_playlist_episode_number(playlist[0], playlist) == 1
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+    assert infer_playlist_episode_number(playlist[2], playlist) == 6
 
 
 def test_infer_playlist_episode_number_prefers_cjk_bar_separated_prefix_titles_over_playlist_position() -> None:

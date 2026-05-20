@@ -5735,6 +5735,95 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     ]
 
 
+def test_app_coordinator_episode_title_enhancer_ignores_complete_series_count_when_mapping_tmdb_titles(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    seen: dict[str, object] = {"season_calls": []}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, **_: object) -> None:
+            assert api_key == "tmdb-key"
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            seen["title"] = title
+            seen["year"] = year
+            return [{"id": 42, "name": "The Capture", "first_air_date": "2019-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            cast = seen["season_calls"]
+            assert isinstance(cast, list)
+            cast.append(season_number)
+            if season_number == 1:
+                return {"episodes": [{"episode_number": 1, "name": "纠正"}]}
+            if season_number == 2:
+                return {"episodes": [{"episode_number": 2, "name": "惊天反转"}]}
+            if season_number == 3:
+                return {
+                    "episodes": [
+                        {"episode_number": 1, "name": "不要看镜头"},
+                        {"episode_number": 6, "name": "有人守护我"},
+                    ]
+                }
+            raise AssertionError(season_number)
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="The Capture 第三季", vod_year="", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="The Capture 第三季", vod_year="", category_name="电视剧"),
+            playlist=[
+                PlayItem(
+                    title="第一季 1080P 6集全 - 01(3.67 GB)",
+                    original_title="第一季 1080P 6集全 - 01(3.67 GB)",
+                    url="http://m/s1e1.mp4",
+                ),
+                PlayItem(
+                    title="第二季 1080P 6集全 - 02(2.76 GB)",
+                    original_title="第二季 1080P 6集全 - 02(2.76 GB)",
+                    url="http://m/s2e2.mp4",
+                ),
+                PlayItem(
+                    title="S03 - 01(1).mkv(7.28 GB)",
+                    original_title="S03 - 01(1).mkv(7.28 GB)",
+                    path="/show/The Capture/S03E01.mkv",
+                    url="http://m/s3e1.mp4",
+                ),
+                PlayItem(
+                    title="The Capture S03E06 Someone to Watch Over Me 1080p iP WEB-DL AAC2 0 H 264-Kitsune.mkv(1.8 GB)",
+                    original_title="The Capture S03E06 Someone to Watch Over Me 1080p iP WEB-DL AAC2 0 H 264-Kitsune.mkv(1.8 GB)",
+                    url="http://m/s3e6.mp4",
+                ),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert seen == {"season_calls": [1, 2, 3], "title": "The Capture", "year": ""}
+    assert [item.episode_display_title for item in updated] == [
+        "第1季 第1集 纠正",
+        "第2季 第2集 惊天反转",
+        "第3季 第1集 不要看镜头",
+        "第3季 第6集 有人守护我",
+    ]
+
+
 def test_app_coordinator_episode_title_enhancer_maps_tilde_quality_variants_and_skips_bonus_tracks(
     tmp_path,
     monkeypatch,

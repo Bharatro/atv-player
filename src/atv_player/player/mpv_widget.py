@@ -379,6 +379,17 @@ class MpvWidget(QWidget):
         mpv_version = getattr(player, "mpv_version_tuple", None)
         return isinstance(mpv_version, tuple) and mpv_version >= (0, 38, 0)
 
+    def _should_use_async_loadfile(self, player: Any, mode: str) -> bool:
+        command_async = getattr(player, "command_async", None)
+        if not callable(command_async):
+            return False
+        if mode != "replace":
+            return True
+        mpv_version = getattr(player, "mpv_version_tuple", None)
+        if isinstance(mpv_version, tuple) and mpv_version < (0, 38, 0):
+            return not bool(self._player_property("path", ""))
+        return True
+
     def _load_player_media(
         self,
         player: Any,
@@ -390,7 +401,7 @@ class MpvWidget(QWidget):
     ) -> None:
         normalized_options = dict(options or {})
         command_async = getattr(player, "command_async", None)
-        if callable(command_async):
+        if self._should_use_async_loadfile(player, mode):
             command_args: list[object] = [url, mode]
             encoded_options = self._encode_loadfile_options(normalized_options)
             if self._loadfile_index_supported(player):

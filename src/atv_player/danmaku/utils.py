@@ -178,6 +178,8 @@ def extract_episode_number(name: str) -> int | None:
             continue
         if _looks_like_episode_range_part(value, match):
             continue
+        if _looks_like_complete_series_count_part(value, match):
+            continue
         if _looks_like_date_fragment_part(value, match):
             continue
         raw = match.group(1)
@@ -194,6 +196,11 @@ def _looks_like_episode_range_part(value: str, match: re.Match[str]) -> bool:
         re.search(r"\d{1,4}\s*-\s*$", prefix)
         or re.match(r"^\s*-\s*\d{1,4}", suffix)
     )
+
+
+def _looks_like_complete_series_count_part(value: str, match: re.Match[str]) -> bool:
+    suffix = value[match.end() :]
+    return re.match(r"^\s*全(?:$|[\s\-_.~～〜(（])", suffix) is not None
 
 
 def _looks_like_date_fragment_part(value: str, match: re.Match[str]) -> bool:

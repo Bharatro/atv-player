@@ -66,6 +66,54 @@ def test_build_provider_episode_playlist_maps_iqiyi_videos_for_multi_season_play
     assert updated[0].episode_display_title == "第1集 终局开篇"
 
 
+def test_build_provider_episode_playlist_maps_tmdb_multi_season_titles_with_complete_series_count_filenames() -> None:
+    vod = VodItem(vod_id="v1", vod_name="模范剧集", vod_year="2026", category_name="电视剧")
+    playlist = [
+        PlayItem(
+            title="第一季 1080P 6集全 - 01(3.67 GB)",
+            original_title="第一季 1080P 6集全 - 01(3.67 GB)",
+            url="http://m/s1e1.mp4",
+        ),
+        PlayItem(
+            title="第二季 1080P 6集全 - 02(2.76 GB)",
+            original_title="第二季 1080P 6集全 - 02(2.76 GB)",
+            url="http://m/s2e2.mp4",
+        ),
+        PlayItem(
+            title="S03 - 01(1).mkv(7.28 GB)",
+            original_title="S03 - 01(1).mkv(7.28 GB)",
+            path="/show/The Capture/S03E01.mkv",
+            url="http://m/s3e1.mp4",
+        ),
+    ]
+    match = MetadataMatch(
+        provider="tmdb",
+        provider_id="tv:42",
+        title="模范剧集",
+        year="2026",
+        raw={
+            "episodes": [
+                {"episode_number": 1, "name": "不要看镜头"},
+                {"episode_number": 2, "name": "孤狼"},
+            ]
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1季 第1集 不要看镜头",
+        "第2季 第2集 孤狼",
+        "第3季 第1集 不要看镜头",
+    ]
+
+
 def test_build_provider_episode_playlist_maps_iqiyi_videos_with_number_and_subtitle() -> None:
     vod = VodItem(vod_id="v1", vod_name="择天记", vod_year="2026", category_name="动漫")
     playlist = [

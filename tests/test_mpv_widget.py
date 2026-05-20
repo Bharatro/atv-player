@@ -474,6 +474,43 @@ def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) ->
     ]
 
 
+def test_mpv_widget_uses_sync_loadfile_when_replacing_active_media_on_mpv_037(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.mpv_version_tuple = (0, 37, 0)
+            self.path = "http://127.0.0.1:2323/current.m3u8"
+            self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.command_async_calls: list[tuple[object, ...]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, mode, index, options))
+
+        def command_async(self, *args, **kwargs):
+            self.command_async_calls.append((*args, kwargs))
+            return object()
+
+    widget._player = FakePlayer()
+
+    widget.load("http://127.0.0.1:2323/next.m3u8", start_seconds=12)
+
+    assert widget._player.loadfile_calls == [
+        (
+            "http://127.0.0.1:2323/next.m3u8",
+            "replace",
+            None,
+            {
+                "demuxer_lavf_o_add": "allowed_extensions=ALL",
+                "start": "12",
+            },
+        )
+    ]
+    assert widget._player.command_async_calls == []
+
+
 def test_mpv_widget_rejects_loadfile_option_values_with_commas(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
