@@ -298,7 +298,7 @@ def build_application() -> tuple[QApplication, SettingsRepository, AppLogService
     app_instance_getter = getattr(QApplication, "instance", None)
     app = app_instance_getter() if callable(app_instance_getter) else None
     if app is None:
-        app = QApplication([])
+        app = QApplication(sys.argv)
     _install_button_pointing_hand_cursor(app)
     _install_main_thread_gc_workaround(app)
     app.setApplicationName("atv-player")

@@ -3493,6 +3493,30 @@ def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_pa
     assert repo.load_config().base_url == "http://127.0.0.1:4567"
 
 
+def test_build_application_passes_process_argv_to_qapplication(monkeypatch, tmp_path) -> None:
+    captured = {"args": None}
+
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            captured["args"] = list(args)
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            return None
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(app_module.sys, "argv", ["atv-player", "--demo"])
+
+    app_module.build_application()
+
+    assert captured["args"] == ["atv-player", "--demo"]
+
+
 def test_build_application_creates_poster_cache_directory(monkeypatch, tmp_path) -> None:
     class FakeApplication:
         def __init__(self, args) -> None:

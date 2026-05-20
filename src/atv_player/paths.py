@@ -17,19 +17,26 @@ def _writable_location(
     return fallback
 
 
-def app_data_dir() -> Path:
-    path = _writable_location(
-        QStandardPaths.StandardLocation.AppDataLocation,
-        Path.home() / ".local" / "share" / APP_NAME,
-    )
+def _app_scoped_location(
+    location: QStandardPaths.StandardLocation,
+    fallback_base: Path,
+) -> Path:
+    path = _writable_location(location, fallback_base)
+    if path.name != APP_NAME:
+        path = path / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def app_data_dir() -> Path:
+    return _app_scoped_location(
+        QStandardPaths.StandardLocation.GenericDataLocation,
+        Path.home() / ".local" / "share",
+    )
 
 
 def app_cache_dir() -> Path:
-    path = _writable_location(
-        QStandardPaths.StandardLocation.CacheLocation,
-        Path.home() / ".cache" / APP_NAME,
+    return _app_scoped_location(
+        QStandardPaths.StandardLocation.GenericCacheLocation,
+        Path.home() / ".cache",
     )
-    path.mkdir(parents=True, exist_ok=True)
-    return path
