@@ -861,6 +861,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_original_toggle.setTristate(False)
         self._metadata_original_toggle.setHidden(True)
         self._metadata_original_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._metadata_original_toggle.setFixedSize(34, 20)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.document().setDocumentMargin(4)
@@ -1136,6 +1137,35 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         heading_qss = build_player_section_heading_qss(tokens)
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
+        self._metadata_original_toggle.setStyleSheet(
+            f"""
+            QCheckBox {{
+                spacing: 0;
+                padding: 0;
+                margin: 0;
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
+                width: 34px;
+                height: 20px;
+                border-radius: 10px;
+                background-color: {tokens.panel_alt_bg};
+                border: 1px solid {tokens.border_subtle};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: {tokens.accent_hover};
+                background-color: {tokens.menu_hover_bg};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {tokens.accent};
+                border: 1px solid {tokens.accent};
+            }}
+            QCheckBox::indicator:checked:hover {{
+                background-color: {tokens.accent_hover};
+                border: 1px solid {tokens.accent_hover};
+            }}
+            """
+        )
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
         sidebar_combo_qss = build_combobox_qss(tokens)
         sidebar_combo_popup_qss = build_combobox_popup_qss(

@@ -1793,6 +1793,51 @@ def test_player_window_hides_metadata_original_toggle_when_metadata_matches_orig
     assert window._metadata_original_toggle.isHidden() is True
 
 
+def test_player_window_metadata_original_toggle_has_visible_switch_styling(qtbot) -> None:
+    class FakeVideo:
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="原始标题", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda _session: VodItem(
+            vod_id="v1",
+            vod_name="增强标题",
+            vod_year="2024",
+            vod_content="增强简介",
+        ),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window._metadata_original_toggle.isHidden() is False, timeout=1000)
+    assert window._metadata_original_toggle.minimumWidth() >= 30
+    assert window._metadata_original_toggle.minimumHeight() >= 18
+    assert "QCheckBox::indicator" in window._metadata_original_toggle.styleSheet()
+
+
 def test_player_window_metadata_scrape_apply_original_toggle_restores_original_item_detail_fields(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(
