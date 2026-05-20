@@ -448,6 +448,8 @@ class MpvWidget(QWidget):
         return isinstance(mpv_version, tuple) and mpv_version >= (0, 38, 0)
 
     def _should_use_async_loadfile(self, player: Any, mode: str) -> bool:
+        if sys.platform.startswith("win"):
+            return False
         command_async = getattr(player, "command_async", None)
         if not callable(command_async):
             return False
