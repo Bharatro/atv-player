@@ -2530,7 +2530,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return self.video is self.video_widget
 
     def _should_defer_post_load_player_configuration(self) -> bool:
-        return self.video is self.video_widget and sys.platform.startswith("win")
+        return False
 
     def _schedule_window_single_shot(self, delay_ms: int, callback: Callable[[], None]) -> None:
         if not self._can_deliver_async_result():
@@ -4668,18 +4668,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._primary_external_subtitle_track_id = loaded_track_id
         self._primary_external_subtitle_path = subtitle_path
         if loaded_track_id is None:
-            if sys.platform.startswith("win"):
-                self._stop_primary_external_subtitle_retry()
-                return True
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
         return True
 
     def _apply_primary_external_subtitle_track(self, track_id: int | None) -> bool:
         if track_id is None:
-            if sys.platform.startswith("win") and self._primary_external_subtitle_path is not None:
-                self._stop_primary_external_subtitle_retry()
-                return True
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
         try:
@@ -5118,16 +5112,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 self.video.remove_subtitle_track(self._danmaku_track_id)
             except Exception as exc:
                 self._append_log(f"弹幕关闭失败: {exc}")
-        elif (
-            sys.platform.startswith("win")
-            and self._danmaku_active
-            and self._danmaku_uses_secondary_slot is False
-            and hasattr(self.video, "apply_subtitle_mode")
-        ):
-            try:
-                self.video.apply_subtitle_mode("off")
-            except Exception as exc:
-                self._append_log(f"弹幕关闭失败: {exc}")
         self._danmaku_track_id = None
         self._danmaku_active = False
         if restore_position:
@@ -5233,7 +5217,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
         track_id = self._load_primary_danmaku_subtitle(subtitle_path)
-        if track_id is None and not sys.platform.startswith("win"):
+        if track_id is None:
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id
         self._danmaku_active = True
@@ -7820,10 +7804,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
-        if sys.platform.startswith("win"):
-            self.video_widget.suspend()
-        else:
-            self.video_widget.shutdown()
+        self.video_widget.shutdown()
         self.hide()
         self.closed_to_main.emit()
 

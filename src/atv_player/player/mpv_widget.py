@@ -418,7 +418,6 @@ class MpvWidget(QWidget):
                     **common,
                     audio_device="auto",
                     audio_exclusive="no",
-                    start_event_thread=False,
                 )
             elif sys.platform == "darwin":
                 player = mpv.MPV(
@@ -473,23 +472,10 @@ class MpvWidget(QWidget):
             raise
 
     def suspend(self) -> None:
-        if not self._on_widget_thread():
-            self._run_on_widget_thread(self.suspend)
-            return
-        if not sys.platform.startswith("win"):
-            self.shutdown()
-            return
-        self._player_property_cache.clear()
-        self._audio_cover_active = False
-        self._audio_cover_mode = False
-        self._playback_finished_emitted = False
-        self._windows_file_loaded_timer.stop()
-        self._set_video_picture_state("idle")
+        self.shutdown()
 
     def _register_player_events(self) -> None:
         if self._player is None:
-            return
-        if sys.platform.startswith("win") and getattr(self._player, "_event_thread", None) is None:
             return
         event_callback = getattr(self._player, "event_callback", None)
         if event_callback is None:
@@ -524,8 +510,6 @@ class MpvWidget(QWidget):
             self._post_to_widget_thread(self.file_loaded.emit)
 
         self._file_loaded_handler = handle_file_loaded
-        if sys.platform.startswith("win"):
-            return
         observe_property = getattr(self._player, "observe_property", None)
         if observe_property is None:
             return
@@ -587,9 +571,6 @@ class MpvWidget(QWidget):
         if not hasattr(type(player), "__setitem__"):
             return
         player["http-header-fields"] = header_fields
-
-    def _use_windows_safe_load_path(self) -> bool:
-        return sys.platform.startswith("win")
 
     def _is_local_iso_proxy_url(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -716,39 +697,14 @@ class MpvWidget(QWidget):
                 return getattr(self._player, name.replace("-", "_"))
             return default
 
-    def _command_property_value(self, value: object) -> str:
-        if isinstance(value, bool):
-            return "yes" if value else "no"
-        if value is None:
-            return ""
-        return str(value)
-
-    def _set_player_property_via_command(self, name: str, value: object) -> bool:
-        if self._player is None:
-            return False
-        command = getattr(self._player, "command", None)
-        if not callable(command):
-            return False
-        command("set", name, self._command_property_value(value))
-        return True
-
     def _set_player_property(self, name: str, value: object) -> None:
         if self._player is None:
             return
-        cached_value: object = value
-        if sys.platform.startswith("win"):
-            cached_value = self._command_property_value(value)
-            if self._player_property_cache.get(name) == cached_value:
-                return
         try:
-            if sys.platform.startswith("win") and self._set_player_property_via_command(name, value):
-                self._player_property_cache[name] = cached_value
-                return
             if hasattr(type(self._player), "__setitem__"):
                 self._player[name] = value
             else:
                 setattr(self._player, name.replace("-", "_"), value)
-            self._player_property_cache[name] = cached_value
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -850,7 +806,6 @@ class MpvWidget(QWidget):
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
         self._windows_file_loaded_timer.stop()
-        self._player_property_cache.clear()
         self._ensure_player()
         player = self._player
         if player is None:
@@ -861,19 +816,15 @@ class MpvWidget(QWidget):
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
         can_loadfile = hasattr(player, "loadfile")
-        use_windows_safe_load_path = self._use_windows_safe_load_path()
         try:
-            if use_windows_safe_load_path:
-                profile_name = "windows-safe"
-            else:
-                self._apply_http_header_fields(player, header_fields)
-                profile_name = self._apply_stream_profile(
-                    player,
-                    url,
-                    audio_files=audio_files,
-                    ytdl_format=ytdl_format,
-                )
-                self._apply_extra_mpv_options(player)
+            self._apply_http_header_fields(player, header_fields)
+            profile_name = self._apply_stream_profile(
+                player,
+                url,
+                audio_files=audio_files,
+                ytdl_format=ytdl_format,
+            )
+            self._apply_extra_mpv_options(player)
             logger.info(
                 "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                 self._summarize_media_url(url),
@@ -916,17 +867,14 @@ class MpvWidget(QWidget):
                 player = self._create_player()
                 self._player = player
                 self._register_player_events()
-                if use_windows_safe_load_path:
-                    profile_name = "windows-safe"
-                else:
-                    self._apply_http_header_fields(player, header_fields)
-                    profile_name = self._apply_stream_profile(
-                        player,
-                        url,
-                        audio_files=audio_files,
-                        ytdl_format=ytdl_format,
-                    )
-                    self._apply_extra_mpv_options(player)
+                self._apply_http_header_fields(player, header_fields)
+                profile_name = self._apply_stream_profile(
+                    player,
+                    url,
+                    audio_files=audio_files,
+                    ytdl_format=ytdl_format,
+                )
+                self._apply_extra_mpv_options(player)
                 logger.info(
                     "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),
@@ -967,10 +915,7 @@ class MpvWidget(QWidget):
                 self._attach_external_audio(player, audio_files)
             else:
                 raise
-        if sys.platform.startswith("win"):
-            self._windows_file_loaded_timer.start(100)
-        else:
-            player.pause = pause
+        player.pause = pause
 
     def _summarize_media_url(self, url: str) -> str:
         parsed = urlparse(url or "")
@@ -1075,10 +1020,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._set_player_property("speed", speed)
-            else:
-                self._player.speed = speed
+            self._player.speed = speed
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1091,10 +1033,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._set_player_property("volume", value)
-            else:
-                self._player.volume = value
+            self._player.volume = value
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1107,10 +1046,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._player.command("cycle", "mute")
-            else:
-                self._player.mute = not bool(getattr(self._player, "mute", False))
+            self._player.mute = not bool(getattr(self._player, "mute", False))
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1123,10 +1059,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._set_player_property("mute", muted)
-            else:
-                self._player.mute = muted
+            self._player.mute = muted
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1154,10 +1087,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._set_player_property("pause", True)
-            else:
-                self._player.pause = True
+            self._player.pause = True
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1170,10 +1100,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            if sys.platform.startswith("win"):
-                self._set_player_property("pause", False)
-            else:
-                self._player.pause = False
+            self._player.pause = False
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1272,8 +1199,6 @@ class MpvWidget(QWidget):
             return list(self._run_on_widget_thread(self.subtitle_tracks) or [])
         if self._player is None:
             return []
-        if sys.platform.startswith("win"):
-            return []
         try:
             raw_tracks = getattr(self._player, "track_list", None) or []
         except Exception:
@@ -1351,8 +1276,6 @@ class MpvWidget(QWidget):
     def current_subtitle_track_id(self) -> int | None:
         if not self._on_widget_thread():
             return self._run_on_widget_thread(self.current_subtitle_track_id)
-        if sys.platform.startswith("win"):
-            return None
         value = self._player_property("sid", None)
         if value in {None, "auto", "no"}:
             return None
@@ -1363,8 +1286,6 @@ class MpvWidget(QWidget):
 
     def _subtitle_track_ids(self) -> set[int]:
         if self._player is None:
-            return set()
-        if sys.platform.startswith("win"):
             return set()
         raw_tracks = getattr(self._player, "track_list", [])
         track_ids: set[int] = set()
@@ -1398,10 +1319,6 @@ class MpvWidget(QWidget):
             )
         if self._player is None:
             return None
-        if sys.platform.startswith("win"):
-            mode = "auto" if select_for_secondary else "select"
-            self._player.command("sub-add", path, mode)
-            return None
         before_ids = self._subtitle_track_ids()
         try:
             self._player.command("sub-add", path, "auto")
@@ -1420,8 +1337,6 @@ class MpvWidget(QWidget):
             return
         if self._player is None or track_id is None:
             return
-        if sys.platform.startswith("win"):
-            return
         try:
             current_secondary_sid = self._player_property("secondary-sid", None)
             if str(current_secondary_sid) == str(track_id):
@@ -1437,8 +1352,6 @@ class MpvWidget(QWidget):
     def subtitle_position(self) -> int:
         if not self._on_widget_thread():
             return int(self._run_on_widget_thread(self.subtitle_position) or 50)
-        if sys.platform.startswith("win"):
-            return 50
         value = self._player_property("sub-pos", 50)
         return self._int_property_value(value, 50)
 
@@ -1452,8 +1365,6 @@ class MpvWidget(QWidget):
     def secondary_subtitle_position(self) -> int:
         if not self._on_widget_thread():
             return int(self._run_on_widget_thread(self.secondary_subtitle_position) or 50)
-        if sys.platform.startswith("win"):
-            return 50
         value = self._player_property("secondary-sub-pos", 50)
         return self._int_property_value(value, 50)
 
@@ -1461,8 +1372,6 @@ class MpvWidget(QWidget):
         if not self._on_widget_thread():
             return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_position))
         if self._player is None:
-            return False
-        if sys.platform.startswith("win"):
             return False
         try:
             self._player_property("secondary-sub-pos", 50)
@@ -1550,8 +1459,6 @@ class MpvWidget(QWidget):
             return bool(self._run_on_widget_thread(self.supports_subtitle_scale))
         if self._player is None:
             return False
-        if sys.platform.startswith("win"):
-            return False
         try:
             _ = self._player["sub-scale"]
             return True
@@ -1566,8 +1473,6 @@ class MpvWidget(QWidget):
         if not self._on_widget_thread():
             return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_scale))
         if self._player is None:
-            return False
-        if sys.platform.startswith("win"):
             return False
         try:
             _ = self._player["secondary-sub-scale"]
@@ -1584,8 +1489,6 @@ class MpvWidget(QWidget):
             return bool(self._run_on_widget_thread(self.supports_subtitle_ass_override))
         if self._player is None:
             return False
-        if sys.platform.startswith("win"):
-            return False
         try:
             _ = self._player["sub-ass-override"]
             return True
@@ -1601,8 +1504,6 @@ class MpvWidget(QWidget):
             return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_ass_override))
         if self._player is None:
             return False
-        if sys.platform.startswith("win"):
-            return False
         try:
             _ = self._player["secondary-sub-ass-override"]
             return True
@@ -1617,8 +1518,6 @@ class MpvWidget(QWidget):
         if not self._on_widget_thread():
             return bool(self._run_on_widget_thread(self.supports_subtitle_ass_force_margins))
         if self._player is None:
-            return False
-        if sys.platform.startswith("win"):
             return False
         try:
             _ = self._player["sub-ass-force-margins"]
@@ -1716,8 +1615,6 @@ class MpvWidget(QWidget):
         if not self._on_widget_thread():
             return list(self._run_on_widget_thread(self.audio_tracks) or [])
         if self._player is None:
-            return []
-        if sys.platform.startswith("win"):
             return []
         try:
             raw_tracks = getattr(self._player, "track_list", None) or []

@@ -361,7 +361,7 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     assert widget._player.mute is False
 
 
-def test_mpv_widget_uses_command_based_controls_on_windows(qtbot, monkeypatch) -> None:
+def test_mpv_widget_uses_direct_property_controls_on_windows(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr(sys, "platform", "win32")
@@ -370,6 +370,10 @@ def test_mpv_widget_uses_command_based_controls_on_windows(qtbot, monkeypatch) -
         def __init__(self) -> None:
             self.core_shutdown = False
             self.command_calls: list[tuple[object, ...]] = []
+            self.speed = 1.0
+            self.volume = 100
+            self.mute = False
+            self.pause = False
 
         def command(self, *args) -> None:
             self.command_calls.append(args)
@@ -383,14 +387,11 @@ def test_mpv_widget_uses_command_based_controls_on_windows(qtbot, monkeypatch) -
     widget.pause()
     widget.resume()
 
-    assert widget._player.command_calls == [
-        ("set", "speed", "1.5"),
-        ("set", "volume", "35"),
-        ("set", "mute", "yes"),
-        ("cycle", "mute"),
-        ("set", "pause", "yes"),
-        ("set", "pause", "no"),
-    ]
+    assert widget._player.speed == 1.5
+    assert widget._player.volume == 35
+    assert widget._player.mute is False
+    assert widget._player.pause is False
+    assert widget._player.command_calls == []
 
 
 def test_mpv_widget_toggles_video_info_overlay(qtbot) -> None:
@@ -1147,7 +1148,7 @@ def test_mpv_widget_uses_conservative_windows_renderer_defaults(qtbot, monkeypat
     assert captured["vo"] == "gpu"
     assert captured["gpu_context"] == "d3d11"
     assert captured["hwdec"] == "auto-safe"
-    assert captured["start_event_thread"] is False
+    assert "start_event_thread" not in captured
     assert "gpu_api" not in captured
 
 
@@ -1536,7 +1537,7 @@ def test_mpv_widget_registers_left_click_binding_and_emits_context_menu_dismiss_
     assert dismissed["count"] == 1
 
 
-def test_mpv_widget_skips_mpv_mouse_bindings_on_windows(qtbot, monkeypatch) -> None:
+def test_mpv_widget_registers_mpv_mouse_bindings_on_windows(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:
             self.play_calls: list[str] = []
@@ -1567,10 +1568,13 @@ def test_mpv_widget_skips_mpv_mouse_bindings_on_windows(qtbot, monkeypatch) -> N
 
     widget.load("http://m/1.m3u8")
 
-    assert player.register_key_binding_calls == []
+    assert player.register_key_binding_calls == [
+        ("MBTN_RIGHT", "force"),
+        ("MBTN_LEFT", "force"),
+    ]
 
 
-def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> None:
+def test_mpv_widget_registers_property_observers_on_windows(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:
             self._end_file_callback = None
@@ -1599,9 +1603,9 @@ def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> N
 
     widget._register_player_events()
 
-    assert player._end_file_callback is None
-    assert player._file_loaded_callback is None
-    assert player.observed_properties == []
+    assert callable(player._end_file_callback)
+    assert callable(player._file_loaded_callback)
+    assert player.observed_properties == ["track-list", "video-out-params", "eof-reached"]
 
 
 def test_mpv_widget_routes_windows_property_sets_to_gui_thread(qtbot, monkeypatch) -> None:
@@ -1611,13 +1615,21 @@ def test_mpv_widget_routes_windows_property_sets_to_gui_thread(qtbot, monkeypatc
 
     main_thread_id = threading.get_ident()
     background_thread_id: int | None = None
-    command_calls: list[tuple[tuple[object, ...], int]] = []
+    assigned_values: list[tuple[float, int]] = []
 
     class FakePlayer:
-        core_shutdown = False
+        def __init__(self) -> None:
+            self.core_shutdown = False
+            self._speed = 1.0
 
-        def command(self, *args) -> None:
-            command_calls.append((args, threading.get_ident()))
+        @property
+        def speed(self) -> float:
+            return self._speed
+
+        @speed.setter
+        def speed(self, value: float) -> None:
+            self._speed = value
+            assigned_values.append((value, threading.get_ident()))
 
     widget._player = FakePlayer()
 
@@ -1629,40 +1641,57 @@ def test_mpv_widget_routes_windows_property_sets_to_gui_thread(qtbot, monkeypatc
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
     worker.join()
-    qtbot.waitUntil(lambda: len(command_calls) == 1, timeout=1000)
+    qtbot.waitUntil(lambda: len(assigned_values) == 1, timeout=1000)
 
     assert background_thread_id is not None
-    assert command_calls == [(("set", "speed", "1.5"), main_thread_id)]
-    assert command_calls[0][1] != background_thread_id
+    assert assigned_values == [(1.5, main_thread_id)]
+    assert assigned_values[0][1] != background_thread_id
 
 
-def test_mpv_widget_skips_redundant_windows_property_sets(qtbot, monkeypatch) -> None:
+def test_mpv_widget_applies_repeated_property_sets_on_windows_via_direct_assignment(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
 
-    command_calls: list[tuple[object, ...]] = []
-
     class FakePlayer:
-        core_shutdown = False
+        def __init__(self) -> None:
+            self.core_shutdown = False
+            self.speed_history: list[float] = []
+            self.mute_history: list[bool] = []
+            self._speed = 1.0
+            self._mute = False
 
-        def command(self, *args) -> None:
-            command_calls.append(args)
+        @property
+        def speed(self) -> float:
+            return self._speed
 
-    widget._player = FakePlayer()
+        @speed.setter
+        def speed(self, value: float) -> None:
+            self._speed = value
+            self.speed_history.append(value)
+
+        @property
+        def mute(self) -> bool:
+            return self._mute
+
+        @mute.setter
+        def mute(self, value: bool) -> None:
+            self._mute = value
+            self.mute_history.append(value)
+
+    player = FakePlayer()
+    widget._player = player
 
     widget.set_speed(1.25)
     widget.set_speed(1.25)
     widget.set_muted(True)
     widget.set_muted(True)
 
-    assert command_calls == [
-        ("set", "speed", "1.25"),
-        ("set", "mute", "yes"),
-    ]
+    assert player.speed_history == [1.25, 1.25]
+    assert player.mute_history == [True, True]
 
 
-def test_mpv_widget_skips_startup_property_churn_on_windows_safe_load_path(qtbot, monkeypatch) -> None:
+def test_mpv_widget_applies_startup_properties_on_windows_like_other_platforms(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
@@ -1672,16 +1701,12 @@ def test_mpv_widget_skips_startup_property_churn_on_windows_safe_load_path(qtbot
             self.pause = False
             self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
             self.options: dict[str, object] = {}
-            self.command_calls: list[tuple[object, ...]] = []
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
             self.loadfile_calls.append((url, mode, index, options))
 
         def __setitem__(self, key: str, value: object) -> None:
             self.options[key] = value
-
-        def command(self, *args) -> None:
-            self.command_calls.append(args)
 
     widget._player = FakePlayer()
 
@@ -1702,8 +1727,11 @@ def test_mpv_widget_skips_startup_property_churn_on_windows_safe_load_path(qtbot
             {"demuxer_lavf_o_add": "allowed_extensions=ALL"},
         )
     ]
-    assert widget._player.options == {}
-    assert widget._player.command_calls == []
+    assert widget._player.options["http-header-fields"] == [
+        "User-Agent: Yamby/1.5.7.18(Android",
+        "Referer: https://site.example",
+    ]
+    assert widget._player.options["cache-pause-initial"] == "yes"
 
 
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
@@ -2013,7 +2041,7 @@ def test_mpv_widget_still_raises_when_removing_existing_subtitle_track_fails(qtb
     assert player.command_calls == [("sub-remove", 99)]
 
 
-def test_mpv_widget_disables_track_queries_but_still_loads_external_subtitles_on_windows(
+def test_mpv_widget_uses_track_queries_and_external_subtitles_on_windows_like_other_platforms(
     qtbot, monkeypatch, tmp_path
 ) -> None:
     widget = MpvWidget()
@@ -2027,19 +2055,23 @@ def test_mpv_widget_disables_track_queries_but_still_loads_external_subtitles_on
                 {"id": 2, "type": "audio", "title": "Main"},
             ]
             self.command_calls: list[tuple[object, ...]] = []
+            self._next_track_id = 3
 
         def command(self, *args) -> None:
             self.command_calls.append(args)
+            if args[:2] == ("sub-add", str(subtitle_path)):
+                self.track_list.append({"id": self._next_track_id, "type": "sub", "title": "外挂", "external": True})
+                self._next_track_id += 1
 
     widget._player = FakePlayer()
     subtitle_path = tmp_path / "sample.ass"
     subtitle_path.write_text("dummy", encoding="utf-8")
 
-    assert widget.subtitle_tracks() == []
-    assert widget.audio_tracks() == []
-    assert widget.load_external_subtitle(str(subtitle_path), select_for_secondary=False) is None
+    assert [track.id for track in widget.subtitle_tracks()] == [1]
+    assert [track.id for track in widget.audio_tracks()] == [2]
+    assert widget.load_external_subtitle(str(subtitle_path), select_for_secondary=False) == 3
     widget.remove_subtitle_track(1)
-    assert widget._player.command_calls == [("sub-add", str(subtitle_path), "select")]
+    assert widget._player.command_calls == [("sub-add", str(subtitle_path), "auto"), ("sub-remove", 1)]
 
 
 def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:
