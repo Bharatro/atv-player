@@ -7288,6 +7288,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.details.setHidden(is_fullscreen or not metadata_visible)
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)
+        self._refresh_metadata_original_toggle()
         self._update_log_section_max_height()
 
     def _should_dock_log_to_sidebar_bottom(self) -> bool:
