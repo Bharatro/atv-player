@@ -3130,6 +3130,63 @@ def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qt
     assert "ok" in item.danmaku_xml
 
 
+def test_player_window_clear_danmaku_button_removes_loaded_danmaku_and_keeps_source_selection(qtbot) -> None:
+    class DanmakuRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.removed_subtitle_tracks: list[int | None] = []
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            self.removed_subtitle_tracks.append(track_id)
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>',
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+        selected_danmaku_provider="tencent",
+        selected_danmaku_url="https://v.qq.com/demo",
+        selected_danmaku_title="红果短剧 第1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = DanmakuRecordingVideo()
+    window._danmaku_track_id = 7
+    window._danmaku_active = True
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_clear_button is not None
+    assert window._danmaku_source_clear_button.isEnabled() is True
+
+    window._clear_current_item_danmaku_source()
+
+    assert item.danmaku_xml == ""
+    assert item.selected_danmaku_url == "https://v.qq.com/demo"
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_title == "红果短剧 第1集"
+    assert window.video.removed_subtitle_tracks == [7]
+    assert window._danmaku_source_clear_button.isEnabled() is False
+    assert window._danmaku_source_switch_button is not None
+    assert window._danmaku_source_switch_button.isEnabled() is True
+
+
 def test_player_window_manual_danmaku_source_switch_logs_failure_without_raising(qtbot) -> None:
     class FakeDanmakuController:
         def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
