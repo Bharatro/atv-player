@@ -1617,6 +1617,80 @@ def test_main_window_hidden_plugin_context_menu_rename_updates_drawer_items(qtbo
     assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["重命名插件", "插件3"]
 
 
+def test_main_window_manage_categories_context_action_reloads_only_target_plugin(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    opened: list[int] = []
+    monkeypatch.setattr(window, "_open_plugin_category_manager", lambda plugin_id: opened.append(plugin_id) or True)
+
+    window.show()
+    window._refresh_navigation_tabs()
+    result = window._run_plugin_context_action("manage_categories", "2")
+
+    assert result is True
+    assert opened == [2]
+    assert manager.load_plugins_calls[-1] == ["2"]
+
+
+def test_main_window_plugin_context_menu_includes_category_management(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    captured_actions: list[str] = []
+
+    class FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class FakeMenu:
+        def __init__(self, parent=None) -> None:
+            del parent
+            self.actions: list[FakeAction] = []
+
+        def addAction(self, text: str):
+            action = FakeAction(text)
+            self.actions.append(action)
+            captured_actions.append(text)
+            return action
+
+        def exec(self, global_pos):
+            del global_pos
+            return None
+
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+
+    window._open_plugin_context_menu("1", window.mapToGlobal(window.rect().center()))
+
+    assert captured_actions == ["重新加载", "编辑名称", "编辑配置", "分类管理", "禁用"]
+
+
 def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:
     manager = WidthAwarePluginManager()
     window = MainWindow(

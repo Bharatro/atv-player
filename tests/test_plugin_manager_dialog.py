@@ -239,6 +239,58 @@ def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtb
     assert dialog.delete_button.isEnabled() is True
 
 
+def test_plugin_manager_dialog_exposes_category_management_button(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.category_button.text() == "分类管理"
+
+
+def test_plugin_manager_dialog_enables_category_management_only_for_single_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.clearSelection()
+    dialog._sync_action_state()
+    assert dialog.category_button.isEnabled() is False
+
+    _select_rows(dialog, 0)
+    dialog._sync_action_state()
+    assert dialog.category_button.isEnabled() is True
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+    assert dialog.category_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_opens_category_manager_and_marks_tabs_dirty_on_accept(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+    reload_calls: list[str] = []
+
+    class FakeCategoryDialog:
+        def __init__(self, plugin_manager, plugin_id: int, parent=None) -> None:
+            assert plugin_manager is manager
+            assert plugin_id == 1
+            assert parent is dialog
+
+        def exec(self) -> int:
+            manager.plugins[0].category_overrides_json = '{"order":["tv"]}'
+            return PluginManagerDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialog, "reload_plugins", lambda: reload_calls.append("reload"))
+    monkeypatch.setattr(plugin_manager_dialog_module, "PluginCategoryManagerDialog", FakeCategoryDialog)
+
+    dialog._open_category_manager_dialog()
+
+    assert dialog.plugin_tabs_dirty is True
+    assert reload_calls == ["reload"]
+
+
 def test_plugin_manager_dialog_shows_empty_custom_action_state_without_selection(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)

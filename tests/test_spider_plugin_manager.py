@@ -10,6 +10,7 @@ from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.models import PlayItem
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.models import (
+    DoubanCategory,
     SpiderPluginAction,
     SpiderPluginConfig,
     SpiderPluginImportCancelled,
@@ -208,6 +209,25 @@ class RunnableActionLoader(FakeLoader):
             spider=self.spider,
             plugin_name="红果短剧",
             search_enabled=False,
+        )
+
+
+class CategoryLoader(FakeLoader):
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh)
+        spider = FakeSpider()
+        spider.homeContent = lambda filter: {  # type: ignore[method-assign]
+            "class": [
+                {"type_id": "hot", "type_name": "热门"},
+                {"type_id": "tv", "type_name": "剧场"},
+            ],
+            "list": [],
+        }
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=spider,
+            plugin_name="分类插件",
+            search_enabled=True,
         )
 
 
@@ -563,6 +583,33 @@ def test_manager_run_plugin_action_rejects_undeclared_action(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="插件动作未注册: missing_action"):
         manager.run_plugin_action(plugin.id, "missing_action")
+
+
+def test_manager_set_plugin_category_overrides_persists_json_and_survives_refresh(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/demo.py", "演示插件")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    manager.set_plugin_category_overrides(plugin.id, '{"renames":{"movie":"影片"}}')
+    manager.refresh_plugin(plugin.id)
+
+    saved = repository.get_plugin(plugin.id)
+
+    assert saved.category_overrides_json == '{"renames":{"movie":"影片"}}'
+
+
+def test_manager_load_plugin_categories_returns_raw_plugin_categories(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/demo.py", "演示插件")
+    repository.set_plugin_category_overrides(plugin.id, '{"renames":{"hot":"热门推荐"}}')
+    manager = SpiderPluginManager(repository, CategoryLoader())
+
+    categories = manager.load_plugin_categories(plugin.id)
+
+    assert categories == [
+        DoubanCategory(type_id="hot", type_name="热门"),
+        DoubanCategory(type_id="tv", type_name="剧场"),
+    ]
 
 
 def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_path: Path) -> None:

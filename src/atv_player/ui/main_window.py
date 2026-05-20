@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEv
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -48,6 +49,7 @@ from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
+from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
@@ -2385,6 +2387,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         reload_action = menu.addAction("重新加载")
         rename_action = menu.addAction("编辑名称")
         config_action = menu.addAction("编辑配置")
+        manage_categories_action = menu.addAction("分类管理")
         toggle_action = menu.addAction(self._plugin_toggle_action_text(plugin_id))
         chosen = menu.exec(global_pos)
         if chosen is reload_action:
@@ -2393,12 +2396,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._run_plugin_context_action("rename", plugin_id)
         elif chosen is config_action:
             self._run_plugin_context_action("edit_config", plugin_id)
+        elif chosen is manage_categories_action:
+            self._run_plugin_context_action("manage_categories", plugin_id)
         elif chosen is toggle_action:
             self._run_plugin_context_action("toggle_enabled", plugin_id)
+
+    def _open_plugin_category_manager(self, plugin_id: int) -> bool:
+        if self._plugin_manager is None:
+            return False
+        self._close_plugin_overflow_drawer()
+        dialog = PluginCategoryManagerDialog(self._plugin_manager, plugin_id, self)
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def _run_plugin_context_action(self, action_name: str, plugin_id: str) -> bool:
         if self._plugin_actions is None:
             return False
+        normalized_plugin_id = int(self._normalize_plugin_id(plugin_id))
+        if action_name == "manage_categories":
+            changed = self._open_plugin_category_manager(normalized_plugin_id)
+            if not changed:
+                return False
+            self._reload_changed_plugin_tabs([str(normalized_plugin_id)])
+            self._sync_plugin_overflow_drawer(reset_search=False)
+            return True
         action_map = {
             "refresh": self._plugin_actions.refresh_plugin,
             "rename": self._plugin_actions.rename_plugin,
@@ -2408,7 +2428,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         action = action_map.get(action_name)
         if action is None:
             return False
-        result = action(self, int(self._normalize_plugin_id(plugin_id)))
+        result = action(self, normalized_plugin_id)
         if not result.changed or result.plugin_id is None:
             return False
         self._reload_changed_plugin_tabs([str(result.plugin_id)])
