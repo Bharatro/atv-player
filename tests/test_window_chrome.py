@@ -1,6 +1,6 @@
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
 
 from atv_player.ui.window_chrome import (
     ThemedDialogBase,
@@ -12,6 +12,14 @@ class DemoWindow(ThemedWidgetWindowBase):
     def __init__(self) -> None:
         super().__init__(title="Demo Window", allow_minimize=True, allow_maximize=True, resizable=True)
         self.content_layout().addWidget(QLabel("body", self.content_widget()))
+
+
+class EdgeToEdgeWindow(ThemedWidgetWindowBase):
+    def __init__(self) -> None:
+        super().__init__(title="Edge Window", allow_minimize=True, allow_maximize=True, resizable=True)
+        self.edge_child = QWidget(self.content_widget())
+        self.edge_child.setObjectName("edgeChild")
+        self.content_layout().addWidget(self.edge_child)
 
 
 class DemoDialog(ThemedDialogBase):
@@ -141,6 +149,55 @@ def test_themed_dialog_dragging_right_edge_resizes_window(qtbot) -> None:
     )
 
     assert dialog.geometry().width() > start_rect.width()
+
+
+def test_themed_widget_window_dragging_right_edge_through_child_widget_resizes_window(qtbot) -> None:
+    window = EdgeToEdgeWindow()
+    qtbot.addWidget(window)
+    window.resize(400, 300)
+    window.show()
+    qtbot.wait(50)
+
+    start_rect = window.geometry()
+    press_global = window.mapToGlobal(QPoint(window.width() - 2, window.height() // 2))
+    press_local = window.edge_child.mapFromGlobal(press_global)
+    QApplication.sendEvent(
+        window.edge_child,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            press_local,
+            press_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    move_global = press_global + QPoint(40, 0)
+    move_local = window.edge_child.mapFromGlobal(move_global)
+    QApplication.sendEvent(
+        window.edge_child,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            move_local,
+            move_global,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.sendEvent(
+        window.edge_child,
+        QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            move_local,
+            move_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert window.geometry().width() > start_rect.width()
 
 
 def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) -> None:
