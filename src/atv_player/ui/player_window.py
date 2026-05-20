@@ -589,6 +589,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
+        self._danmaku_source_clear_button: QPushButton | None = None
         self._danmaku_source_switch_button: QPushButton | None = None
         self._metadata_scrape_title_edit: QLineEdit | None = None
         self._metadata_scrape_year_edit: QLineEdit | None = None
@@ -6485,13 +6486,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         rerun_button = QPushButton("重新搜索", host)
         self._danmaku_source_rerun_button = rerun_button
         reset_button = QPushButton("恢复默认", host)
+        clear_button = QPushButton("清除弹幕", host)
+        self._danmaku_source_clear_button = clear_button
         switch_button = QPushButton("加载弹幕", host)
         self._danmaku_source_switch_button = switch_button
         rerun_button.clicked.connect(self._rerun_current_item_danmaku_search)
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
+        clear_button.clicked.connect(self._clear_current_item_danmaku_source)
         switch_button.clicked.connect(self._switch_current_item_danmaku_source)
         actions.addWidget(rerun_button)
         actions.addWidget(reset_button)
+        actions.addWidget(clear_button)
         actions.addWidget(switch_button)
         layout.addLayout(actions)
         self._danmaku_source_provider_list.currentRowChanged.connect(self._handle_danmaku_source_provider_changed)
@@ -6698,6 +6703,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._danmaku_source_rerun_button.setEnabled(
                 bool(current_item is not None and not self._has_active_danmaku_source_task(current_item))
             )
+        if self._danmaku_source_clear_button is not None:
+            self._danmaku_source_clear_button.setEnabled(
+                bool(
+                    current_item is not None
+                    and not self._has_active_danmaku_source_task(current_item)
+                    and current_item.danmaku_xml
+                )
+            )
         if self._danmaku_source_switch_button is not None:
             self._danmaku_source_switch_button.setEnabled(
                 bool(
@@ -6833,6 +6846,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             debug_label="恢复默认搜索词",
             queue_if_active=True,
         )
+
+    def _clear_current_item_danmaku_source(self) -> None:
+        current_item = self._current_play_item()
+        if current_item is None or not current_item.danmaku_xml:
+            return
+        self._clear_active_danmaku()
+        current_item.danmaku_xml = ""
+        self._refresh_danmaku_source_dialog_actions(current_item)
 
     def _switch_current_item_danmaku_source(self) -> None:
         if self.session is None or self.session.danmaku_controller is None:
