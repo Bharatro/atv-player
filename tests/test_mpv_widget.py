@@ -413,7 +413,7 @@ def test_mpv_widget_loads_mpd_with_allowed_extensions_override(qtbot) -> None:
     ]
 
 
-def test_mpv_widget_prefers_async_loadfile_to_avoid_blocking_caller(qtbot) -> None:
+def test_mpv_widget_uses_sync_loadfile_for_replace_to_preserve_stable_startup(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
 
@@ -421,30 +421,25 @@ def test_mpv_widget_prefers_async_loadfile_to_avoid_blocking_caller(qtbot) -> No
         def __init__(self) -> None:
             self.pause = False
             self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
-            self.command_async_calls: list[tuple[object, ...]] = []
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
             self.loadfile_calls.append((url, mode, index, options))
-            time.sleep(0.2)
-
-        def command_async(self, *args, **kwargs):
-            self.command_async_calls.append((*args, kwargs))
-            return object()
 
     widget._player = FakePlayer()
 
-    started_at = time.monotonic()
     widget.load("http://127.0.0.1:2323/m3u", start_seconds=12)
-    elapsed = time.monotonic() - started_at
 
-    assert elapsed < 0.1
-    assert widget._player.loadfile_calls == []
-    assert widget._player.command_async_calls == [
-        ("loadfile", "http://127.0.0.1:2323/m3u", "replace", "start=12", {})
+    assert widget._player.loadfile_calls == [
+        (
+            "http://127.0.0.1:2323/m3u",
+            "replace",
+            None,
+            {"start": "12"},
+        )
     ]
 
 
-def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) -> None:
+def test_mpv_widget_uses_sync_loadfile_on_mpv_038_even_when_async_is_available(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
 
@@ -452,24 +447,27 @@ def test_mpv_widget_uses_mpv_038_loadfile_signature_for_async_commands(qtbot) ->
         def __init__(self) -> None:
             self.pause = False
             self.mpv_version_tuple = (0, 38, 0)
-            self.command_async_calls: list[tuple[object, ...]] = []
+            self.loadfile_calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append((url, mode, index, options))
 
         def command_async(self, *args, **kwargs):
-            self.command_async_calls.append((*args, kwargs))
-            return object()
+            raise AssertionError("command_async should not be used in stable sync mode")
 
     widget._player = FakePlayer()
 
     widget.load("http://127.0.0.1:2323/dash/test-token.mpd", start_seconds=5)
 
-    assert widget._player.command_async_calls == [
+    assert widget._player.loadfile_calls == [
         (
-            "loadfile",
             "http://127.0.0.1:2323/dash/test-token.mpd",
             "replace",
-            -1,
-            "demuxer_lavf_o_add=allowed_extensions=ALL,start=5",
-            {},
+            None,
+            {
+                "demuxer_lavf_o_add": "allowed_extensions=ALL",
+                "start": "5",
+            },
         )
     ]
 

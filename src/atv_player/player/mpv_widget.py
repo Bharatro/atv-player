@@ -473,18 +473,6 @@ class MpvWidget(QWidget):
         options: dict[str, str] | None = None,
     ) -> None:
         normalized_options = dict(options or {})
-        command_async = getattr(player, "command_async", None)
-        if self._should_use_async_loadfile(player, mode):
-            command_args: list[object] = [url, mode]
-            encoded_options = self._encode_loadfile_options(normalized_options)
-            if self._loadfile_index_supported(player):
-                command_args.append(-1 if index is None else index)
-                if encoded_options:
-                    command_args.append(encoded_options)
-            elif encoded_options:
-                command_args.append(encoded_options)
-            command_async("loadfile", *command_args)
-            return
         if index is not None:
             player.loadfile(url, mode, index, **normalized_options)
             return
@@ -604,7 +592,7 @@ class MpvWidget(QWidget):
         if ytdl_format:
             loadfile_options["ytdl"] = "yes"
             loadfile_options["ytdl_format"] = ytdl_format
-        can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
+        can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
             profile_name = self._apply_stream_profile(
@@ -674,7 +662,7 @@ class MpvWidget(QWidget):
                     profile_name,
                     bool(header_fields),
                 )
-                can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
+                can_loadfile = hasattr(player, "loadfile")
                 if poster_image_path and can_loadfile:
                     self._load_media(
                         player,
@@ -716,7 +704,7 @@ class MpvWidget(QWidget):
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     def _load_media(self, player: Any, url: str, start_seconds: int, loadfile_options: dict[str, str]) -> None:
-        can_loadfile = hasattr(player, "loadfile") or callable(getattr(player, "command_async", None))
+        can_loadfile = hasattr(player, "loadfile")
         if start_seconds > 0 and can_loadfile:
             self._load_player_media(
                 player,
