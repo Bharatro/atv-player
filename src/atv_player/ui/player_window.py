@@ -2062,21 +2062,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             widget.installEventFilter(self)
             widget.setCursor(Qt.CursorShape.ArrowCursor)
 
-    def _window_resize_cursor_has_priority(self, global_pos: QPoint | None = None) -> bool:
-        return self.is_window_resize_active() or self.is_pointer_on_window_resize_edge(global_pos)
-
-    def _set_video_cursor_hidden(self, hidden: bool, *, include_window_cursor: bool = True) -> None:
+    def _set_video_cursor_hidden(self, hidden: bool) -> None:
         cursor_shape = Qt.CursorShape.BlankCursor if hidden else Qt.CursorShape.ArrowCursor
         for widget in self._video_surface_widgets():
             widget.setCursor(cursor_shape)
-        if include_window_cursor:
-            self.setCursor(cursor_shape)
+        self.setCursor(cursor_shape)
 
     def _restore_video_cursor(self, stop_timer: bool = True, disable_native_autohide: bool = True) -> None:
         if stop_timer:
             self._cursor_hide_timer.stop()
-        resize_cursor_has_priority = self._window_resize_cursor_has_priority()
-        self._set_video_cursor_hidden(False, include_window_cursor=not resize_cursor_has_priority)
+        self._set_video_cursor_hidden(False)
         if hasattr(self.video, "set_cursor_autohide"):
             if disable_native_autohide:
                 self.video.set_cursor_autohide(None)
@@ -2090,12 +2085,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         now_ms = self._cursor_now_ms() if now_ms is None else now_ms
         self._last_cursor_pos = QCursor.pos()
         self._last_cursor_activity_ms = now_ms
-        if self._window_resize_cursor_has_priority(self._last_cursor_pos):
-            self._cursor_hide_timer.stop()
-            self._set_video_cursor_hidden(False, include_window_cursor=False)
-            if hasattr(self.video, "set_cursor_autohide"):
-                self.video.set_cursor_autohide(None)
-            return
         self._set_video_cursor_hidden(False)
         if self.is_playing:
             if hasattr(self.video, "set_cursor_autohide"):
@@ -2115,9 +2104,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._restore_video_cursor()
 
     def _hide_video_cursor_if_idle(self) -> None:
-        if self._window_resize_cursor_has_priority():
-            self._set_video_cursor_hidden(False, include_window_cursor=False)
-            return
         if self.is_playing and self._video_pointer_inside:
             self._set_video_cursor_hidden(True)
 
@@ -2129,9 +2115,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _poll_cursor_idle_state(self, now_ms: int | None = None) -> None:
         now_ms = self._cursor_now_ms() if now_ms is None else now_ms
         global_pos = QCursor.pos()
-        if self._window_resize_cursor_has_priority(global_pos):
-            self._restore_video_cursor()
-            return
         if self._last_cursor_pos is None or global_pos != self._last_cursor_pos:
             self._refresh_video_pointer_inside_state()
             self._handle_video_mouse_activity(now_ms=now_ms)
