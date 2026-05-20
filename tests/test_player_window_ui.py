@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
@@ -4938,10 +4938,26 @@ def test_player_window_shows_poster_navigation_for_multiple_candidates(qtbot, mo
 
     assert window._poster_previous_button.isHidden() is False
     assert window._poster_next_button.isHidden() is False
+    assert window._poster_previous_button.autoRaise() is True
+    assert window._poster_next_button.autoRaise() is True
 
     qtbot.mouseClick(window._poster_next_button, Qt.MouseButton.LeftButton)
 
     assert detail_started[-1] == "https://img.example/alt.jpg"
+
+
+def test_player_window_places_builtin_arrow_buttons_on_both_sides_of_poster(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window._poster_previous_button, QToolButton)
+    assert isinstance(window._poster_next_button, QToolButton)
+    assert window._poster_previous_button.arrowType() == Qt.ArrowType.LeftArrow
+    assert window._poster_next_button.arrowType() == Qt.ArrowType.RightArrow
+
+    layout = window._poster_row_layout
+    assert layout.indexOf(window._poster_previous_button) < layout.indexOf(window.poster_label)
+    assert layout.indexOf(window.poster_label) < layout.indexOf(window._poster_next_button)
 
 
 def test_player_window_hides_poster_navigation_for_single_candidate(qtbot) -> None:

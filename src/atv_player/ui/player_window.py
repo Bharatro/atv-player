@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTextBrowser,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -847,9 +848,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
         self.poster_label.setMaximumSize(self._POSTER_SIZE)
         self.poster_label.setText("")
-        self._poster_previous_button = self._create_icon_button("previous.svg", "上一张海报", role="secondary")
+        self._poster_previous_button = QToolButton()
+        self._poster_previous_button.setToolTip("上一张海报")
+        self._poster_previous_button.setArrowType(Qt.ArrowType.LeftArrow)
+        self._poster_previous_button.setAutoRaise(True)
+        self._poster_previous_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._poster_previous_button.setFixedSize(24, 24)
         self._poster_previous_button.setHidden(True)
-        self._poster_next_button = self._create_icon_button("next.svg", "下一张海报", role="secondary")
+        self._poster_next_button = QToolButton()
+        self._poster_next_button.setToolTip("下一张海报")
+        self._poster_next_button.setArrowType(Qt.ArrowType.RightArrow)
+        self._poster_next_button.setAutoRaise(True)
+        self._poster_next_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._poster_next_button.setFixedSize(24, 24)
         self._poster_next_button.setHidden(True)
         self.video_poster_overlay = QLabel()
         self.video_poster_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -890,16 +901,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_layout.setContentsMargins(0, 0, 0, 0)
         metadata_layout.setSpacing(10)
         metadata_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        metadata_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        self._poster_navigation_widget = QWidget()
-        self._poster_navigation_layout = QHBoxLayout(self._poster_navigation_widget)
-        self._poster_navigation_layout.setContentsMargins(0, 0, 0, 0)
-        self._poster_navigation_layout.setSpacing(8)
-        self._poster_navigation_layout.addStretch(1)
-        self._poster_navigation_layout.addWidget(self._poster_previous_button)
-        self._poster_navigation_layout.addWidget(self._poster_next_button)
-        self._poster_navigation_layout.addStretch(1)
-        metadata_layout.addWidget(self._poster_navigation_widget)
+        self._poster_row_widget = QWidget()
+        self._poster_row_layout = QHBoxLayout(self._poster_row_widget)
+        self._poster_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._poster_row_layout.setSpacing(6)
+        self._poster_row_layout.addStretch(1)
+        self._poster_row_layout.addWidget(self._poster_previous_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._poster_row_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._poster_row_layout.addWidget(self._poster_next_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._poster_row_layout.addStretch(1)
+        metadata_layout.addWidget(self._poster_row_widget)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1150,6 +1161,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
+        poster_arrow_qss = (
+            f"QToolButton {{ border: none; background: transparent; color: {tokens.text_secondary}; padding: 0; }}"
+            f"QToolButton:hover {{ background-color: {tokens.panel_alt_bg}; border-radius: 12px; }}"
+        )
+        self._poster_previous_button.setStyleSheet(poster_arrow_qss)
+        self._poster_next_button.setStyleSheet(poster_arrow_qss)
         sidebar_combo_qss = build_combobox_qss(tokens)
         sidebar_combo_popup_qss = build_combobox_popup_qss(
             background=tokens.menu_bg,
@@ -2849,7 +2866,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _refresh_poster_navigation(self) -> None:
         visible = len(self._current_metadata_poster_sources()) > 1
-        self._poster_navigation_widget.setHidden(not visible)
         self._poster_previous_button.setHidden(not visible)
         self._poster_next_button.setHidden(not visible)
 
