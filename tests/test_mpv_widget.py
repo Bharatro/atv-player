@@ -1386,6 +1386,40 @@ def test_mpv_widget_registers_left_click_binding_and_emits_context_menu_dismiss_
     assert dismissed["count"] == 1
 
 
+def test_mpv_widget_skips_mpv_mouse_bindings_on_windows(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self.register_key_binding_calls: list[tuple[str, str]] = []
+
+        def event_callback(self, *_event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, _name: str, _handler) -> None:
+            return None
+
+        def register_key_binding(self, keydef: str, callback, mode: str = "force") -> None:
+            del callback
+            self.register_key_binding_calls.append((keydef, mode))
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+
+    widget.load("http://m/1.m3u8")
+
+    assert player.register_key_binding_calls == []
+
+
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:

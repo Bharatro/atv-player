@@ -335,6 +335,9 @@ class MpvWidget(QWidget):
         observe_property("eof-reached", handle_eof_reached)
         self._eof_reached_handler = handle_eof_reached
 
+        if sys.platform.startswith("win"):
+            return
+
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:
             return
