@@ -357,6 +357,38 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     assert widget._player.mute is False
 
 
+def test_mpv_widget_uses_command_based_controls_on_windows(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.core_shutdown = False
+            self.command_calls: list[tuple[object, ...]] = []
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+    widget._player = FakePlayer()
+
+    widget.set_speed(1.5)
+    widget.set_volume(35)
+    widget.set_muted(True)
+    widget.toggle_mute()
+    widget.pause()
+    widget.resume()
+
+    assert widget._player.command_calls == [
+        ("set", "speed", "1.5"),
+        ("set", "volume", "35"),
+        ("set", "mute", "yes"),
+        ("cycle", "mute"),
+        ("set", "pause", "yes"),
+        ("set", "pause", "no"),
+    ]
+
+
 def test_mpv_widget_toggles_video_info_overlay(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -1493,6 +1525,36 @@ def test_mpv_widget_skips_mpv_mouse_bindings_on_windows(qtbot, monkeypatch) -> N
     assert player.register_key_binding_calls == []
 
 
+def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self._end_file_callback = None
+            self.observed_properties: list[str] = []
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, _handler) -> None:
+            self.observed_properties.append(name)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    widget._player = player
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    widget._register_player_events()
+
+    assert callable(player._end_file_callback)
+    assert player.observed_properties == []
+
+
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:
@@ -1798,6 +1860,33 @@ def test_mpv_widget_still_raises_when_removing_existing_subtitle_track_fails(qtb
         widget.remove_subtitle_track(99)
 
     assert player.command_calls == [("sub-remove", 99)]
+
+
+def test_mpv_widget_disables_track_queries_and_external_subtitles_on_windows(qtbot, monkeypatch, tmp_path) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.track_list = [
+                {"id": 1, "type": "sub", "title": "CN"},
+                {"id": 2, "type": "audio", "title": "Main"},
+            ]
+            self.command_calls: list[tuple[object, ...]] = []
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+    widget._player = FakePlayer()
+    subtitle_path = tmp_path / "sample.ass"
+    subtitle_path.write_text("dummy", encoding="utf-8")
+
+    assert widget.subtitle_tracks() == []
+    assert widget.audio_tracks() == []
+    assert widget.load_external_subtitle(str(subtitle_path), select_for_secondary=True) is None
+    widget.remove_subtitle_track(1)
+    assert widget._player.command_calls == []
 
 
 def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:
