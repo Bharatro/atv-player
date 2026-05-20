@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QCoreApplication, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -243,6 +243,9 @@ class MpvWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._placeholder)
+        self._windows_file_loaded_timer = QTimer(self)
+        self._windows_file_loaded_timer.setSingleShot(True)
+        self._windows_file_loaded_timer.timeout.connect(self.file_loaded.emit)
         self._gui_call_requested.connect(
             self._execute_gui_call,
             Qt.ConnectionType.QueuedConnection,
@@ -415,6 +418,7 @@ class MpvWidget(QWidget):
                     **common,
                     audio_device="auto",
                     audio_exclusive="no",
+                    start_event_thread=False,
                 )
             elif sys.platform == "darwin":
                 player = mpv.MPV(
@@ -452,6 +456,7 @@ class MpvWidget(QWidget):
         if not self._on_widget_thread():
             self._run_on_widget_thread(self.shutdown)
             return
+        self._windows_file_loaded_timer.stop()
         if self._player is None:
             return
         player, self._player = self._player, None
@@ -478,10 +483,13 @@ class MpvWidget(QWidget):
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
+        self._windows_file_loaded_timer.stop()
         self._set_video_picture_state("idle")
 
     def _register_player_events(self) -> None:
         if self._player is None:
+            return
+        if sys.platform.startswith("win") and getattr(self._player, "_event_thread", None) is None:
             return
         event_callback = getattr(self._player, "event_callback", None)
         if event_callback is None:
@@ -838,6 +846,7 @@ class MpvWidget(QWidget):
         self._audio_cover_active = False
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
+        self._windows_file_loaded_timer.stop()
         self._player_property_cache.clear()
         self._ensure_player()
         player = self._player
@@ -950,6 +959,7 @@ class MpvWidget(QWidget):
                 raise
         if sys.platform.startswith("win"):
             self._set_player_property("pause", pause)
+            self._windows_file_loaded_timer.start(100)
         else:
             player.pause = pause
 

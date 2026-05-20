@@ -1147,6 +1147,7 @@ def test_mpv_widget_uses_conservative_windows_renderer_defaults(qtbot, monkeypat
     assert captured["vo"] == "gpu"
     assert captured["gpu_context"] == "d3d11"
     assert captured["hwdec"] == "auto-safe"
+    assert captured["start_event_thread"] is False
     assert "gpu_api" not in captured
 
 
@@ -1598,8 +1599,8 @@ def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> N
 
     widget._register_player_events()
 
-    assert callable(player._end_file_callback)
-    assert callable(player._file_loaded_callback)
+    assert player._end_file_callback is None
+    assert player._file_loaded_callback is None
     assert player.observed_properties == []
 
 
