@@ -12,6 +12,7 @@ from atv_player.models import (
     PlaybackSource,
     PlaybackSourceGroup,
     PlaybackDetailAction,
+    PlaybackDetailField,
     PlaybackDetailFieldAction,
     PlaybackLoadResult,
     VodItem,
@@ -50,6 +51,11 @@ class PlayerSession:
     metadata_hydrated: bool = False
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     episode_titles_hydrated: bool = False
+    original_vod: VodItem | None = None
+    show_original_metadata: bool = False
+    original_item_detail_fields_by_key: dict[tuple[str, str, str, str, str], list[PlaybackDetailField]] = field(
+        default_factory=dict
+    )
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

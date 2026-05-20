@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import html
 import json
 import logging
@@ -38,6 +39,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QColorDialog,
     QDoubleSpinBox,
     QDialog,
@@ -854,6 +856,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.metadata_view.setOpenLinks(False)
         self.metadata_view.document().setDocumentMargin(4)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
+        self._metadata_original_toggle = QCheckBox()
+        self._metadata_original_toggle.setText("")
+        self._metadata_original_toggle.setTristate(False)
+        self._metadata_original_toggle.setHidden(True)
+        self._metadata_original_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.document().setDocumentMargin(4)
@@ -893,7 +900,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.detail_fields_layout.setSpacing(6)
         metadata_layout.addWidget(self.detail_fields_widget)
         self.metadata_heading = QLabel("影片详情")
-        metadata_layout.addWidget(self.metadata_heading)
+        metadata_heading_row = QHBoxLayout()
+        metadata_heading_row.setContentsMargins(0, 0, 0, 0)
+        metadata_heading_row.setSpacing(8)
+        metadata_heading_row.addWidget(self.metadata_heading)
+        metadata_heading_row.addStretch(1)
+        metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
+        metadata_layout.addLayout(metadata_heading_row)
         metadata_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(self.metadata_section, 3)
         self.log_section = QWidget()
@@ -1050,6 +1063,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
         self.playlist_title_tabs.currentChanged.connect(self._change_playlist_title_mode)
+        self._metadata_original_toggle.toggled.connect(self._toggle_original_metadata_view)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -1557,9 +1571,60 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return []
         return [action for action in self.session.playlist[self.current_index].detail_actions if action.visible]
 
+    def _clone_metadata_snapshot(self, vod: VodItem) -> VodItem:
+        return deepcopy(vod)
+
+    def _current_metadata_vod(self) -> VodItem | None:
+        if self.session is None:
+            return None
+        if self.session.show_original_metadata and self.session.original_vod is not None:
+            return self.session.original_vod
+        return self.session.vod
+
+    def _metadata_values_differ(self) -> bool:
+        if self.session is None or self.session.original_vod is None:
+            return False
+        original = self.session.original_vod
+        current = self.session.vod
+        return (
+            original.vod_name != current.vod_name
+            or original.type_name != current.type_name
+            or original.vod_year != current.vod_year
+            or original.vod_area != current.vod_area
+            or original.vod_lang != current.vod_lang
+            or original.vod_remarks != current.vod_remarks
+            or original.vod_director != current.vod_director
+            or original.vod_actor != current.vod_actor
+            or original.vod_content != current.vod_content
+            or original.dbid != current.dbid
+            or original.detail_fields != current.detail_fields
+        )
+
+    def _refresh_metadata_original_toggle(self) -> None:
+        visible = self.session is not None and not self.details.isHidden() and self._metadata_values_differ()
+        if self.session is not None and not visible:
+            self.session.show_original_metadata = False
+        self._metadata_original_toggle.blockSignals(True)
+        self._metadata_original_toggle.setChecked(bool(self.session and self.session.show_original_metadata))
+        self._metadata_original_toggle.setToolTip(
+            "显示增强后详情" if self.session and self.session.show_original_metadata else "显示原始详情"
+        )
+        self._metadata_original_toggle.blockSignals(False)
+        self._metadata_original_toggle.setHidden(not visible)
+
+    def _toggle_original_metadata_view(self, checked: bool) -> None:
+        if self.session is None:
+            return
+        self.session.show_original_metadata = checked
+        self._refresh_metadata_original_toggle()
+        self._render_metadata()
+        self._render_detail_fields()
+
     def _current_detail_fields(self) -> list[PlaybackDetailField]:
         if self.session is None:
             return []
+        if self.session.show_original_metadata and self.session.original_vod is not None:
+            return list(self.session.original_vod.detail_fields)
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
@@ -2023,6 +2088,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
+        session.original_vod = self._clone_metadata_snapshot(session.vod)
+        session.show_original_metadata = False
         initial_item = session.playlist[session.start_index] if 0 <= session.start_index < len(session.playlist) else None
         self._metadata_scrape_binding_title = str(getattr(initial_item, "media_title", "") or session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
@@ -2056,6 +2123,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._refresh_metadata_original_toggle()
         self._reset_log()
         self._start_metadata_hydration()
         self.current_speed = session.speed
@@ -2520,10 +2588,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return "<br>".join(parts)
 
     def _render_metadata(self) -> None:
-        if self.session is None:
+        vod = self._current_metadata_vod()
+        if vod is None:
             self.metadata_view.clear()
             return
-        self.metadata_view.setHtml(self._format_metadata_html(self.session.vod))
+        self.metadata_view.setHtml(self._format_metadata_html(vod))
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:
@@ -3413,6 +3482,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._refresh_metadata_original_toggle()
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
