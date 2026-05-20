@@ -119,6 +119,7 @@ from atv_player.ui.theme import (
     current_resolved_theme,
     current_theme_manager,
 )
+from atv_player.ui.toggle_switch import ToggleSwitch
 from atv_player.ui.window_chrome import ThemedDialogBase, ThemedWidgetWindowBase
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
@@ -856,12 +857,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.metadata_view.setOpenLinks(False)
         self.metadata_view.document().setDocumentMargin(4)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
-        self._metadata_original_toggle = QCheckBox()
-        self._metadata_original_toggle.setText("")
-        self._metadata_original_toggle.setTristate(False)
+        self._metadata_original_toggle = ToggleSwitch(False)
         self._metadata_original_toggle.setHidden(True)
-        self._metadata_original_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._metadata_original_toggle.setFixedSize(34, 20)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.document().setDocumentMargin(4)
@@ -901,13 +898,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.detail_fields_layout.setSpacing(6)
         metadata_layout.addWidget(self.detail_fields_widget)
         self.metadata_heading = QLabel("影片详情")
-        metadata_heading_row = QHBoxLayout()
-        metadata_heading_row.setContentsMargins(0, 0, 0, 0)
-        metadata_heading_row.setSpacing(8)
-        metadata_heading_row.addWidget(self.metadata_heading)
-        metadata_heading_row.addStretch(1)
-        metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
-        metadata_layout.addLayout(metadata_heading_row)
+        self._metadata_heading_row = QHBoxLayout()
+        self._metadata_heading_row.setContentsMargins(0, 0, 8, 0)
+        self._metadata_heading_row.setSpacing(8)
+        self._metadata_heading_row.addWidget(self.metadata_heading)
+        self._metadata_heading_row.addStretch(1)
+        self._metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
+        metadata_layout.addLayout(self._metadata_heading_row)
         metadata_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(self.metadata_section, 3)
         self.log_section = QWidget()
@@ -1137,35 +1134,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         heading_qss = build_player_section_heading_qss(tokens)
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
-        self._metadata_original_toggle.setStyleSheet(
-            f"""
-            QCheckBox {{
-                spacing: 0;
-                padding: 0;
-                margin: 0;
-                background: transparent;
-            }}
-            QCheckBox::indicator {{
-                width: 34px;
-                height: 20px;
-                border-radius: 10px;
-                background-color: {tokens.panel_alt_bg};
-                border: 1px solid {tokens.border_subtle};
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {tokens.accent_hover};
-                background-color: {tokens.menu_hover_bg};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {tokens.accent};
-                border: 1px solid {tokens.accent};
-            }}
-            QCheckBox::indicator:checked:hover {{
-                background-color: {tokens.accent_hover};
-                border: 1px solid {tokens.accent_hover};
-            }}
-            """
-        )
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
         sidebar_combo_qss = build_combobox_qss(tokens)
         sidebar_combo_popup_qss = build_combobox_popup_qss(
@@ -5929,7 +5897,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         actions = QHBoxLayout()
         self._metadata_scrape_rerun_button = QPushButton("重新搜索", host)
-        self._metadata_scrape_reset_button = QPushButton("重置", host)
+        self._metadata_scrape_reset_button = QPushButton("自动刮削", host)
         self._metadata_scrape_restore_query_button = QPushButton("恢复默认", host)
         self._metadata_scrape_apply_button = QPushButton("应用结果", host)
         actions.addWidget(self._metadata_scrape_rerun_button)
@@ -6442,8 +6410,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         actions = QHBoxLayout()
         rerun_button = QPushButton("重新搜索", host)
         self._danmaku_source_rerun_button = rerun_button
-        reset_button = QPushButton("恢复默认搜索词", host)
-        switch_button = QPushButton("切换并加载", host)
+        reset_button = QPushButton("恢复默认", host)
+        switch_button = QPushButton("加载弹幕", host)
         self._danmaku_source_switch_button = switch_button
         rerun_button.clicked.connect(self._rerun_current_item_danmaku_search)
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)

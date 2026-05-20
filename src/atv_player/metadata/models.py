@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from atv_player.metadata.query import normalize_metadata_query_inputs
+from atv_player.metadata.query import infer_metadata_category_name_from_title, normalize_metadata_query_inputs
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -35,10 +35,12 @@ class MetadataContext:
         current_title = ""
         if self.current_item is not None:
             current_title = str(self.current_item.media_title or "").strip()
+        raw_title = current_title or (self.vod.vod_name or "").strip()
         title, year = normalize_metadata_query_inputs(
-            current_title or (self.vod.vod_name or "").strip(),
+            raw_title,
             self.vod.vod_year or "",
         )
+        category_name = (self.vod.category_name or "").strip() or infer_metadata_category_name_from_title(raw_title)
         return MetadataQuery(
             title=title,
             year=year,
@@ -47,7 +49,7 @@ class MetadataContext:
             vod_id=(self.vod.vod_id or "").strip(),
             vod_dbid=int(self.vod.dbid or 0),
             type_name=(self.vod.type_name or "").strip(),
-            category_name=(self.vod.category_name or "").strip(),
+            category_name=category_name,
         )
 
 

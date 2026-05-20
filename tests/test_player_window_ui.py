@@ -1738,13 +1738,13 @@ def test_player_window_metadata_original_toggle_switches_between_enhanced_and_or
     assert window._metadata_original_toggle.isHidden() is False
     assert window._metadata_original_toggle.isChecked() is False
 
-    window._metadata_original_toggle.click()
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
 
     qtbot.waitUntil(lambda: "原始简介" in window.metadata_view.toPlainText(), timeout=1000)
     assert "增强简介" not in window.metadata_view.toPlainText()
     assert "TMDB ID: 1" not in window.metadata_view.toPlainText()
 
-    window._metadata_original_toggle.click()
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
 
     qtbot.waitUntil(lambda: "增强简介" in window.metadata_view.toPlainText(), timeout=1000)
     assert "原始简介" not in window.metadata_view.toPlainText()
@@ -1833,9 +1833,10 @@ def test_player_window_metadata_original_toggle_has_visible_switch_styling(qtbot
     window.open_session(session)
 
     qtbot.waitUntil(lambda: window._metadata_original_toggle.isHidden() is False, timeout=1000)
-    assert window._metadata_original_toggle.minimumWidth() >= 30
+    assert window._metadata_original_toggle.minimumWidth() >= 40
     assert window._metadata_original_toggle.minimumHeight() >= 18
-    assert "QCheckBox::indicator" in window._metadata_original_toggle.styleSheet()
+    assert window._metadata_original_toggle.graphicsEffect() is not None
+    assert window._metadata_heading_row.contentsMargins().right() >= 6
 
 
 def test_player_window_metadata_scrape_apply_original_toggle_restores_original_item_detail_fields(qtbot) -> None:
@@ -1864,7 +1865,7 @@ def test_player_window_metadata_scrape_apply_original_toggle_restores_original_i
     window._apply_selected_metadata_scrape_result()
 
     qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
-    window._metadata_original_toggle.click()
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: "站内热度: 99" in window.metadata_view.toPlainText(), timeout=1000)
     assert "TMDB ID: 1" not in window.metadata_view.toPlainText()
     assert "原始简介" in window.metadata_view.toPlainText()
@@ -1914,7 +1915,7 @@ def test_player_window_metadata_original_toggle_uses_late_resolved_detail_as_ori
 
     release_detail_resolution.set()
     qtbot.waitUntil(lambda: "ep-1" in window.session.resolved_vod_by_id, timeout=1000)
-    window._metadata_original_toggle.click()
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
 
     qtbot.waitUntil(lambda: "站内简介" in window.metadata_view.toPlainText(), timeout=1000)
     assert "刮削后的简介" not in window.metadata_view.toPlainText()
@@ -2011,7 +2012,7 @@ def test_player_window_open_session_resets_metadata_original_toggle_to_enhanced_
 
     window.open_session(first)
     qtbot.waitUntil(lambda: "增强简介" in window.metadata_view.toPlainText(), timeout=1000)
-    window._metadata_original_toggle.click()
+    qtbot.mouseClick(window._metadata_original_toggle, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: "原始简介" in window.metadata_view.toPlainText(), timeout=1000)
 
     window.open_session(second)

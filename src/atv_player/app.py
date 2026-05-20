@@ -54,6 +54,7 @@ from atv_player.metadata import (
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
+from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.models import MetadataMatch
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
 from atv_player.metadata.providers.bangumi_client import BangumiClient
@@ -1090,9 +1091,7 @@ class AppCoordinator(QObject):
                     match_kind = _match_media_kind(candidate)
                     if query_kind and match_kind and query_kind != match_kind:
                         continue
-                    query_title = _normalize_title(session_vod.vod_name)
-                    candidate_title = _normalize_title(getattr(candidate, "title", ""))
-                    if query_title and candidate_title and query_title != candidate_title:
+                    if not is_confident_match(score_match(query, candidate)):
                         continue
                     query_year = str(getattr(session_vod, "vod_year", "") or "").strip()
                     candidate_year = str(getattr(candidate, "year", "") or "").strip()

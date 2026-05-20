@@ -10,6 +10,31 @@ _TRAILING_RELEASE_NOISE_RE = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_YEAR_RE = re.compile(r"(.*?)[\s]*[\(（]\s*((?:19|20)\d{2})\s*[\)）]\s*$")
+_TITLE_CATEGORY_PREFIX_RE = re.compile(r"^(电视剧|电影|剧集|连续剧|动漫|动画|番剧)\s*[:：]\s*", re.IGNORECASE)
+_TITLE_CATEGORY_SUFFIX_RE = re.compile(r"(电视剧|电影|剧集|连续剧|动漫|动画|番剧)\s*$", re.IGNORECASE)
+
+_TITLE_CATEGORY_HINTS = {
+    "动漫": "动漫",
+    "动画": "动漫",
+    "番剧": "动漫",
+    "电视剧": "剧集",
+    "剧集": "剧集",
+    "连续剧": "剧集",
+    "电影": "电影",
+}
+
+
+def infer_metadata_category_name_from_title(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    prefix_match = _TITLE_CATEGORY_PREFIX_RE.match(text)
+    if prefix_match is not None:
+        return _TITLE_CATEGORY_HINTS.get(prefix_match.group(1), "")
+    suffix_match = _TITLE_CATEGORY_SUFFIX_RE.search(text)
+    if suffix_match is not None:
+        return _TITLE_CATEGORY_HINTS.get(suffix_match.group(1), "")
+    return ""
 
 
 def normalize_metadata_title(value: object) -> str:
