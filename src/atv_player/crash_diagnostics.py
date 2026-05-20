@@ -62,6 +62,10 @@ def _install_unraisable_hook() -> None:
 def install_crash_diagnostics(logs_dir: Path) -> Path:
     global _crash_log_path, _crash_log_stream
 
+    path = Path(logs_dir) / "fatal.log"
+    if sys.platform.startswith("win"):
+        return path
+
     resolved_dir = Path(logs_dir)
     resolved_dir.mkdir(parents=True, exist_ok=True)
     path = resolved_dir / "fatal.log"

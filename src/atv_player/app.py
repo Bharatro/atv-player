@@ -314,7 +314,8 @@ def build_application() -> tuple[QApplication, SettingsRepository, AppLogService
         max_bytes=10 * 1024 * 1024,
         max_archives=5,
     )
-    install_crash_diagnostics(app_log_service.active_path.parent)
+    if not sys.platform.startswith("win"):
+        install_crash_diagnostics(app_log_service.active_path.parent)
     configure_logging("INFO", StructuredJsonlHandler(app_log_service))
     install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()

@@ -60,3 +60,21 @@ def test_install_crash_diagnostics_logs_thread_and_unraisable_exceptions(monkeyp
     assert "Unraisable exception: callback failed" in text
     assert "metadata callback" in text
     assert "unraisable boom" in text
+
+
+def test_install_crash_diagnostics_is_noop_on_windows(monkeypatch, tmp_path) -> None:
+    enable_calls: list[tuple[object, bool]] = []
+
+    def fake_enable(*, file, all_threads: bool) -> None:
+        enable_calls.append((file, all_threads))
+
+    monkeypatch.setattr(crash_diagnostics.faulthandler, "enable", fake_enable)
+    monkeypatch.setattr(crash_diagnostics, "_crash_log_stream", None)
+    monkeypatch.setattr(crash_diagnostics, "_crash_log_path", None)
+    monkeypatch.setattr(crash_diagnostics.sys, "platform", "win32")
+
+    path = crash_diagnostics.install_crash_diagnostics(tmp_path)
+
+    assert path == tmp_path / "fatal.log"
+    assert enable_calls == []
+    assert not path.exists()
