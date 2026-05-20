@@ -8382,6 +8382,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "弹幕源",
         "弹幕设置",
         "视频信息",
+        "退出播放",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
     assert [action.text() for action in _submenu_actions(menu, "次字幕")] == ["关闭次字幕", "中文 (默认)", "English"]
@@ -9150,6 +9151,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "弹幕源",
         "弹幕设置",
         "视频信息",
+        "退出播放",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
         "很小",
@@ -17978,6 +17980,48 @@ def test_player_window_return_to_main_uses_video_shutdown_on_windows(qtbot, monk
     assert window.isHidden() is True
     assert pauses["count"] == 1
     assert shutdowns["count"] == 1
+
+
+def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeypatch) -> None:
+    quit_calls = {"count": 0}
+    emitted = {"count": 0}
+    shutdowns = {"count": 0}
+    controller = RecordingPlayerController()
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(controller, config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+    controller.progress_calls.clear()
+    controller.stop_calls.clear()
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+
+    monkeypatch.setattr(
+        window.video_widget,
+        "shutdown",
+        lambda: shutdowns.__setitem__("count", shutdowns["count"] + 1),
+    )
+    monkeypatch.setattr(
+        QApplication,
+        "quit",
+        lambda *args, **kwargs: quit_calls.__setitem__("count", quit_calls["count"] + 1),
+    )
+
+    menu = window._build_video_context_menu()
+    exit_action = next(action for action in menu.actions() if action.text() == "退出播放")
+
+    window.show()
+    exit_action.trigger()
+
+    assert quit_calls["count"] == 0
+    assert emitted["count"] == 1
+    assert window.isHidden() is True
+    assert config.last_active_window == "main"
+    assert shutdowns["count"] == 1
+    assert window.video.pause_calls == 1
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)] and controller.stop_calls == [1]
+    )
 
 
 def test_player_window_applies_post_load_configuration_immediately_on_windows(qtbot, monkeypatch) -> None:

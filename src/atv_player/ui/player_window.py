@@ -5903,6 +5903,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
+        menu.addAction("退出播放", self._return_to_main)
         return menu
 
     def _current_play_item(self) -> PlayItem | None:
