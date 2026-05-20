@@ -5147,6 +5147,26 @@ def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for
             }[str(tmdb_id)]
             return {"episodes": [{"episode_number": 1, "name": title}]}
 
+    class EmptyBangumiClient:
+        def __init__(self, access_token: str = "", proxy_decider=None) -> None:
+            del access_token, proxy_decider
+
+        def search_subjects(self, title: str) -> list[dict[str, object]]:
+            del title
+            return []
+
+    class EmptyProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            del candidate
+            return []
+
+    monkeypatch.setattr(app_module, "BangumiClient", EmptyBangumiClient)
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", lambda: EmptyProvider("bilibili"))
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: EmptyProvider("tencent"))
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: EmptyProvider("iqiyi"))
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
@@ -6077,7 +6097,10 @@ def test_app_coordinator_episode_title_enhancer_sorts_each_multi_version_block_i
     assert [item.index for item in updated] == [0, 1, 2, 3]
 
 
-def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iqiyi(tmp_path, monkeypatch) -> None:
+def test_app_coordinator_episode_title_enhancer_prefers_high_confidence_iqiyi_over_tmdb_and_tencent(
+    tmp_path,
+    monkeypatch,
+) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
             return AppConfig(
@@ -6138,6 +6161,74 @@ def test_app_coordinator_episode_title_enhancer_prefers_tmdb_over_tencent_and_iq
     )
 
     assert updated is not None
+    assert updated[0].episode_title_source == "iqiyi"
+    assert updated[0].episode_display_title == "第1集 终局开篇"
+
+
+def test_app_coordinator_episode_title_enhancer_keeps_tmdb_when_iqiyi_title_confidence_is_low(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class EmptyTencentProvider:
+        name = "tencent"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            del candidate
+            return []
+
+    class FakeIqiyiProvider:
+        name = "iqiyi"
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return [
+                MetadataMatch(
+                    provider="iqiyi",
+                    provider_id="iqiyi:1",
+                    title="临江仙 特别篇",
+                    year="2025",
+                    raw={"videos": [{"itemNumber": 1, "itemTitle": "缘起"}]},
+                )
+            ]
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": title, "first_air_date": "2025-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            return {"episodes": [{"episode_number": 1, "name": "TMDB标题"}]}
+
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="临江仙", vod_year="2025", category_name="电视剧"),
+            playlist=[PlayItem(title="01.mp4", url="http://m/1.mp4", original_title="01.mp4")],
+        )
+    )
+
+    assert updated is not None
     assert updated[0].episode_title_source == "tmdb"
     assert updated[0].episode_display_title == "第1集 TMDB标题"
 
@@ -6164,6 +6255,14 @@ def test_app_coordinator_episode_title_enhancer_prefers_confirmed_bilibili_over_
         name = "iqiyi"
 
         def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
+    class EmptyBangumiClient:
+        def __init__(self, access_token: str = "", proxy_decider=None) -> None:
+            del access_token, proxy_decider
+
+        def search_subjects(self, title: str) -> list[dict[str, object]]:
+            del title
             return []
 
     class FakeBilibiliProvider:
@@ -6211,6 +6310,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_confirmed_bilibili_over_
                 ]
             }
 
+    monkeypatch.setattr(app_module, "BangumiClient", EmptyBangumiClient)
     monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", EmptyIqiyiProvider)
     monkeypatch.setattr(app_module, "BilibiliMetadataProvider", FakeBilibiliProvider)

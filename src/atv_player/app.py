@@ -52,6 +52,7 @@ from atv_player.metadata import (
     MetadataContext,
     MetadataHydrator,
     build_provider_episode_playlist,
+    resolve_episode_title_source_priority,
 )
 from atv_player.metadata.models import MetadataMatch
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
@@ -62,7 +63,7 @@ from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
-from atv_player.metadata.scrape import MetadataScrapeService
+from atv_player.metadata.scrape import MetadataScrapeService, _match_media_kind, _query_media_kind
 from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
@@ -1085,6 +1086,22 @@ class AppCoordinator(QObject):
                             candidate = hydrate(candidate)
                         except Exception:
                             pass
+                    query_kind = _query_media_kind(query)
+                    match_kind = _match_media_kind(candidate)
+                    if query_kind and match_kind and query_kind != match_kind:
+                        continue
+                    query_title = _normalize_title(session_vod.vod_name)
+                    candidate_title = _normalize_title(getattr(candidate, "title", ""))
+                    if query_title and candidate_title and query_title != candidate_title:
+                        continue
+                    query_year = str(getattr(session_vod, "vod_year", "") or "").strip()
+                    candidate_year = str(getattr(candidate, "year", "") or "").strip()
+                    if query_year and candidate_year and query_year != candidate_year:
+                        continue
+                    requested_season = _guess_season_number(session_vod)
+                    candidate_season = extract_season_number(getattr(candidate, "title", ""))
+                    if requested_season > 1 and candidate_season != requested_season:
+                        continue
                     candidates.append(candidate)
             return candidates
 
@@ -1106,6 +1123,14 @@ class AppCoordinator(QObject):
                 )
                 for item in playlist
             ]
+
+        def _episode_title_source_rank(playlist: list[PlayItem], source_priority: list[str]) -> int:
+            ranks = [
+                source_priority.index(source)
+                for _, source in _episode_title_snapshot(playlist)
+                if source in source_priority
+            ]
+            return min(ranks) if ranks else len(source_priority) + 100
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
@@ -1440,41 +1465,57 @@ class AppCoordinator(QObject):
                     }:
                         continue
                     candidate_vods.append(candidate_vod)
+                candidate_results: list[tuple[VodItem, object]] = []
                 for candidate_vod in candidate_vods:
                     for candidate in _search_metadata_candidates(candidate_vod, source_kind):
-                        logger.info(
-                            "Episode title enhancer trying provider candidate provider=%s provider_id=%s candidate_title=%s candidate_year=%s query_title=%s query_year=%s",
-                            str(getattr(candidate, "provider", "") or "").strip(),
-                            str(getattr(candidate, "provider_id", "") or "").strip(),
-                            str(getattr(candidate, "title", "") or "").strip(),
-                            str(getattr(candidate, "year", "") or "").strip(),
-                            str(candidate_vod.vod_name or "").strip(),
-                            str(candidate_vod.vod_year or "").strip(),
-                        )
-                        updated_playlist = build_provider_episode_playlist(
-                            candidate_vod,
-                            playlist,
-                            candidate,
-                            source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
-                        )
-                        if updated_playlist is None:
-                            continue
-                        updated_pairs = _season_episode_pairs(updated_playlist, default_season)
-                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
-                        if finalized is None:
-                            continue
-                        if (
-                            _count_mapped_episode_titles(finalized) >= _count_mapped_episode_titles(playlist)
+                        candidate_results.append((candidate_vod, candidate))
+                dynamic_source_priority = resolve_episode_title_source_priority(
+                    effective_vod,
+                    playlist,
+                    [candidate for _, candidate in candidate_results],
+                    preferred_provider=str(getattr(bound_candidate, "provider", "") or "").strip(),
+                )
+                for candidate_vod, candidate in candidate_results:
+                    logger.info(
+                        "Episode title enhancer trying provider candidate provider=%s provider_id=%s candidate_title=%s candidate_year=%s query_title=%s query_year=%s",
+                        str(getattr(candidate, "provider", "") or "").strip(),
+                        str(getattr(candidate, "provider_id", "") or "").strip(),
+                        str(getattr(candidate, "title", "") or "").strip(),
+                        str(getattr(candidate, "year", "") or "").strip(),
+                        str(candidate_vod.vod_name or "").strip(),
+                        str(candidate_vod.vod_year or "").strip(),
+                    )
+                    updated_playlist = build_provider_episode_playlist(
+                        candidate_vod,
+                        playlist,
+                        candidate,
+                        source_priority=dynamic_source_priority,
+                    )
+                    if updated_playlist is None:
+                        continue
+                    updated_pairs = _season_episode_pairs(updated_playlist, default_season)
+                    finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                    if finalized is None:
+                        continue
+                    mapped_count = _count_mapped_episode_titles(finalized)
+                    previous_mapped_count = _count_mapped_episode_titles(playlist)
+                    if (
+                        mapped_count > previous_mapped_count
+                        or (
+                            mapped_count == previous_mapped_count
                             and _episode_title_snapshot(finalized) != _episode_title_snapshot(playlist)
-                        ):
-                            logger.info(
-                                "Episode title enhancer accepted provider candidate provider=%s mapped_count=%s previous_mapped_count=%s",
-                                str(getattr(candidate, "provider", "") or "").strip(),
-                                _count_mapped_episode_titles(finalized),
-                                _count_mapped_episode_titles(playlist),
-                            )
-                            playlist = finalized
-                            season_episode_pairs = updated_pairs
+                            and _episode_title_source_rank(finalized, dynamic_source_priority)
+                            < _episode_title_source_rank(playlist, dynamic_source_priority)
+                        )
+                    ):
+                        logger.info(
+                            "Episode title enhancer accepted provider candidate provider=%s mapped_count=%s previous_mapped_count=%s",
+                            str(getattr(candidate, "provider", "") or "").strip(),
+                            mapped_count,
+                            previous_mapped_count,
+                        )
+                        playlist = finalized
+                        season_episode_pairs = updated_pairs
                 finalized_playlist = _finalize_episode_playlist(playlist, season_episode_pairs)
                 if finalized_playlist is not None:
                     logger.info(
