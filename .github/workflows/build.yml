@@ -71,7 +71,7 @@ jobs:
           Write-Host "Downloaded libmpv runtime: $($mpvDll.FullName) ($([Math]::Round($mpvDll.Length / 1MB, 2)) MB)"
 
       - name: Sync dependencies
-        run: uv sync --frozen --group dev --group package
+        run: uv sync --frozen --group dev --group build
 
       - name: Resolve artifact version (POSIX)
         if: matrix.platform != 'windows'
