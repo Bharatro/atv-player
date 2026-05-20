@@ -22,6 +22,11 @@ _CHINESE_UNIT_VALUES = {
     "百": 100,
     "千": 1000,
 }
+_SEASON_PATTERNS = (
+    r"\bS(?:eason)?\s*0*(\d{1,2})\s*(?:E\d+)?\b",
+    r"第\s*0*(\d{1,2})\s*季",
+    r"(?:^|[\\/])S0*(\d{1,2})(?:[\\/]|$)",
+)
 
 
 def normalize_episode_title_text(value: str) -> str:
@@ -54,26 +59,42 @@ def _parse_chinese_number(value: str) -> int | None:
     return total
 
 
+def _iter_season_numbers(value: str) -> list[int]:
+    seasons: list[int] = []
+    text = str(value or "")
+    for pattern in _SEASON_PATTERNS:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            try:
+                season_number = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if season_number > 0:
+                seasons.append(season_number)
+    for match in re.finditer(r"第\s*([零一二两三四五六七八九十百千]+)\s*季", text, re.IGNORECASE):
+        season_number = _parse_chinese_number(match.group(1))
+        if season_number is not None:
+            seasons.append(season_number)
+    return seasons
+
+
+def _single_unambiguous_season(value: str) -> int | None:
+    unique: list[int] = []
+    for season_number in _iter_season_numbers(value):
+        if season_number not in unique:
+            unique.append(season_number)
+    return unique[0] if len(unique) == 1 else None
+
+
 def extract_season_number(value: object) -> int | None:
     text = str(value or "")
-    for pattern in (
-        r"\bS(?:eason)?\s*0*(\d{1,2})\s*(?:E\d+)?\b",
-        r"第\s*0*(\d{1,2})\s*季",
-        r"(?:^|[\\/])S0*(\d{1,2})(?:[\\/]|$)",
-    ):
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match is None:
-            continue
-        try:
-            season_number = int(match.group(1))
-        except (TypeError, ValueError):
-            continue
-        if season_number > 0:
-            return season_number
-    match = re.search(r"第\s*([零一二两三四五六七八九十百千]+)\s*季", text, re.IGNORECASE)
-    if match is None:
+    if not text.strip():
         return None
-    return _parse_chinese_number(match.group(1))
+    segments = [segment for segment in re.split(r"[\\/]", text) if segment.strip()]
+    for segment in reversed(segments):
+        season_number = _single_unambiguous_season(segment)
+        if season_number is not None:
+            return season_number
+    return _single_unambiguous_season(text)
 
 
 def seed_original_titles(playlist: list[PlayItem]) -> list[PlayItem]:

@@ -67,3 +67,12 @@ def test_extract_season_number_supports_common_formats() -> None:
     assert extract_season_number("黑袍纠察队第五季") == 5
     assert extract_season_number("Season 2") == 2
     assert extract_season_number("S02E01.mkv") == 2
+
+
+def test_extract_season_number_prefers_specific_episode_path_over_mixed_parent_folder() -> None:
+    path = (
+        "/我的百度分享/temp/10@1vjZiPMqZe5ZOya8ff4RrKA@edei/极地恶灵 第三季/"
+        "s01-s02/极地恶灵.第二季.2019.英语中字.1080/S02E01.mp4"
+    )
+
+    assert extract_season_number(path) == 2
