@@ -753,6 +753,50 @@ def test_main_window_restores_last_selected_plugin_tab_after_async_startup_load(
     assert config.last_selected_tab == "plugin:plugin-2"
 
 
+def test_main_window_restores_saved_visible_plugin_tab_after_geometry_restore(qtbot) -> None:
+    plugin_definitions = [
+        {"id": "plugin-1", "title": "插件一", "controller": FakeSpiderController("插件一"), "search_enabled": True}
+    ]
+    source = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=plugin_definitions,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(source)
+    source.resize(920, 520)
+    source.show()
+    geometry = bytes(source.saveGeometry())
+    source.close()
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(last_selected_tab="plugin:plugin-1", main_window_geometry=geometry),
+        spider_plugins=plugin_definitions,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert "插件一" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+    assert window.nav_tabs.currentWidget() is window._plugin_pages[0][0]
+
+
 def test_main_window_restores_plugin_player_as_soon_as_target_plugin_arrives_during_startup_load(
     qtbot, monkeypatch,
 ) -> None:

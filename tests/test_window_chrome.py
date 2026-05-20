@@ -1,4 +1,4 @@
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
@@ -152,6 +152,158 @@ def test_title_bar_visibility_toggle_hides_chrome_without_hiding_content(qtbot) 
 
     assert window.title_bar().isHidden() is True
     assert window.content_widget().isVisible() is True
+
+
+def test_double_clicking_title_label_toggles_maximized_state(qtbot) -> None:
+    window = DemoWindow()
+    qtbot.addWidget(window)
+    window.resize(640, 480)
+    window.show()
+    qtbot.wait(50)
+
+    label = window.title_bar().title_label
+    local_pos = label.rect().center()
+    global_pos = label.mapToGlobal(local_pos)
+    double_click_event = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release_event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    QApplication.sendEvent(label, double_click_event)
+    QApplication.sendEvent(label, release_event)
+
+    assert window.isMaximized() is True
+
+    QApplication.sendEvent(label, double_click_event)
+    QApplication.sendEvent(label, release_event)
+
+    assert window.isMaximized() is False
+
+
+def test_dragging_title_bar_to_top_edge_requests_maximize(qtbot, monkeypatch) -> None:
+    window = DemoWindow()
+    qtbot.addWidget(window)
+    window.resize(640, 480)
+    window.show()
+    qtbot.wait(50)
+
+    title_bar = window.title_bar()
+    press_local = title_bar.rect().center()
+    press_global = title_bar.mapToGlobal(press_local)
+    release_global = QPoint(press_global.x() + 30, 0)
+    release_local = title_bar.mapFromGlobal(release_global)
+    calls: list[str] = []
+    state = {"maximized": False}
+
+    monkeypatch.setattr(window, "isMaximized", lambda: state["maximized"])
+
+    def fake_show_maximized() -> None:
+        calls.append("showMaximized")
+        state["maximized"] = True
+
+    monkeypatch.setattr(window, "showMaximized", fake_show_maximized)
+
+    QApplication.sendEvent(
+        title_bar,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            press_local,
+            press_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.sendEvent(
+        title_bar,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            release_local,
+            release_global,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.sendEvent(
+        title_bar,
+        QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            release_local,
+            release_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert calls == ["showMaximized"]
+
+
+def test_dragging_maximized_title_bar_down_restores_window(qtbot, monkeypatch) -> None:
+    window = DemoWindow()
+    qtbot.addWidget(window)
+    window.resize(640, 480)
+    window.show()
+    qtbot.wait(50)
+
+    title_bar = window.title_bar()
+    press_local = title_bar.rect().center()
+    press_global = title_bar.mapToGlobal(press_local)
+    move_global = press_global + QPoint(60, 80)
+    move_local = title_bar.mapFromGlobal(move_global)
+    calls: list[str] = []
+    state = {"maximized": True}
+    moved_positions: list[QPoint] = []
+    normal_geometry = QRect(160, 120, 640, 480)
+
+    monkeypatch.setattr(window, "isMaximized", lambda: state["maximized"])
+    monkeypatch.setattr(window, "normalGeometry", lambda: QRect(normal_geometry))
+
+    def fake_show_normal() -> None:
+        calls.append("showNormal")
+        state["maximized"] = False
+
+    monkeypatch.setattr(window, "showNormal", fake_show_normal)
+    monkeypatch.setattr(window, "move", lambda pos: moved_positions.append(QPoint(pos)))
+
+    QApplication.sendEvent(
+        title_bar,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            press_local,
+            press_global,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.sendEvent(
+        title_bar,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            move_local,
+            move_global,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert calls == ["showNormal"]
+    assert moved_positions
 
 
 def test_themed_widget_window_title_bar_can_insert_extra_action_buttons(qtbot) -> None:

@@ -1240,12 +1240,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._trailing_tab_definitions: list[_TabDefinition] = []
         self._plugin_tab_definitions: list[_TabDefinition] = []
         self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
+        self._defer_navigation_refresh = True
         self._startup_plugin_load_started = False
         self._startup_plugin_load_request_id = 0
         self._startup_plugin_load_state = "loading" if callable(plugin_loader_task) else "idle"
         self._startup_plugin_load_error = ""
         self._startup_selected_category_id = str(getattr(config, "last_selected_category_id", "") or "").strip()
         selected_tab = str(getattr(config, "last_selected_tab", "") or "")
+        self._startup_pending_tab_restore_key = selected_tab
         self._startup_plugin_pending_tab_restore_key = (
             selected_tab if callable(plugin_loader_task) and selected_tab.startswith("plugin:") else ""
         )
@@ -1522,6 +1524,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self.config.main_window_geometry:
             self._restore_saved_geometry(apply_maximized=True)
 
+        self._defer_navigation_refresh = False
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
@@ -1808,6 +1811,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.nav_tabs.addTab(definition.page, title_overrides.get(definition.key, definition.title))
         self.nav_tabs.blockSignals(False)
 
+        if not self._global_search_active and self._restore_pending_tab_selection(definitions):
+            self._sync_plugin_overflow_drawer()
+            return
         if current_widget is not None:
             current_index = self.nav_tabs.indexOf(current_widget)
             if current_index >= 0:
@@ -1827,6 +1833,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _refresh_visible_tabs(self) -> None:
         self._refresh_navigation_tabs()
+
+    def _restore_pending_tab_selection(self, definitions: list[_TabDefinition]) -> bool:
+        pending_key = self._startup_pending_tab_restore_key
+        if not pending_key:
+            return False
+        for index, definition in enumerate(definitions):
+            if definition.key == pending_key:
+                self.nav_tabs.setCurrentIndex(index)
+                return True
+        return False
 
     def _restore_saved_tab_selection(self, definitions: list[_TabDefinition]) -> bool:
         selected_key = getattr(self.config, "last_selected_tab", "douban") or "douban"
@@ -2195,6 +2211,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._active_widget = widget
         selected_key = self._tab_key_for_widget(widget)
+        if self._startup_pending_tab_restore_key:
+            visible_keys = {definition.key for definition in self._visible_tab_definitions()}
+            if selected_key == self._startup_pending_tab_restore_key:
+                self._startup_pending_tab_restore_key = ""
+            elif self.isVisible() and self._startup_pending_tab_restore_key in visible_keys and selected_key is not None:
+                self._startup_pending_tab_restore_key = ""
         if (
             self._startup_plugin_pending_tab_restore_key
             and self._startup_plugin_load_started
@@ -3069,7 +3091,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_tab_definitions = []
         for definition in self._plugin_definitions:
             self._append_plugin_page_from_definition(definition)
-        self._refresh_visible_tabs()
+        if not self._defer_navigation_refresh:
+            self._refresh_visible_tabs()
 
     def _build_placeholder_player_request(
         self, item: Any, *, source_kind: str = "plugin", source_key: str = "",
