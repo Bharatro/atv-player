@@ -233,6 +233,7 @@ class VodItem:
     path: str = ""
     share_type: str = ""
     vod_pic: str = ""
+    poster_candidates: list[str] = field(default_factory=list)
     vod_tag: str = ""
     vod_time: str = ""
     vod_remarks: str = ""

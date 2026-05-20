@@ -190,6 +190,23 @@ def _clean_detail_text(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _normalize_poster_source(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _sync_poster_candidates(vod: VodItem, *, primary: str, candidate: str = "") -> None:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for source in (primary, *vod.poster_candidates, vod.vod_pic, candidate):
+        normalized = _normalize_poster_source(source)
+        if not normalized or normalized in seen:
+            continue
+        ordered.append(normalized)
+        seen.add(normalized)
+    vod.vod_pic = ordered[0] if ordered else ""
+    vod.poster_candidates = ordered
+
+
 def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priority: list[str]) -> VodItem:
     del provider_priority
     if record.title:
@@ -197,9 +214,13 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
             vod.vod_name = record.title
         elif record.provider in _TITLE_CORRECTION_PROVIDERS or _is_low_quality_title(vod.vod_name):
             vod.vod_name = choose_preferred_title(vod.vod_name, record.title)
-    if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
-        vod.vod_pic = record.poster
-        _set_field_source(vod, "poster", record.provider)
+    poster = _normalize_poster_source(record.poster)
+    if poster:
+        if not vod.vod_pic or _can_override(vod, "poster", record.provider):
+            _sync_poster_candidates(vod, primary=poster)
+            _set_field_source(vod, "poster", record.provider)
+        else:
+            _sync_poster_candidates(vod, primary=vod.vod_pic, candidate=poster)
     if record.year and (not vod.vod_year or _can_override(vod, "year", record.provider)):
         vod.vod_year = record.year
         _set_field_source(vod, "year", record.provider)
@@ -258,7 +279,7 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
     if not vod.vod_name and record.title:
         vod.vod_name = record.title
     if not vod.vod_pic and record.poster:
-        vod.vod_pic = record.poster
+        _sync_poster_candidates(vod, primary=record.poster)
         _set_field_source(vod, "poster", record.provider)
     if not vod.vod_year and record.year:
         vod.vod_year = record.year
@@ -309,7 +330,7 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
 
 def override_visual_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
     if record.poster and (not vod.vod_pic or _can_override(vod, "poster", record.provider)):
-        vod.vod_pic = record.poster
+        _sync_poster_candidates(vod, primary=record.poster)
         _set_field_source(vod, "poster", record.provider)
     return vod
 
@@ -320,7 +341,7 @@ def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
 
     if record.title:
         vod.vod_name = record.title
-    vod.vod_pic = record.poster
+    _sync_poster_candidates(vod, primary=record.poster)
     vod.vod_year = record.year
     vod.type_name = " / ".join(record.genres)
     vod.vod_area = record.country

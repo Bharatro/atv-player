@@ -158,6 +158,41 @@ def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> N
     assert vod.vod_pic == "https://img.tmdb/poster.jpg"
 
 
+def test_merge_metadata_promotes_higher_priority_poster_and_keeps_previous_candidate() -> None:
+    vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_pic="https://img.site/poster.jpg")
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="movie:42",
+        poster="https://img.tmdb/poster.jpg",
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert vod.vod_pic == "https://img.tmdb/poster.jpg"
+    assert vod.poster_candidates == [
+        "https://img.tmdb/poster.jpg",
+        "https://img.site/poster.jpg",
+    ]
+
+
+def test_merge_metadata_appends_lower_priority_poster_without_overriding_primary() -> None:
+    vod = VodItem(vod_id="v1", vod_name="旧标题", vod_pic="https://img.tmdb/poster.jpg")
+    vod.metadata_field_sources["poster"] = "tmdb"
+    record = MetadataRecord(
+        provider="bangumi",
+        provider_id="subject:1",
+        poster="https://img.bgm/poster.jpg",
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["bangumi", "tmdb"])
+
+    assert vod.vod_pic == "https://img.tmdb/poster.jpg"
+    assert vod.poster_candidates == [
+        "https://img.tmdb/poster.jpg",
+        "https://img.bgm/poster.jpg",
+    ]
+
+
 def test_choose_preferred_title_overrides_garbage_title_with_clean_candidate() -> None:
     assert choose_preferred_title("J【加@页】", "国色芳华") == "国色芳华"
 
