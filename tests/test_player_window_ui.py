@@ -1793,6 +1793,88 @@ def test_player_window_hides_metadata_original_toggle_when_metadata_matches_orig
     assert window._metadata_original_toggle.isHidden() is True
 
 
+def test_player_window_metadata_scrape_apply_original_toggle_restores_original_item_detail_fields(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸", vod_year="2026", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://media.example/1.mp4",
+                detail_fields=[PlaybackDetailField(label="站内热度", value="99")],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
+    window._metadata_original_toggle.click()
+    qtbot.waitUntil(lambda: "站内热度: 99" in window.metadata_view.toPlainText(), timeout=1000)
+    assert "TMDB ID: 1" not in window.metadata_view.toPlainText()
+    assert "原始简介" in window.metadata_view.toPlainText()
+
+
+def test_player_window_metadata_original_toggle_uses_late_resolved_detail_as_original_snapshot(qtbot) -> None:
+    class DetailResolvingController(FakePlayerController):
+        def resolve_play_item_detail(self, session, play_item):
+            if not play_item.vod_id or session.detail_resolver is None:
+                return None
+            resolved_vod = session.detail_resolver(play_item)
+            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+            play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+            return resolved_vod
+
+    release_detail_resolution = threading.Event()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        assert release_detail_resolution.wait(timeout=1)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name="站内标题",
+            vod_content="站内简介",
+            items=[PlayItem(title=item.title, url=item.url, vod_id=item.vod_id)],
+        )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="原始标题", vod_content="原始简介"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_resolver=detail_resolver,
+        metadata_hydrator=lambda _session: VodItem(
+            vod_id="movie-1",
+            vod_name="刮削后的标题",
+            vod_year="2026",
+            vod_content="刮削后的简介",
+        ),
+    )
+    window = PlayerWindow(DetailResolvingController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: "刮削后的简介" in window.metadata_view.toPlainText(), timeout=1000)
+
+    release_detail_resolution.set()
+    qtbot.waitUntil(lambda: "ep-1" in window.session.resolved_vod_by_id, timeout=1000)
+    window._metadata_original_toggle.click()
+
+    qtbot.waitUntil(lambda: "站内简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert "刮削后的简介" not in window.metadata_view.toPlainText()
+
+
 def test_player_window_metadata_scrape_apply_replaces_current_item_detail_fields(qtbot) -> None:
     service = FakeMetadataScrapeService()
     session = PlayerSession(

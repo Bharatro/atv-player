@@ -1620,6 +1620,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_metadata()
         self._render_detail_fields()
 
+    def _snapshot_item_detail_fields(self, item: PlayItem) -> None:
+        if self.session is None:
+            return
+        key = self._playlist_identity_key(item)
+        if key not in self.session.original_item_detail_fields_by_key:
+            self.session.original_item_detail_fields_by_key[key] = deepcopy(item.detail_fields)
+
+    def _build_original_metadata_snapshot(self, vod: VodItem) -> VodItem:
+        snapshot = self._clone_metadata_snapshot(vod)
+        if self.session is None:
+            return snapshot
+        current_item = self._current_play_item()
+        if current_item is None:
+            return snapshot
+        key = self._playlist_identity_key(current_item)
+        cached_fields = self.session.original_item_detail_fields_by_key.get(key)
+        if cached_fields:
+            snapshot.detail_fields = deepcopy(cached_fields)
+        return snapshot
+
+    def _update_original_metadata_snapshot(self, vod: VodItem) -> None:
+        if self.session is None:
+            return
+        self.session.original_vod = self._build_original_metadata_snapshot(vod)
+        self._refresh_metadata_original_toggle()
+
     def _current_detail_fields(self) -> list[PlaybackDetailField]:
         if self.session is None:
             return []
@@ -2088,9 +2114,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
-        session.original_vod = self._clone_metadata_snapshot(session.vod)
-        session.show_original_metadata = False
         initial_item = session.playlist[session.start_index] if 0 <= session.start_index < len(session.playlist) else None
+        if initial_item is not None:
+            self._snapshot_item_detail_fields(initial_item)
+        session.original_vod = self._build_original_metadata_snapshot(session.vod)
+        session.show_original_metadata = False
         self._metadata_scrape_binding_title = str(getattr(initial_item, "media_title", "") or session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self._metadata_scrape_query_saved = False
@@ -2598,6 +2626,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         self.session.vod = resolved_vod
+        self._update_original_metadata_snapshot(resolved_vod)
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -3255,6 +3284,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             should_apply_resolved_vod = False
         if resolved_vod is not None and should_apply_resolved_vod:
             self._apply_resolved_vod(resolved_vod)
+        elif resolved_vod is not None:
+            self._update_original_metadata_snapshot(resolved_vod)
         if pending_load is None or not pending_load.wait_for_load:
             return
         if self.session is None or self.current_index != pending_load.index:
@@ -6281,7 +6312,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             updated_vod = replace(updated_vod, category_name=selected_category)
         self.session.vod = updated_vod
         if 0 <= self.current_index < len(self.session.playlist):
-            self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
+            current_item = self.session.playlist[self.current_index]
+            self._snapshot_item_detail_fields(current_item)
+            current_item.detail_fields = list(updated_vod.detail_fields)
         updated_playlist = None
         build_playlist = getattr(self.session.metadata_scrape_service, "build_episode_title_playlist", None)
         if callable(build_playlist):
@@ -6330,6 +6363,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._refresh_metadata_original_toggle()
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
