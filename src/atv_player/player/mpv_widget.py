@@ -8,13 +8,14 @@ import os
 import platform
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QCoreApplication, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -218,11 +219,13 @@ class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
     playback_failed = Signal(str)
+    file_loaded = Signal()
     video_picture_state_changed = Signal(str)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     context_menu_requested = Signal()
     context_menu_dismiss_requested = Signal()
+    _gui_call_requested = Signal(object)
 
     def __init__(self, parent=None, config: AppConfig | None = None) -> None:
         super().__init__(parent)
@@ -233,12 +236,52 @@ class MpvWidget(QWidget):
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
+        self._player_property_cache: dict[str, object] = {}
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._placeholder)
+        self._gui_call_requested.connect(
+            self._execute_gui_call,
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+    def _on_widget_thread(self) -> bool:
+        return QThread.currentThread() is self.thread()
+
+    @Slot(object)
+    def _execute_gui_call(self, callback: object) -> None:
+        if callable(callback):
+            callback()
+
+    def _post_to_widget_thread(self, callback) -> None:
+        if self._on_widget_thread():
+            callback()
+            return
+        self._gui_call_requested.emit(callback)
+
+    def _run_on_widget_thread(self, callback):
+        if self._on_widget_thread():
+            return callback()
+        result: dict[str, object] = {}
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                result["value"] = callback()
+            except BaseException as exc:  # pragma: no cover - re-raised on caller thread
+                result["error"] = exc
+            finally:
+                done.set()
+
+        self._gui_call_requested.emit(run)
+        done.wait()
+        error = result.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return result.get("value")
 
     def _set_video_picture_state(self, state: str) -> None:
         if self._video_picture_state == state:
@@ -253,9 +296,12 @@ class MpvWidget(QWidget):
         self.playback_finished.emit()
 
     def _base_player_options(self) -> dict[str, object]:
+        hwdec = str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe")
+        if sys.platform.startswith("win") and hwdec == "auto-copy":
+            hwdec = "auto-safe"
         options = dict(
             wid=str(int(self.winId())),
-            hwdec=str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe"),
+            hwdec=hwdec,
             force_window="yes",
             audio_spdif="no",
             ad="ffmpeg",
@@ -270,6 +316,9 @@ class MpvWidget(QWidget):
             stream_buffer_size="4M",
             network_timeout=int(getattr(self._config, "mpv_network_timeout_seconds", 15) or 15),
         )
+        if sys.platform.startswith("win"):
+            options["vo"] = "gpu"
+            options["gpu_context"] = "d3d11"
         mismatch = detect_linux_nvidia_driver_mismatch()
         if mismatch is not None:
             userspace_version, kernel_version = mismatch
@@ -354,9 +403,9 @@ class MpvWidget(QWidget):
         )
         if ytdl_raw_options:
             common["ytdl_raw_options"] = ytdl_raw_options
-        if os.getenv("ATV_MPV_DEBUG"):
+        if sys.platform.startswith("win") or os.getenv("ATV_MPV_DEBUG"):
             common["log_handler"] = print
-            common["loglevel"] = "warn"
+            common["loglevel"] = "debug"
 
         if sys.platform.startswith("win"):
             self._log_windows_mpv_runtime_diagnostics("before-create", mpv_module=mpv)
@@ -396,12 +445,17 @@ class MpvWidget(QWidget):
         if self._player is not None and not getattr(self._player, "core_shutdown", False):
             return
         self._player = self._create_player()
+        self._player_property_cache.clear()
         self._register_player_events()
 
     def shutdown(self) -> None:
+        if not self._on_widget_thread():
+            self._run_on_widget_thread(self.shutdown)
+            return
         if self._player is None:
             return
         player, self._player = self._player, None
+        self._player_property_cache.clear()
         if getattr(player, "core_shutdown", False):
             return
         try:
@@ -413,6 +467,19 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def suspend(self) -> None:
+        if not self._on_widget_thread():
+            self._run_on_widget_thread(self.suspend)
+            return
+        if not sys.platform.startswith("win"):
+            self.shutdown()
+            return
+        self._player_property_cache.clear()
+        self._audio_cover_active = False
+        self._audio_cover_mode = False
+        self._playback_finished_emitted = False
+        self._set_video_picture_state("idle")
+
     def _register_player_events(self) -> None:
         if self._player is None:
             return
@@ -422,19 +489,28 @@ class MpvWidget(QWidget):
 
         @event_callback("end-file")
         def handle_end_file(event) -> None:
-            event_data = getattr(event, "data", None)
-            if event_data is None:
-                return
-            reason = getattr(event_data, "reason", None)
-            eof_reason = getattr(type(event_data), "EOF", 0)
-            if reason == eof_reason:
-                self._emit_playback_finished_once()
-                return
-            error_reason = getattr(type(event_data), "ERROR", 4)
-            if reason == error_reason:
-                self.playback_failed.emit(self._format_end_file_failure_message(event_data))
+            def emit_event() -> None:
+                event_data = getattr(event, "data", None)
+                if event_data is None:
+                    return
+                reason = getattr(event_data, "reason", None)
+                eof_reason = getattr(type(event_data), "EOF", 0)
+                if reason == eof_reason:
+                    self._emit_playback_finished_once()
+                    return
+                error_reason = getattr(type(event_data), "ERROR", 4)
+                if reason == error_reason:
+                    self.playback_failed.emit(self._format_end_file_failure_message(event_data))
+
+            self._post_to_widget_thread(emit_event)
 
         self._end_file_handler = handle_end_file
+
+        @event_callback("file-loaded")
+        def handle_file_loaded(*_args) -> None:
+            self._post_to_widget_thread(self.file_loaded.emit)
+
+        self._file_loaded_handler = handle_file_loaded
         if sys.platform.startswith("win"):
             return
         observe_property = getattr(self._player, "observe_property", None)
@@ -643,13 +719,20 @@ class MpvWidget(QWidget):
     def _set_player_property(self, name: str, value: object) -> None:
         if self._player is None:
             return
+        cached_value: object = value
+        if sys.platform.startswith("win"):
+            cached_value = self._command_property_value(value)
+            if self._player_property_cache.get(name) == cached_value:
+                return
         try:
             if sys.platform.startswith("win") and self._set_player_property_via_command(name, value):
+                self._player_property_cache[name] = cached_value
                 return
             if hasattr(type(self._player), "__setitem__"):
                 self._player[name] = value
             else:
                 setattr(self._player, name.replace("-", "_"), value)
+            self._player_property_cache[name] = cached_value
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -733,10 +816,24 @@ class MpvWidget(QWidget):
             audio_files: str = "",
             ytdl_format: str = "",
     ) -> None:
+        if not self._on_widget_thread():
+            self._run_on_widget_thread(
+                lambda: self.load(
+                    url,
+                    pause=pause,
+                    start_seconds=start_seconds,
+                    headers=headers,
+                    poster_image_path=poster_image_path,
+                    audio_files=audio_files,
+                    ytdl_format=ytdl_format,
+                )
+            )
+            return
         self._set_video_picture_state("loading")
         self._audio_cover_active = False
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
+        self._player_property_cache.clear()
         self._ensure_player()
         player = self._player
         if player is None:
@@ -889,6 +986,9 @@ class MpvWidget(QWidget):
             player.loadfile(audio_files, "append")
 
     def attach_audio_cover(self, poster_image_path: str) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.attach_audio_cover(poster_image_path))
+            return
         player = self._player
         if player is None or not poster_image_path:
             return
@@ -909,6 +1009,9 @@ class MpvWidget(QWidget):
         self._set_video_picture_state("audio-cover")
 
     def seek(self, seconds: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.seek(seconds))
+            return
         if self._player is None:
             return
         try:
@@ -919,6 +1022,9 @@ class MpvWidget(QWidget):
             raise
 
     def seek_relative(self, seconds: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.seek_relative(seconds))
+            return
         if self._player is None:
             return
         try:
@@ -929,6 +1035,8 @@ class MpvWidget(QWidget):
             raise
 
     def can_seek(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.can_seek))
         if self._player is None:
             return False
         try:
@@ -937,6 +1045,9 @@ class MpvWidget(QWidget):
             return False
 
     def set_speed(self, speed: float) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_speed(speed))
+            return
         if self._player is None:
             return
         try:
@@ -950,6 +1061,9 @@ class MpvWidget(QWidget):
             raise
 
     def set_volume(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_volume(value))
+            return
         if self._player is None:
             return
         try:
@@ -963,6 +1077,9 @@ class MpvWidget(QWidget):
             raise
 
     def toggle_mute(self) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(self.toggle_mute)
+            return
         if self._player is None:
             return
         try:
@@ -976,6 +1093,9 @@ class MpvWidget(QWidget):
             raise
 
     def set_muted(self, muted: bool) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_muted(muted))
+            return
         if self._player is None:
             return
         try:
@@ -989,6 +1109,9 @@ class MpvWidget(QWidget):
             raise
 
     def set_cursor_autohide(self, value: int | None) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_cursor_autohide(value))
+            return
         if self._player is None:
             return
         try:
@@ -1001,6 +1124,9 @@ class MpvWidget(QWidget):
             raise
 
     def pause(self) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(self.pause)
+            return
         if self._player is None:
             return
         try:
@@ -1014,6 +1140,9 @@ class MpvWidget(QWidget):
             raise
 
     def resume(self) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(self.resume)
+            return
         if self._player is None:
             return
         try:
@@ -1027,6 +1156,8 @@ class MpvWidget(QWidget):
             raise
 
     def position_seconds(self) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(self.position_seconds)
         if self._player is None:
             return None
         try:
@@ -1036,6 +1167,8 @@ class MpvWidget(QWidget):
             return None
 
     def duration_seconds(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.duration_seconds) or 0)
         if self._player is None:
             return 0
         try:
@@ -1111,6 +1244,8 @@ class MpvWidget(QWidget):
         )
 
     def subtitle_tracks(self) -> list[SubtitleTrack]:
+        if not self._on_widget_thread():
+            return list(self._run_on_widget_thread(self.subtitle_tracks) or [])
         if self._player is None:
             return []
         if sys.platform.startswith("win"):
@@ -1141,6 +1276,8 @@ class MpvWidget(QWidget):
         return tracks
 
     def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(lambda: self.apply_subtitle_mode(mode, track_id=track_id))
         if self._player is None:
             return None
         try:
@@ -1169,6 +1306,8 @@ class MpvWidget(QWidget):
             raise
 
     def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(lambda: self.apply_secondary_subtitle_mode(mode, track_id=track_id))
         if self._player is None:
             return None
         try:
@@ -1186,6 +1325,8 @@ class MpvWidget(QWidget):
             raise
 
     def current_subtitle_track_id(self) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(self.current_subtitle_track_id)
         if sys.platform.startswith("win"):
             return None
         value = self._player_property("sid", None)
@@ -1227,6 +1368,10 @@ class MpvWidget(QWidget):
         return None
 
     def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(
+                lambda: self.load_external_subtitle(path, select_for_secondary=select_for_secondary)
+            )
         if self._player is None:
             return None
         if sys.platform.startswith("win"):
@@ -1244,6 +1389,9 @@ class MpvWidget(QWidget):
             raise
 
     def remove_subtitle_track(self, track_id: int | None) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.remove_subtitle_track(track_id))
+            return
         if self._player is None or track_id is None:
             return
         if sys.platform.startswith("win"):
@@ -1261,22 +1409,31 @@ class MpvWidget(QWidget):
             raise
 
     def subtitle_position(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.subtitle_position) or 50)
         if sys.platform.startswith("win"):
             return 50
         value = self._player_property("sub-pos", 50)
         return self._int_property_value(value, 50)
 
     def set_subtitle_position(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_subtitle_position(value))
+            return
         clamped = max(0, min(int(value), 100))
         self._set_player_property("sub-pos", clamped)
 
     def secondary_subtitle_position(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.secondary_subtitle_position) or 50)
         if sys.platform.startswith("win"):
             return 50
         value = self._player_property("secondary-sub-pos", 50)
         return self._int_property_value(value, 50)
 
     def supports_secondary_subtitle_position(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_position))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1294,47 +1451,77 @@ class MpvWidget(QWidget):
             raise
 
     def set_secondary_subtitle_position(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_secondary_subtitle_position(value))
+            return
         clamped = max(0, min(int(value), 100))
         self._set_player_property("secondary-sub-pos", clamped)
 
     def subtitle_scale(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.subtitle_scale) or 100)
         value = self._player_property("sub-scale", 1.0)
         return self._scale_property_percent(value, 100)
 
     def set_subtitle_scale(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_subtitle_scale(value))
+            return
         clamped = max(50, min(int(value), 200))
         self._set_player_property("sub-scale", clamped / 100)
 
     def secondary_subtitle_scale(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.secondary_subtitle_scale) or 100)
         value = self._player_property("secondary-sub-scale", 1.0)
         return self._scale_property_percent(value, 100)
 
     def set_secondary_subtitle_scale(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_secondary_subtitle_scale(value))
+            return
         clamped = max(50, min(int(value), 200))
         self._set_player_property("secondary-sub-scale", clamped / 100)
 
     def subtitle_ass_override(self) -> str:
+        if not self._on_widget_thread():
+            return str(self._run_on_widget_thread(self.subtitle_ass_override) or "scale")
         value = self._player_property("sub-ass-override", "scale")
         return self._ass_override_value(value, "scale")
 
     def set_subtitle_ass_override(self, value: str) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_subtitle_ass_override(value))
+            return
         self._set_player_property("sub-ass-override", self._ass_override_value(value, "scale"))
 
     def secondary_subtitle_ass_override(self) -> str:
+        if not self._on_widget_thread():
+            return str(self._run_on_widget_thread(self.secondary_subtitle_ass_override) or "strip")
         value = self._player_property("secondary-sub-ass-override", "strip")
         return self._ass_override_value(value, "strip")
 
     def set_secondary_subtitle_ass_override(self, value: str) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_secondary_subtitle_ass_override(value))
+            return
         self._set_player_property("secondary-sub-ass-override", self._ass_override_value(value, "strip"))
 
     def subtitle_ass_force_margins(self) -> str:
+        if not self._on_widget_thread():
+            return str(self._run_on_widget_thread(self.subtitle_ass_force_margins) or "no")
         value = self._player_property("sub-ass-force-margins", "no")
         return self._yes_no_value(value, "no")
 
     def set_subtitle_ass_force_margins(self, value: str) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_subtitle_ass_force_margins(value))
+            return
         self._set_player_property("sub-ass-force-margins", self._yes_no_value(value, "no"))
 
     def supports_subtitle_scale(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_subtitle_scale))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1350,6 +1537,8 @@ class MpvWidget(QWidget):
             raise
 
     def supports_secondary_subtitle_scale(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_scale))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1365,6 +1554,8 @@ class MpvWidget(QWidget):
             raise
 
     def supports_subtitle_ass_override(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_subtitle_ass_override))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1380,6 +1571,8 @@ class MpvWidget(QWidget):
             raise
 
     def supports_secondary_subtitle_ass_override(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_secondary_subtitle_ass_override))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1395,6 +1588,8 @@ class MpvWidget(QWidget):
             raise
 
     def supports_subtitle_ass_force_margins(self) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_subtitle_ass_force_margins))
         if self._player is None:
             return False
         if sys.platform.startswith("win"):
@@ -1492,6 +1687,8 @@ class MpvWidget(QWidget):
         return (int(track.is_default), int(bool(track.title)))
 
     def audio_tracks(self) -> list[AudioTrack]:
+        if not self._on_widget_thread():
+            return list(self._run_on_widget_thread(self.audio_tracks) or [])
         if self._player is None:
             return []
         if sys.platform.startswith("win"):
@@ -1549,6 +1746,8 @@ class MpvWidget(QWidget):
         return tracks
 
     def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(lambda: self.apply_audio_mode(mode, track_id=track_id))
         if self._player is None:
             return None
         try:
@@ -1568,6 +1767,9 @@ class MpvWidget(QWidget):
             raise
 
     def toggle_video_info(self) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(self.toggle_video_info)
+            return
         if self._player is None:
             return
         try:

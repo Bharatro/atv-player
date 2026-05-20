@@ -6,6 +6,7 @@ import json
 import logging
 import queue
 import re
+import sys
 import threading
 import time
 import tempfile
@@ -364,6 +365,11 @@ class _DanmakuPlaybackLogSignals(QObject):
     log = Signal(str)
 
 
+class _DanmakuRenderSignals(QObject):
+    succeeded = Signal(int, str, int)
+    failed = Signal(int, str)
+
+
 class _PlaybackPrepareSignals(QObject):
     succeeded = Signal(int, str)
     failed = Signal(int, str)
@@ -694,6 +700,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._connect_async_signal(self._danmaku_source_task_signals.finished, self._handle_danmaku_source_task_finished)
         self._danmaku_playback_log_signals = _DanmakuPlaybackLogSignals()
         self._connect_async_signal(self._danmaku_playback_log_signals.log, self._append_log)
+        self._danmaku_render_signals = _DanmakuRenderSignals()
+        self._connect_async_signal(self._danmaku_render_signals.succeeded, self._handle_danmaku_render_succeeded)
+        self._connect_async_signal(self._danmaku_render_signals.failed, self._handle_danmaku_render_failed)
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
@@ -723,8 +732,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.context_menu_requested.connect(self._show_video_context_menu_at_cursor)
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
+        self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
+        self._pending_post_load_item: PlayItem | None = None
+        self._danmaku_render_request_id = 0
+        self._pending_danmaku_render_item: PlayItem | None = None
         self.title_bar_return_button = QPushButton("", self.title_bar())
         self.title_bar_return_button.setObjectName("customTitleBarReturnButton")
         self.title_bar_return_button.setProperty("icon_name", "home.svg")
@@ -2465,6 +2478,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._set_startup_state(self._startup_coordinator.connecting())
         current_item = self.session.playlist[self.current_index]
+        defer_post_load_configuration = self._should_defer_post_load_player_configuration()
         self._append_log(f"当前播放: {playlist_item_display_title(current_item, 'episode')}")
         self._append_log(f"播放地址: {current_item.url}")
         if start_position_seconds > self.opening_spin.value():
@@ -2472,6 +2486,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         else:
             effective_start_seconds = self.opening_spin.value()
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
+        if defer_post_load_configuration:
+            self._pending_post_load_item = current_item
         logger.info(
             "PlayerWindow start playback index=%s quality=%s ytdl_format=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
             self.current_index,
@@ -2483,17 +2499,37 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause,
             len(current_item.external_subtitles),
         )
-        self._video_load(
-            current_item.url,
-            pause=pause,
-            start_seconds=effective_start_seconds,
-            headers=current_item.headers,
-            poster_image_path=poster_image_path,
-            audio_files=current_item.audio_url,
-            ytdl_format=current_item.ytdl_format,
-        )
+        try:
+            self._video_load(
+                current_item.url,
+                pause=pause,
+                start_seconds=effective_start_seconds,
+                headers=current_item.headers,
+                poster_image_path=poster_image_path,
+                audio_files=current_item.audio_url,
+                ytdl_format=current_item.ytdl_format,
+            )
+        except Exception:
+            if defer_post_load_configuration:
+                self._pending_post_load_item = None
+            raise
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()
+        if defer_post_load_configuration:
+            self._reset_subtitle_combo()
+            self._reset_audio_combo()
+        else:
+            self._apply_post_load_player_configuration(current_item)
+        if self.session is not None:
+            self.controller.on_item_started(self.session, self.current_index)
+
+    def _uses_event_driven_track_refresh(self) -> bool:
+        return self.video is self.video_widget
+
+    def _should_defer_post_load_player_configuration(self) -> bool:
+        return self.video is self.video_widget and sys.platform.startswith("win")
+
+    def _apply_post_load_player_configuration(self, current_item: PlayItem) -> None:
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._apply_muted_state()
@@ -2508,11 +2544,25 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._refresh_audio_state()
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
-        if self.session is not None:
-            self.controller.on_item_started(self.session, self.current_index)
 
-    def _uses_event_driven_track_refresh(self) -> bool:
-        return self.video is self.video_widget
+    def _handle_video_file_loaded(self) -> None:
+        pending_item = self._pending_post_load_item
+        if pending_item is None:
+            return
+
+        def apply_if_still_current() -> None:
+            if self.session is None:
+                self._pending_post_load_item = None
+                return
+            if not (0 <= self.current_index < len(self.session.playlist)):
+                self._pending_post_load_item = None
+                return
+            if self.session.playlist[self.current_index] is not pending_item:
+                return
+            self._pending_post_load_item = None
+            self._apply_post_load_player_configuration(pending_item)
+
+        QTimer.singleShot(0, apply_if_still_current)
 
     def _schedule_followup_subtitle_refresh_if_needed(
         self,
@@ -5036,6 +5086,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_retry_timer.stop()
         self._pending_danmaku_timer.stop()
         self._danmaku_retry_attempts = 0
+        self._pending_danmaku_render_item = None
+        self._danmaku_render_request_id += 1
         if self._danmaku_track_id is not None and hasattr(self.video, "remove_subtitle_track"):
             try:
                 self.video.remove_subtitle_track(self._danmaku_track_id)
@@ -5056,7 +5108,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _write_danmaku_subtitle_file(self, xml_text: str, line_count: int) -> Path | None:
         self._cleanup_danmaku_temp_file()
-        temp_path = load_or_create_danmaku_ass_cache(
+        temp_path = self._build_danmaku_subtitle_file(
             xml_text,
             line_count,
             render_mode=self._preferred_danmaku_render_mode(),
@@ -5070,6 +5122,39 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return None
         self._danmaku_temp_path = temp_path
         return temp_path
+
+    def _build_danmaku_subtitle_file(
+        self,
+        xml_text: str,
+        line_count: int,
+        *,
+        render_mode: str,
+        color_mode: str,
+        uniform_color: str,
+        position_preset: str,
+        scroll_speed: float,
+        font_size: int,
+    ) -> Path | None:
+        return load_or_create_danmaku_ass_cache(
+            xml_text,
+            line_count,
+            render_mode=render_mode,
+            color_mode=color_mode,
+            uniform_color=uniform_color,
+            position_preset=position_preset,
+            scroll_speed=scroll_speed,
+            font_size=font_size,
+        )
+
+    def _current_danmaku_render_settings(self) -> dict[str, object]:
+        return {
+            "render_mode": self._preferred_danmaku_render_mode(),
+            "color_mode": self._preferred_danmaku_color_mode(),
+            "uniform_color": self._preferred_danmaku_uniform_color(),
+            "position_preset": self._preferred_danmaku_position_preset(),
+            "scroll_speed": self._preferred_danmaku_scroll_speed(),
+            "font_size": self._preferred_danmaku_font_size(),
+        }
 
     def _apply_danmaku_secondary_scale(self) -> None:
         if (
@@ -5107,9 +5192,100 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._apply_danmaku_secondary_scale()
 
+    def _attach_danmaku_subtitle_file(self, subtitle_path: Path, line_count: int) -> None:
+        self._clear_active_danmaku(restore_position=False)
+        self._danmaku_temp_path = subtitle_path
+        if not hasattr(self.video, "load_external_subtitle"):
+            raise RuntimeError("播放器不支持外挂弹幕")
+        track_id = self._load_primary_danmaku_subtitle(subtitle_path)
+        if track_id is None:
+            raise RuntimeError("播放器未返回弹幕轨道")
+        self._danmaku_track_id = track_id
+        self._danmaku_active = True
+        self._danmaku_line_count = line_count
+
+    def _should_render_danmaku_async(self) -> bool:
+        return self.video is self.video_widget
+
+    def _start_async_danmaku_render(self, xml_text: str, line_count: int) -> None:
+        if self.session is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        settings = self._current_danmaku_render_settings()
+        self._danmaku_render_request_id += 1
+        request_id = self._danmaku_render_request_id
+        self._pending_danmaku_render_item = current_item
+
+        def run() -> None:
+            try:
+                subtitle_path = self._build_danmaku_subtitle_file(
+                    xml_text,
+                    line_count,
+                    render_mode=str(settings["render_mode"]),
+                    color_mode=str(settings["color_mode"]),
+                    uniform_color=str(settings["uniform_color"]),
+                    position_preset=str(settings["position_preset"]),
+                    scroll_speed=float(settings["scroll_speed"]),
+                    font_size=int(settings["font_size"]),
+                )
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._danmaku_render_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._danmaku_render_signals.succeeded.emit(request_id, str(subtitle_path or ""), line_count)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_danmaku_render_succeeded(self, request_id: int, subtitle_path_text: str, line_count: int) -> None:
+        pending_item = self._pending_danmaku_render_item
+        if request_id != self._danmaku_render_request_id or pending_item is None:
+            return
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            self._pending_danmaku_render_item = None
+            return
+        if self.session.playlist[self.current_index] is not pending_item:
+            return
+        self._pending_danmaku_render_item = None
+        try:
+            if self._danmaku_restore_secondary_position is None:
+                self._danmaku_restore_secondary_position = self._secondary_subtitle_position
+            if (
+                self._danmaku_restore_ass_force_margins is None
+                and hasattr(self.video, "subtitle_ass_force_margins")
+                and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
+            ):
+                self._danmaku_restore_ass_force_margins = self.video.subtitle_ass_force_margins()
+            if (
+                hasattr(self.video, "set_subtitle_ass_force_margins")
+                and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
+            ):
+                self.video.set_subtitle_ass_force_margins("yes")
+            if not subtitle_path_text:
+                raise ValueError("弹幕为空")
+            self._attach_danmaku_subtitle_file(Path(subtitle_path_text), line_count)
+        except Exception as exc:
+            if self._should_retry_danmaku_load(exc):
+                self._schedule_danmaku_retry()
+                return
+            self._append_log(f"弹幕加载失败: {exc}")
+            self._clear_active_danmaku()
+            self._reset_danmaku_combo(enabled=True, current_index=1)
+
+    def _handle_danmaku_render_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._danmaku_render_request_id:
+            return
+        self._pending_danmaku_render_item = None
+        self._append_log(f"弹幕加载失败: {message}")
+        self._clear_active_danmaku()
+        self._reset_danmaku_combo(enabled=True, current_index=1)
+
     def _enable_danmaku(self, line_count: int) -> None:
         xml_text = self._current_play_item_danmaku_xml()
         if not xml_text:
+            return
+        if self._should_render_danmaku_async():
+            self._start_async_danmaku_render(xml_text, line_count)
             return
         if self._danmaku_restore_secondary_position is None:
             self._danmaku_restore_secondary_position = self._secondary_subtitle_position
@@ -5124,19 +5300,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
         ):
             self.video.set_subtitle_ass_force_margins("yes")
-        self._clear_active_danmaku(restore_position=False)
         subtitle_path = self._write_danmaku_subtitle_file(xml_text, line_count)
         if subtitle_path is None:
             raise ValueError("弹幕为空")
-        if not hasattr(self.video, "load_external_subtitle"):
-            raise RuntimeError("播放器不支持外挂弹幕")
-        track_id = self._load_primary_danmaku_subtitle(subtitle_path)
-        if track_id is None:
-            raise RuntimeError("播放器未返回弹幕轨道")
-        self._danmaku_track_id = track_id
-        self._danmaku_active = True
-        self._danmaku_line_count = line_count
-        # self._append_log(f"已加载弹幕文件: {subtitle_path}")
+        self._attach_danmaku_subtitle_file(subtitle_path, line_count)
 
     def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
         self._danmaku_loading_slot = "primary"
@@ -7618,7 +7785,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
-        self.video_widget.shutdown()
+        if sys.platform.startswith("win"):
+            self.video_widget.suspend()
+        else:
+            self.video_widget.shutdown()
         self.hide()
         self.closed_to_main.emit()
 

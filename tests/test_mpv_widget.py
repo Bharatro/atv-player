@@ -1,4 +1,5 @@
 import sys
+import threading
 import time
 import types
 
@@ -217,15 +218,18 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
             self._track_list_observer = None
             self._video_out_observer = None
             self._eof_reached_observer = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1121,7 +1125,29 @@ def test_mpv_widget_enables_mpv_terminal_logging_only_when_debug_is_requested(qt
     widget._create_player()
 
     assert captured["log_handler"] is print
-    assert captured["loglevel"] == "warn"
+    assert captured["loglevel"] == "debug"
+
+
+def test_mpv_widget_uses_conservative_windows_renderer_defaults(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdlp_path", lambda: "")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options", lambda **_kwargs: "")
+
+    widget._create_player()
+
+    assert captured["vo"] == "gpu"
+    assert captured["gpu_context"] == "d3d11"
+    assert captured["hwdec"] == "auto-safe"
+    assert "gpu_api" not in captured
 
 
 def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_name(qtbot, monkeypatch) -> None:
@@ -1173,12 +1199,15 @@ def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypa
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1208,15 +1237,18 @@ def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) 
             self.loadfile_calls: list[tuple[str, dict[str, object]]] = []
             self.options: dict[str, object] = {}
             self._end_file_callback = None
+            self._file_loaded_callback = None
             self._track_list_observer = None
             self._video_out_observer = None
             self._eof_reached_observer = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1267,12 +1299,15 @@ def test_mpv_widget_emits_playback_failed_with_reason_from_end_file_event(qtbot,
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1306,12 +1341,15 @@ def test_mpv_widget_does_not_treat_aborted_end_file_as_failure(qtbot, monkeypatc
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1338,12 +1376,15 @@ def test_mpv_widget_emits_playback_failed_with_unknown_error_fallback(qtbot, mon
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1370,12 +1411,15 @@ def test_mpv_widget_formats_numeric_mpv_error_codes_from_end_file_event(qtbot, m
             self.play_calls: list[str] = []
             self.pause = False
             self._end_file_callback = None
+            self._file_loaded_callback = None
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1529,13 +1573,16 @@ def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> N
     class FakePlayer:
         def __init__(self) -> None:
             self._end_file_callback = None
+            self._file_loaded_callback = None
             self.observed_properties: list[str] = []
 
         def event_callback(self, *event_types):
-            assert event_types == ("end-file",)
-
             def register(callback):
-                self._end_file_callback = callback
+                if event_types == ("end-file",):
+                    self._end_file_callback = callback
+                else:
+                    assert event_types == ("file-loaded",)
+                    self._file_loaded_callback = callback
                 return callback
 
             return register
@@ -1552,7 +1599,66 @@ def test_mpv_widget_skips_property_observers_on_windows(qtbot, monkeypatch) -> N
     widget._register_player_events()
 
     assert callable(player._end_file_callback)
+    assert callable(player._file_loaded_callback)
     assert player.observed_properties == []
+
+
+def test_mpv_widget_routes_windows_property_sets_to_gui_thread(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    main_thread_id = threading.get_ident()
+    background_thread_id: int | None = None
+    command_calls: list[tuple[tuple[object, ...], int]] = []
+
+    class FakePlayer:
+        core_shutdown = False
+
+        def command(self, *args) -> None:
+            command_calls.append((args, threading.get_ident()))
+
+    widget._player = FakePlayer()
+
+    def run() -> None:
+        nonlocal background_thread_id
+        background_thread_id = threading.get_ident()
+        widget.set_speed(1.5)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join()
+    qtbot.waitUntil(lambda: len(command_calls) == 1, timeout=1000)
+
+    assert background_thread_id is not None
+    assert command_calls == [(("set", "speed", "1.5"), main_thread_id)]
+    assert command_calls[0][1] != background_thread_id
+
+
+def test_mpv_widget_skips_redundant_windows_property_sets(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    command_calls: list[tuple[object, ...]] = []
+
+    class FakePlayer:
+        core_shutdown = False
+
+        def command(self, *args) -> None:
+            command_calls.append(args)
+
+    widget._player = FakePlayer()
+
+    widget.set_speed(1.25)
+    widget.set_speed(1.25)
+    widget.set_muted(True)
+    widget.set_muted(True)
+
+    assert command_calls == [
+        ("set", "speed", "1.25"),
+        ("set", "mute", "yes"),
+    ]
 
 
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
