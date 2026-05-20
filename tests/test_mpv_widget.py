@@ -2013,7 +2013,9 @@ def test_mpv_widget_still_raises_when_removing_existing_subtitle_track_fails(qtb
     assert player.command_calls == [("sub-remove", 99)]
 
 
-def test_mpv_widget_disables_track_queries_and_external_subtitles_on_windows(qtbot, monkeypatch, tmp_path) -> None:
+def test_mpv_widget_disables_track_queries_but_still_loads_external_subtitles_on_windows(
+    qtbot, monkeypatch, tmp_path
+) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
@@ -2035,9 +2037,9 @@ def test_mpv_widget_disables_track_queries_and_external_subtitles_on_windows(qtb
 
     assert widget.subtitle_tracks() == []
     assert widget.audio_tracks() == []
-    assert widget.load_external_subtitle(str(subtitle_path), select_for_secondary=True) is None
+    assert widget.load_external_subtitle(str(subtitle_path), select_for_secondary=False) is None
     widget.remove_subtitle_track(1)
-    assert widget._player.command_calls == []
+    assert widget._player.command_calls == [("sub-add", str(subtitle_path), "select")]
 
 
 def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:

@@ -1399,6 +1399,8 @@ class MpvWidget(QWidget):
         if self._player is None:
             return None
         if sys.platform.startswith("win"):
+            mode = "auto" if select_for_secondary else "select"
+            self._player.command("sub-add", path, mode)
             return None
         before_ids = self._subtitle_track_ids()
         try:

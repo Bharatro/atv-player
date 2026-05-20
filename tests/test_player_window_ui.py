@@ -14793,6 +14793,92 @@ def test_player_window_refresh_button_reloads_selected_external_subtitle(qtbot, 
     assert window.subtitle_combo.currentText() == "中文 [B站]"
 
 
+def test_player_window_refresh_button_reloads_selected_external_subtitle_on_windows_without_track_id(
+    qtbot, monkeypatch
+) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return None
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(player_window_module.sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("1\n00:00:00,000 --> 00:00:01,000\n你好\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV1", vod_name="B站视频"),
+        playlist=[
+            PlayItem(
+                title="第1话",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://www.bilibili.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="中文 [B站]",
+                        lang="ai-zh",
+                        url="http://sub/zh.srt",
+                        format="application/x-subrip",
+                        source="bilibili",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.subtitle_combo.setCurrentIndex(2)
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+
+    window.refresh_button.click()
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == []
+    assert window.subtitle_combo.currentText() == "中文 [B站]"
+    assert window._primary_external_subtitle_retry_timer.isActive() is False
+    assert "字幕切换失败" not in window.log_view.toPlainText()
+
+
 def test_player_window_play_next_reloads_selected_spider_karaoke_subtitle_for_new_item(qtbot, tmp_path) -> None:
     class FakeVideo:
         def __init__(self) -> None:
@@ -19028,6 +19114,76 @@ def test_player_window_resume_from_main_reloads_active_danmaku(qtbot) -> None:
     assert len(window.video.loaded_danmaku_paths) == initial_count + 1
     assert window.video.removed_danmaku_track_ids == [70]
     assert window.video.load_calls == [("http://m/1.m3u8", 0), ("http://m/1.m3u8", 30)]
+
+
+def test_player_window_loads_danmaku_on_windows_without_track_id(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_danmaku_paths: list[str] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            return None
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+    monkeypatch.setattr(player_window_module.sys, "platform", "win32")
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="Episode 1",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert len(window.video.loaded_danmaku_paths) == 1
+    assert window.video.subtitle_apply_calls == []
+    assert window.danmaku_combo.currentText() == "弹幕"
+    assert window._danmaku_active is True
+    assert "弹幕加载失败" not in window.log_view.toPlainText()
 
 
 def test_player_window_close_during_quit_clears_session_for_future_restore(qtbot) -> None:
