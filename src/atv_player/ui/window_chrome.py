@@ -44,7 +44,6 @@ class CustomTitleBar(QWidget):
         super().__init__(parent)
         self.setObjectName("customTitleBar")
         self._drag_offset: QPoint | None = None
-        self._drag_restore_ratio = 0.5
         self.setFixedHeight(46)
 
         self.title_label = QLabel("", self)
@@ -104,54 +103,22 @@ class CustomTitleBar(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             window = self.window()
-            if window is not None:
-                if window.isMaximized():
-                    window_width = max(1, window.width())
-                    self._drag_restore_ratio = event.position().x() / window_width
-                    self._drag_offset = None
-                else:
-                    self._drag_offset = event.globalPosition().toPoint() - window.frameGeometry().topLeft()
+            if window is not None and not window.isMaximized():
+                self._drag_offset = event.globalPosition().toPoint() - window.frameGeometry().topLeft()
                 event.accept()
                 return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() & Qt.MouseButton.LeftButton:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             window = self.window()
-            if window is not None:
-                global_pos = event.globalPosition().toPoint()
-                if window.isMaximized():
-                    normal_geometry = window.normalGeometry()
-                    if not normal_geometry.isValid():
-                        normal_geometry = window.geometry()
-                    restore_x = int(normal_geometry.width() * self._drag_restore_ratio)
-                    restore_y = min(self.height() // 2, normal_geometry.height())
-                    target_top_left = QPoint(global_pos.x() - restore_x, global_pos.y() - restore_y)
-                    window.showNormal()
-                    window.move(target_top_left)
-                    self._drag_offset = global_pos - target_top_left
-                    event.accept()
-                    return
-                if self._drag_offset is not None:
-                    window.move(global_pos - self._drag_offset)
-                    event.accept()
-                    return
+            if window is not None and not window.isMaximized():
+                window.move(event.globalPosition().toPoint() - self._drag_offset)
+                event.accept()
+                return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        window = self.window()
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self._drag_offset is not None
-            and window is not None
-            and not window.isMaximized()
-            and self.maximize_button.isVisible()
-            and event.globalPosition().toPoint().y() <= 0
-        ):
-            window.showMaximized()
-            self._drag_offset = None
-            event.accept()
-            return
         self._drag_offset = None
         super().mouseReleaseEvent(event)
 
@@ -198,7 +165,7 @@ class _ThemedChromeMixin:
             allow_minimize=allow_minimize,
             allow_maximize=allow_maximize,
         )
-        self._install_resize_event_filter_tree(self._title_bar)
+        self._install_resize_event_filter(self._title_bar)
         self._window_chrome_layout.addWidget(self._title_bar)
 
         self._window_chrome_content = QWidget(self._window_chrome_root)
@@ -206,7 +173,7 @@ class _ThemedChromeMixin:
         self._window_chrome_content_layout = QVBoxLayout(self._window_chrome_content)
         self._window_chrome_content_layout.setContentsMargins(0, 0, 0, 0)
         self._window_chrome_content_layout.setSpacing(0)
-        self._install_resize_event_filter_tree(self._window_chrome_content)
+        self._install_resize_event_filter(self._window_chrome_content)
         self._window_chrome_layout.addWidget(self._window_chrome_content, 1)
 
         self._title_bar.minimize_requested.connect(self.showMinimized)
@@ -265,16 +232,8 @@ class _ThemedChromeMixin:
         return region
 
     def _install_resize_event_filter(self, widget: QWidget) -> None:
-        if bool(widget.property("_resize_event_filter_installed")):
-            return
         widget.installEventFilter(self)
         widget.setMouseTracking(True)
-        widget.setProperty("_resize_event_filter_installed", True)
-
-    def _install_resize_event_filter_tree(self, widget: QWidget) -> None:
-        self._install_resize_event_filter(widget)
-        for child in widget.findChildren(QWidget):
-            self._install_resize_event_filter(child)
 
     def _cursor_shape_for_resize_region(self, region: _ResizeRegion) -> Qt.CursorShape:
         if region in (_ResizeRegion.TOP_LEFT, _ResizeRegion.BOTTOM_RIGHT):
@@ -378,14 +337,9 @@ class _ThemedChromeMixin:
         super().childEvent(event)
         child = event.child()
         if isinstance(child, QWidget):
-            self._install_resize_event_filter_tree(child)
+            self._install_resize_event_filter(child)
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.Type.ChildAdded:
-            child_getter = getattr(event, "child", None)
-            child = child_getter() if callable(child_getter) else None
-            if isinstance(child, QWidget):
-                self._install_resize_event_filter_tree(child)
         if isinstance(event, QMouseEvent):
             if event.type() == QEvent.Type.MouseButtonPress and self._handle_resize_mouse_press(event):
                 return True
@@ -413,7 +367,7 @@ class _ThemedChromeMixin:
         super().mouseReleaseEvent(event)
 
 
-class ThemedWidgetWindowBase(_ThemedChromeMixin, QWidget):
+class ThemedWidgetWindowBase(QWidget, _ThemedChromeMixin):
     def __init__(
         self,
         *,
@@ -459,7 +413,7 @@ class ThemedDialogBase(_ThemedChromeMixin, QDialog):
         root_layout.addWidget(self._window_chrome_root)
 
 
-class ThemedMainWindowBase(_ThemedChromeMixin, QMainWindow):
+class ThemedMainWindowBase(QMainWindow, _ThemedChromeMixin):
     def __init__(
         self,
         *,

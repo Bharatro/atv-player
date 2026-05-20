@@ -25,7 +25,6 @@ from atv_player.ui.theme import (
     FlatComboBox,
     build_form_combobox_qss,
     build_form_line_edit_qss,
-    build_navigation_tabbar_qss,
     configure_form_flat_combobox,
     current_tokens,
 )
@@ -216,7 +215,6 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
-        self.settings_tabs.tabBar().setStyleSheet(build_navigation_tabbar_qss(tokens))
         combo_qss = build_form_combobox_qss(tokens)
         line_edit_qss = build_form_line_edit_qss(tokens)
         for combo in (

@@ -3863,25 +3863,6 @@ def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None
     )
 
 
-def test_advanced_settings_dialog_tabs_use_explicit_dark_theme_text_colors(qtbot) -> None:
-    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
-    from atv_player.ui.theme import ThemeManager, install_theme
-
-    app = QApplication.instance() or QApplication([])
-    manager = ThemeManager(system_theme_getter=lambda: "dark")
-    install_theme(app, manager, "dark")
-
-    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
-    qtbot.addWidget(dialog)
-
-    tokens = manager.tokens_for("dark")
-    stylesheet = dialog.settings_tabs.tabBar().styleSheet()
-
-    assert f"color: {tokens.text_primary};" in stylesheet
-    assert f"color: {tokens.accent};" in stylesheet
-    assert f"background: {tokens.panel_alt_bg};" in stylesheet
-
-
 def test_advanced_settings_dialog_applies_branded_line_edit_styles(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
