@@ -212,6 +212,8 @@ def test_build_navigation_tabbar_qss_uses_explicit_dark_theme_text_colors() -> N
     assert f"color: {tokens.accent};" in qss
     assert f"background: {tokens.panel_alt_bg};" in qss
     assert f"border-color: {tokens.input_hover_border};" in qss
+    assert "padding: 8px 8px;" in qss
+    assert "margin-right: 2px;" in qss
 
 
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:

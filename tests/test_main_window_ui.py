@@ -321,6 +321,19 @@ def test_main_window_navigation_tabs_use_explicit_dark_theme_text_colors(qtbot) 
     assert f"background: {tokens.panel_alt_bg};" in stylesheet
 
 
+def test_main_window_navigation_tabs_do_not_use_scroll_buttons(qtbot) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.nav_tabs.tab_bar.usesScrollButtons() is False
+    assert window.nav_tabs.tab_bar.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
 def test_global_search_popup_action_button_qss_uses_disabled_button_text_token() -> None:
     from atv_player.ui.theme import ThemeManager, current_tokens, install_theme
 
@@ -1266,6 +1279,43 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
     assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件3", "插件4", "插件5"]
 
 
+def test_main_window_keeps_trailing_tabs_visible_when_more_button_is_shown(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        bilibili_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {
+                "id": f"plugin-{index}",
+                "title": f"插件{index}",
+                "controller": FakeSpiderController(f"插件{index}"),
+                "search_enabled": True,
+            }
+            for index in range(1, 4)
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+        show_bilibili_tab=True,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window._refresh_navigation_tabs()
+
+    assert window.plugin_overflow_button.isVisible() is True
+    last_index = window.nav_tabs.count() - 1
+    last_rect = window.nav_tabs.tab_bar.tabRect(last_index)
+
+    assert window.nav_tabs.tabText(last_index) == "播放记录"
+    assert last_rect.right() <= window.nav_tabs.tab_bar.width()
+
+
 def test_main_window_hides_more_button_when_all_plugin_tabs_fit(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
@@ -1293,6 +1343,34 @@ def test_main_window_hides_more_button_when_all_plugin_tabs_fit(qtbot, monkeypat
 
     assert window.plugin_overflow_button.isVisible() is False
     assert window._hidden_plugin_tab_definitions == []
+
+
+def test_main_window_available_plugin_width_reserves_more_button_space_when_overflowing(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": "plugin-1", "title": "插件1", "controller": FakeSpiderController("插件1"), "search_enabled": True},
+            {"id": "plugin-2", "title": "插件2", "controller": FakeSpiderController("插件2"), "search_enabled": True},
+            {"id": "plugin-3", "title": "插件3", "controller": FakeSpiderController("插件3"), "search_enabled": True},
+        ],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    monkeypatch.setattr(window, "_plugin_overflow_button_width", lambda: 84)
+    monkeypatch.setattr(window.nav_tabs.tab_bar, "width", lambda: 804)
+    monkeypatch.setattr(window.nav_tabs, "width", lambda: 804)
+
+    assert window._available_plugin_tab_width() == 8
 
 
 def test_main_window_hides_all_plugin_tabs_when_fixed_tabs_exhaust_width(qtbot, monkeypatch) -> None:

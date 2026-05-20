@@ -1061,6 +1061,7 @@ class _NavigationTabs(QWidget):
         self.tab_bar.setMovable(False)
         self.tab_bar.setDocumentMode(True)
         self.tab_bar.setUsesScrollButtons(False)
+        self.tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.plugin_overflow_button = QPushButton("更多", self)
         self.plugin_overflow_button.hide()
         self.content_stack = QStackedWidget(self)
@@ -1668,7 +1669,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _apply_navigation_tab_theme(self) -> None:
         tokens = current_tokens()
         self.nav_tabs.tab_bar.setStyleSheet(build_navigation_tabbar_qss(tokens))
-        self.plugin_overflow_button.setStyleSheet(build_pill_button_qss(tokens))
+        self.plugin_overflow_button.setStyleSheet(
+            build_pill_button_qss(tokens, border_radius=12, horizontal_padding=8)
+        )
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
@@ -1750,12 +1753,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return max(self.plugin_overflow_button.sizeHint().width(), 84)
 
     def _available_plugin_tab_width(self) -> int:
+        button_spacing = 8
         tab_bar_width = self.nav_tabs.tab_bar.width()
-        if tab_bar_width <= 0:
-            tab_bar_width = max(
-                self.nav_tabs.width() - self._plugin_overflow_button_width() - 8,
-                0,
-            )
+        total_nav_width = tab_bar_width
+        if self.plugin_overflow_button.isVisible():
+            total_nav_width += self._plugin_overflow_button_width() + button_spacing
+        if total_nav_width <= 0:
+            total_nav_width = max(self.nav_tabs.width(), 0)
         static_width = sum(
             self._plugin_tab_title_width(definition.title)
             for definition in self._static_tab_definitions
@@ -1766,7 +1770,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             for definition in self._trailing_tab_definitions
             if not definition.global_search_only
         )
-        available = tab_bar_width - static_width - trailing_width
+        available = total_nav_width - static_width - trailing_width
+        total_plugin_width = sum(
+            self._plugin_tab_title_width(definition.title)
+            for definition in self._plugin_tab_definitions
+        )
+        if self._plugin_tab_definitions and total_plugin_width > available:
+            available -= self._plugin_overflow_button_width() + button_spacing
         return max(available, 0)
 
     def _split_visible_and_hidden_plugin_tabs(self) -> tuple[list[_TabDefinition], list[_TabDefinition]]:

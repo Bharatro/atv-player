@@ -791,7 +791,14 @@ def build_round_icon_button_qss(
     """
 
 
-def build_pill_button_qss(tokens: ThemeTokens, *, checked_accent: bool = False) -> str:
+def build_pill_button_qss(
+    tokens: ThemeTokens,
+    *,
+    checked_accent: bool = False,
+    border_radius: int = 14,
+    vertical_padding: int = 4,
+    horizontal_padding: int = 12,
+) -> str:
     checked_block = ""
     if checked_accent:
         checked_block = f"""
@@ -810,8 +817,8 @@ def build_pill_button_qss(tokens: ThemeTokens, *, checked_accent: bool = False) 
         background-color: {tokens.input_bg};
         color: {tokens.text_primary};
         border: 1px solid {tokens.input_border};
-        border-radius: 14px;
-        padding: 4px 12px;
+        border-radius: {border_radius}px;
+        padding: {vertical_padding}px {horizontal_padding}px;
     }}
     QPushButton:hover {{
         background-color: {tokens.panel_alt_bg};
@@ -832,8 +839,8 @@ def build_navigation_tabbar_qss(tokens: ThemeTokens) -> str:
     QTabBar::tab {{
         background: transparent;
         color: {tokens.text_primary};
-        padding: 8px 14px;
-        margin-right: 6px;
+        padding: 8px 8px;
+        margin-right: 2px;
         border: 1px solid transparent;
         border-radius: 14px;
     }}
