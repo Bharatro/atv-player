@@ -44,7 +44,21 @@ class SohuDanmakuProvider:
         return self._expand_search_items(items, query_name=name, original_name=original_name or name)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
-        raise DanmakuResolveError("搜狐弹幕解析尚未实现")
+        context = dict(self._resolve_context_by_url.get(page_url) or {})
+        aid = str(context.get("aid") or "").strip()
+        vid = str(context.get("vid") or "").strip()
+        duration_seconds = int(context.get("duration_seconds") or 0)
+        if not aid or not vid:
+            page_aid, page_vid = self._extract_ids_from_page(page_url)
+            aid = aid or page_aid
+            vid = vid or page_vid
+        if not aid or not vid:
+            raise DanmakuResolveError("搜狐页面缺少 aid 或 vid")
+        duration_seconds = duration_seconds or self._duration_for_video(aid, vid)
+        records = self._fetch_danmaku_records(aid, vid, duration_seconds or 300)
+        if not records:
+            raise DanmakuResolveError("搜狐弹幕分段解析失败")
+        return sorted(records, key=lambda record: (record.time_offset, record.content))
 
     def _expand_search_items(self, raw_items: list[dict], *, query_name: str, original_name: str) -> list[DanmakuSearchItem]:
         requested_episode = extract_episode_number(original_name)
@@ -140,6 +154,67 @@ class SohuDanmakuProvider:
         videos = payload.get("videos")
         return videos if isinstance(videos, list) else []
 
+    def _extract_ids_from_page(self, page_url: str) -> tuple[str, str]:
+        response = self._get(
+            page_url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://tv.sohu.com/"},
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        aid_match = re.search(r'id="aid"[^>]*value=["\'](\d+)["\']', response.text)
+        playlist_match = re.search(r'playlistId="(\d+)"', response.text)
+        vid_match = re.search(r'vid="(\d+)"', response.text)
+        return (
+            aid_match.group(1) if aid_match else (playlist_match.group(1) if playlist_match else ""),
+            vid_match.group(1) if vid_match else "",
+        )
+
+    def _duration_for_video(self, aid: str, vid: str) -> int:
+        for video in self._playlist_videos(aid):
+            if str(video.get("vid") or "").strip() != vid:
+                continue
+            return int(video.get("playLength") or 0)
+        return 0
+
+    def _fetch_danmaku_records(self, aid: str, vid: str, duration_seconds: int) -> list[DanmakuRecord]:
+        records: list[DanmakuRecord] = []
+        failures = 0
+        seen: set[tuple[float, str]] = set()
+        for start in range(0, max(duration_seconds, 1), 300):
+            response = self._get(
+                "https://api.danmu.tv.sohu.com/dmh5/dmListAll",
+                params={
+                    "act": "dmlist_v2",
+                    "vid": vid,
+                    "aid": aid,
+                    "pct": "2",
+                    "time_begin": start,
+                    "time_end": min(start + 300, duration_seconds),
+                    "dct": "1",
+                    "request_from": "h5_js",
+                },
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://tv.sohu.com/"},
+                follow_redirects=True,
+                timeout=10.0,
+            )
+            try:
+                payload = response.json()
+            except Exception:
+                failures += 1
+                continue
+            for comment in ((payload.get("info") or {}).get("comments") or []):
+                record = self._comment_to_record(comment)
+                if record is None:
+                    continue
+                key = (record.time_offset, record.content)
+                if key in seen:
+                    continue
+                seen.add(key)
+                records.append(record)
+        if failures > 0 and not records:
+            raise DanmakuResolveError("搜狐弹幕分段解析失败")
+        return records
+
     def _pick_movie_video(self, title: str, videos: list[dict]) -> dict | None:
         candidates = [video for video in videos if not self._is_noise_title(str(video.get("video_name") or ""))]
         if not candidates:
@@ -207,3 +282,20 @@ class SohuDanmakuProvider:
 
     def _is_noise_title(self, title: str) -> bool:
         return any(keyword in title for keyword in self._NOISE_KEYWORDS)
+
+    def _comment_to_record(self, comment: dict) -> DanmakuRecord | None:
+        content = str(comment.get("c") or "").strip()
+        if not content:
+            return None
+        color_text = str(((comment.get("t") or {}).get("c")) or "#ffffff").strip().lstrip("#")
+        try:
+            color = str(int(color_text, 16))
+        except ValueError:
+            color = "16777215"
+        position = int(((comment.get("t") or {}).get("p")) or 1)
+        return DanmakuRecord(
+            time_offset=round(float(comment.get("v") or 0), 3),
+            pos=self._POSITION_MAP.get(position, 1),
+            color=color,
+            content=content,
+        )

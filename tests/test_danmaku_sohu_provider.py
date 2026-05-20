@@ -1,5 +1,7 @@
 import httpx
+import pytest
 
+from atv_player.danmaku.errors import DanmakuResolveError
 from atv_player.danmaku.providers.sohu import SohuDanmakuProvider
 
 
@@ -156,3 +158,106 @@ def test_sohu_search_keeps_variety_issue_candidates() -> None:
 
     assert [item.name for item in items] == ["哈哈哈哈哈第6季 20260411期 第2期上"]
     assert items[0].resolve_context["variety_year"] == "20260411"
+
+
+def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:
+    calls: list[tuple[str, dict | None]] = []
+
+    def fake_get(url: str, **kwargs):
+        calls.append((url, kwargs.get("params")))
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "第一条",
+                                "v": 12.5,
+                                "uid": "u1",
+                                "created": "1710000000",
+                                "t": {"p": 1, "c": "#ffffff"},
+                            },
+                            {
+                                "i": "c2",
+                                "c": "顶部",
+                                "v": 18.0,
+                                "uid": "u2",
+                                "created": "1710000001",
+                                "t": {"p": 4, "c": "#ff0000"},
+                            },
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(200, json={"videos": [{"vid": "9002", "playLength": 120}]})
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/dXMvOTAwMi8=.html",
+        {"aid": "200001", "vid": "9002", "duration_seconds": 120},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/dXMvOTAwMi8=.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (12.5, 1, "16777215", "第一条"),
+        (18.0, 5, "16711680", "顶部"),
+    ]
+    assert all(url != "https://tv.sohu.com/v/dXMvOTAwMi8=.html" for url, _ in calls)
+
+
+def test_sohu_resolve_falls_back_to_page_html_for_aid_and_vid() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://tv.sohu.com/v/demo.html":
+            return httpx.Response(
+                200,
+                text='<html><input id="aid" value="500001" /><script>var vid="9999";</script></html>',
+            )
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "回退成功",
+                                "v": 3.0,
+                                "uid": "u1",
+                                "created": "1710000002",
+                                "t": {"p": 5, "c": "#00ff00"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider._duration_for_video = lambda aid, vid: 60
+
+    records = provider.resolve("https://tv.sohu.com/v/demo.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (3.0, 4, "65280", "回退成功"),
+    ]
+
+
+def test_sohu_resolve_raises_when_all_segments_are_unusable() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(200, text="{bad json")
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/demo.html",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 60},
+    )
+
+    with pytest.raises(DanmakuResolveError, match="搜狐弹幕分段解析失败"):
+        provider.resolve("https://tv.sohu.com/v/demo.html")
