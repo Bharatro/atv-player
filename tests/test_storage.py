@@ -1782,6 +1782,82 @@ def test_spider_plugin_repository_reorder_plugins_rejects_stale_plugin_ids(tmp_p
     assert [plugin.id for plugin in repo.list_plugins()] == [plugin1.id, plugin2.id, plugin3.id]
 
 
+def test_spider_plugin_repository_round_trips_category_overrides_json(tmp_path: Path) -> None:
+    repo = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repo.add_plugin("local", "/plugins/demo.py", "演示插件")
+
+    repo.set_plugin_category_overrides(
+        plugin.id,
+        '{"order":["movie","tv"],"hidden":["adult"],"renames":{"movie":"影片"}}',
+    )
+
+    saved = repo.get_plugin(plugin.id)
+
+    assert saved.category_overrides_json == (
+        '{"order":["movie","tv"],"hidden":["adult"],"renames":{"movie":"影片"}}'
+    )
+
+
+def test_spider_plugin_repository_migrates_missing_category_overrides_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_value TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL,
+                cached_file_path TEXT NOT NULL DEFAULT '',
+                last_loaded_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                config_text TEXT NOT NULL DEFAULT '',
+                plugin_version INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugins (
+                id, source_type, source_value, display_name, enabled, sort_order,
+                cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+            )
+            VALUES (1, 'local', '/plugins/demo.py', '演示插件', 1, 0, '', 0, '', '', 1)
+            """
+        )
+
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.get_plugin(1)
+
+    assert plugin.category_overrides_json == ""
+    repo.set_plugin_category_overrides(1, '{"order":["tv"]}')
+    assert repo.get_plugin(1).category_overrides_json == '{"order":["tv"]}'
+
+
+def test_spider_plugin_repository_partial_updates_preserve_category_overrides_json(tmp_path: Path) -> None:
+    repo = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repo.add_plugin("local", "/plugins/demo.py", "演示插件")
+    repo.set_plugin_category_overrides(plugin.id, '{"renames":{"movie":"影片"}}')
+
+    repo.update_plugin(
+        plugin.id,
+        display_name="演示插件新",
+        enabled=False,
+        cached_file_path="",
+        last_loaded_at=1713206400,
+        last_error="",
+        config_text="token=updated",
+    )
+
+    saved = repo.get_plugin(plugin.id)
+
+    assert saved.display_name == "演示插件新"
+    assert saved.config_text == "token=updated"
+    assert saved.category_overrides_json == '{"renames":{"movie":"影片"}}'
+
+
 def test_spider_plugin_repository_round_trip_playback_history(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SpiderPluginRepository(db_path)
@@ -2090,6 +2166,46 @@ def test_spider_plugin_repository_migrates_missing_config_text_column(tmp_path: 
     )
 
     assert repo.get_plugin(1).config_text == "token=updated"
+
+
+def test_spider_plugin_repository_migrates_missing_category_overrides_column_on_legacy_config_row(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_value TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL,
+                cached_file_path TEXT NOT NULL DEFAULT '',
+                last_loaded_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                config_text TEXT NOT NULL DEFAULT '',
+                plugin_version INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugins (
+                source_type, source_value, display_name, enabled, sort_order,
+                cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+            )
+            VALUES ('local', '/plugins/红果短剧.py', '红果短剧', 1, 0, '', 0, '', 'token=updated', 1)
+            """
+        )
+
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.get_plugin(1)
+
+    assert plugin.category_overrides_json == ""
+    repo.set_plugin_category_overrides(1, '{"order":["tv"]}')
+    assert repo.get_plugin(1).category_overrides_json == '{"order":["tv"]}'
 
 
 def test_spider_plugin_repository_partial_updates_do_not_overwrite_other_fields(tmp_path: Path) -> None:

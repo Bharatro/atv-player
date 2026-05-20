@@ -38,7 +38,9 @@ class SpiderPluginRepository:
                     cached_file_path TEXT NOT NULL DEFAULT '',
                     last_loaded_at INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT NOT NULL DEFAULT '',
-                    config_text TEXT NOT NULL DEFAULT ''
+                    config_text TEXT NOT NULL DEFAULT '',
+                    plugin_version INTEGER NOT NULL DEFAULT 1,
+                    category_overrides_json TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -47,6 +49,8 @@ class SpiderPluginRepository:
                 conn.execute("ALTER TABLE spider_plugins ADD COLUMN config_text TEXT NOT NULL DEFAULT ''")
             if "plugin_version" not in plugin_columns:
                 conn.execute("ALTER TABLE spider_plugins ADD COLUMN plugin_version INTEGER NOT NULL DEFAULT 1")
+            if "category_overrides_json" not in plugin_columns:
+                conn.execute("ALTER TABLE spider_plugins ADD COLUMN category_overrides_json TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS spider_plugin_logs (
@@ -114,9 +118,10 @@ class SpiderPluginRepository:
                 """
                 INSERT INTO spider_plugins (
                     source_type, source_value, display_name, enabled, sort_order,
-                    cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+                    cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
+                    category_overrides_json
                 )
-                VALUES (?, ?, ?, ?, ?, '', 0, '', '', ?)
+                VALUES (?, ?, ?, ?, ?, '', 0, '', '', ?, '')
                 """,
                 (source_type, source_value, display_name, int(enabled), next_order, int(plugin_version)),
             )
@@ -127,7 +132,8 @@ class SpiderPluginRepository:
             row = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
+                       category_overrides_json
                 FROM spider_plugins
                 WHERE id = ?
                 """,
@@ -144,7 +150,8 @@ class SpiderPluginRepository:
             rows = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
+                       category_overrides_json
                 FROM spider_plugins
                 ORDER BY sort_order ASC, id ASC
                 """
@@ -168,13 +175,17 @@ class SpiderPluginRepository:
         last_error: str,
         config_text: str,
         plugin_version: int = 1,
+        category_overrides_json: str | None = None,
     ) -> None:
+        if category_overrides_json is None:
+            category_overrides_json = self.get_plugin(plugin_id).category_overrides_json
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE spider_plugins
                 SET display_name = ?, enabled = ?, cached_file_path = ?,
-                    last_loaded_at = ?, last_error = ?, config_text = ?, plugin_version = ?
+                    last_loaded_at = ?, last_error = ?, config_text = ?, plugin_version = ?,
+                    category_overrides_json = ?
                 WHERE id = ?
                 """,
                 (
@@ -185,6 +196,7 @@ class SpiderPluginRepository:
                     last_error,
                     config_text,
                     int(plugin_version),
+                    category_overrides_json,
                     plugin_id,
                 ),
             )
@@ -210,12 +222,20 @@ class SpiderPluginRepository:
                 (config_text, plugin_id),
             )
 
+    def set_plugin_category_overrides(self, plugin_id: int, category_overrides_json: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE spider_plugins SET category_overrides_json = ? WHERE id = ?",
+                (category_overrides_json, plugin_id),
+            )
+
     def find_plugin_by_source_value(self, source_value: str) -> SpiderPluginConfig | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
+                       category_overrides_json
                 FROM spider_plugins
                 WHERE source_value = ?
                 """,

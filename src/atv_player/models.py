@@ -226,6 +226,20 @@ class DoubanCategory:
 
 
 @dataclass(slots=True)
+class SpiderPluginCategoryOverrides:
+    order: list[str] = field(default_factory=list)
+    hidden: list[str] = field(default_factory=list)
+    renames: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SpiderPluginRawCategory:
+    type_id: str
+    type_name: str
+    filters: list[CategoryFilter] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class VodItem:
     vod_id: str
     vod_name: str
@@ -350,6 +364,7 @@ class SpiderPluginConfig:
     last_error: str = ""
     config_text: str = ""
     plugin_version: int = 1
+    category_overrides_json: str = ""
 
 
 @dataclass(slots=True)

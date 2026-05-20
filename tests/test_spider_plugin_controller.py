@@ -596,6 +596,7 @@ class FilterSpider(FakeSpider):
             "class": [
                 {"type_id": "movie", "type_name": "电影"},
                 {"type_id": "tv", "type_name": "剧集"},
+                {"type_id": "adult", "type_name": "成人视频"},
             ],
             "filters": {
                 "movie": [
@@ -740,6 +741,61 @@ def test_controller_ignores_filters_for_home_category_items() -> None:
     controller.load_items("home", 1, filters={"sc": "6"})
 
     assert spider.category_calls == []
+
+
+def test_controller_applies_category_overrides_without_changing_type_ids() -> None:
+    controller = SpiderPluginController(
+        FilterSpider(),
+        plugin_name="筛选插件",
+        search_enabled=True,
+        category_overrides_json='{"order":["tv","movie"],"hidden":["adult"],"renames":{"tv":"剧集","movie":"影片"}}',
+    )
+
+    categories = controller.load_categories()
+
+    assert [(item.type_id, item.type_name) for item in categories] == [
+        ("tv", "剧集"),
+        ("movie", "影片"),
+    ]
+
+
+def test_controller_appends_new_categories_not_present_in_saved_order() -> None:
+    class ExtraCategorySpider(FilterSpider):
+        def homeContent(self, filter):
+            payload = super().homeContent(filter)
+            payload["class"].append({"type_id": "variety", "type_name": "综艺"})
+            return payload
+
+    controller = SpiderPluginController(
+        ExtraCategorySpider(),
+        plugin_name="筛选插件",
+        search_enabled=True,
+        category_overrides_json='{"order":["tv","movie"],"renames":{"tv":"剧集"}}',
+    )
+
+    categories = controller.load_categories()
+
+    assert [item.type_id for item in categories] == ["tv", "movie", "adult", "variety"]
+    assert categories[3].type_name == "综艺"
+
+
+def test_controller_exposes_raw_categories_for_category_manager() -> None:
+    controller = SpiderPluginController(
+        FilterSpider(),
+        plugin_name="筛选插件",
+        search_enabled=True,
+        category_overrides_json='{"renames":{"movie":"影片"}}',
+    )
+
+    raw_categories = controller.load_raw_categories()
+    visible_categories = controller.load_categories()
+
+    assert [(item.type_id, item.type_name) for item in raw_categories] == [
+        ("movie", "电影"),
+        ("tv", "剧集"),
+        ("adult", "成人视频"),
+    ]
+    assert visible_categories[0].type_name == "影片"
 
 
 def test_controller_search_and_category_mapping() -> None:

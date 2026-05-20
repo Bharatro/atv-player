@@ -54,10 +54,12 @@ from atv_player.models import (
     PlaybackDetailValuePart,
     PlaybackLoadResult,
     VideoQualityOption,
+    SpiderPluginRawCategory,
     VodItem,
 )
 from atv_player.paths import app_cache_dir
 from atv_player.player.resume import resolve_resume_index
+from atv_player.plugins.category_overrides import apply_category_overrides, parse_category_overrides_json
 
 
 logger = logging.getLogger(__name__)
@@ -676,6 +678,7 @@ class SpiderPluginController:
         spider,
         plugin_name: str,
         search_enabled: bool,
+        category_overrides_json: str = "",
         drive_detail_loader: Callable[[str], dict] | None = None,
         offline_download_detail_loader: Callable[[str], dict] | None = None,
         playback_history_loader: Callable[[str], object | None] | None = None,
@@ -703,6 +706,8 @@ class SpiderPluginController:
         self._offline_download_detail_loader = offline_download_detail_loader
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
+        self._category_overrides_json = str(category_overrides_json or "")
+        self._category_overrides = parse_category_overrides_json(self._category_overrides_json)
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
@@ -720,7 +725,8 @@ class SpiderPluginController:
         self._pending_danmaku_item_ids: set[int] = set()
         self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
-        self._home_categories: list[DoubanCategory] = []
+        self._raw_home_categories: list[SpiderPluginRawCategory] = []
+        self._has_home_recommendations = False
         self._home_items: list[VodItem] = []
         self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
@@ -753,7 +759,7 @@ class SpiderPluginController:
         normalized_category_id = str(category_id or "").strip()
         if not normalized_category_id or normalized_category_id == "home":
             return ""
-        for category in self._home_categories:
+        for category in apply_category_overrides(self._raw_home_categories, self._category_overrides):
             if str(category.type_id or "").strip() == normalized_category_id:
                 return str(category.type_name or "").strip()
         return ""
@@ -801,8 +807,8 @@ class SpiderPluginController:
             logger.exception("Spider plugin home load failed plugin=%s", self._plugin_name)
             raise ApiError(str(exc)) from exc
         raw_filters = payload.get("filters") or {}
-        categories = [
-            DoubanCategory(
+        self._raw_home_categories = [
+            SpiderPluginRawCategory(
                 type_id=_coerce_category_id(item.get("type_id")),
                 type_name=str(item.get("type_name") or ""),
                 filters=_map_category_filters(raw_filters.get(_coerce_category_id(item.get("type_id")))),
@@ -812,8 +818,7 @@ class SpiderPluginController:
         items = self._map_items(payload)
         if items:
             items = self._annotate_items_with_category(items)
-            categories = [DoubanCategory(type_id="home", type_name="推荐"), *categories]
-        self._home_categories = categories
+        self._has_home_recommendations = bool(items)
         self._home_items = items
         self._home_loaded = True
 
@@ -876,9 +881,19 @@ class SpiderPluginController:
             )
         ]
 
+    def load_raw_categories(self) -> list[DoubanCategory]:
+        self._ensure_home_loaded()
+        return [
+            DoubanCategory(type_id=item.type_id, type_name=item.type_name, filters=list(item.filters))
+            for item in self._raw_home_categories
+        ]
+
     def load_categories(self) -> list[DoubanCategory]:
         self._ensure_home_loaded()
-        return list(self._home_categories)
+        categories = apply_category_overrides(self._raw_home_categories, self._category_overrides)
+        if self._has_home_recommendations:
+            categories = [DoubanCategory(type_id="home", type_name="推荐"), *categories]
+        return categories
 
     def load_items(
         self,

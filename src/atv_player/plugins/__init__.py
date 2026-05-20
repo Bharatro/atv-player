@@ -11,6 +11,7 @@ import httpx
 
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.models import (
+    DoubanCategory,
     SpiderPluginAction,
     SpiderPluginActionContext,
     SpiderPluginConfig,
@@ -129,6 +130,9 @@ class SpiderPluginManager:
     def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
         self._repository.set_plugin_config(plugin_id, config_text)
 
+    def set_plugin_category_overrides(self, plugin_id: int, category_overrides_json: str) -> None:
+        self._repository.set_plugin_category_overrides(plugin_id, category_overrides_json)
+
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self._repository.move_plugin(plugin_id, direction)
 
@@ -149,6 +153,7 @@ class SpiderPluginManager:
                 last_error=str(exc),
                 config_text=plugin.config_text,
                 plugin_version=plugin.plugin_version,
+                category_overrides_json=plugin.category_overrides_json,
             )
             self._repository.append_log(plugin.id, "error", str(exc))
             return
@@ -161,6 +166,7 @@ class SpiderPluginManager:
             last_error="",
             config_text=plugin.config_text,
             plugin_version=plugin.plugin_version,
+            category_overrides_json=plugin.category_overrides_json,
         )
 
     def delete_plugin(self, plugin_id: int) -> None:
@@ -254,6 +260,7 @@ class SpiderPluginManager:
             loaded.spider,
             plugin_name=title,
             search_enabled=loaded.search_enabled,
+            category_overrides_json=plugin.category_overrides_json,
             drive_detail_loader=drive_detail_loader,
             offline_download_detail_loader=offline_download_detail_loader,
             playback_parser_service=self._playback_parser_service,
@@ -308,6 +315,17 @@ class SpiderPluginManager:
             refresh_plugin=lambda plugin_id=plugin.id: self.refresh_plugin(plugin_id),
             log=lambda level, message, plugin_id=plugin.id: self._append_plugin_log(plugin_id, level, message),
         )
+
+    def load_plugin_categories(self, plugin_id: int) -> list[DoubanCategory]:
+        plugin, loaded = self._load_plugin(plugin_id)
+        controller = SpiderPluginController(
+            loaded.spider,
+            plugin_name=self._plugin_title(plugin, loaded),
+            search_enabled=loaded.search_enabled,
+            category_overrides_json=plugin.category_overrides_json,
+            spider_initializer=loaded.initialize_spider,
+        )
+        return controller.load_raw_categories()
 
     def list_plugin_actions(self, plugin_id: int) -> list[SpiderPluginAction]:
         plugin, loaded = self._load_plugin(plugin_id)
@@ -408,6 +426,7 @@ class SpiderPluginManager:
                     last_error=existing.last_error,
                     config_text=existing.config_text,
                     plugin_version=plugin_version,
+                    category_overrides_json=existing.category_overrides_json,
                 )
                 result.updated_count += 1
                 self._raise_if_import_cancelled(cancel_callback, result)
@@ -448,6 +467,7 @@ class SpiderPluginManager:
                     last_error=str(exc),
                     config_text=plugin.config_text,
                     plugin_version=plugin.plugin_version,
+                    category_overrides_json=plugin.category_overrides_json,
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
@@ -499,6 +519,7 @@ class SpiderPluginManager:
                     last_error=str(exc),
                     config_text=plugin.config_text,
                     plugin_version=plugin.plugin_version,
+                    category_overrides_json=plugin.category_overrides_json,
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue

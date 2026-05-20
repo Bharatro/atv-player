@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from atv_player.models import SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
+from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
 from atv_player.ui.theme import build_placeholder_label_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -84,6 +85,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.import_github_button = QPushButton("从 GitHub 导入")
         self.rename_button = QPushButton("编辑名称")
         self.config_button = QPushButton("编辑配置")
+        self.category_button = QPushButton("分类管理")
         self.toggle_button = QPushButton("启用/禁用")
         self.up_button = QPushButton("上移")
         self.down_button = QPushButton("下移")
@@ -113,6 +115,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.import_github_button,
             self.rename_button,
             self.config_button,
+            self.category_button,
             self.toggle_button,
             self.up_button,
             self.down_button,
@@ -136,6 +139,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.import_github_button.clicked.connect(self._import_github_repository)
         self.rename_button.clicked.connect(self._rename_selected)
         self.config_button.clicked.connect(self._edit_selected_config)
+        self.category_button.clicked.connect(self._open_category_manager_dialog)
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
@@ -190,6 +194,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
                 plugin.last_error,
                 plugin.config_text,
                 int(plugin.plugin_version),
+                plugin.category_overrides_json,
             )
         return snapshot
 
@@ -223,6 +228,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.import_github_button.setEnabled(False)
             self.rename_button.setEnabled(False)
             self.config_button.setEnabled(False)
+            self.category_button.setEnabled(False)
             self.toggle_button.setEnabled(False)
             self.up_button.setEnabled(False)
             self.down_button.setEnabled(False)
@@ -240,6 +246,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.import_github_button.setEnabled(not self._import_in_progress)
         self.rename_button.setEnabled(has_single_selection)
         self.config_button.setEnabled(has_single_selection)
+        self.category_button.setEnabled(has_single_selection)
         self.toggle_button.setEnabled(has_single_selection)
         self.up_button.setEnabled(has_single_selection and row > 0)
         self.down_button.setEnabled(has_single_selection and row >= 0 and row < last_row)
@@ -518,6 +525,16 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _open_reorder_dialog(self) -> None:
         dialog = PluginReorderDialog(self.plugin_manager, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.plugin_tabs_dirty = True
+        self.reload_plugins()
+
+    def _open_category_manager_dialog(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        dialog = PluginCategoryManagerDialog(self.plugin_manager, plugin_id, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.plugin_tabs_dirty = True
