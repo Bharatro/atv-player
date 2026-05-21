@@ -81,10 +81,7 @@ class SohuMetadataProvider:
         payload = dict(match.raw)
         if not payload:
             payload = self._search_detail_payload(match)
-        badges = list(payload.get("sohu_badges") or [])
         detail_fields: list[dict[str, object]] = []
-        if badges:
-            detail_fields.append({"label": "搜狐标签", "value": " / ".join(badges)})
         update_text = str(payload.get("updateNotification") or "").strip()
         if update_text:
             detail_fields.append({"label": "更新状态", "value": update_text})

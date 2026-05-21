@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
+import time
 
 import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.utils import extract_episode_number, extract_variety_issue_key, normalize_name
+
+
+logger = logging.getLogger(__name__)
 
 
 class SohuDanmakuProvider:
@@ -27,23 +33,58 @@ class SohuDanmakuProvider:
         self._resolve_context_by_url[page_url] = dict(resolve_context)
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
+        logger.info("Sohu danmaku search start name=%s original_name=%s", name, original_name or name)
         response = self._get(
             self._SEARCH_URL,
-            params={"key": name, "type": "1", "page": "1", "page_size": "20"},
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://so.tv.sohu.com/"},
+            params={
+                "key": name,
+                "type": "1",
+                "page": "1",
+                "page_size": "20",
+                "user_id": "",
+                "tabsChosen": "0",
+                "poster": "4",
+                "tuple": "6",
+                "extSource": "1",
+                "show_star_detail": "3",
+                "pay": "1",
+                "hl": "3",
+                "uid": str(int(time.time() * 1000)),
+                "passport": "",
+                "plat": "-1",
+                "ssl": "0",
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Referer": "https://so.tv.sohu.com/",
+                "Origin": "https://so.tv.sohu.com",
+            },
             follow_redirects=True,
             timeout=10.0,
         )
         try:
             payload = response.json()
         except Exception as exc:
-            raise DanmakuSearchError("搜狐弹幕搜索结果解析失败") from exc
-        items = (payload.get("data") or {}).get("items")
-        if not isinstance(items, list):
+            try:
+                payload = json.loads(response.text)
+            except Exception:
+                raise DanmakuSearchError("搜狐弹幕搜索结果解析失败") from exc
+        if not isinstance(payload, dict):
+            logger.warning("Sohu danmaku search payload is not a mapping type=%s", type(payload).__name__)
             raise DanmakuSearchError("搜狐弹幕搜索结果解析失败")
-        return self._expand_search_items(items, query_name=name, original_name=original_name or name)
+        data = self._mapping_or_empty(payload.get("data"), context="search data")
+        items = data.get("items")
+        if not isinstance(items, list):
+            logger.warning("Sohu danmaku search items payload is not a list type=%s", type(items).__name__)
+            raise DanmakuSearchError("搜狐弹幕搜索结果解析失败")
+        candidates = self._expand_search_items(items, query_name=name, original_name=original_name or name)
+        logger.info("Sohu danmaku search success name=%s candidates=%s", name, len(candidates))
+        return candidates
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
+        logger.info("Sohu danmaku resolve start page_url=%s", page_url)
         context = dict(self._resolve_context_by_url.get(page_url) or {})
         aid = str(context.get("aid") or "").strip()
         vid = str(context.get("vid") or "").strip()
@@ -55,17 +96,21 @@ class SohuDanmakuProvider:
         if not aid or not vid:
             raise DanmakuResolveError("搜狐页面缺少 aid 或 vid")
         duration_seconds = duration_seconds or self._duration_for_video(aid, vid)
+        logger.info("Sohu danmaku resolve context aid=%s vid=%s duration_seconds=%s", aid, vid, duration_seconds)
         records = self._fetch_danmaku_records(aid, vid, duration_seconds or 300)
         if not records:
             raise DanmakuResolveError("搜狐弹幕分段解析失败")
         return sorted(records, key=lambda record: (record.time_offset, record.content))
 
-    def _expand_search_items(self, raw_items: list[dict], *, query_name: str, original_name: str) -> list[DanmakuSearchItem]:
+    def _expand_search_items(self, raw_items: list[object], *, query_name: str, original_name: str) -> list[DanmakuSearchItem]:
         requested_episode = extract_episode_number(original_name)
         requested_issue_key = extract_variety_issue_key(normalize_name(original_name))
         candidates: list[DanmakuSearchItem] = []
-        for raw in raw_items:
-            album = self._normalize_album(raw)
+        for index, raw in enumerate(raw_items):
+            raw_item = self._mapping_or_none(raw, context=f"search item[{index}]")
+            if raw_item is None:
+                continue
+            album = self._normalize_album(raw_item)
             if album is None:
                 continue
             candidates.extend(
@@ -84,7 +129,7 @@ class SohuDanmakuProvider:
             return None
         if int(raw.get("is_trailer") or 0) == 1:
             return None
-        corner_mark = raw.get("corner_mark") or {}
+        corner_mark = self._mapping_or_empty(raw.get("corner_mark"), context=f"album corner_mark aid={aid}")
         if str(corner_mark.get("text") or "").strip() == "预告":
             return None
         if any(keyword in title for keyword in self._NOISE_KEYWORDS):
@@ -94,12 +139,12 @@ class SohuDanmakuProvider:
             "title": title,
             "year": int(raw.get("year") or 0),
             "category_name": self._category_name(raw),
-            "videos": list(raw.get("videos") or []),
+            "videos": self._mapping_list(raw.get("videos"), context=f"album videos aid={aid}"),
         }
 
     def _category_name(self, raw: dict) -> str:
-        for meta in raw.get("meta") or []:
-            text = str((meta or {}).get("txt") or "")
+        for meta in self._mapping_list(raw.get("meta"), context=f"album meta aid={raw.get('aid') or ''}"):
+            text = str(meta.get("txt") or "")
             if "|" not in text:
                 continue
             parts = [part.strip() for part in text.split("|")]
@@ -154,9 +199,24 @@ class SohuDanmakuProvider:
         try:
             payload = response.json()
         except Exception as exc:
-            raise DanmakuSearchError("搜狐播放列表解析失败") from exc
+            text = response.text.strip()
+            if text.startswith("jsonp(") and text.endswith(")"):
+                try:
+                    payload = json.loads(text[text.find("(") + 1 : text.rfind(")")])
+                except Exception:
+                    raise DanmakuSearchError("搜狐播放列表解析失败") from exc
+            else:
+                try:
+                    payload = json.loads(text)
+                except Exception:
+                    raise DanmakuSearchError("搜狐播放列表解析失败") from exc
+        if not isinstance(payload, dict):
+            logger.warning("Sohu playlist payload is not a mapping aid=%s type=%s", aid, type(payload).__name__)
+            return []
         videos = payload.get("videos")
-        return videos if isinstance(videos, list) else []
+        normalized_videos = self._mapping_list(videos, context=f"playlist videos aid={aid}")
+        logger.info("Sohu playlist parsed aid=%s video_count=%s", aid, len(normalized_videos))
+        return normalized_videos
 
     def _extract_ids_from_page(self, page_url: str) -> tuple[str, str]:
         response = self._get(
@@ -175,6 +235,8 @@ class SohuDanmakuProvider:
 
     def _duration_for_video(self, aid: str, vid: str) -> int:
         for video in self._playlist_videos(aid):
+            if not isinstance(video, dict):
+                continue
             if str(video.get("vid") or "").strip() != vid:
                 continue
             return int(video.get("playLength") or 0)
@@ -220,7 +282,11 @@ class SohuDanmakuProvider:
         return records
 
     def _pick_movie_video(self, title: str, videos: list[dict]) -> dict | None:
-        candidates = [video for video in videos if not self._is_noise_title(str(video.get("video_name") or ""))]
+        candidates = [
+            video
+            for video in videos
+            if isinstance(video, dict) and not self._is_noise_title(str(video.get("video_name") or ""))
+        ]
         if not candidates:
             return None
         normalized_title = normalize_name(title)
@@ -233,6 +299,9 @@ class SohuDanmakuProvider:
         )
 
     def _video_to_item(self, album: dict[str, str | int], video: dict) -> DanmakuSearchItem | None:
+        if not isinstance(video, dict):
+            logger.warning("Sohu skipped malformed video album_aid=%s type=%s", album.get("aid"), type(video).__name__)
+            return None
         vid = str(video.get("vid") or "").strip()
         url = str(
             video.get("url_html5")
@@ -311,18 +380,55 @@ class SohuDanmakuProvider:
         return re.sub(r"(?<!\s)(第\s*[0-9零一二两三四五六七八九十百]+\s*[集话期])$", r" \1", title).strip()
 
     def _comment_to_record(self, comment: dict) -> DanmakuRecord | None:
+        if not isinstance(comment, dict):
+            return None
         content = str(comment.get("c") or "").strip()
         if not content:
             return None
-        color_text = str(((comment.get("t") or {}).get("c")) or "#ffffff").strip().lstrip("#")
+        style = self._mapping_or_empty(comment.get("t"), context=f"comment style cid={comment.get('i') or ''}")
+        color_text = str(style.get("c") or "#ffffff").strip().lstrip("#")
         try:
             color = str(int(color_text, 16))
         except ValueError:
             color = "16777215"
-        position = int(((comment.get("t") or {}).get("p")) or 1)
+        position = self._to_int(style.get("p"), default=1, context=f"comment position cid={comment.get('i') or ''}")
         return DanmakuRecord(
             time_offset=round(float(comment.get("v") or 0), 3),
             pos=self._POSITION_MAP.get(position, 1),
             color=color,
             content=content,
         )
+
+    def _mapping_list(self, value: object, *, context: str) -> list[dict]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            logger.warning("Sohu expected list for %s but got type=%s", context, type(value).__name__)
+            return []
+        output: list[dict] = []
+        for index, item in enumerate(value):
+            mapping = self._mapping_or_none(item, context=f"{context}[{index}]")
+            if mapping is not None:
+                output.append(mapping)
+        return output
+
+    def _mapping_or_empty(self, value: object, *, context: str) -> dict:
+        mapping = self._mapping_or_none(value, context=context)
+        return mapping or {}
+
+    def _mapping_or_none(self, value: object, *, context: str) -> dict | None:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        logger.warning("Sohu skipped malformed %s type=%s", context, type(value).__name__)
+        return None
+
+    def _to_int(self, value: object, *, default: int, context: str) -> int:
+        if value in (None, ""):
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning("Sohu expected integer for %s but got value=%r", context, value)
+            return default

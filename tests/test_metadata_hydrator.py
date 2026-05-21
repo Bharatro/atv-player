@@ -232,7 +232,7 @@ def test_metadata_hydrator_prefers_promoted_sohu_record_over_tmdb_but_keeps_tmdb
     assert updated.vod_content == "搜狐简介"
     assert updated.type_name == "悬疑 / 剧情"
     assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
-    assert [(field.label, field.value) for field in updated.detail_fields] == [("搜狐标签", "自制 / 独播 / 独家")]
+    assert updated.detail_fields == []
 
 
 def test_metadata_hydrator_keeps_tmdb_primary_when_sohu_is_exclusive_only_supplement(tmp_path: Path) -> None:
@@ -272,7 +272,7 @@ def test_metadata_hydrator_keeps_tmdb_primary_when_sohu_is_exclusive_only_supple
 
     assert updated.vod_content == "TMDB简介"
     assert updated.metadata_field_sources["overview"] == "tmdb"
-    assert [(field.label, field.value) for field in updated.detail_fields] == [("搜狐标签", "独家")]
+    assert updated.detail_fields == []
 
 
 def test_metadata_hydrator_prefers_current_item_media_title_for_query(tmp_path: Path) -> None:

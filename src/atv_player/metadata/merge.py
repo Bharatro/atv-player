@@ -170,6 +170,8 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
         normalized_value = _clean_detail_text(value)
         if not normalized_label or not normalized_value:
             return
+        if record.provider == "sohu" and normalized_label == "搜狐标签":
+            return
         if normalized_label not in values:
             ordered_labels.append(normalized_label)
         values[normalized_label] = normalized_value

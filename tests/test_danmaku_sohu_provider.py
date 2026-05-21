@@ -344,6 +344,50 @@ def test_sohu_search_uses_embedded_search_videos_when_playlist_api_is_unavailabl
     ]
 
 
+def test_sohu_search_ignores_non_mapping_search_items_and_embedded_videos() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            "bad-item",
+                            {
+                                "aid": 9981602,
+                                "album_name": "<<<谁动了我的隐私>>>",
+                                "year": 2026,
+                                "corner_mark": "bad-corner",
+                                "meta": ["bad-meta", {"txt": "电视剧 | 内地 | 2026年"}],
+                                "videos": [
+                                    "bad-video",
+                                    {
+                                        "aid": 9981602,
+                                        "vid": 10234237,
+                                        "video_name": "谁动了我的隐私第1集",
+                                        "video_order": 1,
+                                        "url_html5": "http://m.tv.sohu.com/v10234237.shtml",
+                                        "isFee": 0,
+                                    },
+                                ],
+                            },
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            raise AssertionError("playlist API should not be required when embedded search videos exist")
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("谁动了我的隐私", original_name="谁动了我的隐私 1集")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("谁动了我的隐私 第1集", "https://m.tv.sohu.com/v10234237.shtml"),
+    ]
+
+
 def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:
     calls: list[tuple[str, dict | None]] = []
 
@@ -428,6 +472,188 @@ def test_sohu_resolve_falls_back_to_page_html_for_aid_and_vid() -> None:
 
     assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
         (3.0, 4, "65280", "回退成功"),
+    ]
+
+
+def test_sohu_resolve_parses_jsonp_playlist_response_for_duration_lookup() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(
+                200,
+                text='jsonp({"videos":[{"vid":"9999","playLength":60}]})',
+            )
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "jsonp成功",
+                                "v": 5.0,
+                                "uid": "u1",
+                                "created": "1710000003",
+                                "t": {"p": 1, "c": "#ffffff"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://m.tv.sohu.com/v9999.shtml",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 0},
+    )
+
+    records = provider.resolve("https://m.tv.sohu.com/v9999.shtml")
+
+    assert [(record.time_offset, record.content) for record in records] == [(5.0, "jsonp成功")]
+
+
+def test_sohu_resolve_ignores_non_mapping_playlist_items_when_looking_up_duration() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(
+                200,
+                json={"videos": ["bad-item", {"vid": "9999", "playLength": 60}]},
+            )
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "playlist容错",
+                                "v": 6.0,
+                                "uid": "u1",
+                                "created": "1710000004",
+                                "t": {"p": 1, "c": "#ffffff"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://m.tv.sohu.com/v9999.shtml",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 0},
+    )
+
+    records = provider.resolve("https://m.tv.sohu.com/v9999.shtml")
+
+    assert [(record.time_offset, record.content) for record in records] == [(6.0, "playlist容错")]
+
+
+def test_sohu_resolve_ignores_non_mapping_comment_entries() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            "bad-comment",
+                            {
+                                "i": "c1",
+                                "c": "评论容错",
+                                "v": 7.0,
+                                "uid": "u1",
+                                "created": "1710000005",
+                                "t": {"p": 5, "c": "#00ff00"},
+                            },
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/demo.html",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 60},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/demo.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (7.0, 4, "65280", "评论容错"),
+    ]
+
+
+def test_sohu_resolve_ignores_non_mapping_comment_style_payload() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "样式容错",
+                                "v": 8.0,
+                                "uid": "u1",
+                                "created": "1710000006",
+                                "t": "bad-style",
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/demo.html",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 60},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/demo.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (8.0, 1, "16777215", "样式容错"),
+    ]
+
+
+def test_sohu_resolve_falls_back_when_comment_position_is_not_numeric() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "位置容错",
+                                "v": 9.0,
+                                "uid": "u1",
+                                "created": "1710000007",
+                                "t": {"p": "t", "c": "#ff0000"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/demo.html",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 60},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/demo.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (9.0, 1, "16711680", "位置容错"),
     ]
 
 

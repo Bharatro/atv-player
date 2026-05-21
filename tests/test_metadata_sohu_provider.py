@@ -75,8 +75,8 @@ def test_sohu_provider_promotes_self_made_and_collects_supplemental_flags() -> N
     assert record.directors == ["羽凌旭"]
     assert record.genres == ["悬疑", "剧情"]
     assert record.country == "内地"
-    assert {"label": "搜狐标签", "value": "自制 / 独播 / 独家"} in record.detail_fields
     assert {"label": "更新状态", "value": "18集全 · 会员尊享全集"} in record.detail_fields
+    assert all(item.get("label") != "搜狐标签" for item in record.detail_fields)
 
 
 def test_sohu_provider_keeps_exclusive_only_as_supplemental_match() -> None:
