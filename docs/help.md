@@ -68,7 +68,7 @@ uv sync --group dev
 `start.sh` 实际执行：
 
 ```bash
-uv run src/atv_player/main.py
+uv run atv-player
 ```
 
 如果启动时报错找不到 `libmpv`，优先先解决系统运行库问题，再继续排查应用本身。
@@ -502,7 +502,7 @@ Emby 和 Jellyfin 页更接近媒体库浏览体验：
 - 启用/禁用元数据增强
 - 启用/禁用剧集标题增强
 - 填写 TMDB API Key（用于 TMDB 来源）
-- 填写 Bangumi Access Token（暂时无用）
+- 填写 Bangumi Access Token（可选；留空时使用匿名访问）
 - 填写豆瓣 Cookie（用于豆瓣来源）
 
 启用后，打开播放器时会在后台自动搜索并补充元数据。
@@ -667,9 +667,10 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 
 - 添加本地插件
 - 添加远程插件
-- 从 GitHub 导入
+- 批量导入
 - 编辑名称
 - 编辑配置
+- 分类管理
 - 启用/禁用
 - 上移 / 下移
 - 调整顺序
@@ -687,17 +688,26 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - 当前状态或最近错误
 - 最近加载时间
 
-### 9.2 从 GitHub 导入
+管理窗口还支持这些辅助能力：
 
-“从 GitHub 导入”适合批量导入仓库中的插件：
+- 搜索名称或地址
+- 按启用状态筛选（全部 / 仅启用 / 仅禁用）
+- 按当前顺序、名称、最近加载排序
+- 选中单个插件时显示插件自定义动作区
+
+### 9.2 批量导入
+
+“批量导入”支持两种入口：
 
 - 输入 GitHub 仓库 URL
+- 输入 `spiders_v2.json` 清单 URL
 - 应用会显示进度对话框
 - 完成后会展示新增 / 更新 / 跳过数量
 
-### 9.3 编辑配置与查看日志
+### 9.3 编辑配置、分类与查看日志
 
 - “编辑配置”适合给插件填写自定义文本配置
+- “分类管理”适合调整单个插件内部分类的顺序、显示名称和隐藏状态
 - “查看日志”适合检查插件加载失败、运行错误或兼容性问题
 
 ### 9.4 排序与启用策略
@@ -725,7 +735,7 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 
 ## 10. 高级设置
 
-点击主窗口"高级设置"可打开设置对话框，包含四个标签页。
+点击主窗口"高级设置"可打开设置对话框，包含五个标签页。
 
 ### 10.1 外观
 
@@ -756,7 +766,7 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - **启用元数据增强**：打开播放器时自动搜索并补充元数据
 - **启用剧集标题增强**：从 TMDB 等来源获取更准确的剧集标题
 - **TMDB API Key**：用于 TMDB 元数据来源
-- **Bangumi Access Token**：暂时无用
+- **Bangumi Access Token**：可选；留空时使用匿名访问
 - **豆瓣 Cookie**：用于豆瓣官方抓取；留空时跳过豆瓣官方来源
 
 ### 10.4 网络代理
@@ -766,6 +776,13 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - **直连规则**：一行一条，匹配的域名不走代理。支持主机名和 CIDR，例如 `localhost` 或 `10.0.0.0/8`
 - **代理规则**：留空则代理所有域名；填写后仅匹配域名走代理，例如 `.google.com`
 - **覆盖范围**：API 请求、元数据、解析源、弹幕、海报、插件下载、HLS 上游请求、yt-dlp
+
+### 10.5 日志
+
+- **启用日志记录**：关闭后不再写入新日志，但仍可查看历史日志
+- 支持按来源、级别、分类和关键字筛选
+- 支持导出当前筛选结果
+- 支持清空活动日志和归档日志
 
 ## 11. 支持的内容来源与协议
 
@@ -871,6 +888,8 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 常见内容包括：
 
 - `app.db`：主配置数据库
+- `logs/application.jsonl`：当前应用日志
+- `logs/application.*.jsonl.gz`：按大小轮转后的归档日志
 - `plugins/`：插件缓存
 - `posters/`：海报缓存
 - `subtitles/`：弹幕缓存
@@ -878,7 +897,7 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 - `danmaku-search-cache.json`：弹幕搜索缓存
 - `danmaku-series-preferences.json`：弹幕来源偏好
 - `metadata/`：元数据搜索和详情缓存
-- `metadata-bindings.json`：元数据手动绑定记录
+- `app.db` 内的 `metadata_bindings` 表：元数据手动绑定记录
 
 ### 14.2 会保存什么
 

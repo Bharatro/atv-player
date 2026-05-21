@@ -112,7 +112,7 @@ uv sync --group dev
 `start.sh` 实际执行的是：
 
 ```bash
-uv run src/atv_player/main.py
+uv run atv-player
 ```
 
 ## 首次使用
@@ -176,12 +176,13 @@ uv run src/atv_player/main.py
 常见文件和目录：
 
 - 配置数据库：`~/.local/share/atv-player/app.db`
+- 应用日志：`~/.local/share/atv-player/logs/application.jsonl`
 - 插件缓存：`~/.cache/atv-player/plugins`
 - 海报缓存：`~/.cache/atv-player/posters`
 - 弹幕搜索缓存：`~/.local/share/atv-player/danmaku-search-cache.json`
 - 弹幕系列偏好：`~/.local/share/atv-player/danmaku-series-preferences.json`
 - 元数据缓存：`~/.cache/atv-player/metadata`
-- 元数据手动绑定：`~/.local/share/atv-player/metadata-bindings.json`
+- 元数据手动绑定：保存在 `~/.local/share/atv-player/app.db` 的 `metadata_bindings` 表中
 
 应用会持久化以下状态：
 
