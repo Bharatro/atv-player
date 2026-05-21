@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -81,10 +82,10 @@ def _sample_info(**overrides):
 
 
 def _stub_extract_info(monkeypatch, service, payload):
-    calls: list[tuple[str, int | None]] = []
+    calls: list[tuple[str, int | None, bool]] = []
 
-    def fake_extract_info(url: str, max_height: int | None):
-        calls.append((url, max_height))
+    def fake_extract_info(url: str, max_height: int | None, *, include_subtitles: bool = True):
+        calls.append((url, max_height, include_subtitles))
         if isinstance(payload, Exception):
             raise payload
         return payload
@@ -420,7 +421,33 @@ class TestResolve:
 
         service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", None)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+
+    def test_uses_configured_default_max_height_when_resolve_does_not_specify_limit(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info()
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_max_height=720)
+        )
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert calls == [("https://www.youtube.com/watch?v=test123", 720, True)]
+
+    def test_explicit_max_height_overrides_configured_default_max_height(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info()
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_max_height=720)
+        )
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        service.resolve("https://www.youtube.com/watch?v=test123", max_height=480)
+
+        assert calls == [("https://www.youtube.com/watch?v=test123", 480, True)]
 
     def test_prefers_muxed_fallback_url_when_info_url_missing(self, monkeypatch, service):
         info = _sample_info(
@@ -657,6 +684,28 @@ class TestResolve:
 
         with pytest.raises(ValueError, match="未返回结果"):
             service.resolve("https://www.youtube.com/watch?v=test123")
+
+    def test_retries_without_subtitle_enumeration_after_timeout(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            if len(run_calls) == 1:
+                raise subprocess.TimeoutExpired(command, timeout=60)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_sample_info()),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.url == "https://stream.test/direct.mp4"
+        assert len(run_calls) == 2
+        assert "--all-subs" in run_calls[0]
+        assert "--all-subs" not in run_calls[1]
 
     def test_not_available(self, monkeypatch, service):
         service._ytdlp_path = None

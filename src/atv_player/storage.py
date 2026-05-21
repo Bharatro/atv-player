@@ -153,6 +153,14 @@ def _normalize_youtube_cookie_browser(value: object) -> str:
     return text if text in _VALID_YOUTUBE_COOKIE_BROWSERS else ""
 
 
+def _normalize_youtube_max_height(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return normalized if normalized in {0, 480, 720, 1080, 1440, 2160} else 0
+
+
 def _normalize_mpv_cache_size_mb(value: object) -> int:
     try:
         normalized = int(value)
@@ -232,6 +240,7 @@ class SettingsRepository:
                     network_proxy_url TEXT NOT NULL DEFAULT '',
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
                     youtube_cookie_browser TEXT NOT NULL DEFAULT '',
+                    youtube_max_height INTEGER NOT NULL DEFAULT 0,
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
@@ -324,6 +333,10 @@ class SettingsRepository:
             if "youtube_cookie_browser" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN youtube_cookie_browser TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_max_height" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_max_height INTEGER NOT NULL DEFAULT 0"
                 )
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(
@@ -496,6 +509,7 @@ class SettingsRepository:
                     network_proxy_url,
                     network_proxy_bypass_rules,
                     youtube_cookie_browser,
+                    youtube_max_height,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -536,7 +550,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 0, 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -565,6 +579,7 @@ class SettingsRepository:
                     network_proxy_bypass_rules,
                     network_proxy_rules,
                     youtube_cookie_browser,
+                    youtube_max_height,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -625,6 +640,7 @@ class SettingsRepository:
             network_proxy_bypass_rules,
             network_proxy_rules,
             youtube_cookie_browser,
+            youtube_max_height,
             mpv_cache_size_mb,
             mpv_hwdec_mode,
             mpv_network_timeout_seconds,
@@ -681,6 +697,7 @@ class SettingsRepository:
             network_proxy_bypass_rules=_normalize_network_proxy_bypass_rules(network_proxy_bypass_rules),
             network_proxy_rules=_normalize_network_proxy_rules(network_proxy_rules),
             youtube_cookie_browser=_normalize_youtube_cookie_browser(youtube_cookie_browser),
+            youtube_max_height=_normalize_youtube_max_height(youtube_max_height),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
@@ -747,6 +764,7 @@ class SettingsRepository:
                     network_proxy_bypass_rules = ?,
                     network_proxy_rules = ?,
                     youtube_cookie_browser = ?,
+                    youtube_max_height = ?,
                     mpv_cache_size_mb = ?,
                     mpv_hwdec_mode = ?,
                     mpv_network_timeout_seconds = ?,
@@ -804,6 +822,7 @@ class SettingsRepository:
                     json.dumps(_normalize_network_proxy_bypass_rules(config.network_proxy_bypass_rules), ensure_ascii=False),
                     json.dumps(_normalize_network_proxy_rules(config.network_proxy_rules), ensure_ascii=False),
                     _normalize_youtube_cookie_browser(config.youtube_cookie_browser),
+                    _normalize_youtube_max_height(config.youtube_max_height),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),

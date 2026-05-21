@@ -94,6 +94,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_cookie_browser_combo.addItem("Chrome", "chrome")
         self.youtube_cookie_browser_combo.addItem("Edge", "edge")
         self.youtube_cookie_browser_combo.addItem("Firefox", "firefox")
+        self.youtube_max_height_combo = FlatComboBox()
+        self.youtube_max_height_combo.addItem("不限制", 0)
+        self.youtube_max_height_combo.addItem("480p", 480)
+        self.youtube_max_height_combo.addItem("720p", 720)
+        self.youtube_max_height_combo.addItem("1080p", 1080)
+        self.youtube_max_height_combo.addItem("1440p", 1440)
+        self.youtube_max_height_combo.addItem("2160p", 2160)
         self.mpv_cache_size_edit = QLineEdit()
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
         self.mpv_hwdec_mode_combo = FlatComboBox()
@@ -108,7 +115,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_extra_options_edit = QPlainTextEdit()
         self.mpv_extra_options_edit.setPlaceholderText("一行一个 key=value，例如 cache-pause-wait=8")
         self.playback_scope_label = QLabel(
-            "说明：普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
+            "说明：YouTube 最高画质设为 1080P 及以下时通常启播更快。普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
         )
         self.playback_scope_label.setWordWrap(True)
         self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
@@ -130,6 +137,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.network_proxy_rules_edit.setPlainText("\n".join(config.network_proxy_rules))
         self.youtube_cookie_browser_combo.setCurrentIndex(
             max(0, self.youtube_cookie_browser_combo.findData(config.youtube_cookie_browser))
+        )
+        self.youtube_max_height_combo.setCurrentIndex(
+            max(0, self.youtube_max_height_combo.findData(config.youtube_max_height))
         )
         self.playback_auto_switch_source_on_failure_checkbox.setChecked(
             config.playback_auto_switch_source_on_failure
@@ -176,6 +186,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout = QFormLayout()
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
         playback_layout.addRow("YouTube Cookie", self.youtube_cookie_browser_combo)
+        playback_layout.addRow("YouTube 最高画质", self.youtube_max_height_combo)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("解码模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
@@ -223,6 +234,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.theme_mode_combo,
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
+            self.youtube_max_height_combo,
             self.mpv_hwdec_mode_combo,
         ):
             combo.setStyleSheet(combo_qss)
@@ -284,10 +296,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return mode, proxy_url, bypass_rules, proxy_rules
 
-    def _validated_playback_values(self) -> tuple[bool, str, int, str, int, int, int, str] | None:
+    def _validated_playback_values(self) -> tuple[bool, str, int, int, str, int, int, int, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
         if browser not in {"", "chrome", "edge", "firefox"}:
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
+            return None
+        max_height = self.youtube_max_height_combo.currentData()
+        if max_height not in {0, 480, 720, 1080, 1440, 2160}:
+            QMessageBox.warning(self, "YouTube 最高画质无效", "YouTube 最高画质选项无效")
             return None
 
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
@@ -351,6 +367,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         return (
             self.playback_auto_switch_source_on_failure_checkbox.isChecked(),
             browser,
+            int(max_height),
             cache_size,
             str(self.mpv_hwdec_mode_combo.currentData() or "auto-safe"),
             timeout,
@@ -377,6 +394,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         (
             self._config.playback_auto_switch_source_on_failure,
             self._config.youtube_cookie_browser,
+            self._config.youtube_max_height,
             self._config.mpv_cache_size_mb,
             self._config.mpv_hwdec_mode,
             self._config.mpv_network_timeout_seconds,

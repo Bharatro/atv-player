@@ -485,7 +485,23 @@ class YtdlpPlaybackService:
         config = self._config_loader()
         return str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower()
 
-    def _extract_info_via_command(self, url: str, max_height: int | None) -> dict:
+    def _configured_max_height(self) -> int | None:
+        if self._config_loader is None:
+            return None
+        config = self._config_loader()
+        try:
+            max_height = int(getattr(config, "youtube_max_height", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        return max_height if max_height > 0 else None
+
+    def _extract_info_command(
+        self,
+        url: str,
+        max_height: int | None,
+        *,
+        include_subtitles: bool,
+    ) -> list[str]:
         if self._ytdlp_path is None:
             self._ytdlp_path = resolve_system_ytdlp_path()
         if not self._ytdlp_path:
@@ -497,9 +513,6 @@ class YtdlpPlaybackService:
             "--no-playlist",
             "--socket-timeout",
             "30",
-            "--sub-format",
-            "ass/srt/best",
-            "--all-subs",
             "--format",
             _build_format_selector(max_height),
             *build_ytdlp_command_args(
@@ -509,6 +522,22 @@ class YtdlpPlaybackService:
             "--",
             url,
         ]
+        if include_subtitles:
+            command[6:6] = [
+                "--sub-format",
+                "ass/srt/best",
+                "--all-subs",
+            ]
+        return command
+
+    def _extract_info_via_command(
+        self,
+        url: str,
+        max_height: int | None,
+        *,
+        include_subtitles: bool = True,
+    ) -> dict:
+        command = self._extract_info_command(url, max_height, include_subtitles=include_subtitles)
         try:
             completed = subprocess.run(
                 command,
@@ -563,13 +592,14 @@ class YtdlpPlaybackService:
         *,
         max_height: int | None = None,
     ) -> YtdlpResolveResult:
-        logger.info("yt-dlp resolve start url=%s max_height=%s", url, max_height)
-        cached = self._get_cached_result(url, max_height)
+        effective_max_height = max_height if max_height is not None else self._configured_max_height()
+        logger.info("yt-dlp resolve start url=%s max_height=%s", url, effective_max_height)
+        cached = self._get_cached_result(url, effective_max_height)
         if cached is not None:
             logger.info(
                 "yt-dlp resolve cache-hit url=%s max_height=%s selected_quality=%s video=%s audio=%s",
                 url,
-                max_height,
+                effective_max_height,
                 cached.selected_quality_id,
                 _summarize_media_url(cached.url),
                 _summarize_media_url(cached.audio_url),
@@ -583,13 +613,25 @@ class YtdlpPlaybackService:
         started_at = monotonic()
         if not self.is_available():
             raise ValueError("yt-dlp 未安装")
-        info = self._extract_info_via_command(url, max_height)
+        try:
+            info = self._extract_info_via_command(url, effective_max_height, include_subtitles=True)
+        except ValueError as exc:
+            if str(exc) != "yt-dlp 解析超时":
+                raise
+            logger.warning(
+                "yt-dlp resolve timeout with subtitles url=%s max_height=%s retry_without_subtitles=True",
+                url,
+                effective_max_height,
+            )
+            if callable(log):
+                log("yt-dlp 字幕信息提取超时，正在重试播放地址...")
+            info = self._extract_info_via_command(url, effective_max_height, include_subtitles=False)
 
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
 
-        selected_video, selected_audio = _select_stream_pair(info, max_height)
-        direct_url = _pick_direct_url(info, max_height)
+        selected_video, selected_audio = _select_stream_pair(info, effective_max_height)
+        direct_url = _pick_direct_url(info, effective_max_height)
         if not direct_url:
             raise ValueError("未获取到播放地址")
         playback_url = direct_url
@@ -600,7 +642,7 @@ class YtdlpPlaybackService:
                 raise ValueError("未获取到视频流")
             preferred_youtube_video = None
             if _is_youtube_extractor(info):
-                preferred_videos = _preferred_video_formats(info, max_height)
+                preferred_videos = _preferred_video_formats(info, effective_max_height)
                 candidate = preferred_videos[0] if preferred_videos else None
                 if candidate is not None and _has_muxed_audio(candidate):
                     preferred_youtube_video = candidate
@@ -626,7 +668,7 @@ class YtdlpPlaybackService:
 
         qualities = _build_quality_options(info)
         subtitles = _build_subtitle_options(info)
-        selected_quality_id = _resolve_selected_quality_id(info, qualities, max_height)
+        selected_quality_id = _resolve_selected_quality_id(info, qualities, effective_max_height)
 
         if callable(log):
             ext = info.get("extractor", "")
@@ -659,7 +701,7 @@ class YtdlpPlaybackService:
         logger.info(
             "yt-dlp resolve done url=%s max_height=%s elapsed=%.3fs selected_quality=%s height=%s format_id=%s requested_formats=%s video=%s audio=%s",
             url,
-            max_height,
+            effective_max_height,
             monotonic() - started_at,
             selected_quality_id,
             info.get("height") or 0,
@@ -668,7 +710,7 @@ class YtdlpPlaybackService:
             _summarize_media_url(result.url),
             _summarize_media_url(result.audio_url),
         )
-        self._store_cached_result(url, max_height, result)
+        self._store_cached_result(url, effective_max_height, result)
         return result
 
     def resolve_for_quality(

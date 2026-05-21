@@ -392,6 +392,7 @@ def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Pat
         token="token-123",
         vod_token="vod-123",
         youtube_cookie_browser="edge",
+        youtube_max_height=1080,
         mpv_cache_size_mb=768,
         mpv_hwdec_mode="no",
         mpv_network_timeout_seconds=25,
@@ -403,6 +404,7 @@ def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Pat
     saved = repo.load_config()
 
     assert saved.youtube_cookie_browser == "edge"
+    assert saved.youtube_max_height == 1080
     assert saved.mpv_cache_size_mb == 768
     assert saved.mpv_hwdec_mode == "no"
     assert saved.mpv_network_timeout_seconds == 25
@@ -474,11 +476,19 @@ def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path
     config = SettingsRepository(db_path).load_config()
 
     assert config.youtube_cookie_browser == ""
+    assert config.youtube_max_height == 0
     assert config.mpv_cache_size_mb == 512
     assert config.mpv_hwdec_mode == "auto-safe"
     assert config.mpv_network_timeout_seconds == 15
     assert config.mpv_default_readahead_secs == 20
     assert config.mpv_extra_options == ""
+
+
+def test_settings_repository_normalizes_invalid_youtube_max_height_values(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(youtube_max_height=999))
+
+    assert repo.load_config().youtube_max_height == 0
 
 
 def test_settings_repository_migrates_missing_m3u_proxy_segment_prefetch_size_column(tmp_path: Path) -> None:

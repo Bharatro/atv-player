@@ -3860,6 +3860,28 @@ def test_apply_saved_theme_ignores_advanced_settings_callback_storage(qtbot, tmp
     assert app.property("resolved_theme") == "dark"
 
 
+def test_advanced_settings_dialog_saves_youtube_max_height(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    save_calls: list[int] = []
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: save_calls.append(config.youtube_max_height),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.youtube_max_height_combo.setCurrentIndex(
+        dialog.youtube_max_height_combo.findData(1080)
+    )
+
+    dialog._save()
+
+    assert config.youtube_max_height == 1080
+    assert save_calls == [1080]
+    assert "1080P 及以下时通常启播更快" in dialog.playback_scope_label.text()
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 
