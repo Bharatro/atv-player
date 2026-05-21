@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import IntFlag, auto
+from typing import cast
 
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QMouseEvent
@@ -44,6 +45,7 @@ class CustomTitleBar(QWidget):
         super().__init__(parent)
         self.setObjectName("customTitleBar")
         self._drag_offset: QPoint | None = None
+        self._drag_restore_pending = False
         self.setFixedHeight(46)
 
         self.title_label = QLabel("", self)
@@ -103,8 +105,12 @@ class CustomTitleBar(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             window = self.window()
-            if window is not None and not window.isMaximized():
-                self._drag_offset = event.globalPosition().toPoint() - window.frameGeometry().topLeft()
+            if window is not None:
+                self._drag_restore_pending = bool(window.isMaximized())
+                if not self._drag_restore_pending:
+                    self._drag_offset = event.globalPosition().toPoint() - window.frameGeometry().topLeft()
+                else:
+                    self._drag_offset = event.position().toPoint()
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -112,14 +118,37 @@ class CustomTitleBar(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             window = self.window()
-            if window is not None and not window.isMaximized():
-                window.move(event.globalPosition().toPoint() - self._drag_offset)
+            if window is not None:
+                if window.isMaximized():
+                    normal_geometry = window.normalGeometry()
+                    restore_x = min(
+                        max(int(event.position().x() * normal_geometry.width() / max(1, self.width())), 0),
+                        max(0, normal_geometry.width() - 1),
+                    )
+                    restore_y = min(max(self._drag_offset.y(), 0), max(0, normal_geometry.height() - 1))
+                    window.showNormal()
+                    self._drag_offset = QPoint(restore_x, restore_y)
+                    self._drag_restore_pending = False
+                if not window.isMaximized():
+                    window.move(event.globalPosition().toPoint() - self._drag_offset)
                 event.accept()
                 return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        window = self.window()
+        if (
+            self._drag_offset is not None
+            and event.button() == Qt.MouseButton.LeftButton
+            and window is not None
+            and not window.isMaximized()
+            and self.maximize_button.isVisible()
+            and event.globalPosition().toPoint().y() <= 0
+        ):
+            window.showMaximized()
+            event.accept()
         self._drag_offset = None
+        self._drag_restore_pending = False
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -141,6 +170,7 @@ class _ThemedChromeMixin:
     _resize_start_geometry: QRect | None = None
     _resize_start_global_pos: QPoint | None = None
     _RESIZE_BORDER = 6
+    _RESIZE_FILTER_PROPERTY = "_window_chrome_resize_filter_installed"
 
     def _init_window_chrome(
         self,
@@ -232,8 +262,16 @@ class _ThemedChromeMixin:
         return region
 
     def _install_resize_event_filter(self, widget: QWidget) -> None:
+        if bool(widget.property(self._RESIZE_FILTER_PROPERTY)):
+            return
+        widget.setProperty(self._RESIZE_FILTER_PROPERTY, True)
         widget.installEventFilter(self)
         widget.setMouseTracking(True)
+        for child in widget.findChildren(QWidget):
+            self._install_resize_event_filter(child)
+
+    def _should_handle_resize_event_for(self, watched: object) -> bool:
+        return isinstance(watched, QWidget) and (watched is self or self.isAncestorOf(watched))
 
     def _cursor_shape_for_resize_region(self, region: _ResizeRegion) -> Qt.CursorShape:
         if region in (_ResizeRegion.TOP_LEFT, _ResizeRegion.BOTTOM_RIGHT):
@@ -259,6 +297,11 @@ class _ThemedChromeMixin:
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         region = self._resize_region_at(self._mouse_event_pos_in_self(event))
+        if self._active_resize_region != _ResizeRegion.NONE and region == _ResizeRegion.NONE:
+            self._active_resize_region = _ResizeRegion.NONE
+            self._resize_start_geometry = None
+            self._resize_start_global_pos = None
+            self._update_resize_cursor(region)
         if region == _ResizeRegion.NONE:
             return False
         self._active_resize_region = region
@@ -333,6 +376,10 @@ class _ThemedChromeMixin:
                 self._resize_start_global_pos = None
                 self.unsetCursor()
 
+    def showEvent(self, event) -> None:
+        self._install_resize_event_filter(self._window_chrome_root)
+        super().showEvent(event)
+
     def childEvent(self, event) -> None:
         super().childEvent(event)
         child = event.child()
@@ -340,16 +387,21 @@ class _ThemedChromeMixin:
             self._install_resize_event_filter(child)
 
     def eventFilter(self, watched, event) -> bool:
-        if isinstance(event, QMouseEvent):
+        should_handle_resize = self._should_handle_resize_event_for(watched)
+        if should_handle_resize and event.type() == QEvent.Type.ChildAdded:
+            child = getattr(event, "child", lambda: None)()
+            if isinstance(child, QWidget):
+                self._install_resize_event_filter(child)
+        if should_handle_resize and isinstance(event, QMouseEvent):
             if event.type() == QEvent.Type.MouseButtonPress and self._handle_resize_mouse_press(event):
                 return True
             if event.type() == QEvent.Type.MouseMove and self._handle_resize_mouse_move(event):
                 return True
             if event.type() == QEvent.Type.MouseButtonRelease and self._handle_resize_mouse_release(event):
                 return True
-        elif event.type() == QEvent.Type.Leave and self._active_resize_region == _ResizeRegion.NONE:
+        elif should_handle_resize and event.type() == QEvent.Type.Leave and self._active_resize_region == _ResizeRegion.NONE:
             self.unsetCursor()
-        return super().eventFilter(watched, event)
+        return super().eventFilter(cast(QWidget, watched), event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self._handle_resize_mouse_press(event):
@@ -367,7 +419,7 @@ class _ThemedChromeMixin:
         super().mouseReleaseEvent(event)
 
 
-class ThemedWidgetWindowBase(QWidget, _ThemedChromeMixin):
+class ThemedWidgetWindowBase(_ThemedChromeMixin, QWidget):
     def __init__(
         self,
         *,
@@ -413,7 +465,7 @@ class ThemedDialogBase(_ThemedChromeMixin, QDialog):
         root_layout.addWidget(self._window_chrome_root)
 
 
-class ThemedMainWindowBase(QMainWindow, _ThemedChromeMixin):
+class ThemedMainWindowBase(_ThemedChromeMixin, QMainWindow):
     def __init__(
         self,
         *,

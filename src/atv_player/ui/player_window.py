@@ -2081,10 +2081,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             widget.installEventFilter(self)
             widget.setCursor(Qt.CursorShape.ArrowCursor)
 
+    @staticmethod
+    def _is_resize_cursor_shape(shape: Qt.CursorShape) -> bool:
+        return shape in (
+            Qt.CursorShape.SizeHorCursor,
+            Qt.CursorShape.SizeVerCursor,
+            Qt.CursorShape.SizeFDiagCursor,
+            Qt.CursorShape.SizeBDiagCursor,
+        )
+
     def _set_video_cursor_hidden(self, hidden: bool) -> None:
         cursor_shape = Qt.CursorShape.BlankCursor if hidden else Qt.CursorShape.ArrowCursor
         for widget in self._video_surface_widgets():
             widget.setCursor(cursor_shape)
+        current_shape = self.cursor().shape()
+        if self._is_resize_cursor_shape(current_shape):
+            return
+        if hidden and not self._video_pointer_inside:
+            return
         self.setCursor(cursor_shape)
 
     def _restore_video_cursor(self, stop_timer: bool = True, disable_native_autohide: bool = True) -> None:
