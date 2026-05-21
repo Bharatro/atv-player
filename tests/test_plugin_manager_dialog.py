@@ -1,7 +1,7 @@
 import types
 
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHeaderView, QLabel, QSizePolicy
 
 from atv_player.models import (
     SpiderPluginAction,
@@ -13,6 +13,7 @@ from atv_player.models import (
 )
 import atv_player.ui.plugin_manager_dialog as plugin_manager_dialog_module
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
+from atv_player.ui.theme import FlatComboBox
 
 
 def _select_rows(dialog: PluginManagerDialog, *rows: int) -> None:
@@ -185,12 +186,51 @@ def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> Non
     qtbot.addWidget(dialog)
 
     assert dialog.search_input.placeholderText() == "搜索名称或地址"
+    assert isinstance(dialog.enabled_filter_combo, FlatComboBox)
     assert dialog.enabled_filter_combo.currentText() == "全部"
-    assert dialog.enabled_filter_combo.minimumWidth() == 112
+    assert dialog.enabled_filter_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    assert dialog.enabled_filter_combo.minimumContentsLength() == 6
+    assert dialog.enabled_filter_combo.maxVisibleItems() == 12
+    assert dialog.enabled_filter_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
+    assert isinstance(dialog.sort_combo, FlatComboBox)
     assert dialog.sort_combo.currentText() == "当前顺序"
-    assert dialog.sort_combo.minimumWidth() == 128
+    assert dialog.sort_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    assert dialog.sort_combo.minimumContentsLength() == 6
+    assert dialog.sort_combo.maxVisibleItems() == 12
+    assert dialog.sort_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
     assert dialog.clear_filters_button.text() == "清空"
     assert dialog.filters_layout.spacing() == 12
+
+
+def test_plugin_manager_dialog_filter_combos_reserve_minimum_width_for_longest_label(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    for combo in (dialog.enabled_filter_combo, dialog.sort_combo):
+        longest_label_width = max(combo.fontMetrics().horizontalAdvance(combo.itemText(index)) for index in range(combo.count()))
+        left_padding = int(combo.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(combo.property("flat_combo_indicator_padding") or 40)
+        assert combo.minimumWidth() >= longest_label_width + left_padding + indicator_padding
+
+
+def test_plugin_manager_dialog_uses_history_style_search_field_and_spacing(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.search_input.isClearButtonEnabled() is True
+    assert dialog.search_input.styleSheet() != ""
+    assert dialog.filters_layout.spacing() == 12
+
+
+def test_plugin_manager_dialog_filter_bar_keeps_search_input_wider_than_filter_combos(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.resize(1200, 520)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert dialog.search_input.width() > dialog.enabled_filter_combo.width()
+    assert dialog.search_input.width() > dialog.sort_combo.width()
 
 
 def test_plugin_manager_dialog_searches_name_and_source_case_insensitively(qtbot) -> None:
