@@ -209,10 +209,21 @@ class TestCanResolve:
 
 
 class TestResolve:
-    def test_prefers_requested_formats_video_and_audio_pair_over_master_url(self, monkeypatch, service):
+    def test_prefers_same_height_muxed_youtube_stream_over_requested_split_pair(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
-            formats=[],
+            formats=[
+                {
+                    "format_id": "301",
+                    "url": "https://stream.test/master-1080.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5200,
+                    "vcodec": "avc1.64002a",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                },
+            ],
             requested_formats=[
                 {
                     "format_id": "399",
@@ -239,11 +250,12 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.url == "https://stream.test/master-1080.m3u8"
         assert result.audio_url == ""
-        assert result.ytdl_format == "bestvideo+bestaudio/best"
+        assert result.ytdl_format == ""
+        assert result.video_format_id == "301"
 
-    def test_prefers_mp4a_audio_pair_with_stable_avc_mp4_video_at_same_height(self, monkeypatch, service):
+    def test_prefers_requested_format_pair_over_local_codec_reselection(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
             requested_formats=[
@@ -319,9 +331,12 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.url.startswith("data:application/dash+xml;base64,")
         assert result.audio_url == ""
-        assert result.ytdl_format == "bestvideo+bestaudio/best"
+        assert result.ytdl_format == ""
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert "https://stream.test/video-1080-av1.mp4" in manifest
+        assert "https://stream.test/audio-251.webm" in manifest
 
     def test_embeds_segment_base_ranges_in_generated_dash_manifest(self, monkeypatch, service):
         info = _sample_info(
@@ -360,6 +375,44 @@ class TestResolve:
         manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
         assert '<SegmentBase indexRange="738-1425"><Initialization range="0-737"/></SegmentBase>' in manifest
         assert '<SegmentBase indexRange="702-1189"><Initialization range="0-701"/></SegmentBase>' in manifest
+
+    def test_escapes_ampersands_in_generated_dash_manifest_base_urls(self, monkeypatch, service):
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            requested_formats=[
+                {
+                    "format_id": "299",
+                    "url": "https://stream.test/video.mp4?expire=1&sig=abc",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4800,
+                    "vcodec": "avc1.64002a",
+                    "acodec": "none",
+                    "ext": "mp4",
+                    "init_range": {"start": "0", "end": "737"},
+                    "index_range": {"start": "738", "end": "1425"},
+                },
+                {
+                    "format_id": "140",
+                    "url": "https://stream.test/audio.m4a?expire=1&sig=def",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a.40.2",
+                    "ext": "m4a",
+                    "init_range": {"start": "0", "end": "701"},
+                    "index_range": {"start": "702", "end": "1189"},
+                },
+            ],
+            formats=[],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert "https://stream.test/video.mp4?expire=1&amp;sig=abc" in manifest
+        assert "https://stream.test/audio.m4a?expire=1&amp;sig=def" in manifest
 
     def test_uses_unbounded_initial_startup_resolve(self, monkeypatch, service):
         info = _sample_info()
@@ -411,8 +464,8 @@ class TestResolve:
         first = service.resolve("https://www.youtube.com/watch?v=test123")
         second = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert first.url == "https://www.youtube.com/watch?v=test123"
-        assert second.url == "https://www.youtube.com/watch?v=test123"
+        assert first.url == "https://stream.test/direct.mp4"
+        assert second.url == "https://stream.test/direct.mp4"
         assert len(calls) == 1
 
     def test_re_extracts_after_cache_expiry(self, monkeypatch):
@@ -435,7 +488,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://www.youtube.com/watch?v=test123"
+        assert result.url == "https://stream.test/direct.mp4"
         assert result.audio_url == ""
         assert result.title == "Test Video"
         assert result.thumbnail == "https://img.test/thumb.jpg"
@@ -444,7 +497,7 @@ class TestResolve:
         assert result.extractor == "youtube"
         assert result.headers == {"Referer": "https://www.youtube.com/", "User-Agent": "test"}
         assert result.selected_quality_id == "ytdlp_1080"
-        assert result.ytdl_format == "bestvideo+bestaudio/best"
+        assert result.ytdl_format == ""
 
     def test_prefers_selected_format_http_headers_when_top_level_headers_missing(self, monkeypatch, service):
         info = _sample_info(
@@ -606,13 +659,13 @@ class TestResolveToPlayItem:
         assert isinstance(item, PlayItem)
         assert vod.vod_name == "Test Video"
         assert vod.vod_pic == "https://img.test/thumb.jpg"
-        assert item.url == "https://www.youtube.com/watch?v=test123"
+        assert item.url == "https://stream.test/direct.mp4"
         assert item.original_url == "https://www.youtube.com/watch?v=test123"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
-        assert item.ytdl_format == "bestvideo+bestaudio/best"
+        assert item.ytdl_format == ""
 
     def test_apply_result_overwrites_vod_and_play_item(self, monkeypatch, service):
         info = _sample_info(
@@ -651,7 +704,7 @@ class TestResolveToPlayItem:
         assert vod.vod_name == "Resolved Title"
         assert vod.vod_pic == "https://img.test/resolved.jpg"
         assert vod.vod_content == ""
-        assert item.url == "https://www.youtube.com/watch?v=test123"
+        assert item.url == "https://stream.test/direct.mp4"
         assert item.original_url == "https://www.youtube.com/watch?v=test123"
         assert item.title == "Resolved Title"
         assert item.media_title == "Resolved Title"

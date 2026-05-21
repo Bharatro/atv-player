@@ -73,6 +73,33 @@ uv run src/atv_player/main.py
 
 如果启动时报错找不到 `libmpv`，优先先解决系统运行库问题，再继续排查应用本身。
 
+如果你在 Linux 上能启动应用，但播放 `YouTube` 时明显比 Windows 更容易反复缓冲、缓存一直很浅，除了检查网络环境，也要检查系统里的 `mpv/libmpv` 版本是否过旧。
+
+以 Linux Mint 22.x / Ubuntu 24.04 为例，系统仓库中的 `libmpv` 往往仍然偏旧。如果你需要排查这类问题，建议先确认：
+
+```bash
+hash -r
+/usr/local/bin/mpv --version
+ldconfig -p | grep libmpv
+yt-dlp --version
+```
+
+如果 `mpv/libmpv` 版本明显落后，而你又主要依赖 `YouTube` 等页面解析播放，通常比继续调应用内缓存参数更值得优先处理运行时版本问题。
+
+如果你是用仓库内的 `scripts/build_mpv.sh` 自行编译新版 `mpv/libmpv`，还要注意 Lua 脚本运行时不能缺失。对 `YouTube` 页面 URL 来说，`mpv` 通常还需要 `ytdl_hook` 这类内置脚本能力；如果构建摘要里出现 `lua : NO`，就很可能出现“视频信息显示失败”或“无法识别媒体格式 (-17)”。
+
+新版脚本在 `apt-get` 可用时会自动尝试安装这个包：
+
+```bash
+sudo apt install liblua5.2-dev
+```
+
+如果当前桌面会话是 `X11`，脚本还会检查 `xpresent` 开发包；缺失时会自动尝试安装：
+
+```bash
+sudo apt install libxpresent-dev
+```
+
 ## 4. 登录与启动
 
 启动应用后会先进入登录页：
@@ -1060,3 +1087,29 @@ CCTV-2财经,https://live.example/cctv2.m3u8
 1. 在"高级设置" → "播放设置"中选择浏览器提取 Cookie。
 2. 确保所选浏览器已登录 YouTube 账号。
 3. 如果仍有问题，尝试更换浏览器选项。
+
+### 17.12 Linux 上 YouTube 播放缓冲很浅或频繁卡顿
+
+如果同一个 `YouTube` 视频在 Windows 上播放流畅，但在 Linux 上缓存始终只有几 MB 到十几 MB、经常反复缓冲，建议按下面顺序排查：
+
+1. 先确认终端中的 `yt-dlp --version` 能正常返回版本号。
+2. 再确认 `mpv --version` 和系统实际加载到的 `libmpv` 版本。
+3. 如果你使用的是 Linux Mint / Ubuntu 一类发行版，优先怀疑系统仓库中的 `mpv/libmpv` 版本偏旧。
+4. 不要先假设是应用里的“播放缓存大小”配置失效。这个值通常只是上限，实际缓存深度还会受站点吞吐、运行时版本和播放器内部缓冲策略影响。
+
+常用检查命令：
+
+```bash
+hash -r
+/usr/local/bin/mpv --version
+ldconfig -p | grep libmpv
+yt-dlp --version
+```
+
+如果确认 `mpv/libmpv` 明显偏旧，而你又主要使用 `YouTube` 页面链接播放，建议优先升级系统的 `mpv/libmpv` 运行时，再重新测试。
+
+对 Linux Mint / Ubuntu 用户，更实用的做法通常是：
+
+- 不要只依赖系统仓库里的旧版 `libmpv`
+- 优先考虑更新的第三方包源，或自行构建较新的 `mpv/libmpv`
+- 升级完成后，再回到应用里观察系统信息和播放日志中的 `mpv` / `ffmpeg` 版本是否已经变化

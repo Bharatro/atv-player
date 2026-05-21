@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import logging
 import subprocess
@@ -200,14 +201,6 @@ def _preferred_audio_formats(info: dict, *, preferred_ext: str = "") -> list[dic
 
 
 def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None, dict | None]:
-    preferred_video_formats = _preferred_video_formats(info, max_height)
-    if preferred_video_formats:
-        selected_video = preferred_video_formats[0]
-        if _has_muxed_audio(selected_video):
-            return selected_video, None
-        preferred_audio_formats = _preferred_audio_formats(info, preferred_ext=str(selected_video.get("ext") or ""))
-        if preferred_audio_formats:
-            return selected_video, preferred_audio_formats[0]
     requested_video_url, requested_audio_url = _pick_requested_stream_pair(info)
     if requested_video_url:
         requested_formats = info.get("requested_formats") or []
@@ -226,6 +219,14 @@ def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None
             None,
         )
         return selected_video, selected_audio
+    preferred_video_formats = _preferred_video_formats(info, max_height)
+    if preferred_video_formats:
+        selected_video = preferred_video_formats[0]
+        if _has_muxed_audio(selected_video):
+            return selected_video, None
+        preferred_audio_formats = _preferred_audio_formats(info, preferred_ext=str(selected_video.get("ext") or ""))
+        if preferred_audio_formats:
+            return selected_video, preferred_audio_formats[0]
     return None, None
 
 
@@ -341,7 +342,7 @@ def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
         segment_base_xml = f"<SegmentBase{segment_base_attrs}>{initialization_xml}</SegmentBase>"
     return (
         f"<Representation {attributes}>"
-        f"<BaseURL>{str(fmt.get('url') or '')}</BaseURL>"
+        f"<BaseURL>{html.escape(str(fmt.get('url') or ''), quote=False)}</BaseURL>"
         f"{segment_base_xml}"
         "</Representation>"
     )
@@ -589,18 +590,22 @@ class YtdlpPlaybackService:
         playback_url = direct_url
         requested_audio_url = ""
         ytdl_format = ""
-        if _is_youtube_extractor(info):
-            playback_url = url
-            ytdl_format = _selected_ytdl_format(
-                info,
-                selected_video,
-                selected_audio,
-                max_height=max_height,
-            )
-        elif selected_audio is not None and selected_audio.get("url"):
+        if selected_audio is not None and selected_audio.get("url"):
             if selected_video is None or not selected_video.get("url"):
                 raise ValueError("未获取到视频流")
-            if _has_dash_segment_metadata(selected_video) or _has_dash_segment_metadata(selected_audio):
+            preferred_youtube_video = None
+            if _is_youtube_extractor(info):
+                preferred_videos = _preferred_video_formats(info, max_height)
+                candidate = preferred_videos[0] if preferred_videos else None
+                if candidate is not None and _has_muxed_audio(candidate):
+                    preferred_youtube_video = candidate
+            if preferred_youtube_video is not None and preferred_youtube_video.get("url"):
+                selected_video = preferred_youtube_video
+            elif (
+                _is_youtube_extractor(info)
+                or _has_dash_segment_metadata(selected_video)
+                or _has_dash_segment_metadata(selected_audio)
+            ):
                 playback_url = _build_dash_manifest_data_uri(
                     selected_video,
                     selected_audio,
@@ -609,6 +614,8 @@ class YtdlpPlaybackService:
             else:
                 playback_url = str(selected_video["url"])
                 requested_audio_url = str(selected_audio["url"])
+            if preferred_youtube_video is not None and preferred_youtube_video.get("url"):
+                playback_url = str(preferred_youtube_video["url"])
 
         headers = _merge_http_headers(info, selected_video, selected_audio)
 

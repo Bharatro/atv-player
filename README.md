@@ -71,6 +71,30 @@
 
 Linux 上如果系统里没有 `libmpv`，运行和打包都会失败。`build.py` 会在常见系统目录查找它。
 
+如果你需要单独构建较新的 `mpv/libmpv` 运行时，可使用仓库内的辅助脚本：
+
+```bash
+scripts/build_mpv.sh
+```
+
+常见用法：
+
+```bash
+scripts/build_mpv.sh --disable-x86asm
+scripts/build_mpv.sh --disable-x86asm --no-install --dry-run
+scripts/build_mpv.sh --master
+```
+
+说明：
+
+- 默认使用 `mpv-build` 的 release 轨道构建 `mpv/libmpv`
+- 默认执行 `sudo ./install`
+- 如果缺少 Lua 开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y liblua5.2-dev`
+- 如果当前桌面会话是 `X11` 且缺少 `xpresent` 开发包，脚本会自动执行 `sudo apt-get install -y libxpresent-dev`
+- 安装完成后建议先执行 `hash -r`，再用 `/usr/local/bin/mpv --version` 和 `ldconfig -p | grep libmpv` 确认新运行时已生效
+- 如果遇到 `nasm not found or too old`，可先使用 `--disable-x86asm`
+- `--dry-run` 只打印构建命令，便于先检查流程
+
 ## 快速开始
 
 安装开发依赖：
