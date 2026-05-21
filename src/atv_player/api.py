@@ -201,7 +201,7 @@ class ApiClient:
         )
 
     def get_live_detail(self, vod_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/live/{self._vod_token}", params={"ids": vod_id})
+        return self._request("GET", f"/live/{self._vod_token}", params={"ids": vod_id, "platform": "gui"})
 
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")

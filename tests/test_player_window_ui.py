@@ -3389,7 +3389,7 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     ]
 
 
-def test_player_window_skips_m3u8_proxy_prepare_for_live_streams(qtbot) -> None:
+def test_player_window_prepares_non_proxy_live_streams(qtbot) -> None:
     class FakeM3U8AdFilter:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, str]]] = []
@@ -3421,9 +3421,14 @@ def test_player_window_skips_m3u8_proxy_prepare_for_live_streams(qtbot) -> None:
     window.video = video
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/live/index.m3u8", 0)])
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?v=proxy-live-1", 0)])
 
-    assert filter_service.calls == []
+    assert filter_service.calls == [
+        (
+            "https://media.example/live/index.m3u8",
+            {"Referer": "https://site.example"},
+        )
+    ]
 
 
 def test_player_window_skips_proxy_prepare_for_live_extensionless_streams(qtbot) -> None:
@@ -3458,6 +3463,42 @@ def test_player_window_skips_proxy_prepare_for_live_extensionless_streams(qtbot)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: video.load_calls == [("http://192.168.50.60:4567/p/web/0@128440", 0)])
+
+    assert filter_service.calls == []
+
+
+def test_player_window_skips_proxy_prepare_for_live_backend_proxy_with_extra_ids(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return True
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u?v=proxy-live-3"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="live-3", vod_name="Live", detail_style="live"),
+        playlist=[
+            PlayItem(
+                title="线路 1",
+                url="http://media.example/p/demo-token/12@3456@78@90",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("http://media.example/p/demo-token/12@3456@78@90", 0)])
 
     assert filter_service.calls == []
 

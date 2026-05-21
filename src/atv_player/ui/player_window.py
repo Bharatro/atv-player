@@ -180,6 +180,21 @@ _INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*
 logger = logging.getLogger(__name__)
 
 
+def _is_backend_proxy_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) != 3 or segments[0] != "p" or not segments[1] or not segments[2]:
+        return False
+    payload_segments = segments[2].split("@")
+    if len(payload_segments) < 2:
+        return False
+    site_id = payload_segments[0].strip()
+    proxy_id = payload_segments[1].strip()
+    return site_id.isdigit() and bool(proxy_id)
+
+
 def _summarize_media_url(url: str) -> str:
     if url.startswith("data:application/dash+xml;base64,"):
         return "data:application/dash+xml;base64,..."
@@ -3393,8 +3408,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return False
         if getattr(self.session.vod, "detail_style", "") != "live":
             return False
-        parsed = urlparse(resolved_url)
-        return parsed.scheme in {"http", "https"}
+        return _is_backend_proxy_url(resolved_url)
 
     def _playback_prepare_source_url(self, current_item: PlayItem) -> str:
         preferred_url = (current_item.original_url or current_item.url).strip()
