@@ -463,11 +463,16 @@ class YtdlpPlaybackService:
         return entry.result
 
     def _store_cached_result(self, url: str, max_height: int | None, result: YtdlpResolveResult) -> None:
-        key = self._cache_key(url, max_height)
-        self._cache[key] = _YtdlpCacheEntry(
+        entry = _YtdlpCacheEntry(
             result=result,
             expires_at=self._now() + self._ttl_seconds,
         )
+        key = self._cache_key(url, max_height)
+        self._cache[key] = entry
+        if max_height is None:
+            selected_height = _quality_height_from_id(str(result.selected_quality_id or ""))
+            if selected_height is not None:
+                self._cache[self._cache_key(url, selected_height)] = entry
 
     def is_available(self) -> bool:
         if self._ytdlp_path is None:

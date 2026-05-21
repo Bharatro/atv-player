@@ -468,6 +468,72 @@ class TestResolve:
         assert second.url == "https://stream.test/direct.mp4"
         assert len(calls) == 1
 
+    def test_quality_specific_resolve_reuses_unbounded_cache_when_selected_quality_matches(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(
+            extractor="youtube",
+            requested_formats=[
+                {
+                    "format_id": "337",
+                    "url": "https://stream.test/video-2160.webm",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 12000,
+                    "vcodec": "vp09.00.51.08",
+                    "acodec": "none",
+                    "ext": "webm",
+                    "init_range": {"start": "0", "end": "737"},
+                    "index_range": {"start": "738", "end": "1425"},
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-251.webm",
+                    "tbr": 126,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "init_range": {"start": "0", "end": "701"},
+                    "index_range": {"start": "702", "end": "1189"},
+                },
+            ],
+            formats=[
+                {
+                    "format_id": "337",
+                    "url": "https://stream.test/video-2160.webm",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 12000,
+                    "vcodec": "vp09.00.51.08",
+                    "acodec": "none",
+                    "ext": "webm",
+                    "init_range": {"start": "0", "end": "737"},
+                    "index_range": {"start": "738", "end": "1425"},
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-251.webm",
+                    "tbr": 126,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "init_range": {"start": "0", "end": "701"},
+                    "index_range": {"start": "702", "end": "1189"},
+                },
+            ],
+        )
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(ttl_seconds=300.0, now=lambda: clock["now"])
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        first = service.resolve("https://www.youtube.com/watch?v=test123")
+        second = service.resolve_for_quality("https://www.youtube.com/watch?v=test123", "ytdlp_2160")
+
+        assert first.selected_quality_id == "ytdlp_2160"
+        assert second.selected_quality_id == "ytdlp_2160"
+        assert second.url == first.url
+        assert len(calls) == 1
+
     def test_re_extracts_after_cache_expiry(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
