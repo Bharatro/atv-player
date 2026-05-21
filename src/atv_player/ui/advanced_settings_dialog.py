@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -49,6 +50,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.resize(920, 560)
 
         self.settings_tabs = QTabWidget()
+        self.settings_tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
         self.appearance_tab = QWidget()
         self.metadata_tab = QWidget()
         self.network_proxy_tab = QWidget()

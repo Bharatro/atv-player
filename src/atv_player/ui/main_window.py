@@ -1684,6 +1684,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._apply_navigation_tab_theme()
         self._global_search_popup._apply_theme()
         for page in (
+            self.browse_page,
             self.history_page,
             self.douban_page,
             self.telegram_page,

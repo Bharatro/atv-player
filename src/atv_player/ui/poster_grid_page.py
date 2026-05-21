@@ -30,7 +30,7 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import CategoryFilterOption
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
-from atv_player.ui.theme import build_accent_label_qss, build_pill_button_qss, current_tokens
+from atv_player.ui.theme import build_accent_label_qss, build_pill_button_qss, build_search_line_edit_qss, current_tokens
 
 
 class _PosterGridSignals(QObject):
@@ -154,6 +154,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_controls_container: QWidget | None = None
         self.category_list = QListWidget()
         self.keyword_edit = QLineEdit()
+        self.keyword_edit.setClearButtonEnabled(True)
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
         self.refresh_button = QPushButton("刷新")
@@ -283,11 +284,13 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.keyword_edit.textChanged.connect(self._handle_keyword_text_changed)
             self._update_search_action_buttons()
             self._sync_search_controls_visibility()
+        self._apply_theme()
 
     def _is_widget_alive(self) -> bool:
         return self._can_deliver_async_result()
 
     def _apply_theme(self) -> None:
+        self.keyword_edit.setStyleSheet(build_search_line_edit_qss(current_tokens()))
         self._rebuild_filter_panel()
 
     def ensure_loaded(self) -> None:

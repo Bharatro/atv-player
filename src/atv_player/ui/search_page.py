@@ -22,7 +22,7 @@ from atv_player.models import VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.table_utils import configure_table_columns
-from atv_player.ui.theme import FlatComboBox
+from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 
 
 class _SearchSignals(QObject):
@@ -46,6 +46,7 @@ class SearchPage(QWidget, AsyncGuardMixin):
         self._init_async_guard()
         self.controller = controller
         self.keyword_edit = QLineEdit()
+        self.keyword_edit.setClearButtonEnabled(True)
         self.filter_combo = FlatComboBox()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
@@ -104,9 +105,13 @@ class SearchPage(QWidget, AsyncGuardMixin):
         self.refresh_button.clicked.connect(self.search)
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_selected)
+        self._apply_theme()
 
     def _is_widget_alive(self) -> bool:
         return self._can_deliver_async_result()
+
+    def _apply_theme(self) -> None:
+        self.keyword_edit.setStyleSheet(build_search_line_edit_qss(current_tokens()))
 
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()

@@ -5,6 +5,7 @@ from functools import partial
 import threading
 
 from PySide6.QtCore import QItemSelectionModel, QObject, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -200,6 +201,16 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_table.itemSelectionChanged.connect(self._sync_action_state)
 
         self.reload_plugins()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._focus_search_input)
+
+    def _focus_search_input(self) -> None:
+        if not self.isVisible():
+            return
+        self.search_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        self.search_input.selectAll()
 
     def reload_plugins(self, selected_plugin_ids: list[int] | None = None) -> None:
         if selected_plugin_ids is None:

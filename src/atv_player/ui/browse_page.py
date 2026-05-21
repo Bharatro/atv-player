@@ -27,7 +27,7 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.table_utils import configure_table_columns
-from atv_player.ui.theme import FlatComboBox
+from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -136,6 +136,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._save_config = save_config or (lambda: None)
         self._initial_load_started = False
         self.keyword_edit = QLineEdit()
+        self.keyword_edit.setClearButtonEnabled(True)
         self.search_button = QPushButton("搜索")
         self.search_refresh_button = QPushButton("刷新")
         self.filter_combo = FlatComboBox()
@@ -281,9 +282,13 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         layout = QVBoxLayout(self)
         layout.addLayout(centered_row)
         self._update_pagination_controls()
+        self._apply_theme()
 
     def _is_widget_alive(self) -> bool:
         return self._can_deliver_async_result()
+
+    def _apply_theme(self) -> None:
+        self.keyword_edit.setStyleSheet(build_search_line_edit_qss(current_tokens()))
 
     def ensure_loaded(self, path: str | None = None) -> None:
         if self._initial_load_started:

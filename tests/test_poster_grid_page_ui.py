@@ -1045,3 +1045,20 @@ def test_poster_grid_page_ignores_async_poster_result_after_widget_deletion(qtbo
     qtbot.wait(100)
 
     assert destroyed["count"] == 1
+
+
+def test_poster_grid_page_search_field_uses_history_style_search_qss(qtbot) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from atv_player.ui.theme import ThemeManager, install_theme
+
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "dark")
+    install_theme(app, manager, "dark")
+
+    page = PosterGridPage(SearchableDoubanController(), click_action="open", search_enabled=True)
+    qtbot.addWidget(page)
+
+    tokens = manager.tokens_for("dark")
+    assert page.keyword_edit.isClearButtonEnabled() is True
+    assert tokens.input_border in page.keyword_edit.styleSheet()

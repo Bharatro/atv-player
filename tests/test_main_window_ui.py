@@ -4053,6 +4053,15 @@ def test_advanced_settings_dialog_applies_branded_line_edit_styles(qtbot) -> Non
     assert dialog.network_proxy_url_edit.height() == 42
 
 
+def test_advanced_settings_dialog_tab_bar_uses_pointing_hand_cursor(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings_tabs.tabBar().cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

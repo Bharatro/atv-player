@@ -1301,3 +1301,14 @@ def test_plugin_manager_dialog_keeps_selection_on_moved_plugin(qtbot) -> None:
 
     assert dialog.plugin_table.currentRow() == 1
     assert dialog._selected_plugin_id() == 1
+
+
+def test_plugin_manager_dialog_focuses_search_input_when_shown(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    dialog.show()
+    qtbot.waitUntil(dialog.isVisible)
+    qtbot.waitUntil(dialog.search_input.hasFocus)
+
+    assert dialog.search_input.hasFocus() is True
