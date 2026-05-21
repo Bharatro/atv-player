@@ -1,6 +1,8 @@
 import httpx
 import pytest
 import json
+import threading
+import time
 
 from atv_player.danmaku.errors import DanmakuResolveError
 from atv_player.danmaku.providers.sohu import SohuDanmakuProvider
@@ -436,6 +438,52 @@ def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:
         (18.0, 5, "16711680", "顶部"),
     ]
     assert all(url != "https://tv.sohu.com/v/dXMvOTAwMi8=.html" for url, _ in calls)
+
+
+def test_sohu_resolve_fetches_segments_concurrently() -> None:
+    lock = threading.Lock()
+    active_requests = 0
+    max_active_requests = 0
+
+    def fake_get(url: str, **kwargs):
+        nonlocal active_requests, max_active_requests
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            start = int(kwargs["params"]["time_begin"])
+            with lock:
+                active_requests += 1
+                max_active_requests = max(max_active_requests, active_requests)
+            time.sleep(0.05)
+            with lock:
+                active_requests -= 1
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": f"c{start}",
+                                "c": f"第{start}段",
+                                "v": float(start),
+                                "uid": "u1",
+                                "created": "1710000000",
+                                "t": {"p": 1, "c": "#ffffff"},
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/demo.html",
+        {"aid": "500001", "vid": "9999", "duration_seconds": 1200},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/demo.html")
+
+    assert max_active_requests >= 2
+    assert [record.content for record in records] == ["第0段", "第300段", "第600段", "第900段"]
 
 
 def test_sohu_resolve_falls_back_to_page_html_for_aid_and_vid() -> None:

@@ -8,6 +8,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number, extract_variety_issue_key, normalize_name
 
 
@@ -232,40 +233,52 @@ class SohuDanmakuProvider:
         records: list[DanmakuRecord] = []
         failures = 0
         seen: set[tuple[float, str]] = set()
-        for start in range(0, max(duration_seconds, 1), 300):
-            response = self._get(
-                "https://api.danmu.tv.sohu.com/dmh5/dmListAll",
-                params={
-                    "act": "dmlist_v2",
-                    "vid": vid,
-                    "aid": aid,
-                    "pct": "2",
-                    "time_begin": start,
-                    "time_end": min(start + 300, duration_seconds),
-                    "dct": "1",
-                    "request_from": "h5_js",
-                },
-                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://tv.sohu.com/"},
-                follow_redirects=True,
-                timeout=10.0,
-            )
-            try:
-                payload = response.json()
-            except Exception:
-                failures += 1
-                continue
-            for comment in ((payload.get("info") or {}).get("comments") or []):
-                record = self._comment_to_record(comment)
-                if record is None:
+        for batch in iter_bounded_settled(
+            range(0, max(duration_seconds, 1), 300),
+            lambda start: self._fetch_segment_comments(aid, vid, duration_seconds, start),
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    failures += 1
                     continue
-                key = (record.time_offset, record.content)
-                if key in seen:
-                    continue
-                seen.add(key)
-                records.append(record)
+                for comment in settled.value or []:
+                    record = self._comment_to_record(comment)
+                    if record is None:
+                        continue
+                    key = (record.time_offset, record.content)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    records.append(record)
         if failures > 0 and not records:
             raise DanmakuResolveError("搜狐弹幕分段解析失败")
         return records
+
+    def _fetch_segment_comments(self, aid: str, vid: str, duration_seconds: int, start: int) -> list[object]:
+        response = self._get(
+            "https://api.danmu.tv.sohu.com/dmh5/dmListAll",
+            params={
+                "act": "dmlist_v2",
+                "vid": vid,
+                "aid": aid,
+                "pct": "2",
+                "time_begin": start,
+                "time_end": min(start + 300, duration_seconds),
+                "dct": "1",
+                "request_from": "h5_js",
+            },
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://tv.sohu.com/"},
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise DanmakuResolveError("搜狐弹幕分段解析失败")
+        info = self._mapping_or_empty(payload.get("info"), context="segment info")
+        comments = info.get("comments")
+        if not isinstance(comments, list):
+            return []
+        return comments
 
     def _pick_movie_video(self, title: str, videos: list[dict]) -> dict | None:
         candidates = [
