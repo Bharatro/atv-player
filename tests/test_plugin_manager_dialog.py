@@ -145,6 +145,7 @@ class FakePluginManager:
 
     def delete_plugin(self, plugin_id: int) -> None:
         self.delete_calls.append(plugin_id)
+        self.plugins = [plugin for plugin in self.plugins if int(plugin.id) != int(plugin_id)]
 
     def list_logs(self, plugin_id: int):
         return self.logs.get(plugin_id, [])
@@ -855,6 +856,32 @@ def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
     dialog._delete_selected()
 
     assert manager.delete_calls == [1, 2]
+
+
+def test_plugin_manager_dialog_bulk_delete_keeps_remaining_selected_rows_visible(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.plugins.append(
+        SpiderPluginConfig(
+            id=3,
+            source_type="local",
+            source_value="/plugins/c.py",
+            display_name="本地C",
+            enabled=False,
+            sort_order=2,
+            plugin_version=1,
+        )
+    )
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 1, 2)
+
+    dialog._delete_selected()
+
+    assert manager.delete_calls == [2, 3]
+    assert _visible_plugin_ids(dialog) == [1]
+    assert dialog._selected_plugin_ids() == []
 
 
 def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:
