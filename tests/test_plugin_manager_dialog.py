@@ -72,14 +72,14 @@ class FakePluginManager:
         self.refresh_calls: list[int] = []
         self.add_local_calls: list[str] = []
         self.add_remote_calls: list[str] = []
-        self.github_import_calls: list[str] = []
+        self.import_calls: list[str] = []
         self.delete_calls: list[int] = []
         self.action_calls: list[tuple[int, str, object]] = []
         self.progress_events: list[tuple[str, int, int, str]] = []
         self.action_query_calls: list[int] = []
         self.cancel_callback_checks = 0
         self.cancel_result = SpiderPluginImportResult(imported_count=1, updated_count=0, skipped_count=0)
-        self.github_import_result = SpiderPluginImportResult(imported_count=2, updated_count=1, skipped_count=3)
+        self.import_result = SpiderPluginImportResult(imported_count=2, updated_count=1, skipped_count=3)
         self.actions = {
             1: [SpiderPluginAction(id="qr_login", label="扫码登录")],
             2: [
@@ -101,8 +101,8 @@ class FakePluginManager:
     def add_remote_plugin(self, url: str) -> None:
         self.add_remote_calls.append(url)
 
-    def import_github_repository(self, repo_url: str, *, progress_callback=None, cancel_callback=None):
-        self.github_import_calls.append(repo_url)
+    def import_plugins(self, source_url: str, *, progress_callback=None, cancel_callback=None):
+        self.import_calls.append(source_url)
         if progress_callback is not None:
             for event in (
                 SpiderPluginImportProgress(stage="resolve_repo", message="正在解析仓库信息"),
@@ -116,7 +116,7 @@ class FakePluginManager:
                     self.cancel_callback_checks += 1
                     if cancel_callback():
                         raise SpiderPluginImportCancelled(self.cancel_result)
-        return self.github_import_result
+        return self.import_result
 
     def rename_plugin(self, plugin_id: int, display_name: str) -> None:
         self.rename_calls.append((plugin_id, display_name))
@@ -214,6 +214,13 @@ def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> Non
     assert dialog.sort_combo.property("flat_combo_height") == 26
     assert dialog.clear_filters_button.text() == "清空"
     assert dialog.filters_layout.spacing() == 12
+
+
+def test_plugin_manager_dialog_renders_bulk_import_button(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.import_github_button.text() == "批量导入"
 
 
 def test_plugin_manager_dialog_filter_combos_reserve_minimum_width_for_longest_label(qtbot) -> None:
@@ -963,11 +970,11 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
     observed: dict[str, object] = {}
 
     class ObservingPluginManager(FakePluginManager):
-        def import_github_repository(self, repo_url: str, *, progress_callback=None, cancel_callback=None):
+        def import_plugins(self, source_url: str, *, progress_callback=None, cancel_callback=None):
             observed["progress_updates_before_import"] = list(progress_updates)
             observed["process_event_calls_before_import"] = list(process_event_calls)
-            return super().import_github_repository(
-                repo_url,
+            return super().import_plugins(
+                source_url,
                 progress_callback=progress_callback,
                 cancel_callback=cancel_callback,
             )
@@ -1025,16 +1032,16 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
             pass
 
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
-    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://d.har01d.cn/spiders_v2.json")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: summary_messages.append(args[2]))
     monkeypatch.setattr(
         "atv_player.ui.plugin_manager_dialog.QApplication.processEvents",
         lambda *args, **kwargs: process_event_calls.append("processed"),
     )
 
-    dialog._import_github_repository()
+    dialog._import_plugins()
 
-    assert manager.github_import_calls == ["https://github.com/har01d5/tvbox"]
+    assert manager.import_calls == ["https://d.har01d.cn/spiders_v2.json"]
     assert observed["progress_updates_before_import"] == [(0, 0, "正在准备导入...")]
     assert observed["process_event_calls_before_import"] == ["processed"]
     assert progress_updates[0] == (0, 0, "正在准备导入...")
@@ -1095,11 +1102,11 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_shows_cancel_text(qt
             pass
 
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
-    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://github.com/har01d5/tvbox")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: None)
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
 
-    dialog._import_github_repository()
+    dialog._import_plugins()
 
     progress = captured["instance"]
     assert progress.label_text == ""
@@ -1166,14 +1173,14 @@ def test_plugin_manager_dialog_reports_cancelled_import_and_reloads_plugins(qtbo
 
     monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
-    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://github.com/har01d5/tvbox")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: info_messages.append(args[2]))
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.warning", lambda *args: warning_messages.append(args[2]))
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
 
-    dialog._import_github_repository()
+    dialog._import_plugins()
 
-    assert manager.github_import_calls == ["https://github.com/har01d5/tvbox"]
+    assert manager.import_calls == ["https://github.com/har01d5/tvbox"]
     assert manager.cancel_callback_checks > 0
     assert reload_calls == ["reload"]
     assert info_messages == ["已取消：新增 1 个，更新 0 个，跳过 0 个。"]
@@ -1187,11 +1194,11 @@ def test_plugin_manager_dialog_ignores_reentrant_github_import_requests(qtbot, m
     dialog.show()
     dialog._import_in_progress = True
 
-    monkeypatch.setattr(dialog, "_prompt_github_repo_url", lambda: "https://github.com/har01d5/tvbox")
+    monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://github.com/har01d5/tvbox")
 
-    dialog._import_github_repository()
+    dialog._import_plugins()
 
-    assert manager.github_import_calls == []
+    assert manager.import_calls == []
 
 
 def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbot, monkeypatch) -> None:

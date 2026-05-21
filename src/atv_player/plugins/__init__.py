@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import time
 from pathlib import Path
 from pathlib import PurePosixPath
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx
 
@@ -69,6 +69,20 @@ def _parse_github_repo(value: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+def _is_github_repo_url(value: str) -> bool:
+    parsed = urlparse(value.strip())
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    return parsed.scheme == "https" and parsed.netloc == "github.com" and len(parts) >= 2
+
+
+def _parse_manifest_source_url(value: str) -> str:
+    url = value.strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("请输入 GitHub 仓库地址或 spiders_v2.json URL")
+    return url
+
+
 def _parse_manifest_plugin_version(entry: object) -> int | None:
     if not isinstance(entry, dict):
         return None
@@ -84,6 +98,16 @@ def _parse_manifest_plugin_version(entry: object) -> int | None:
 def _raw_github_url(owner: str, repo: str, branch: str, relative_path: str) -> str:
     encoded_parts = [quote(part) for part in PurePosixPath(relative_path).parts]
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{'/'.join(encoded_parts)}"
+
+
+def _resolve_manifest_entry_source_url(manifest_url: str, file_path: str) -> str | None:
+    parsed = urlparse(file_path)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return file_path
+    path = PurePosixPath(file_path)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    return urljoin(manifest_url, quote(file_path))
 
 
 class SpiderPluginManager:
@@ -365,15 +389,53 @@ class SpiderPluginManager:
         progress_callback: Callable[[SpiderPluginImportProgress], None] | None = None,
         cancel_callback: Callable[[], bool] | None = None,
     ) -> SpiderPluginImportResult:
+        return self.import_plugins(
+            repo_url,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
+
+    def import_plugins(
+        self,
+        source_url: str,
+        *,
+        progress_callback: Callable[[SpiderPluginImportProgress], None] | None = None,
+        cancel_callback: Callable[[], bool] | None = None,
+    ) -> SpiderPluginImportResult:
         result = SpiderPluginImportResult()
-        owner, repo = _parse_github_repo(repo_url)
-        self._raise_if_import_cancelled(cancel_callback, result)
-        self._emit_import_progress(progress_callback, stage="resolve_repo", message="正在解析仓库信息")
-        self._raise_if_import_cancelled(cancel_callback, result)
-        default_branch = self._load_github_default_branch(owner, repo)
+        source_url = source_url.strip()
+        if _is_github_repo_url(source_url):
+            owner, repo = _parse_github_repo(source_url)
+            self._raise_if_import_cancelled(cancel_callback, result)
+            self._emit_import_progress(progress_callback, stage="resolve_repo", message="正在解析仓库信息")
+            self._raise_if_import_cancelled(cancel_callback, result)
+            default_branch = self._load_github_default_branch(owner, repo)
+            manifest_url = _raw_github_url(owner, repo, default_branch, "spiders_v2.json")
+            return self._import_manifest(
+                manifest_url,
+                result,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+            )
+        manifest_url = _parse_manifest_source_url(source_url)
+        return self._import_manifest(
+            manifest_url,
+            result,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
+
+    def _import_manifest(
+        self,
+        manifest_url: str,
+        result: SpiderPluginImportResult,
+        *,
+        progress_callback: Callable[[SpiderPluginImportProgress], None] | None = None,
+        cancel_callback: Callable[[], bool] | None = None,
+    ) -> SpiderPluginImportResult:
         self._emit_import_progress(progress_callback, stage="fetch_manifest", message="正在读取 spiders_v2.json")
         self._raise_if_import_cancelled(cancel_callback, result)
-        manifest = self._fetch_json(_raw_github_url(owner, repo, default_branch, "spiders_v2.json"))
+        manifest = self._fetch_json(manifest_url)
         if not isinstance(manifest, list):
             raise ValueError("spiders_v2.json 格式无效")
 
@@ -389,16 +451,15 @@ class SpiderPluginManager:
                 total=total,
                 message=f"正在导入 {file_path}",
             )
-            path = PurePosixPath(file_path)
-            if path.is_absolute() or ".." in path.parts:
-                result.skipped_count += 1
-                continue
             plugin_version = _parse_manifest_plugin_version(entry)
             if plugin_version is None:
                 result.skipped_count += 1
                 continue
             try:
-                source_url = _raw_github_url(owner, repo, default_branch, file_path)
+                source_url = _resolve_manifest_entry_source_url(manifest_url, file_path)
+                if source_url is None:
+                    result.skipped_count += 1
+                    continue
                 self._raise_if_import_cancelled(cancel_callback, result)
                 self._fetch_text(source_url)
                 existing = self._repository.find_plugin_by_source_value(source_url)

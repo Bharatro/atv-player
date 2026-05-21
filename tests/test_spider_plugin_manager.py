@@ -294,7 +294,7 @@ def test_manager_import_github_repository_imports_manifest_plugins_and_disables_
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
 
-    result = manager.import_github_repository(
+    result = manager.import_plugins(
         "https://github.com/har01d5/tvbox",
         progress_callback=lambda event: progress_events.append(
             (event.stage, event.current, event.total, event.message)
@@ -376,7 +376,7 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
     )
     manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
 
-    result = manager.import_github_repository("https://github.com/har01d5/tvbox")
+    result = manager.import_plugins("https://github.com/har01d5/tvbox")
 
     plugins = repository.list_plugins()
     updated = next(
@@ -416,7 +416,7 @@ def test_manager_import_github_repository_skips_entries_with_invalid_manifest_ve
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
 
-    result = manager.import_github_repository("https://github.com/har01d5/tvbox")
+    result = manager.import_plugins("https://github.com/har01d5/tvbox")
 
     assert result == SpiderPluginImportResult(imported_count=0, updated_count=0, skipped_count=1)
     assert repository.list_plugins() == []
@@ -462,7 +462,7 @@ def test_manager_import_github_repository_stops_after_cancellation_and_preserves
         return repository.find_plugin_by_source_value(first_url) is not None
 
     with pytest.raises(SpiderPluginImportCancelled) as exc_info:
-        manager.import_github_repository(
+        manager.import_plugins(
             "https://github.com/har01d5/tvbox",
             cancel_callback=cancel_callback,
         )
@@ -476,6 +476,115 @@ def test_manager_import_github_repository_stops_after_cancellation_and_preserves
     )
     assert [plugin.source_value for plugin in plugins] == [first_url]
     assert plugins[0].plugin_version == 6
+
+
+def test_manager_import_plugins_accepts_direct_manifest_url_with_relative_files(tmp_path: Path) -> None:
+    responses = {
+        "https://d.har01d.cn/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"file": "py/红果.txt", "valid": True, "version": 8},
+                {"file": "nested/双星.txt", "valid": False, "version": 3},
+            ],
+        ),
+        "https://d.har01d.cn/py/%E7%BA%A2%E6%9E%9C.txt": httpx.Response(
+            200,
+            text="//@version:1\nprint('a')\n",
+        ),
+        "https://d.har01d.cn/nested/%E5%8F%8C%E6%98%9F.txt": httpx.Response(
+            200,
+            text="//@version:2\nprint('b')\n",
+        ),
+    }
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins(
+        "https://d.har01d.cn/spiders_v2.json",
+        progress_callback=lambda event: progress_events.append(
+            (event.stage, event.current, event.total, event.message)
+        ),
+    )
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=2, updated_count=0, skipped_count=0)
+    assert [plugin.source_value for plugin in plugins] == [
+        "https://d.har01d.cn/py/%E7%BA%A2%E6%9E%9C.txt",
+        "https://d.har01d.cn/nested/%E5%8F%8C%E6%98%9F.txt",
+    ]
+    assert [plugin.enabled for plugin in plugins] == [True, False]
+    assert progress_events == [
+        ("fetch_manifest", 0, 0, "正在读取 spiders_v2.json"),
+        ("import_plugin", 1, 2, "正在导入 py/红果.txt"),
+        ("import_plugin", 2, 2, "正在导入 nested/双星.txt"),
+    ]
+
+
+def test_manager_import_plugins_accepts_direct_manifest_url_with_absolute_files(tmp_path: Path) -> None:
+    plugin_url = "https://cdn.example.com/plugins/%E6%BD%AE%E6%B5%81APP.txt"
+    responses = {
+        "https://example.com/spiders_v2.json": httpx.Response(
+            200,
+            json=[{"file": plugin_url, "valid": True, "version": 6}],
+        ),
+        plugin_url: httpx.Response(200, text="//@version:1\nprint('a')\n"),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins("https://example.com/spiders_v2.json")
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=1, updated_count=0, skipped_count=0)
+    assert [plugin.source_value for plugin in plugins] == [plugin_url]
+
+
+def test_manager_import_plugins_skips_relative_entries_with_parent_traversal(tmp_path: Path) -> None:
+    responses = {
+        "https://example.com/plugins/spiders_v2.json": httpx.Response(
+            200,
+            json=[{"file": "../escape.txt", "valid": True, "version": 2}],
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins("https://example.com/plugins/spiders_v2.json")
+
+    assert result == SpiderPluginImportResult(imported_count=0, updated_count=0, skipped_count=1)
+    assert repository.list_plugins() == []
+
+
+def test_manager_import_plugins_rejects_invalid_source_url(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    with pytest.raises(ValueError, match="请输入 GitHub 仓库地址或 spiders_v2.json URL"):
+        manager.import_plugins("not-a-url")
 
 
 def test_manager_iter_enabled_plugins_prioritizes_requested_plugin_ids(tmp_path: Path) -> None:

@@ -116,7 +116,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_table.setColumnWidth(6, 168)
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
-        self.import_github_button = QPushButton("从 GitHub 导入")
+        self.import_github_button = QPushButton("批量导入")
         self.rename_button = QPushButton("编辑名称")
         self.config_button = QPushButton("编辑配置")
         self.category_button = QPushButton("分类管理")
@@ -181,7 +181,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
 
         self.add_local_button.clicked.connect(self._add_local_plugin)
         self.add_remote_button.clicked.connect(self._add_remote_plugin)
-        self.import_github_button.clicked.connect(self._import_github_repository)
+        self.import_github_button.clicked.connect(self._import_plugins)
         self.rename_button.clicked.connect(self._rename_selected)
         self.config_button.clicked.connect(self._edit_selected_config)
         self.category_button.clicked.connect(self._open_category_manager_dialog)
@@ -531,8 +531,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         value, accepted = QInputDialog.getText(self, "添加远程插件", "Python 文件 URL")
         return value.strip() if accepted else ""
 
-    def _prompt_github_repo_url(self) -> str:
-        value, accepted = QInputDialog.getText(self, "从 GitHub 导入", "GitHub 仓库 URL")
+    def _prompt_import_source_url(self) -> str:
+        value, accepted = QInputDialog.getText(self, "批量导入", "GitHub 仓库 URL 或 spiders_v2.json URL")
         return value.strip() if accepted else ""
 
     def _update_import_progress(self, dialog: QProgressDialog, event) -> None:
@@ -558,14 +558,14 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 
-    def _import_github_repository(self) -> None:
+    def _import_plugins(self) -> None:
         if self._import_in_progress:
             return
-        repo_url = self._prompt_github_repo_url()
-        if not repo_url:
+        source_url = self._prompt_import_source_url()
+        if not source_url:
             return
         progress = QProgressDialog("", "取消", 0, 0, self)
-        progress.setWindowTitle("从 GitHub 导入")
+        progress.setWindowTitle("批量导入")
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
@@ -576,8 +576,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         progress.show()
         QApplication.processEvents()
         try:
-            result = self.plugin_manager.import_github_repository(
-                repo_url,
+            result = self.plugin_manager.import_plugins(
+                source_url,
                 progress_callback=lambda event: self._update_import_progress(progress, event),
                 cancel_callback=lambda: progress.wasCanceled(),
             )
