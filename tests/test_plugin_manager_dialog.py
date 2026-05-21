@@ -446,12 +446,63 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
 
     assert dialog.rename_button.isEnabled() is False
     assert dialog.config_button.isEnabled() is False
-    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.enable_button.isEnabled() is False
+    assert dialog.disable_button.isEnabled() is False
     assert dialog.up_button.isEnabled() is False
     assert dialog.down_button.isEnabled() is False
     assert dialog.refresh_button.isEnabled() is False
     assert dialog.logs_button.isEnabled() is False
     assert dialog.delete_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_exposes_explicit_enable_and_disable_buttons(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.enable_button.text() == "启用"
+    assert dialog.disable_button.text() == "禁用"
+
+
+def test_plugin_manager_dialog_disables_bulk_buttons_without_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.clearSelection()
+    dialog._sync_action_state()
+
+    assert dialog.enable_button.isEnabled() is False
+    assert dialog.disable_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_enables_bulk_buttons_based_on_selected_states(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+
+    assert dialog.enable_button.isEnabled() is True
+    assert dialog.disable_button.isEnabled() is True
+    assert dialog.refresh_button.isEnabled() is True
+    assert dialog.delete_button.isEnabled() is True
+
+
+def test_plugin_manager_dialog_keeps_single_item_actions_disabled_for_multi_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.config_button.isEnabled() is False
+    assert dialog.category_button.isEnabled() is False
+    assert dialog.logs_button.isEnabled() is False
 
 
 def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtbot) -> None:
@@ -464,10 +515,11 @@ def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtb
 
     assert dialog.rename_button.isEnabled() is False
     assert dialog.config_button.isEnabled() is False
-    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.enable_button.isEnabled() is True
+    assert dialog.disable_button.isEnabled() is True
     assert dialog.up_button.isEnabled() is False
     assert dialog.down_button.isEnabled() is False
-    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is True
     assert dialog.logs_button.isEnabled() is False
     assert dialog.delete_button.isEnabled() is True
 

@@ -108,7 +108,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button = QPushButton("编辑名称")
         self.config_button = QPushButton("编辑配置")
         self.category_button = QPushButton("分类管理")
-        self.toggle_button = QPushButton("启用/禁用")
+        self.enable_button = QPushButton("启用")
+        self.disable_button = QPushButton("禁用")
         self.up_button = QPushButton("上移")
         self.down_button = QPushButton("下移")
         self.reorder_button = QPushButton("调整顺序")
@@ -138,7 +139,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.rename_button,
             self.config_button,
             self.category_button,
-            self.toggle_button,
+            self.enable_button,
+            self.disable_button,
             self.up_button,
             self.down_button,
             self.reorder_button,
@@ -171,7 +173,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button.clicked.connect(self._rename_selected)
         self.config_button.clicked.connect(self._edit_selected_config)
         self.category_button.clicked.connect(self._open_category_manager_dialog)
-        self.toggle_button.clicked.connect(self._toggle_selected_enabled)
+        self.enable_button.clicked.connect(self._enable_selected)
+        self.disable_button.clicked.connect(self._disable_selected)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
         self.reorder_button.clicked.connect(self._open_reorder_dialog)
@@ -329,6 +332,21 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _is_current_order_sort(self) -> bool:
         return self.sort_combo.currentData() == "sort_order"
 
+    def _selected_plugins(self) -> list:
+        plugin_by_id = {int(plugin.id): plugin for plugin in self._all_plugins}
+        plugins = []
+        for plugin_id in self._selected_plugin_ids():
+            plugin = plugin_by_id.get(int(plugin_id))
+            if plugin is not None:
+                plugins.append(plugin)
+        return plugins
+
+    def _has_selected_enabled_plugin(self) -> bool:
+        return any(bool(plugin.enabled) for plugin in self._selected_plugins())
+
+    def _has_selected_disabled_plugin(self) -> bool:
+        return any(not bool(plugin.enabled) for plugin in self._selected_plugins())
+
     def _sync_action_state(self) -> None:
         if self._refresh_in_progress:
             self.add_local_button.setEnabled(False)
@@ -337,7 +355,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.rename_button.setEnabled(False)
             self.config_button.setEnabled(False)
             self.category_button.setEnabled(False)
-            self.toggle_button.setEnabled(False)
+            self.enable_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
             self.up_button.setEnabled(False)
             self.down_button.setEnabled(False)
             self.reorder_button.setEnabled(False)
@@ -347,6 +366,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         has_selection = self._has_selection()
         has_single_selection = self._has_single_selection()
+        has_selected_enabled_plugin = self._has_selected_enabled_plugin()
+        has_selected_disabled_plugin = self._has_selected_disabled_plugin()
         row = self.plugin_table.currentRow() if has_single_selection else -1
         last_row = self.plugin_table.rowCount() - 1
         allow_reorder_nudge = self._is_current_order_sort()
@@ -356,11 +377,12 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button.setEnabled(has_single_selection)
         self.config_button.setEnabled(has_single_selection)
         self.category_button.setEnabled(has_single_selection)
-        self.toggle_button.setEnabled(has_single_selection)
+        self.enable_button.setEnabled(has_selected_disabled_plugin)
+        self.disable_button.setEnabled(has_selected_enabled_plugin)
         self.up_button.setEnabled(has_single_selection and allow_reorder_nudge and row > 0)
         self.down_button.setEnabled(has_single_selection and allow_reorder_nudge and row >= 0 and row < last_row)
         self.reorder_button.setEnabled(True)
-        self.refresh_button.setEnabled(has_single_selection)
+        self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_single_selection)
         self.delete_button.setEnabled(has_selection)
         self._schedule_plugin_action_reload()
@@ -605,6 +627,12 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         if not result.changed:
             return
         self.reload_plugins()
+
+    def _enable_selected(self) -> None:
+        return
+
+    def _disable_selected(self) -> None:
+        return
 
     def _toggle_selected_enabled(self) -> None:
         plugin_id = self._selected_plugin_id()
