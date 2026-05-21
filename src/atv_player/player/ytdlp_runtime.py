@@ -63,20 +63,9 @@ def _iter_path_candidates(executable_name: str) -> list[Path]:
         if directory == current_python_dir or directory == project_venv_dir:
             continue
         candidate = directory / executable_name
-        if _is_pyenv_shim(str(candidate)):
-            continue
         if _is_usable_file(candidate):
             candidates.append(candidate)
     return candidates
-
-
-def _is_pyenv_shim(path: str) -> bool:
-    pyenv_root = _normalized_env("PYENV_ROOT")
-    if not pyenv_root:
-        return False
-    candidate = Path(path).expanduser()
-    shim_dir = Path(pyenv_root).expanduser() / "shims"
-    return candidate.parent == shim_dir
 
 
 def resolve_system_ytdlp_path() -> str:
@@ -97,21 +86,11 @@ def resolve_system_ytdlp_path() -> str:
     project_venv_dir = Path(__file__).resolve().parents[3] / ".venv" / "bin"
     if discovered_path.parent in {Path(sys.executable).resolve().parent, project_venv_dir}:
         return ""
-    if _is_pyenv_shim(str(discovered_path)):
-        return ""
     return str(discovered_path)
 
 
 def resolve_mpv_ytdlp_path() -> str:
     return resolve_system_ytdlp_path()
-
-
-def build_ytdlp_subprocess_env(executable_path: str) -> dict[str, str] | None:
-    if not _is_pyenv_shim(executable_path):
-        return None
-    env = os.environ.copy()
-    env["PYENV_DIR"] = str(Path.home())
-    return env
 
 
 def build_ytdlp_command_args(

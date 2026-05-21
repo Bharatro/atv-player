@@ -42,25 +42,6 @@ def test_resolve_system_ytdlp_path_skips_current_venv_bin(monkeypatch) -> None:
     assert ytdlp_runtime.resolve_system_ytdlp_path() == "/usr/local/bin/yt-dlp"
 
 
-def test_resolve_system_ytdlp_path_skips_pyenv_shim(monkeypatch) -> None:
-    from atv_player.player import ytdlp_runtime
-
-    monkeypatch.delenv("ATV_YTDLP_PATH", raising=False)
-    monkeypatch.setenv("PYENV_ROOT", "/home/demo/.pyenv")
-    monkeypatch.setenv("PATH", "/home/demo/.pyenv/shims:/home/demo/miniforge/bin")
-    monkeypatch.setattr(ytdlp_runtime.sys, "executable", "/home/demo/project/.venv/bin/python")
-    monkeypatch.setattr(
-        ytdlp_runtime,
-        "_is_usable_file",
-        lambda path: str(path) in {
-            "/home/demo/.pyenv/shims/yt-dlp",
-            "/home/demo/miniforge/bin/yt-dlp",
-        },
-    )
-
-    assert ytdlp_runtime.resolve_system_ytdlp_path() == "/home/demo/miniforge/bin/yt-dlp"
-
-
 def test_resolve_mpv_ytdlp_path_returns_empty_when_no_candidate_exists(monkeypatch) -> None:
     from atv_player.player import ytdlp_runtime
 

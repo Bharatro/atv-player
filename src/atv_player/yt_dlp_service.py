@@ -19,7 +19,6 @@ from atv_player.models import (
 from atv_player.network_proxy import ProxyDecider, build_ytdlp_proxy_args
 from atv_player.player.ytdlp_runtime import (
     build_ytdlp_command_args,
-    build_ytdlp_subprocess_env,
     resolve_system_ytdlp_path,
 )
 
@@ -511,7 +510,6 @@ class YtdlpPlaybackService:
                 capture_output=True,
                 text=True,
                 timeout=60,
-                env=build_ytdlp_subprocess_env(self._ytdlp_path),
             )
         except subprocess.TimeoutExpired as exc:
             raise ValueError("yt-dlp 解析超时") from exc
