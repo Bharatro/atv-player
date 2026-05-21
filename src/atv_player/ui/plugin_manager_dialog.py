@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -30,7 +31,7 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
-from atv_player.ui.theme import build_placeholder_label_qss, current_tokens
+from atv_player.ui.theme import FlatComboBox, build_placeholder_label_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
@@ -65,16 +66,16 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
         self.search_input = QLineEdit(self)
         self.search_input.setPlaceholderText("搜索名称或地址")
-        self.enabled_filter_combo = QComboBox(self)
+        self.enabled_filter_combo = FlatComboBox(self)
         self.enabled_filter_combo.addItem("全部", "all")
         self.enabled_filter_combo.addItem("仅启用", "enabled")
         self.enabled_filter_combo.addItem("仅禁用", "disabled")
-        self.enabled_filter_combo.setMinimumWidth(112)
-        self.sort_combo = QComboBox(self)
+        self._configure_filter_combo(self.enabled_filter_combo, minimum_contents_length=6)
+        self.sort_combo = FlatComboBox(self)
         self.sort_combo.addItem("当前顺序", "sort_order")
         self.sort_combo.addItem("名称", "name")
         self.sort_combo.addItem("最近加载", "last_loaded_at")
-        self.sort_combo.setMinimumWidth(128)
+        self._configure_filter_combo(self.sort_combo, minimum_contents_length=6)
         self.clear_filters_button = QPushButton("清空")
         self.empty_state_label = QLabel("没有匹配的插件", self)
         self.empty_state_label.hide()
@@ -212,6 +213,16 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.sort_combo.setCurrentIndex(0)
         del blockers
         self._apply_view_filters()
+
+    def _configure_filter_combo(self, combo: QComboBox, *, minimum_contents_length: int) -> None:
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumContentsLength(minimum_contents_length)
+        combo.setMaxVisibleItems(12)
+        longest_label_width = max(combo.fontMetrics().horizontalAdvance(combo.itemText(index)) for index in range(combo.count()))
+        left_padding = int(combo.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(combo.property("flat_combo_indicator_padding") or 40)
+        combo.setMinimumWidth(longest_label_width + left_padding + indicator_padding)
+        combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def _visible_plugins(self, plugins) -> list:
         search_term = self.search_input.text().strip().casefold()
