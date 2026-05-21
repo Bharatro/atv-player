@@ -191,6 +191,90 @@ def test_metadata_hydrator_keeps_official_douban_overview_but_uses_tmdb_visual_f
     assert updated.vod_remarks == "8.1"
 
 
+def test_metadata_hydrator_prefers_promoted_sohu_record_over_tmdb_but_keeps_tmdb_poster(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42", title="谁动了我的隐私", year="2026", score=1.17)],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            title="谁动了我的隐私",
+            poster="https://img.example/tmdb-poster.jpg",
+            overview="TMDB简介",
+        ),
+    )
+    sohu = FakeProvider(
+        "sohu",
+        matches=[
+            MetadataMatch(
+                provider="sohu",
+                provider_id="http://tv.sohu.com/s2026/dsjsdlwdys/",
+                title="谁动了我的隐私",
+                year="2026",
+                score=1.52,
+                raw={"sohu_preferred_over_tmdb": True},
+            )
+        ],
+        record=MetadataRecord(
+            provider="sohu",
+            provider_id="http://tv.sohu.com/s2026/dsjsdlwdys/",
+            title="谁动了我的隐私",
+            overview="搜狐简介",
+            genres=["悬疑", "剧情"],
+            detail_fields=[{"label": "搜狐标签", "value": "自制 / 独播 / 独家"}],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, sohu])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="谁动了我的隐私"), source_kind="browse"))
+
+    assert updated.vod_content == "搜狐简介"
+    assert updated.type_name == "悬疑 / 剧情"
+    assert updated.vod_pic == "https://img.example/tmdb-poster.jpg"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("搜狐标签", "自制 / 独播 / 独家")]
+
+
+def test_metadata_hydrator_keeps_tmdb_primary_when_sohu_is_exclusive_only_supplement(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42", title="如果可以这样爱", year="2019", score=1.17)],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            title="如果可以这样爱",
+            overview="TMDB简介",
+        ),
+    )
+    sohu = FakeProvider(
+        "sohu",
+        matches=[
+            MetadataMatch(
+                provider="sohu",
+                provider_id="http://tv.sohu.com/s2019/ruguokeyizheyangai/",
+                title="如果可以这样爱（DVD版）",
+                year="2019",
+                score=1.1,
+                raw={"sohu_preferred_over_tmdb": False},
+            )
+        ],
+        record=MetadataRecord(
+            provider="sohu",
+            provider_id="http://tv.sohu.com/s2019/ruguokeyizheyangai/",
+            title="如果可以这样爱（DVD版）",
+            detail_fields=[{"label": "搜狐标签", "value": "独家"}],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, sohu])
+
+    updated = hydrator.hydrate(MetadataContext(vod=VodItem(vod_id="v1", vod_name="如果可以这样爱"), source_kind="browse"))
+
+    assert updated.vod_content == "TMDB简介"
+    assert updated.metadata_field_sources["overview"] == "tmdb"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("搜狐标签", "独家")]
+
+
 def test_metadata_hydrator_prefers_current_item_media_title_for_query(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

@@ -152,6 +152,12 @@ def _should_refresh_cached_detail(provider_name: str, cached: MetadataRecord, ma
     return _iqiyi_match_raw_has_detail(match)
 
 
+def _should_promote_sohu_record(match: MetadataMatch) -> bool:
+    if match.provider != "sohu":
+        return False
+    return bool(dict(match.raw or {}).get("sohu_preferred_over_tmdb"))
+
+
 class MetadataHydrator:
     def __init__(
         self,
@@ -373,6 +379,10 @@ class MetadataHydrator:
                     current_kind,
                     _record_media_kind(record),
                 )
+                continue
+            if _should_promote_sohu_record(match):
+                merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
+                override_visual_metadata_record(vod, record)
                 continue
             fill_missing_metadata_record(vod, record)
             override_visual_metadata_record(vod, record)

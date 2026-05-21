@@ -677,6 +677,13 @@ def test_metadata_scrape_service_provider_options_include_tencent_label(tmp_path
     assert service.provider_options() == [("bilibili", "B站"), ("tencent", "腾讯")]
 
 
+def test_metadata_scrape_service_provider_options_include_sohu_label(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    service = MetadataScrapeService(cache=cache, providers=[FakeProvider("sohu"), FakeProvider("tmdb")])
+
+    assert service.provider_options() == [("sohu", "搜狐视频"), ("tmdb", "TMDB")]
+
+
 def test_metadata_scrape_service_provider_options_hide_bangumi_for_non_anime_query(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     service = MetadataScrapeService(cache=cache, providers=[FakeProvider("bangumi"), FakeProvider("tmdb")])
@@ -694,6 +701,45 @@ def test_metadata_scrape_service_provider_options_show_bangumi_for_anime_query(t
     options = service.provider_options(MetadataQuery(title="牧神记", category_name="动漫"))
 
     assert ("bangumi", "Bangumi") in options
+
+
+def test_metadata_scrape_service_episode_title_rewrite_ignores_sohu_provider(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    sohu = FakeProvider(
+        "sohu",
+        matches=[
+            MetadataMatch(
+                provider="sohu",
+                provider_id="http://tv.sohu.com/s2026/demo/",
+                title="谁动了我的隐私",
+                year="2026",
+                raw={"videos": [{"video_order": 1, "video_name": "搜狐标题"}]},
+            )
+        ],
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:42:season:1",
+                title="谁动了我的隐私",
+                year="2026",
+                raw={"episodes": [{"episode_number": 1, "name": "TMDB标题"}]},
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[sohu, tmdb])
+
+    updated = service.build_episode_title_playlist(
+        VodItem(vod_id="v1", vod_name="谁动了我的隐私", vod_year="2026", category_name="电视剧"),
+        [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")],
+    )
+
+    assert updated is not None
+    assert updated[0].episode_title_source == "tmdb"
+    assert updated[0].episode_display_title == "第1集 TMDB标题"
+    assert sohu.search_calls == []
 
 
 def test_metadata_scrape_service_keeps_failed_provider_group_for_all_search(tmp_path: Path) -> None:

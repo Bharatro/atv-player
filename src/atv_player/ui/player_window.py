@@ -131,6 +131,7 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("bilibili", "B站"),
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
+    ("sohu", "搜狐"),
 ]
 
 _METADATA_PROVIDER_LABELS: dict[str, str] = {

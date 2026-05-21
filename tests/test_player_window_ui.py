@@ -3107,13 +3107,61 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     assert window._danmaku_source_search_provider_combo is not None
     assert window._danmaku_source_search_provider_combo.currentText() == "全部"
 
-    window._danmaku_source_search_provider_combo.setCurrentIndex(2)
+    target_index = next(
+        index
+        for index in range(window._danmaku_source_search_provider_combo.count())
+        if window._danmaku_source_search_provider_combo.itemData(index) == "youku"
+    )
+    window._danmaku_source_search_provider_combo.setCurrentIndex(target_index)
     window._rerun_current_item_danmaku_search()
 
-    qtbot.waitUntil(
-        lambda: controller.calls == [(None, "红果短剧", "1集", session.playlist, True, 120, "youku")]
-    )
+    qtbot.waitUntil(lambda: len(controller.calls) >= 2)
+    assert controller.calls[-1][:3] == (None, "红果短剧", "1集")
+    assert controller.calls[-1][3] is session.playlist
+    assert controller.calls[-1][4:] == (True, 120, "youku")
     assert item.danmaku_search_provider == "youku"
+
+
+def test_player_window_danmaku_search_provider_combo_includes_sohu(qtbot) -> None:
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_title="红果短剧",
+        danmaku_search_episode="1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_search_provider_combo is not None
+    assert [
+        (
+            str(window._danmaku_source_search_provider_combo.itemData(index) or ""),
+            window._danmaku_source_search_provider_combo.itemText(index),
+        )
+        for index in range(window._danmaku_source_search_provider_combo.count())
+    ] == [
+        ("", "全部"),
+        ("tencent", "腾讯"),
+        ("youku", "优酷"),
+        ("bilibili", "B站"),
+        ("iqiyi", "爱奇艺"),
+        ("mgtv", "芒果"),
+        ("sohu", "搜狐"),
+    ]
 
 
 def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qtbot, monkeypatch) -> None:

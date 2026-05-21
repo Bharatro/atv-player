@@ -1,5 +1,6 @@
 import httpx
 import pytest
+import json
 
 from atv_player.danmaku.errors import DanmakuResolveError
 from atv_player.danmaku.providers.sohu import SohuDanmakuProvider
@@ -9,6 +10,10 @@ def test_sohu_search_filters_trailer_noise_and_expands_episode_candidates() -> N
     def fake_get(url: str, **kwargs):
         if url == "https://m.so.tv.sohu.com/search/pc/keyword":
             assert kwargs["params"]["key"] == "剑来"
+            assert kwargs["params"]["tabsChosen"] == "0"
+            assert kwargs["params"]["page_size"] == "20"
+            assert kwargs["headers"]["Referer"] == "https://so.tv.sohu.com/"
+            assert kwargs["headers"]["Origin"] == "https://so.tv.sohu.com"
             return httpx.Response(
                 200,
                 json={
@@ -61,6 +66,47 @@ def test_sohu_search_filters_trailer_noise_and_expands_episode_candidates() -> N
     ]
     assert items[0].resolve_context["aid"] == "200001"
     assert items[0].resolve_context["vid"] == "9002"
+
+
+def test_sohu_search_parses_json_from_text_response_when_json_method_cannot_be_used() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                text=json.dumps(
+                    {
+                        "status": 200,
+                        "data": {
+                            "items": [
+                                {
+                                    "aid": "200001",
+                                    "album_name": "剑来",
+                                    "year": 2026,
+                                    "meta": [{"txt": "动漫 | 内地 | 2026年"}],
+                                    "videos": [
+                                        {
+                                            "vid": "9001",
+                                            "video_name": "剑来第1集",
+                                            "url_html5": "http://m.tv.sohu.com/v9001.shtml",
+                                            "playLength": 1420,
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            raise AssertionError("embedded search videos should avoid playlist lookup")
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("剑来", original_name="剑来 1集")
+
+    assert [(item.name, item.url) for item in items] == [("剑来 第1集", "https://m.tv.sohu.com/v9001.shtml")]
 
 
 def test_sohu_search_prefers_single_main_movie_candidate() -> None:
@@ -158,6 +204,144 @@ def test_sohu_search_keeps_variety_issue_candidates() -> None:
 
     assert [item.name for item in items] == ["哈哈哈哈哈第6季 20260411期 第2期上"]
     assert items[0].resolve_context["variety_year"] == "20260411"
+
+
+def test_sohu_search_uses_page_url_when_playlist_lacks_url_html5() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "aid": "500001",
+                                "album_name": "难哄",
+                                "year": 2026,
+                                "meta": [{"txt": "电视剧 | 内地 | 2026年"}],
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(
+                200,
+                json={
+                    "videos": [
+                        {
+                            "vid": "310168357",
+                            "video_name": "第1集",
+                            "pageUrl": "http://tv.sohu.com/20260218/n310168357.shtml",
+                            "playLength": 2710,
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("难哄", original_name="难哄 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("难哄 第1集", "https://tv.sohu.com/20260218/n310168357.shtml", 2710),
+    ]
+    assert items[0].resolve_context["vid"] == "310168357"
+
+
+def test_sohu_search_normalizes_first_season_titles_for_title_only_queries() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "aid": "9986818",
+                                "album_name": "<<<都是她的错>>>第一季（All Her Fault Season 1）",
+                                "year": 2025,
+                                "meta": [{"txt": "电视剧 | 美国 | 2025年"}],
+                                "videos": [
+                                    {
+                                        "aid": 9986818,
+                                        "vid": 10305888,
+                                        "video_name": "都是她的错第一季（All Her Fault Season 1）第1集",
+                                        "video_order": 1,
+                                        "url_html5": "http://m.tv.sohu.com/v10305888.shtml",
+                                        "isFee": 0,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(
+                200,
+                json={
+                    "videos": [
+                        {
+                            "vid": "10305888",
+                            "video_name": "都是她的错第一季（All Her Fault Season 1）第1集",
+                            "url_html5": "http://m.tv.sohu.com/v10305888.shtml",
+                            "playLength": 2710,
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("都是她的错", original_name="都是她的错 1集")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("都是她的错 第1集", "https://m.tv.sohu.com/v10305888.shtml"),
+    ]
+
+
+def test_sohu_search_uses_embedded_search_videos_when_playlist_api_is_unavailable() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "aid": 9981602,
+                                "album_name": "<<<谁动了我的隐私>>>",
+                                "year": 2026,
+                                "meta": [{"txt": "电视剧 | 内地 | 2026年"}],
+                                "videos": [
+                                    {
+                                        "aid": 9981602,
+                                        "vid": 10234237,
+                                        "video_name": "谁动了我的隐私第1集",
+                                        "video_order": 1,
+                                        "url_html5": "http://m.tv.sohu.com/v10234237.shtml",
+                                        "isFee": 0,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            raise AssertionError("playlist API should not be required when search payload already includes videos")
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("谁动了我的隐私", original_name="谁动了我的隐私 1集")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("谁动了我的隐私 第1集", "https://m.tv.sohu.com/v10234237.shtml"),
+    ]
 
 
 def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:

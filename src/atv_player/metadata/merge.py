@@ -10,15 +10,15 @@ from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, PlaybackDetailValuePart, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
-    "overview": ["iqiyi", "official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin"],
+    "overview": ["iqiyi", "official_douban", "bangumi", "douban", "sohu", "tmdb", "local_douban", "plugin"],
     "rating": ["official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
-    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi"],
-    "year": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "actors": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "directors": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "genres": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "country": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "language": ["bangumi", "iqiyi", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
+    "year": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "actors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "directors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "genres": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "country": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "language": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
     "douban_id": ["official_douban", "local_douban", "douban", "plugin", "iqiyi"],
 }
 
@@ -28,13 +28,14 @@ _OVERVIEW_PROVIDER_PRIORITY = {
     "bangumi": 2,
     "tmdb_season": 3,
     "douban": 4,
-    "tmdb": 5,
-    "local_douban": 6,
-    "remote_douban": 6,
-    "plugin": 7,
+    "sohu": 5,
+    "tmdb": 6,
+    "local_douban": 7,
+    "remote_douban": 7,
+    "plugin": 8,
 }
 
-_TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban"}
+_TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban", "sohu"}
 _TITLE_NOISE_PATTERN = re.compile(
     r"(?:\bS\d+E\d+\b|第\s*\d+\s*[集话]|\b(?:WEB[-_. ]?\d+|2160p|1080p|4K|HDR|简繁字幕|外挂|内嵌|高码率)\b|@\w+@)",
     re.IGNORECASE,

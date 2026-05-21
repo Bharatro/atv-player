@@ -65,6 +65,7 @@ from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
 from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
+from atv_player.metadata.providers.sohu import SohuMetadataProvider
 from atv_player.metadata.scrape import MetadataScrapeService, _match_media_kind, _query_media_kind
 from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
@@ -629,6 +630,7 @@ class AppCoordinator(QObject):
                     )
                 )
             )
+        providers.append(SohuMetadataProvider())
         providers.append(LocalDoubanProvider(api_client))
         return providers
 

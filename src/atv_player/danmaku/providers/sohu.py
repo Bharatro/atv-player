@@ -94,6 +94,7 @@ class SohuDanmakuProvider:
             "title": title,
             "year": int(raw.get("year") or 0),
             "category_name": self._category_name(raw),
+            "videos": list(raw.get("videos") or []),
         }
 
     def _category_name(self, raw: dict) -> str:
@@ -117,7 +118,8 @@ class SohuDanmakuProvider:
         requested_episode: int | None,
         requested_issue_key: str | None,
     ) -> list[DanmakuSearchItem]:
-        videos = self._playlist_videos(str(album["aid"]))
+        embedded_videos = album.get("videos")
+        videos = embedded_videos if isinstance(embedded_videos, list) and embedded_videos else self._playlist_videos(str(album["aid"]))
         if not videos:
             return [self._album_fallback_item(album)]
         category_name = str(album.get("category_name") or "")
@@ -128,6 +130,8 @@ class SohuDanmakuProvider:
             item = self._video_to_item(album, best)
             return [item] if item is not None else [self._album_fallback_item(album)]
         items = [item for item in (self._video_to_item(album, video) for video in videos) if item is not None]
+        if not items:
+            return [self._album_fallback_item(album)]
         if requested_issue_key:
             matched = [item for item in items if item.resolve_context.get("variety_year") == requested_issue_key]
             if matched:
@@ -230,14 +234,24 @@ class SohuDanmakuProvider:
 
     def _video_to_item(self, album: dict[str, str | int], video: dict) -> DanmakuSearchItem | None:
         vid = str(video.get("vid") or "").strip()
-        url = str(video.get("url_html5") or "").strip()
+        url = str(
+            video.get("url_html5")
+            or video.get("pageUrl")
+            or video.get("page_url")
+            or video.get("url")
+            or ""
+        ).strip()
         if not vid or not url:
             return None
-        album_title = str(album["title"])
-        video_name = str(video.get("video_name") or "").strip()
+        album_title = self._normalize_display_title(str(album["title"]))
+        video_name = self._normalize_display_title(str(video.get("video_name") or "").strip())
         candidate_name = album_title
         if video_name and video_name != album_title:
-            candidate_name = f"{album_title} {video_name}".strip()
+            if video_name.startswith(album_title):
+                candidate_name = video_name
+            else:
+                candidate_name = f"{album_title} {video_name}".strip()
+        candidate_name = self._space_episode_suffix(candidate_name)
         duration_seconds = int(video.get("playLength") or 0)
         resolve_context: dict[str, str | int | None] = {
             "aid": str(album["aid"]),
@@ -272,7 +286,7 @@ class SohuDanmakuProvider:
         }
         item = DanmakuSearchItem(
             provider=self.key,
-            name=str(album["title"]),
+            name=self._normalize_display_title(str(album["title"])),
             url=url,
             duration_seconds=0,
             resolve_context=resolve_context,
@@ -282,6 +296,19 @@ class SohuDanmakuProvider:
 
     def _is_noise_title(self, title: str) -> bool:
         return any(keyword in title for keyword in self._NOISE_KEYWORDS)
+
+    def _normalize_display_title(self, title: str) -> str:
+        value = str(title or "").replace("<<<", "").replace(">>>", "").strip()
+        if not value:
+            return ""
+        value = re.sub(r"[（(][^()（）]*season\s*1[^()（）]*[)）]", "", value, flags=re.IGNORECASE)
+        value = re.sub(r"[（(][A-Za-z0-9 .:'_-]+[)）]", "", value)
+        value = re.sub(r"(第[一1]季|season\s*1)", "", value, flags=re.IGNORECASE)
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    def _space_episode_suffix(self, title: str) -> str:
+        return re.sub(r"(?<!\s)(第\s*[0-9零一二两三四五六七八九十百]+\s*[集话期])$", r" \1", title).strip()
 
     def _comment_to_record(self, comment: dict) -> DanmakuRecord | None:
         content = str(comment.get("c") or "").strip()
