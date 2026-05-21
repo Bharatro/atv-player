@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 import time
@@ -691,7 +692,7 @@ def test_mpv_widget_uses_hybrid_buffering_for_local_dash_proxy(qtbot) -> None:
     assert widget._player.options["cache-pause-initial"] == "yes"
     assert widget._player.options["cache-pause-wait"] == 5
     assert widget._player.options["demuxer-readahead-secs"] == 120
-    assert widget._player.options["cache-secs"] == 120
+    assert "cache-secs" not in widget._player.options
 
 
 def test_mpv_widget_loads_external_audio_file_with_video(qtbot) -> None:
@@ -805,7 +806,111 @@ def test_mpv_widget_loads_youtube_page_url_with_ytdl_format(qtbot) -> None:
     assert widget._player.options["cache-pause-initial"] == "yes"
     assert widget._player.options["cache-pause-wait"] == 5
     assert widget._player.options["demuxer-readahead-secs"] == 120
-    assert widget._player.options["cache-secs"] == 120
+    assert "cache-secs" not in widget._player.options
+
+
+def test_mpv_widget_logs_ytdlp_stream_diagnostics_when_file_loads(qtbot, caplog) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+            self.values: dict[str, object] = {
+                "cache-buffering-state": 42,
+                "cache-speed": 2048,
+                "demuxer-cache-duration": 6.5,
+                "paused-for-cache": False,
+                "path": "https://www.youtube.com/watch?v=test123",
+            }
+            self._file_loaded_callback = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                if event_types == ("file-loaded",):
+                    self._file_loaded_callback = callback
+                return callback
+
+            return register
+
+        def observe_property(self, _name: str, _handler) -> None:
+            return None
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __getitem__(self, key: str) -> object:
+            return self.values[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+            self.values[key] = value
+
+    player = FakePlayer()
+    widget._player = player
+    widget._register_player_events()
+
+    with caplog.at_level(logging.INFO, logger=mpv_widget_module.__name__):
+        widget.load(
+            "https://www.youtube.com/watch?v=test123",
+            ytdl_format="299+140",
+        )
+        assert callable(player._file_loaded_callback)
+        player._file_loaded_callback()
+
+    assert "MPV stream diagnostics stage=file-loaded" in caplog.text
+    assert "hybrid-ytdl" in caplog.text
+    assert "cache_buffering_state': 42" in caplog.text
+    assert "demuxer_cache_duration': 6.5" in caplog.text
+
+
+def test_mpv_widget_logs_ytdlp_cache_buffering_progress(qtbot, caplog) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+            self.values: dict[str, object] = {
+                "cache-buffering-state": 11,
+                "cache-speed": 1024,
+                "demuxer-cache-duration": 2.5,
+                "paused-for-cache": True,
+            }
+            self._cache_buffering_state_observer = None
+
+        def observe_property(self, name: str, handler) -> None:
+            if name == "cache-buffering-state":
+                self._cache_buffering_state_observer = handler
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __getitem__(self, key: str) -> object:
+            return self.values[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+            self.values[key] = value
+
+    player = FakePlayer()
+    widget._player = player
+
+    with caplog.at_level(logging.INFO, logger=mpv_widget_module.__name__):
+        widget.load(
+            "https://www.youtube.com/watch?v=test123",
+            ytdl_format="299+140",
+        )
+        assert callable(player._cache_buffering_state_observer)
+        player._cache_buffering_state_observer("cache-buffering-state", 11)
+
+    assert "MPV stream diagnostics stage=cache-buffering-state" in caplog.text
+    assert "cache_buffering_bucket': 10" in caplog.text
+    assert "paused_for_cache': True" in caplog.text
 
 
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
@@ -1102,7 +1207,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["cache"] is True
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
-    assert captured["cache_secs"] == 30
+    assert "cache_secs" not in captured
     assert captured["demuxer_max_bytes"] == "512M"
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"

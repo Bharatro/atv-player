@@ -82,6 +82,13 @@ _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
 _WINDOWS_MPV_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv.dll")
+_YTDLP_DIAGNOSTIC_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
 
 
 def _version_sort_key(value: str) -> tuple[int, ...]:
@@ -237,6 +244,10 @@ class MpvWidget(QWidget):
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
         self._player_property_cache: dict[str, object] = {}
+        self._stream_diagnostics_context: dict[str, object] | None = None
+        self._stream_diagnostic_player_id: int | None = None
+        self._last_logged_cache_buffering_bucket: int | None = None
+        self._last_logged_paused_for_cache: bool | None = None
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -456,6 +467,10 @@ class MpvWidget(QWidget):
             self._run_on_widget_thread(self.shutdown)
             return
         self._windows_file_loaded_timer.stop()
+        self._stream_diagnostics_context = None
+        self._stream_diagnostic_player_id = None
+        self._last_logged_cache_buffering_bucket = None
+        self._last_logged_paused_for_cache = None
         if self._player is None:
             return
         player, self._player = self._player, None
@@ -507,7 +522,11 @@ class MpvWidget(QWidget):
 
         @event_callback("file-loaded")
         def handle_file_loaded(*_args) -> None:
-            self._post_to_widget_thread(self.file_loaded.emit)
+            def emit_event() -> None:
+                self._log_stream_diagnostics("file-loaded")
+                self.file_loaded.emit()
+
+            self._post_to_widget_thread(emit_event)
 
         self._file_loaded_handler = handle_file_loaded
         observe_property = getattr(self._player, "observe_property", None)
@@ -579,6 +598,112 @@ class MpvWidget(QWidget):
     def _is_local_dash_proxy_url(self, url: str) -> bool:
         parsed = urlparse(url)
         return parsed.scheme in {"http", "https"} and parsed.path.startswith("/dash/")
+
+    def _should_log_stream_diagnostics(self, url: str, *, ytdl_format: str = "") -> bool:
+        if ytdl_format:
+            return True
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        if hostname in _YTDLP_DIAGNOSTIC_HOSTS:
+            return True
+        return self._is_local_dash_proxy_url(url)
+
+    def _stream_diagnostics_snapshot(self) -> dict[str, object]:
+        path = str(self._player_property("path", "") or "")
+        return {
+            "path": self._summarize_media_url(path) if path else "",
+            "paused_for_cache": self._player_property("paused-for-cache", None),
+            "cache_buffering_state": self._player_property("cache-buffering-state", None),
+            "cache_speed": self._player_property("cache-speed", None),
+            "demuxer_cache_duration": self._player_property("demuxer-cache-duration", None),
+            "demuxer_readahead_secs": self._player_property(
+                "demuxer-readahead-secs",
+                self._player_property_cache.get("demuxer-readahead-secs"),
+            ),
+            "cache_pause_wait": self._player_property(
+                "cache-pause-wait",
+                self._player_property_cache.get("cache-pause-wait"),
+            ),
+        }
+
+    def _log_stream_diagnostics(self, stage: str, extra_fields: dict[str, object] | None = None) -> None:
+        if self._stream_diagnostics_context is None:
+            return
+        data = dict(self._stream_diagnostics_context)
+        data.update(self._stream_diagnostics_snapshot())
+        if extra_fields:
+            data.update(extra_fields)
+        logger.info(
+            "MPV stream diagnostics stage=%s data=%s",
+            stage,
+            data,
+            extra={"log_category": "player", "log_source": "app"},
+        )
+
+    def _register_stream_diagnostic_observers(self, player: Any) -> None:
+        if self._stream_diagnostic_player_id == id(player):
+            return
+        observe_property = getattr(player, "observe_property", None)
+        if observe_property is None:
+            return
+
+        def handle_paused_for_cache(_property_name, paused) -> None:
+            if self._stream_diagnostics_context is None:
+                return
+            normalized = bool(paused)
+            if self._last_logged_paused_for_cache is normalized:
+                return
+            self._last_logged_paused_for_cache = normalized
+            self._log_stream_diagnostics("paused-for-cache", {"paused_for_cache": normalized})
+
+        observe_property("paused-for-cache", handle_paused_for_cache)
+        self._paused_for_cache_handler = handle_paused_for_cache
+
+        def handle_cache_buffering_state(_property_name, value) -> None:
+            if self._stream_diagnostics_context is None:
+                return
+            try:
+                bucket = max(0, min(100, int(float(value)) // 10 * 10))
+            except (TypeError, ValueError):
+                return
+            if self._last_logged_cache_buffering_bucket == bucket:
+                return
+            self._last_logged_cache_buffering_bucket = bucket
+            self._log_stream_diagnostics("cache-buffering-state", {"cache_buffering_bucket": bucket})
+
+        observe_property("cache-buffering-state", handle_cache_buffering_state)
+        self._cache_buffering_state_handler = handle_cache_buffering_state
+        self._stream_diagnostic_player_id = id(player)
+
+    def _prepare_stream_diagnostics(
+        self,
+        player: Any,
+        *,
+        url: str,
+        audio_files: str = "",
+        ytdl_format: str = "",
+        profile_name: str,
+        header_fields: list[str],
+    ) -> None:
+        self._stream_diagnostics_context = None
+        self._last_logged_cache_buffering_bucket = None
+        self._last_logged_paused_for_cache = None
+        if not self._should_log_stream_diagnostics(url, ytdl_format=ytdl_format):
+            return
+        self._register_stream_diagnostic_observers(player)
+        self._stream_diagnostics_context = {
+            "platform": sys.platform,
+            "url": self._summarize_media_url(url),
+            "audio_url": self._summarize_media_url(audio_files),
+            "ytdl_format": ytdl_format,
+            "profile": profile_name,
+            "headers": bool(header_fields),
+            "configured_cache_size_mb": int(getattr(self._config, "mpv_cache_size_mb", 512) or 512),
+            "configured_default_readahead_secs": int(
+                getattr(self._config, "mpv_default_readahead_secs", 20) or 20
+            ),
+        }
+        self._log_stream_diagnostics("load-start")
 
     def _apply_stream_profile(
         self,
@@ -827,6 +952,14 @@ class MpvWidget(QWidget):
                 ytdl_format=ytdl_format,
             )
             self._apply_extra_mpv_options(player)
+            self._prepare_stream_diagnostics(
+                player,
+                url=url,
+                audio_files=audio_files,
+                ytdl_format=ytdl_format,
+                profile_name=profile_name,
+                header_fields=header_fields,
+            )
             logger.info(
                 "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                 self._summarize_media_url(url),
@@ -877,6 +1010,14 @@ class MpvWidget(QWidget):
                     ytdl_format=ytdl_format,
                 )
                 self._apply_extra_mpv_options(player)
+                self._prepare_stream_diagnostics(
+                    player,
+                    url=url,
+                    audio_files=audio_files,
+                    ytdl_format=ytdl_format,
+                    profile_name=profile_name,
+                    header_fields=header_fields,
+                )
                 logger.info(
                     "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),
