@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import time
 
@@ -10,9 +9,6 @@ import httpx
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.utils import extract_episode_number, extract_variety_issue_key, normalize_name
-
-
-logger = logging.getLogger(__name__)
 
 
 class SohuDanmakuProvider:
@@ -33,7 +29,6 @@ class SohuDanmakuProvider:
         self._resolve_context_by_url[page_url] = dict(resolve_context)
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
-        logger.info("Sohu danmaku search start name=%s original_name=%s", name, original_name or name)
         response = self._get(
             self._SEARCH_URL,
             params={
@@ -72,19 +67,14 @@ class SohuDanmakuProvider:
             except Exception:
                 raise DanmakuSearchError("搜狐弹幕搜索结果解析失败") from exc
         if not isinstance(payload, dict):
-            logger.warning("Sohu danmaku search payload is not a mapping type=%s", type(payload).__name__)
             raise DanmakuSearchError("搜狐弹幕搜索结果解析失败")
         data = self._mapping_or_empty(payload.get("data"), context="search data")
         items = data.get("items")
         if not isinstance(items, list):
-            logger.warning("Sohu danmaku search items payload is not a list type=%s", type(items).__name__)
             raise DanmakuSearchError("搜狐弹幕搜索结果解析失败")
-        candidates = self._expand_search_items(items, query_name=name, original_name=original_name or name)
-        logger.info("Sohu danmaku search success name=%s candidates=%s", name, len(candidates))
-        return candidates
+        return self._expand_search_items(items, query_name=name, original_name=original_name or name)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
-        logger.info("Sohu danmaku resolve start page_url=%s", page_url)
         context = dict(self._resolve_context_by_url.get(page_url) or {})
         aid = str(context.get("aid") or "").strip()
         vid = str(context.get("vid") or "").strip()
@@ -96,7 +86,6 @@ class SohuDanmakuProvider:
         if not aid or not vid:
             raise DanmakuResolveError("搜狐页面缺少 aid 或 vid")
         duration_seconds = duration_seconds or self._duration_for_video(aid, vid)
-        logger.info("Sohu danmaku resolve context aid=%s vid=%s duration_seconds=%s", aid, vid, duration_seconds)
         records = self._fetch_danmaku_records(aid, vid, duration_seconds or 300)
         if not records:
             raise DanmakuResolveError("搜狐弹幕分段解析失败")
@@ -211,12 +200,9 @@ class SohuDanmakuProvider:
                 except Exception:
                     raise DanmakuSearchError("搜狐播放列表解析失败") from exc
         if not isinstance(payload, dict):
-            logger.warning("Sohu playlist payload is not a mapping aid=%s type=%s", aid, type(payload).__name__)
             return []
         videos = payload.get("videos")
-        normalized_videos = self._mapping_list(videos, context=f"playlist videos aid={aid}")
-        logger.info("Sohu playlist parsed aid=%s video_count=%s", aid, len(normalized_videos))
-        return normalized_videos
+        return self._mapping_list(videos, context=f"playlist videos aid={aid}")
 
     def _extract_ids_from_page(self, page_url: str) -> tuple[str, str]:
         response = self._get(
@@ -300,7 +286,6 @@ class SohuDanmakuProvider:
 
     def _video_to_item(self, album: dict[str, str | int], video: dict) -> DanmakuSearchItem | None:
         if not isinstance(video, dict):
-            logger.warning("Sohu skipped malformed video album_aid=%s type=%s", album.get("aid"), type(video).__name__)
             return None
         vid = str(video.get("vid") or "").strip()
         url = str(
@@ -403,7 +388,6 @@ class SohuDanmakuProvider:
         if value is None:
             return []
         if not isinstance(value, list):
-            logger.warning("Sohu expected list for %s but got type=%s", context, type(value).__name__)
             return []
         output: list[dict] = []
         for index, item in enumerate(value):
@@ -421,7 +405,6 @@ class SohuDanmakuProvider:
             return None
         if isinstance(value, dict):
             return value
-        logger.warning("Sohu skipped malformed %s type=%s", context, type(value).__name__)
         return None
 
     def _to_int(self, value: object, *, default: int, context: str) -> int:
@@ -430,5 +413,4 @@ class SohuDanmakuProvider:
         try:
             return int(value)
         except (TypeError, ValueError):
-            logger.warning("Sohu expected integer for %s but got value=%r", context, value)
             return default
