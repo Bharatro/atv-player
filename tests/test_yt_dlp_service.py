@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -147,6 +148,25 @@ class TestIsAvailable:
         command = run_calls[0]
         assert "--cookies-from-browser" in command
         assert command[command.index("--cookies-from-browser") + 1] == "firefox"
+
+    def test_extract_info_via_command_isolates_pyenv_shim_from_repo_python_version(self, monkeypatch, service):
+        run_kwargs: list[dict] = []
+        service._ytdlp_path = "/home/demo/.pyenv/shims/yt-dlp"
+        monkeypatch.setenv("PYENV_ROOT", "/home/demo/.pyenv")
+
+        def fake_run(command, **kwargs):
+            run_kwargs.append(kwargs)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_sample_info()),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        assert run_kwargs[0]["env"]["PYENV_DIR"] == str(Path.home())
 
     def test_extract_info_via_command_includes_proxy_when_manual_proxy_is_selected(self, monkeypatch, service):
         run_calls: list[list[str]] = []
