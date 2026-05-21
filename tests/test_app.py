@@ -3882,6 +3882,16 @@ def test_advanced_settings_dialog_saves_youtube_max_height(qtbot) -> None:
     assert "1080P 及以下时通常启播更快" in dialog.playback_scope_label.text()
 
 
+def test_advanced_settings_dialog_defaults_youtube_quality_to_1080p(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.youtube_max_height_combo.currentData() == 1080
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 

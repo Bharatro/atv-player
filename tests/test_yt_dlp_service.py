@@ -415,26 +415,109 @@ class TestResolve:
         assert "https://stream.test/video.mp4?expire=1&amp;sig=abc" in manifest
         assert "https://stream.test/audio.m4a?expire=1&amp;sig=def" in manifest
 
-    def test_uses_unbounded_initial_startup_resolve(self, monkeypatch, service):
-        info = _sample_info()
-        calls = _stub_extract_info(monkeypatch, service, info)
-
-        service.resolve("https://www.youtube.com/watch?v=test123")
-
-        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
-
-    def test_uses_configured_default_max_height_when_resolve_does_not_specify_limit(self, monkeypatch):
+    def test_uses_configured_default_startup_quality_when_resolve_does_not_specify_limit(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
-        info = _sample_info()
+        info = _sample_info(
+            extractor="youtube",
+            requested_formats=[
+                {
+                    "format_id": "1080",
+                    "url": "https://stream.test/1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                }
+            ],
+        )
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_max_height=1080)
+        )
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert result.selected_quality_id == "ytdlp_1080"
+        assert result.video_format_id == "1080"
+
+    def test_prefers_configured_default_quality_when_available(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(
+            extractor="youtube",
+            requested_formats=[
+                {
+                    "format_id": "720",
+                    "url": "https://stream.test/720.mp4",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2500,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                }
+            ],
+        )
         service = YtdlpPlaybackService(
             config_loader=lambda: AppConfig(youtube_max_height=720)
         )
         calls = _stub_extract_info(monkeypatch, service, info)
 
-        service.resolve("https://www.youtube.com/watch?v=test123")
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", 720, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert result.selected_quality_id == "ytdlp_720"
+        assert result.video_format_id == "720"
+
+    def test_falls_back_to_highest_available_quality_when_configured_default_missing(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(
+            extractor="youtube",
+            requested_formats=[
+                {
+                    "format_id": "2160",
+                    "url": "https://stream.test/2160.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 12000,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                }
+            ],
+            formats=[
+                {
+                    "format_id": "2160",
+                    "url": "https://stream.test/2160.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 12000,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                },
+                {
+                    "format_id": "720",
+                    "url": "https://stream.test/720.mp4",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2500,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                },
+            ],
+        )
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_max_height=1080)
+        )
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert result.selected_quality_id == "ytdlp_2160"
+        assert result.video_format_id == "2160"
 
     def test_explicit_max_height_overrides_configured_default_max_height(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService

@@ -157,8 +157,8 @@ def _normalize_youtube_max_height(value: object) -> int:
     try:
         normalized = int(value)
     except (TypeError, ValueError):
-        return 0
-    return normalized if normalized in {0, 480, 720, 1080, 1440, 2160} else 0
+        return 1080
+    return normalized if normalized in {0, 480, 720, 1080, 1440, 2160} else 1080
 
 
 def _normalize_mpv_cache_size_mb(value: object) -> int:
@@ -240,7 +240,7 @@ class SettingsRepository:
                     network_proxy_url TEXT NOT NULL DEFAULT '',
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
                     youtube_cookie_browser TEXT NOT NULL DEFAULT '',
-                    youtube_max_height INTEGER NOT NULL DEFAULT 0,
+                    youtube_max_height INTEGER NOT NULL DEFAULT 1080,
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
@@ -336,7 +336,7 @@ class SettingsRepository:
                 )
             if "youtube_max_height" not in columns:
                 conn.execute(
-                    "ALTER TABLE app_config ADD COLUMN youtube_max_height INTEGER NOT NULL DEFAULT 0"
+                    "ALTER TABLE app_config ADD COLUMN youtube_max_height INTEGER NOT NULL DEFAULT 1080"
                 )
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(

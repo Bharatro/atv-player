@@ -476,7 +476,7 @@ def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path
     config = SettingsRepository(db_path).load_config()
 
     assert config.youtube_cookie_browser == ""
-    assert config.youtube_max_height == 0
+    assert config.youtube_max_height == 1080
     assert config.mpv_cache_size_mb == 512
     assert config.mpv_hwdec_mode == "auto-safe"
     assert config.mpv_network_timeout_seconds == 15
@@ -488,7 +488,7 @@ def test_settings_repository_normalizes_invalid_youtube_max_height_values(tmp_pa
     repo = SettingsRepository(tmp_path / "app.db")
     repo.save_config(AppConfig(youtube_max_height=999))
 
-    assert repo.load_config().youtube_max_height == 0
+    assert repo.load_config().youtube_max_height == 1080
 
 
 def test_settings_repository_migrates_missing_m3u_proxy_segment_prefetch_size_column(tmp_path: Path) -> None:
