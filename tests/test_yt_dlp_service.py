@@ -519,6 +519,77 @@ class TestResolve:
         assert result.selected_quality_id == "ytdlp_2160"
         assert result.video_format_id == "2160"
 
+    def test_ignores_unbounded_requested_formats_when_default_quality_is_available(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(
+            extractor="youtube",
+            requested_formats=[
+                {
+                    "format_id": "400",
+                    "url": "https://stream.test/1440.mp4",
+                    "height": 1440,
+                    "width": 2560,
+                    "tbr": 2200,
+                    "vcodec": "av01.0.12M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 126,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "audio_channels": 2,
+                },
+            ],
+            formats=[
+                {
+                    "format_id": "400",
+                    "url": "https://stream.test/1440.mp4",
+                    "height": 1440,
+                    "width": 2560,
+                    "tbr": 2200,
+                    "vcodec": "av01.0.12M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1000,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 126,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "audio_channels": 2,
+                },
+            ],
+        )
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_max_height=1080)
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.selected_quality_id == "ytdlp_1080"
+        assert result.video_format_id == "399"
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert "https://stream.test/1080.mp4" in manifest
+        assert "https://stream.test/1440.mp4" not in manifest
+
     def test_explicit_max_height_overrides_configured_default_max_height(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 

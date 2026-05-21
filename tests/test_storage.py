@@ -491,6 +491,13 @@ def test_settings_repository_normalizes_invalid_youtube_max_height_values(tmp_pa
     assert repo.load_config().youtube_max_height == 1080
 
 
+def test_settings_repository_normalizes_legacy_zero_youtube_max_height_to_1080(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(youtube_max_height=0))
+
+    assert repo.load_config().youtube_max_height == 1080
+
+
 def test_settings_repository_migrates_missing_m3u_proxy_segment_prefetch_size_column(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:

@@ -212,24 +212,25 @@ def _preferred_audio_formats(info: dict, *, preferred_ext: str = "") -> list[dic
 
 
 def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None, dict | None]:
-    requested_video_url, requested_audio_url = _pick_requested_stream_pair(info)
-    if requested_video_url:
-        requested_formats = info.get("requested_formats") or []
-        selected_video = next(
-            (
-                fmt for fmt in requested_formats
-                if isinstance(fmt, dict) and fmt.get("url") == requested_video_url
-            ),
-            None,
-        )
-        selected_audio = next(
-            (
-                fmt for fmt in requested_formats
-                if isinstance(fmt, dict) and fmt.get("url") == requested_audio_url
-            ),
-            None,
-        )
-        return selected_video, selected_audio
+    if max_height is None:
+        requested_video_url, requested_audio_url = _pick_requested_stream_pair(info)
+        if requested_video_url:
+            requested_formats = info.get("requested_formats") or []
+            selected_video = next(
+                (
+                    fmt for fmt in requested_formats
+                    if isinstance(fmt, dict) and fmt.get("url") == requested_video_url
+                ),
+                None,
+            )
+            selected_audio = next(
+                (
+                    fmt for fmt in requested_formats
+                    if isinstance(fmt, dict) and fmt.get("url") == requested_audio_url
+                ),
+                None,
+            )
+            return selected_video, selected_audio
     preferred_video_formats = _preferred_video_formats(info, max_height)
     if preferred_video_formats:
         selected_video = preferred_video_formats[0]
@@ -502,8 +503,8 @@ class YtdlpPlaybackService:
         try:
             max_height = int(getattr(config, "youtube_max_height", 0) or 0)
         except (TypeError, ValueError):
-            return None
-        return max_height if max_height > 0 else None
+            return _DEFAULT_STARTUP_MAX_HEIGHT
+        return max_height if max_height > 0 else _DEFAULT_STARTUP_MAX_HEIGHT
 
     def _extract_info_command(
         self,
@@ -686,7 +687,12 @@ class YtdlpPlaybackService:
         headers = _merge_http_headers(info, selected_video, selected_audio)
 
         subtitles = _build_subtitle_options(info)
-        selected_quality_id = _resolve_selected_quality_id(info, qualities, selection_max_height)
+        selected_quality_id = _resolve_selected_quality_id(
+            info,
+            qualities,
+            selection_max_height,
+            selected_video=selected_video,
+        )
 
         if callable(log):
             ext = info.get("extractor", "")
@@ -855,8 +861,12 @@ def _resolve_selected_quality_id(
     info: dict,
     qualities: list[VideoQualityOption],
     max_height: int | None,
+    *,
+    selected_video: dict | None = None,
 ) -> str:
-    selected_height = info.get("height") or 0
+    selected_height = int((selected_video or {}).get("height") or 0)
+    if not selected_height:
+        selected_height = info.get("height") or 0
     if not selected_height:
         requested_formats = info.get("requested_formats") or []
         requested_heights = [

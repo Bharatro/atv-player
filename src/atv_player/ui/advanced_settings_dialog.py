@@ -95,7 +95,6 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_cookie_browser_combo.addItem("Edge", "edge")
         self.youtube_cookie_browser_combo.addItem("Firefox", "firefox")
         self.youtube_max_height_combo = FlatComboBox()
-        self.youtube_max_height_combo.addItem("最高可用", 0)
         self.youtube_max_height_combo.addItem("480p", 480)
         self.youtube_max_height_combo.addItem("720p", 720)
         self.youtube_max_height_combo.addItem("1080p", 1080)
@@ -138,8 +137,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_cookie_browser_combo.setCurrentIndex(
             max(0, self.youtube_cookie_browser_combo.findData(config.youtube_cookie_browser))
         )
+        youtube_max_height = config.youtube_max_height if config.youtube_max_height in {480, 720, 1080, 1440, 2160} else 1080
         self.youtube_max_height_combo.setCurrentIndex(
-            max(0, self.youtube_max_height_combo.findData(config.youtube_max_height))
+            max(0, self.youtube_max_height_combo.findData(youtube_max_height))
         )
         self.playback_auto_switch_source_on_failure_checkbox.setChecked(
             config.playback_auto_switch_source_on_failure
@@ -302,7 +302,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
             return None
         max_height = self.youtube_max_height_combo.currentData()
-        if max_height not in {0, 480, 720, 1080, 1440, 2160}:
+        if max_height not in {480, 720, 1080, 1440, 2160}:
             QMessageBox.warning(self, "YouTube 默认画质无效", "YouTube 默认画质选项无效")
             return None
 

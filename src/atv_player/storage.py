@@ -158,7 +158,7 @@ def _normalize_youtube_max_height(value: object) -> int:
         normalized = int(value)
     except (TypeError, ValueError):
         return 1080
-    return normalized if normalized in {0, 480, 720, 1080, 1440, 2160} else 1080
+    return normalized if normalized in {480, 720, 1080, 1440, 2160} else 1080
 
 
 def _normalize_mpv_cache_size_mb(value: object) -> int:
