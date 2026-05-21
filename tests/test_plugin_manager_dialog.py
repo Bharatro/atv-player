@@ -186,8 +186,11 @@ def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> Non
 
     assert dialog.search_input.placeholderText() == "搜索名称或地址"
     assert dialog.enabled_filter_combo.currentText() == "全部"
+    assert dialog.enabled_filter_combo.minimumWidth() == 112
     assert dialog.sort_combo.currentText() == "当前顺序"
+    assert dialog.sort_combo.minimumWidth() == 128
     assert dialog.clear_filters_button.text() == "清空"
+    assert dialog.filters_layout.spacing() == 12
 
 
 def test_plugin_manager_dialog_searches_name_and_source_case_insensitively(qtbot) -> None:
