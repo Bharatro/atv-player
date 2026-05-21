@@ -320,6 +320,58 @@ def test_manager_import_github_repository_imports_manifest_plugins_and_disables_
     ]
 
 
+def test_manager_import_github_repository_falls_back_to_repo_page_when_api_is_forbidden(tmp_path: Path) -> None:
+    api_url = "https://api.github.com/repos/har01d5/tvbox"
+    repo_url = "https://github.com/har01d5/tvbox"
+    manifest_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json"
+    plugin_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt"
+    responses = {
+        api_url: httpx.Response(
+            403,
+            request=httpx.Request("GET", api_url),
+            text="forbidden",
+        ),
+        repo_url: httpx.Response(
+            200,
+            text='<html><head><meta name="octolytics-dimension-repository_default_branch" content="master"></head></html>',
+        ),
+        manifest_url: httpx.Response(
+            200,
+            json=[
+                {"file": "py/双星.txt", "valid": True, "version": 3},
+            ],
+        ),
+        plugin_url: httpx.Response(
+            200,
+            text="//@version:3\nprint('ok')\n",
+        ),
+    }
+    requested_urls: list[str] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        requested_urls.append(url)
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins("https://github.com/har01d5/tvbox")
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=1, updated_count=0, skipped_count=0)
+    assert [plugin.source_value for plugin in plugins] == [plugin_url]
+    assert requested_urls == [
+        api_url,
+        repo_url,
+        manifest_url,
+        plugin_url,
+    ]
+
+
 def test_manager_import_github_repository_skips_same_version_and_updates_existing_version(tmp_path: Path) -> None:
     responses = {
         "https://api.github.com/repos/har01d5/tvbox": httpx.Response(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import re
 import time
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -98,6 +99,21 @@ def _parse_manifest_plugin_version(entry: object) -> int | None:
 def _raw_github_url(owner: str, repo: str, branch: str, relative_path: str) -> str:
     encoded_parts = [quote(part) for part in PurePosixPath(relative_path).parts]
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{'/'.join(encoded_parts)}"
+
+
+def _extract_github_default_branch_from_html(html: str) -> str:
+    for pattern in (
+        r'<meta[^>]+name=["\']octolytics-dimension-repository_default_branch["\'][^>]+content=["\']([^"\']+)["\']',
+        r'"defaultBranch"\s*:\s*"([^"]+)"',
+        r'"default_branch"\s*:\s*"([^"]+)"',
+    ):
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        branch = str(match.group(1) or "").strip()
+        if branch:
+            return branch
+    raise ValueError("无法解析仓库默认分支")
 
 
 def _resolve_manifest_entry_source_url(manifest_url: str, file_path: str) -> str | None:
@@ -248,13 +264,24 @@ class SpiderPluginManager:
         return response.text
 
     def _load_github_default_branch(self, owner: str, repo: str) -> str:
-        payload = self._fetch_json(f"https://api.github.com/repos/{owner}/{repo}")
-        if not isinstance(payload, dict):
-            raise ValueError("无法解析仓库默认分支")
-        branch = str(payload.get("default_branch") or "").strip()
-        if not branch:
-            raise ValueError("无法解析仓库默认分支")
-        return branch
+        api_error: Exception | None = None
+        try:
+            payload = self._fetch_json(f"https://api.github.com/repos/{owner}/{repo}")
+            if isinstance(payload, dict):
+                branch = str(payload.get("default_branch") or "").strip()
+                if branch:
+                    return branch
+            api_error = ValueError("无法解析仓库默认分支")
+        except Exception as exc:
+            api_error = exc
+
+        try:
+            repo_html = self._fetch_text(f"https://github.com/{owner}/{repo}")
+            return _extract_github_default_branch_from_html(repo_html)
+        except Exception:
+            if api_error is not None:
+                raise api_error
+            raise
 
     def _get_plugin(self, plugin_id: int) -> SpiderPluginConfig:
         return self._repository.get_plugin(plugin_id)
