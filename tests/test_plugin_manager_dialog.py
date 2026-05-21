@@ -293,6 +293,74 @@ def test_plugin_manager_dialog_disables_move_buttons_when_view_sort_is_not_curre
     assert dialog.reorder_button.isEnabled() is True
 
 
+def test_plugin_manager_dialog_clear_button_restores_default_conditions(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.search_input.setText("远程")
+    dialog.enabled_filter_combo.setCurrentText("仅禁用")
+    dialog.sort_combo.setCurrentText("名称")
+    dialog.clear_filters_button.click()
+
+    assert dialog.search_input.text() == ""
+    assert dialog.enabled_filter_combo.currentText() == "全部"
+    assert dialog.sort_combo.currentText() == "当前顺序"
+    assert _visible_plugin_ids(dialog) == [1, 2]
+
+
+def test_plugin_manager_dialog_reload_preserves_active_view_conditions(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.search_input.setText("远程")
+    manager.plugins.append(
+        SpiderPluginConfig(
+            id=3,
+            source_type="local",
+            source_value="/plugins/c.py",
+            display_name="本地C",
+            enabled=True,
+            sort_order=2,
+            plugin_version=1,
+        )
+    )
+    dialog.reload_plugins()
+
+    assert dialog.search_input.text() == "远程"
+    assert dialog.enabled_filter_combo.currentText() == "全部"
+    assert dialog.sort_combo.currentText() == "当前顺序"
+    assert _visible_plugin_ids(dialog) == [2]
+
+
+def test_plugin_manager_dialog_restores_single_selection_when_item_remains_visible(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(1)
+
+    dialog.search_input.setText("远程")
+
+    assert dialog._selected_plugin_id() == 2
+
+
+def test_plugin_manager_dialog_clears_selection_and_shows_empty_state_when_no_rows_match(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+
+    dialog.search_input.setText("not-found")
+
+    assert dialog.plugin_table.rowCount() == 0
+    assert dialog._selected_plugin_id() is None
+    assert dialog.empty_state_label.isHidden() is False
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is False
+
+
 def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
@@ -958,6 +1026,8 @@ def test_plugin_manager_dialog_keeps_selection_on_moved_plugin(qtbot) -> None:
             if not (0 <= target < len(self.plugins)):
                 return
             self.plugins[index], self.plugins[target] = self.plugins[target], self.plugins[index]
+            for sort_order, plugin in enumerate(self.plugins):
+                plugin.sort_order = sort_order
 
     manager = ReorderingPluginManager()
     dialog = PluginManagerDialog(manager)
