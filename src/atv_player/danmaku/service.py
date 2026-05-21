@@ -11,6 +11,7 @@ from atv_player.danmaku.providers import (
     BilibiliDanmakuProvider,
     IqiyiDanmakuProvider,
     MgtvDanmakuProvider,
+    SohuDanmakuProvider,
     TencentDanmakuProvider,
     YoukuDanmakuProvider,
 )
@@ -83,6 +84,7 @@ _PROVIDER_LABELS = {
     "bilibili": "B站",
     "iqiyi": "爱奇艺",
     "mgtv": "芒果",
+    "sohu": "搜狐",
 }
 
 
@@ -736,5 +738,6 @@ def create_default_danmaku_service(get=httpx.get, post=httpx.post) -> DanmakuSer
         "bilibili": BilibiliDanmakuProvider(get=get),
         "iqiyi": IqiyiDanmakuProvider(get=get),
         "mgtv": MgtvDanmakuProvider(get=get),
+        "sohu": SohuDanmakuProvider(get=get),
     }
-    return DanmakuService(providers, provider_order=["tencent", "youku", "bilibili", "iqiyi", "mgtv"])
+    return DanmakuService(providers, provider_order=["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu"])
