@@ -937,11 +937,15 @@ class FakeDanmakuController:
     def __init__(self) -> None:
         self.calls: list[tuple[PlayItem, list[PlayItem]]] = []
         self.raise_on_call: Exception | None = None
+        self.invalidate_calls = 0
 
     def prefetch_next_episode_danmaku(self, item: PlayItem, playlist: list[PlayItem]) -> None:
         self.calls.append((item, playlist))
         if self.raise_on_call is not None:
             raise self.raise_on_call
+
+    def invalidate_running_danmaku_prefetches(self) -> None:
+        self.invalidate_calls += 1
 
 
 class FakeTimer:
@@ -1117,6 +1121,7 @@ def test_reset_next_episode_danmaku_prefetch_state_clears_indices_and_invalidate
 
     assert session.prefetched_next_danmaku_indices == set()
     assert session.pending_next_danmaku_prefetch_token == 8
+    assert danmaku_controller.invalidate_calls == 1
 
 
 def test_report_progress_tail_prefetch_triggers_when_remaining_under_150s() -> None:

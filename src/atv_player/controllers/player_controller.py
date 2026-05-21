@@ -399,6 +399,12 @@ class PlayerController:
     def reset_next_episode_danmaku_prefetch_state(self, session: PlayerSession) -> None:
         session.prefetched_next_danmaku_indices.clear()
         self._invalidate_pending_next_episode_danmaku_prefetch(session)
+        controller = session.danmaku_controller
+        if controller is None:
+            return
+        invalidate = getattr(controller, "invalidate_running_danmaku_prefetches", None)
+        if callable(invalidate):
+            invalidate()
 
     def _invalidate_pending_next_episode_danmaku_prefetch(self, session: PlayerSession) -> None:
         session.pending_next_danmaku_prefetch_token += 1

@@ -2776,6 +2776,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         previous_index = self.current_index
+        if previous_index != index:
+            reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
+            if callable(reset_prefetch):
+                reset_prefetch(self.session)
         self.current_index = index
         try:
             self.playlist.setCurrentRow(self.current_index)

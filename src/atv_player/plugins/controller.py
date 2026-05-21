@@ -738,6 +738,7 @@ class SpiderPluginController:
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
         self._warming_danmaku_source_cache_keys: set[str] = set()
+        self._danmaku_prefetch_generation = 0
         self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
         self._raw_home_categories: list[SpiderPluginRawCategory] = []
@@ -1220,14 +1221,27 @@ class SpiderPluginController:
             item.index = index
         return updated, current_index
 
-    def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None, *, is_prefetch: bool = False) -> None:
+    def _resolve_danmaku_sync(
+        self,
+        item: PlayItem,
+        url: str,
+        playlist: list[PlayItem] | None = None,
+        *,
+        is_prefetch: bool = False,
+        prefetch_still_valid: Callable[[], bool] | None = None,
+    ) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
+        is_prefetch_valid = prefetch_still_valid or (lambda: True)
         lookup = self._prepare_danmaku_lookup(item, url, playlist)
         if lookup is None:
             return
         preference, search_name, reg_src = lookup
+        if not is_prefetch_valid():
+            return
         if self._apply_cached_danmaku(item, search_name, reg_src, preference, playlist=playlist):
+            if not is_prefetch_valid():
+                return
             logger.info(
                 "Spider plugin loaded cached danmaku plugin=%s source=%s",
                 self._plugin_name,
@@ -1256,6 +1270,8 @@ class SpiderPluginController:
         last_error = ""
         for candidate in candidates:
             try:
+                if not is_prefetch_valid():
+                    return
                 item.selected_danmaku_provider = candidate.provider
                 item.selected_danmaku_url = candidate.url
                 item.selected_danmaku_title = candidate.name
@@ -1265,7 +1281,10 @@ class SpiderPluginController:
                 if not is_prefetch:
                     self._log_danmaku_event("弹幕下载中", detail=download_detail)
                 cached_candidate_xml = load_cached_danmaku_xml(search_name, candidate.url)
-                item.danmaku_xml = cached_candidate_xml or self._resolve_danmaku_xml(candidate.url, candidate)
+                resolved_xml = cached_candidate_xml or self._resolve_danmaku_xml(candidate.url, candidate)
+                if not is_prefetch_valid():
+                    return
+                item.danmaku_xml = resolved_xml
                 self._save_danmaku_xml_cache(
                     item,
                     search_name,
@@ -1902,6 +1921,10 @@ class SpiderPluginController:
         self._log_danmaku_event("弹幕预下载中", detail=prefetch_label)
         self._maybe_resolve_danmaku(item, url, playlist, is_prefetch=True)
 
+    def invalidate_running_danmaku_prefetches(self) -> None:
+        with self._danmaku_lock:
+            self._danmaku_prefetch_generation += 1
+
     def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
         self._danmaku_log_handler = handler
 
@@ -1933,12 +1956,25 @@ class SpiderPluginController:
             if item_id in self._pending_danmaku_item_ids:
                 return
             self._pending_danmaku_item_ids.add(item_id)
+            prefetch_generation = self._danmaku_prefetch_generation
         item.danmaku_pending = True
+
+        def prefetch_still_valid() -> bool:
+            if not is_prefetch:
+                return True
+            with self._danmaku_lock:
+                return prefetch_generation == self._danmaku_prefetch_generation
 
         def run() -> None:
             try:
-                self._resolve_danmaku_sync(item, url, playlist, is_prefetch=is_prefetch)
-                if is_prefetch and item.danmaku_xml:
+                self._resolve_danmaku_sync(
+                    item,
+                    url,
+                    playlist,
+                    is_prefetch=is_prefetch,
+                    prefetch_still_valid=prefetch_still_valid,
+                )
+                if is_prefetch and item.danmaku_xml and prefetch_still_valid():
                     success_label = (item.selected_danmaku_title or _build_danmaku_search_name(item, playlist) or item.media_title or item.title).strip()
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
                     self._log_danmaku_event(

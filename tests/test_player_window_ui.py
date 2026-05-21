@@ -17220,6 +17220,32 @@ def test_player_window_route_replacement_resets_danmaku_prefetch_state(qtbot) ->
     assert controller.reset_calls == [session]
 
 
+def test_player_window_switching_playlist_item_resets_danmaku_prefetch_state(qtbot) -> None:
+    controller = PrefetchResetRecordingPlayerController()
+    playlist = [
+        PlayItem(title="第1集", url="http://m/1.mp4", play_source="线路1"),
+        PlayItem(title="第2集", url="http://m/2.mp4", play_source="线路1"),
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="雨霖铃"),
+        playlist=playlist,
+        playlists=[playlist],
+        playlist_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window = PlayerWindow(controller, config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._play_clicked_item(window.playlist.item(1))
+
+    assert controller.reset_calls == [session]
+
+
 def test_player_window_async_loader_plays_replacement_item_after_route_replacement(qtbot) -> None:
     ready = threading.Event()
     class StartedRecordingPlayerController(FakePlayerController):

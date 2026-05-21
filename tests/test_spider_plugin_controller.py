@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from pathlib import Path
 import zlib
@@ -3619,6 +3620,63 @@ def test_controller_warms_series_level_provider_cache_after_successful_resolutio
     ]
     assert thirteenth.selected_danmaku_provider == "sohu"
     assert thirteenth.selected_danmaku_url == "https://m.tv.sohu.com/v9545931.shtml"
+
+
+def test_controller_invalidated_prefetch_discards_stale_result_and_success_log() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    logs: list[str] = []
+
+    class BlockingDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = "", provider_filter: str = ""):
+            return [
+                DanmakuSearchItem(
+                    provider="tencent",
+                    name="雨霖铃 第2集",
+                    url="https://v.qq.com/x/cover/yll/ep2.html",
+                )
+            ]
+
+        def resolve_danmu(self, page_url: str) -> str:
+            assert page_url == "https://v.qq.com/x/cover/yll/ep2.html"
+            started.set()
+            assert release.wait(timeout=1)
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">prefetched</d></i>'
+
+    class TwoEpisodeSpider(PluginLevelDanmakuSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "雨霖铃",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                    }
+                ]
+            }
+
+    controller = SpiderPluginController(
+        TwoEpisodeSpider(),
+        plugin_name="雨霖铃",
+        search_enabled=True,
+        danmaku_service=BlockingDanmakuService(),
+    )
+    controller.set_danmaku_log_handler(logs.append)
+    request = controller.build_request("/detail/1")
+    second = request.playlist[1]
+
+    controller.prefetch_next_episode_danmaku(second, request.playlist)
+    assert started.wait(timeout=1)
+
+    controller.invalidate_running_danmaku_prefetches()
+    release.set()
+
+    _wait_until(lambda: second.danmaku_pending is False)
+
+    assert second.danmaku_xml == ""
+    assert all("弹幕预下载成功" not in message for message in logs)
 
 
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:
