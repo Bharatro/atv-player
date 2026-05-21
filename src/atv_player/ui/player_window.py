@@ -3394,7 +3394,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if getattr(self.session.vod, "detail_style", "") != "live":
             return False
         parsed = urlparse(resolved_url)
-        return parsed.scheme in {"http", "https"} and ".m3u8" in resolved_url.lower()
+        return parsed.scheme in {"http", "https"}
 
     def _playback_prepare_source_url(self, current_item: PlayItem) -> str:
         preferred_url = (current_item.original_url or current_item.url).strip()
