@@ -293,7 +293,11 @@ def _danmaku_cache_query_names(
     playlist: list[PlayItem] | None = None,
 ) -> list[str]:
     names: list[str] = []
-    for candidate in (query_name, _build_danmaku_search_name(item, playlist)):
+    for candidate in (
+        query_name,
+        _build_danmaku_search_name(item, playlist),
+        str(item.danmaku_search_title or "").strip(),
+    ):
         normalized = str(candidate).strip()
         if normalized and normalized not in names:
             names.append(normalized)
@@ -387,6 +391,16 @@ def _cached_danmaku_source_result_matches_query(query_name: str, result) -> bool
             ):
                 return True
     return not has_related_candidate
+
+
+def _load_series_level_cached_danmaku_source_result(
+    item: PlayItem,
+    reg_src: str,
+):
+    search_title = str(item.danmaku_search_title or "").strip()
+    if not search_title:
+        return None
+    return _load_cached_danmaku_source_search_result_variants(search_title, reg_src)
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -723,6 +737,7 @@ class SpiderPluginController:
         )
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
+        self._warming_danmaku_source_cache_keys: set[str] = set()
         self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
         self._raw_home_categories: list[SpiderPluginRawCategory] = []
@@ -1260,6 +1275,7 @@ class SpiderPluginController:
                     page_url=candidate.url,
                 )
                 self._save_danmaku_source_preference(item)
+                self._schedule_series_level_danmaku_source_cache_warm(item, reg_src, playlist)
                 if not is_prefetch and item.danmaku_xml:
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
                     self._log_danmaku_event(
@@ -1464,6 +1480,88 @@ class SpiderPluginController:
             )
         )
 
+    def _schedule_series_level_danmaku_source_cache_warm(
+        self,
+        item: PlayItem,
+        reg_src: str,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        if self._danmaku_service is None or not hasattr(self._danmaku_service, "search_danmu_sources"):
+            return
+        search_title = str(item.danmaku_search_title or "").strip()
+        provider_filter = str(item.selected_danmaku_provider or "").strip()
+        if not search_title or not provider_filter:
+            return
+        query_name = str(item.danmaku_search_query or "").strip()
+        query_requests_episode, _ = _query_requests_explicit_episode(query_name)
+        if not query_requests_episode:
+            return
+        title_key = _compact_danmaku_title(search_title)
+        for group in item.danmaku_candidates:
+            if group.provider != provider_filter:
+                continue
+            related_options = [
+                option
+                for option in group.options
+                if extract_episode_number(option.name) is not None
+                and (
+                    not title_key
+                    or title_key in _compact_danmaku_title(strip_episode_suffix(option.name))
+                )
+            ]
+            if len(related_options) > 1:
+                return
+        cache_query_names = _danmaku_cache_query_names(item, search_title, playlist)
+        preferred_page_url = str(item.selected_danmaku_url or "").strip()
+        target_duration = int(item.duration_seconds or 0)
+        cache_warm_key = f"{search_title}\n{provider_filter}"
+        with self._danmaku_lock:
+            if cache_warm_key in self._warming_danmaku_source_cache_keys:
+                return
+            self._warming_danmaku_source_cache_keys.add(cache_warm_key)
+
+        def run() -> None:
+            try:
+                search_method = self._danmaku_service.search_danmu_sources
+                search_kwargs = {
+                    "preferred_provider": provider_filter,
+                    "preferred_page_url": preferred_page_url,
+                    "media_duration_seconds": target_duration,
+                }
+                if "provider_filter" in inspect.signature(search_method).parameters:
+                    search_kwargs["provider_filter"] = provider_filter
+                result = search_method(search_title, reg_src, **search_kwargs)
+                if not getattr(result, "groups", None):
+                    return
+                for cache_query_name in cache_query_names:
+                    _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)
+                logger.info(
+                    (
+                        "Spider plugin warmed series-level danmaku source cache plugin=%s title=%s "
+                        "provider=%s groups=%s"
+                    ),
+                    self._plugin_name,
+                    search_title,
+                    provider_filter,
+                    len(result.groups),
+                )
+            except Exception as exc:
+                logger.warning(
+                    (
+                        "Spider plugin warm danmaku source cache failed plugin=%s title=%s "
+                        "provider=%s error=%s"
+                    ),
+                    self._plugin_name,
+                    search_title,
+                    provider_filter,
+                    exc,
+                )
+            finally:
+                with self._danmaku_lock:
+                    self._warming_danmaku_source_cache_keys.discard(cache_warm_key)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _apply_cached_danmaku_preference_xml(
         self,
         item: PlayItem,
@@ -1628,6 +1726,8 @@ class SpiderPluginController:
         item.danmaku_search_query = query_name
         reg_src = str(item.vod_id or item.url or "").strip()
         cached_result = _load_cached_danmaku_source_search_result_variants(query_name, reg_src)
+        if cached_result is None:
+            cached_result = _load_series_level_cached_danmaku_source_result(item, reg_src)
         logger.info(
             "Spider plugin load cached danmaku sources plugin=%s title=%s query=%s reg_src=%s cache_hit=%s",
             self._plugin_name,
@@ -1774,6 +1874,7 @@ class SpiderPluginController:
         reg_src = str(item.vod_id or item.url or "").strip()
         self._save_danmaku_xml_cache(item, query_name, reg_src, xml_text, page_url=page_url)
         self._save_danmaku_source_preference(item)
+        self._schedule_series_level_danmaku_source_cache_warm(item, reg_src)
         danmaku_count = _count_danmaku_entries(xml_text)
         self._log_danmaku_event("弹幕下载成功", detail=f"{danmaku_count} 条弹幕")
         return xml_text

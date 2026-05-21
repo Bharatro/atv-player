@@ -3375,6 +3375,252 @@ def test_controller_load_cached_danmaku_sources_prefers_matching_episode_over_hi
     assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep8.html"
 
 
+def test_controller_load_cached_danmaku_sources_reuses_series_level_episode_list_without_global_search(
+    monkeypatch,
+) -> None:
+    series_cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="sohu",
+                provider_label="搜狐",
+                options=[
+                    DanmakuSourceOption(provider="sohu", name="谁动了我的隐私 第1集", url="https://m.tv.sohu.com/v10234237.shtml"),
+                    DanmakuSourceOption(provider="sohu", name="谁动了我的隐私 第4集", url="https://m.tv.sohu.com/v10234281.shtml"),
+                ],
+            )
+        ],
+        default_option_url="https://m.tv.sohu.com/v10234237.shtml",
+        default_provider="sohu",
+    )
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self._reranker = DanmakuService({}, provider_order=[])
+            self.search_calls = 0
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            assert result == series_cached_result
+            assert kwargs["query_name"] == "谁动了我的隐私 4集"
+            return self._reranker.rerank_danmaku_source_search_result(result, **kwargs)
+
+        def search_danmu_sources(self, *args, **kwargs):
+            self.search_calls += 1
+            raise AssertionError("global danmaku search should not run when series-level episode list cache is available")
+
+    def fake_load_cached(name: str, reg_src: str):
+        if name == "谁动了我的隐私":
+            return series_cached_result
+        return None
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", fake_load_cached)
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="谁动了我的隐私",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(title="04.mp4", url="http://m/04.mp4", media_title="谁动了我的隐私", vod_id="episode-04")
+
+    assert controller.load_cached_danmaku_sources(item, playlist=[item]) is True
+    assert service.search_calls == 0
+    assert item.selected_danmaku_provider == "sohu"
+    assert item.selected_danmaku_url == "https://m.tv.sohu.com/v10234281.shtml"
+
+
+def test_controller_refresh_danmaku_sources_saves_series_level_episode_list_cache(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import atv_player.danmaku.cache as danmaku_cache_module
+
+    monkeypatch.setattr(danmaku_cache_module, "danmaku_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="sohu",
+                provider_label="搜狐",
+                options=[
+                    DanmakuSourceOption(provider="sohu", name="谁动了我的隐私 第1集", url="https://m.tv.sohu.com/v10234237.shtml"),
+                    DanmakuSourceOption(provider="sohu", name="谁动了我的隐私 第4集", url="https://m.tv.sohu.com/v10234281.shtml"),
+                ],
+            )
+        ],
+        default_option_url="https://m.tv.sohu.com/v10234237.shtml",
+        default_provider="sohu",
+    )
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            return result
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="谁动了我的隐私",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="01.mp4", url="http://m/01.mp4", media_title="谁动了我的隐私", vod_id="episode-01")
+
+    controller.refresh_danmaku_sources(item, force_refresh=True, playlist=[item])
+
+    loaded = danmaku_cache_module.load_cached_danmaku_source_search_result("谁动了我的隐私", "")
+    assert loaded is not None
+    assert [option.url for option in loaded.groups[0].options] == [
+        "https://m.tv.sohu.com/v10234237.shtml",
+        "https://m.tv.sohu.com/v10234281.shtml",
+    ]
+
+
+def test_controller_warms_series_level_provider_cache_after_successful_resolution(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import atv_player.danmaku.cache as danmaku_cache_module
+
+    monkeypatch.setattr(danmaku_cache_module, "danmaku_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+
+    class LongSeriesDanmakuSpider(PluginLevelDanmakuSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "假面迷情",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "#".join(f"第{index}集$/play/{index}" for index in range(1, 15)),
+                    }
+                ]
+            }
+
+    explicit_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="sohu",
+                provider_label="搜狐",
+                options=[
+                    DanmakuSourceOption(provider="sohu", name="假面迷情 第1集", url="https://m.tv.sohu.com/v9545881.shtml"),
+                ],
+            )
+        ],
+        default_option_url="https://m.tv.sohu.com/v9545881.shtml",
+        default_provider="sohu",
+    )
+    series_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="sohu",
+                provider_label="搜狐",
+                options=[
+                    DanmakuSourceOption(provider="sohu", name="假面迷情 第1集", url="https://m.tv.sohu.com/v9545881.shtml"),
+                    DanmakuSourceOption(provider="sohu", name="假面迷情 第13集", url="https://m.tv.sohu.com/v9545931.shtml"),
+                ],
+            )
+        ],
+        default_option_url="https://m.tv.sohu.com/v9545881.shtml",
+        default_provider="sohu",
+    )
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self._reranker = DanmakuService({}, provider_order=[])
+            self.search_calls: list[tuple[str, str]] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            self.search_calls.append((name, provider_filter))
+            if name == "假面迷情 1集":
+                assert provider_filter == ""
+                return explicit_result
+            if name == "假面迷情":
+                assert provider_filter == "sohu"
+                assert preferred_provider == "sohu"
+                assert preferred_page_url == "https://m.tv.sohu.com/v9545881.shtml"
+                return series_result
+            raise AssertionError(f"unexpected danmaku search: {name=} {provider_filter=}")
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return self._reranker.rerank_danmaku_source_search_result(result, **kwargs)
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        LongSeriesDanmakuSpider(),
+        plugin_name="假面迷情",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    request = controller.build_request("/detail/series-1")
+    first = request.playlist[0]
+    thirteenth = request.playlist[12]
+
+    controller._resolve_danmaku_sync(first, first.vod_id or first.url, request.playlist)
+
+    assert first.selected_danmaku_provider == "sohu"
+    assert first.selected_danmaku_url == "https://m.tv.sohu.com/v9545881.shtml"
+    assert _count_danmaku_entries(first.danmaku_xml) == 1
+
+    def warmed_series_cache_ready() -> bool:
+        cached = danmaku_cache_module.load_cached_danmaku_source_search_result("假面迷情", "")
+        if cached is None or not cached.groups:
+            return False
+        return any(option.url == "https://m.tv.sohu.com/v9545931.shtml" for option in cached.groups[0].options)
+
+    _wait_until(warmed_series_cache_ready)
+
+    assert service.search_calls == [
+        ("假面迷情 1集", ""),
+        ("假面迷情", "sohu"),
+    ]
+    assert controller.load_cached_danmaku_sources(thirteenth, playlist=request.playlist) is True
+    assert service.search_calls == [
+        ("假面迷情 1集", ""),
+        ("假面迷情", "sohu"),
+    ]
+    assert thirteenth.selected_danmaku_provider == "sohu"
+    assert thirteenth.selected_danmaku_url == "https://m.tv.sohu.com/v9545931.shtml"
+
+
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:
     calls: list[tuple[str, str]] = []
 
