@@ -124,6 +124,50 @@ install_x11_dev_package() {
   run sudo apt-get install -y libxpresent-dev
 }
 
+install_hwdec_dev_packages() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "Missing required hardware decode development packages for mpv video output. Install libva-dev and libvdpau-dev, then rebuild."
+  fi
+  log "Installing missing hardware decode development packages: libva-dev libvdpau-dev"
+  run sudo apt-get install -y libva-dev libvdpau-dev
+}
+
+require_hwdec_support_dependencies() {
+  if has_pkg_config_dep "libva" && has_pkg_config_dep "vdpau"; then
+    return 0
+  fi
+  install_hwdec_dev_packages
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  if has_pkg_config_dep "libva" && has_pkg_config_dep "vdpau"; then
+    return 0
+  fi
+  die "Missing required hardware decode development packages for mpv video output after install. Verify libva-dev and libvdpau-dev are available to pkg-config, then rebuild."
+}
+
+install_nvcodec_dev_package() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "Missing required NVIDIA codec development package for mpv NVDEC/NVENC support. Install libffmpeg-nvenc-dev, then rebuild."
+  fi
+  log "Installing missing NVIDIA codec development package: libffmpeg-nvenc-dev"
+  run sudo apt-get install -y libffmpeg-nvenc-dev
+}
+
+require_nvcodec_support_dependencies() {
+  if has_pkg_config_dep "ffnvcodec"; then
+    return 0
+  fi
+  install_nvcodec_dev_package
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  if has_pkg_config_dep "ffnvcodec"; then
+    return 0
+  fi
+  die "Missing required NVIDIA codec development package for mpv NVDEC/NVENC support after install. Verify libffmpeg-nvenc-dev is available to pkg-config, then rebuild."
+}
+
 require_x11_support_dependencies() {
   if ! has_active_x11_session; then
     return 0
@@ -191,6 +235,8 @@ check_dependencies() {
   require_cmd ninja
   require_cmd pkg-config
   require_lua_dev_package
+  require_hwdec_support_dependencies
+  require_nvcodec_support_dependencies
   require_x11_support_dependencies
 
   if [[ "${DISABLE_X86ASM}" != "1" ]]; then

@@ -160,6 +160,121 @@ def test_build_mpv_script_auto_installs_libxpresent_dev_for_x11_sessions(tmp_pat
     assert "+ sudo apt-get install -y libxpresent-dev" in result.stdout
 
 
+def test_build_mpv_script_auto_installs_hardware_decode_dev_packages_when_missing(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
+        _write_fake_tool(fake_bin, tool)
+    (fake_bin / "pkg-config").write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *libva*|*vdpau*) exit 1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    os.chmod(fake_bin / "pkg-config", 0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "+ sudo apt-get install -y libva-dev libvdpau-dev" in result.stdout
+
+
+def test_build_mpv_script_fails_when_hardware_decode_dev_packages_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname", "mkdir"):
+        _write_fake_tool(fake_bin, tool)
+    (fake_bin / "pkg-config").write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *libva*|*vdpau*) exit 1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    os.chmod(fake_bin / "pkg-config", 0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(fake_bin)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Missing required hardware decode development packages" in result.stderr
+    assert "libva-dev" in result.stderr
+    assert "libvdpau-dev" in result.stderr
+
+
+def test_build_mpv_script_auto_installs_nvcodec_headers_when_missing(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
+        _write_fake_tool(fake_bin, tool)
+    (fake_bin / "pkg-config").write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *ffnvcodec*) exit 1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    os.chmod(fake_bin / "pkg-config", 0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "+ sudo apt-get install -y libffmpeg-nvenc-dev" in result.stdout
+
+
+def test_build_mpv_script_fails_when_nvcodec_headers_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname", "mkdir"):
+        _write_fake_tool(fake_bin, tool)
+    (fake_bin / "pkg-config").write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *ffnvcodec*) exit 1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    os.chmod(fake_bin / "pkg-config", 0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(fake_bin)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Missing required NVIDIA codec development package" in result.stderr
+    assert "libffmpeg-nvenc-dev" in result.stderr
+
+
 def test_build_mpv_script_fails_when_x11_session_needs_xpresent_and_apt_get_unavailable(tmp_path: Path) -> None:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
