@@ -174,6 +174,13 @@ def _existing_windows_mpv_dll_candidates() -> list[str]:
     return _dedupe_preserve_order(found)
 
 
+def _basename_or_empty(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return ""
+    return os.path.basename(normalized)
+
+
 def _loaded_windows_module_path(module_name: str) -> str:
     if not sys.platform.startswith("win"):
         return ""
@@ -626,6 +633,21 @@ class MpvWidget(QWidget):
             ),
         }
 
+    def _stream_runtime_summary(self) -> dict[str, object]:
+        ytdlp_path = resolve_mpv_ytdlp_path()
+        ytdl_raw_options = resolve_mpv_ytdl_raw_options(
+            cookie_browser=str(getattr(self._config, "youtube_cookie_browser", "") or "")
+        )
+        return {
+            "mpv_version": self._player_property("mpv-version", ""),
+            "ffmpeg_version": self._player_property("ffmpeg-version", ""),
+            "ytdlp_path": _basename_or_empty(ytdlp_path),
+            "ytdl_has_cookie_settings": any(
+                token in ytdl_raw_options for token in ("cookies=", "cookies-from-browser=")
+            ),
+            "ytdl_has_remote_components": "remote-components=" in ytdl_raw_options,
+        }
+
     def _log_stream_diagnostics(self, stage: str, extra_fields: dict[str, object] | None = None) -> None:
         if self._stream_diagnostics_context is None:
             return
@@ -703,6 +725,7 @@ class MpvWidget(QWidget):
                 getattr(self._config, "mpv_default_readahead_secs", 20) or 20
             ),
         }
+        self._stream_diagnostics_context.update(self._stream_runtime_summary())
         self._log_stream_diagnostics("load-start")
 
     def _apply_stream_profile(

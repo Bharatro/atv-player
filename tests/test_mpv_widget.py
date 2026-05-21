@@ -913,6 +913,60 @@ def test_mpv_widget_logs_ytdlp_cache_buffering_progress(qtbot, caplog) -> None:
     assert "paused_for_cache': True" in caplog.text
 
 
+def test_mpv_widget_logs_runtime_versions_and_ytdlp_config_in_stream_diagnostics(
+    qtbot,
+    monkeypatch,
+    caplog,
+) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdlp_path",
+        lambda: "/tmp/tools/linux/yt-dlp",
+    )
+    monkeypatch.setattr(
+        "atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options",
+        lambda **_kwargs: "",
+    )
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
+            self.values: dict[str, object] = {
+                "mpv-version": "0.40.0",
+                "ffmpeg-version": "7.1.1",
+            }
+
+        def observe_property(self, _name: str, _handler) -> None:
+            return None
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+        def __getitem__(self, key: str) -> object:
+            return self.values[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+            self.values[key] = value
+
+    widget._player = FakePlayer()
+
+    with caplog.at_level(logging.INFO, logger=mpv_widget_module.__name__):
+        widget.load(
+            "https://www.youtube.com/watch?v=test123",
+            ytdl_format="299+140",
+        )
+
+    assert "MPV stream diagnostics stage=load-start" in caplog.text
+    assert "mpv_version': '0.40.0'" in caplog.text
+    assert "ffmpeg_version': '7.1.1'" in caplog.text
+    assert "ytdlp_path': 'yt-dlp'" in caplog.text
+    assert "ytdl_has_cookie_settings': False" in caplog.text
+
+
 def test_mpv_widget_loads_mkv_with_subtitle_preroll_disabled(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
