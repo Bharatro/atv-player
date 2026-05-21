@@ -321,6 +321,25 @@ def test_settings_repository_round_trip_persists_global_search_history(tmp_path:
     assert saved == config
 
 
+def test_settings_repository_round_trip_preserves_extended_global_search_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    history = [f"关键词{i}" for i in range(1, 13)]
+    config = AppConfig(
+        base_url="http://127.0.0.1:4567",
+        username="alice",
+        token="token-123",
+        vod_token="vod-123",
+        global_search_history=history,
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.global_search_history == history
+
+
 def test_settings_repository_round_trip_persists_global_search_hot_source(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

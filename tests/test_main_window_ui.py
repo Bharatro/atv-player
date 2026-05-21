@@ -2622,6 +2622,30 @@ def test_main_window_global_search_records_history_and_deduplicates(qtbot) -> No
     assert config.global_search_history == ["庆余年", "繁花", "琅琊榜"]
 
 
+def test_main_window_global_search_popup_shows_only_latest_ten_history_items(qtbot) -> None:
+    history = [f"关键词{i}" for i in range(12, 0, -1)]
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(global_search_history=history),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window._global_search_popup.isVisible() is True)
+    assert _popup_history_texts(window) == history[:10]
+
+
 def test_main_window_global_search_does_not_record_direct_open_url_history(qtbot, monkeypatch) -> None:
     opened: list[OpenPlayerRequest] = []
     config = AppConfig(global_search_history=["庆余年"])

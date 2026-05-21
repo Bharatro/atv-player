@@ -11,6 +11,7 @@ _VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
+_GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
     "localhost",
     "127.0.0.1",
@@ -84,7 +85,7 @@ def _normalize_global_search_history(value: object) -> list[str]:
             continue
         history.append(text)
         seen.add(text)
-    return history[:10]
+    return history[:_GLOBAL_SEARCH_HISTORY_LIMIT]
 
 
 def _normalize_theme_mode(value: object) -> str:

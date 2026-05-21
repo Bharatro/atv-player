@@ -131,6 +131,8 @@ _HOTKEY_360_API = "http://api.xcvts.cn/api/hotlist/360so_juhe"
 _HOTKEY_TENCENT_API = "https://pbaccess.video.qq.com/trpc.videosearch.hot_rank.HotRankServantHttp/HotRankHttp"
 _HOTKEY_IQIYI_API = "https://mesh.if.iqiyi.com/portal/lw/search/keywords/hotList"
 _SUGGESTION_360_API = "https://sug.so.360.cn/suggest"
+_GLOBAL_SEARCH_HISTORY_LIMIT = 50
+_GLOBAL_SEARCH_HISTORY_DISPLAY_LIMIT = 10
 _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE = "360"
 _DEFAULT_GLOBAL_SEARCH_HOT_TYPE = "dsp"
 _GLOBAL_SEARCH_360_HOT_TABS: list[tuple[str, str]] = [
@@ -2077,7 +2079,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if not normalized_keyword:
             return
         previous = self._global_search_history()
-        updated = [normalized_keyword, *[item for item in previous if item != normalized_keyword]][:10]
+        updated = [normalized_keyword, *[item for item in previous if item != normalized_keyword]][
+            :_GLOBAL_SEARCH_HISTORY_LIMIT
+        ]
         if updated == previous:
             return
         self.config.global_search_history = updated
@@ -2162,7 +2166,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             [],
         )
         self._global_search_popup.set_sections(
-            self._global_search_history(),
+            self._global_search_history()[:_GLOBAL_SEARCH_HISTORY_DISPLAY_LIMIT],
             self._global_search_hotkey_active_source,
             self._global_search_hot_sources(),
             self._global_search_hotkey_active_type,
