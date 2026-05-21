@@ -96,6 +96,7 @@ from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
+from atv_player.request_headers import normalize_media_request_headers
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon, tint_icon
@@ -2349,8 +2350,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ytdl_format: str = "",
     ) -> None:
         extra_kwargs: dict[str, object] = {}
-        if headers:
-            extra_kwargs["headers"] = headers
+        normalized_headers = normalize_media_request_headers(url, headers)
+        if normalized_headers:
+            extra_kwargs["headers"] = normalized_headers
         if poster_image_path:
             extra_kwargs["poster_image_path"] = poster_image_path
         if audio_files:

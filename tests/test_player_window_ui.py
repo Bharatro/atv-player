@@ -16083,6 +16083,52 @@ def test_player_window_loads_play_item_via_session_loader_and_passes_headers(qtb
     assert window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})]
 
 
+def test_player_window_normalizes_huya_headers_for_direct_playback(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(
+            title="线路1",
+            url="https://al.flv.huya.com/src/demo.flv",
+            vod_id="huya-1",
+        )
+    ]
+    session.use_local_history = False
+
+    window.open_session(session)
+
+    assert window.video.load_calls == [
+        (
+            "https://al.flv.huya.com/src/demo.flv",
+            False,
+            0,
+            {
+                "Referer": "https://www.huya.com/",
+                "User-Agent": "HYSDK(Windows,30000002)_APP(pc_exe&7080000&official)_SDK(trans&2.34.0.5795)",
+            },
+        )
+    ]
+
+
 def test_player_window_loads_play_item_via_async_session_loader_without_blocking_open_session(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
