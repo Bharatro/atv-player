@@ -740,6 +740,7 @@ class YtdlpPlaybackService:
 def _build_quality_options(info: dict) -> list[VideoQualityOption]:
     formats = info.get("formats") or []
     best_by_height: dict[int, dict] = {}
+    is_youtube = _is_youtube_extractor(info)
     for fmt in formats:
         height = fmt.get("height")
         if not height or height < 360:
@@ -748,9 +749,14 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
         if vcodec == "none":
             continue
         previous = best_by_height.get(height)
-        current_tbr = fmt.get("tbr") or 0
-        previous_tbr = (previous or {}).get("tbr") or 0
-        if previous is None or current_tbr > previous_tbr:
+
+        def sort_key(candidate: dict) -> tuple[int, int]:
+            return (
+                0 if is_youtube and _has_muxed_audio(candidate) else 1,
+                -int(candidate.get("tbr") or 0),
+            )
+
+        if previous is None or sort_key(fmt) < sort_key(previous):
             best_by_height[height] = fmt
 
     options: list[VideoQualityOption] = []
@@ -761,12 +767,15 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
         if tbr:
             label += f"  {tbr:.0f}kbps"
         ytdl_format = ""
-        if _is_youtube_extractor(info):
+        option_url = ""
+        if is_youtube:
             ytdl_format = _quality_option_ytdl_format(info, fmt, height=height)
+            if fmt.get("url") and _has_muxed_audio(fmt):
+                option_url = str(fmt.get("url") or "")
         options.append(VideoQualityOption(
             id=_quality_id_for_height(height),
             label=label,
-            url="",
+            url=option_url,
             ytdl_format=ytdl_format,
             width=fmt.get("width") or 0,
             height=height,

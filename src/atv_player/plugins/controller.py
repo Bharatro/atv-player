@@ -2186,9 +2186,10 @@ class SpiderPluginController:
             if not item.danmaku_xml:
                 self._maybe_resolve_danmaku(item, item.url, current_playlist)
             return
+        preserved_quality_id = item.selected_playback_quality_id if str(item.selected_playback_quality_id or "").startswith("ytdlp_") else ""
         item.external_subtitles = []
         item.playback_qualities = []
-        item.selected_playback_quality_id = ""
+        item.selected_playback_quality_id = preserved_quality_id
         if not item.vod_id:
             return
         if _looks_like_offline_download_link(item.vod_id):

@@ -3919,6 +3919,190 @@ def test_player_window_switches_ytdlp_quality_via_selected_ytdl_format_with_posi
     assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
 
 
+def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, str]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds, ytdl_format))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    loader_calls: list[str] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        loader_calls.append(item.selected_playback_quality_id)
+        suffix = (item.selected_playback_quality_id or "ytdlp_1080").removeprefix("ytdlp_")
+        item.url = f"https://stream.test/{suffix}/playlist.m3u8"
+        item.audio_url = ""
+        item.ytdl_format = ""
+        item.playback_qualities = [
+            VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140"),
+            VideoQualityOption(id="ytdlp_720", label="720p", ytdl_format="298+140"),
+        ]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://stream.test/1080/playlist.m3u8",
+                original_url="https://www.youtube.com/watch?v=test123",
+                playback_qualities=[
+                    VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140"),
+                    VideoQualityOption(id="ytdlp_720", label="720p", ytdl_format="298+140"),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert video.load_calls == [("https://stream.test/1080/playlist.m3u8", False, 0, "")]
+    assert loader_calls == ["ytdlp_1080"]
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(1)
+
+    assert video.load_calls[-1] == ("https://stream.test/720/playlist.m3u8", True, 93, "")
+    assert loader_calls == ["ytdlp_1080", "ytdlp_720"]
+    assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
+
+
+def test_player_window_switches_ytdlp_quality_via_direct_resolved_url_without_reloading(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, str]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds, ytdl_format))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    loader_calls: list[str] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        loader_calls.append(item.selected_playback_quality_id)
+        item.url = "https://stream.test/1080/playlist.m3u8"
+        item.audio_url = ""
+        item.ytdl_format = ""
+        item.playback_qualities = [
+            VideoQualityOption(
+                id="ytdlp_1080",
+                label="1080p",
+                url="https://stream.test/1080/playlist.m3u8",
+                ytdl_format="299+140",
+            ),
+            VideoQualityOption(
+                id="ytdlp_720",
+                label="720p",
+                url="https://stream.test/720/playlist.m3u8",
+                ytdl_format="298+140",
+            ),
+        ]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://stream.test/1080/playlist.m3u8",
+                original_url="https://www.youtube.com/watch?v=test123",
+                playback_qualities=[
+                    VideoQualityOption(
+                        id="ytdlp_1080",
+                        label="1080p",
+                        url="https://stream.test/1080/playlist.m3u8",
+                        ytdl_format="299+140",
+                    ),
+                    VideoQualityOption(
+                        id="ytdlp_720",
+                        label="720p",
+                        url="https://stream.test/720/playlist.m3u8",
+                        ytdl_format="298+140",
+                    ),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert video.load_calls == [("https://stream.test/1080/playlist.m3u8", False, 0, "")]
+    assert loader_calls == ["ytdlp_1080"]
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(1)
+
+    assert video.load_calls[-1] == ("https://stream.test/720/playlist.m3u8", True, 93, "")
+    assert loader_calls == ["ytdlp_1080"]
+    assert session.playlist[0].original_url == "https://www.youtube.com/watch?v=test123"
+    assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
+
+
 def test_player_window_does_not_prepare_ytdlp_page_url_after_loader_resolves_direct_media(qtbot) -> None:
     class RecordingM3U8AdFilter:
         def __init__(self) -> None:

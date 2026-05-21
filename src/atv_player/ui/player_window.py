@@ -5783,7 +5783,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     or not target_quality_id.startswith("ytdlp_")
                 ):
                     return
-                if selected_quality.ytdl_format:
+                can_switch_via_selected_ytdl_format = bool(selected_quality.ytdl_format) and (
+                    str(current_item.url or "").strip() == str(current_item.original_url or "").strip()
+                ) and bool(str(current_item.ytdl_format or "").strip())
+                if can_switch_via_selected_ytdl_format:
                     previous_url = current_item.url
                     previous_audio_url = current_item.audio_url
                     previous_ytdl_format = current_item.ytdl_format
@@ -5829,9 +5832,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             previous_url = current_item.url
             previous_original_url = current_item.original_url
             previous_selected_quality_id = current_item.selected_playback_quality_id
+            previous_ytdl_format = current_item.ytdl_format
+            previous_audio_url = current_item.audio_url
             current_item.url = selected_quality.url
-            current_item.original_url = selected_quality.url
+            if not target_quality_id.startswith("ytdlp_"):
+                current_item.original_url = selected_quality.url
             current_item.selected_playback_quality_id = target_quality_id
+            current_item.ytdl_format = ""
+            current_item.audio_url = ""
             if self._start_playback_prepare(
                 previous_index=self.current_index,
                 start_position_seconds=start_position_seconds,
@@ -5850,6 +5858,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 current_item.url = previous_url
                 current_item.original_url = previous_original_url
                 current_item.selected_playback_quality_id = previous_selected_quality_id
+                current_item.ytdl_format = previous_ytdl_format
+                current_item.audio_url = previous_audio_url
                 self._refresh_video_quality_state()
                 self._append_log(f"清晰度切换失败: {exc}")
             return

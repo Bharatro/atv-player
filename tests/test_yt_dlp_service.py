@@ -795,6 +795,36 @@ class TestBuildQualityOptions:
         result = _build_quality_options(info)
         assert [option.id for option in result] == ["ytdlp_720"]
 
+    def test_youtube_quality_options_prefer_same_height_muxed_url_for_fast_switch(self):
+        from atv_player.yt_dlp_service import _build_quality_options
+        info = {
+            "extractor": "youtube",
+            "formats": [
+                {
+                    "format_id": "397",
+                    "url": "https://stream.test/video-480.mp4",
+                    "height": 480,
+                    "tbr": 900,
+                    "vcodec": "avc1.4d401f",
+                    "acodec": "none",
+                },
+                {
+                    "format_id": "94",
+                    "url": "https://stream.test/480-master.m3u8",
+                    "height": 480,
+                    "tbr": 600,
+                    "vcodec": "avc1.4d401f",
+                    "acodec": "mp4a.40.2",
+                },
+            ],
+        }
+
+        result = _build_quality_options(info)
+
+        assert [option.id for option in result] == ["ytdlp_480"]
+        assert result[0].url == "https://stream.test/480-master.m3u8"
+        assert result[0].ytdl_format == "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best"
+
 
 class TestBuildSubtitleOptions:
     def test_manual_and_auto(self):
