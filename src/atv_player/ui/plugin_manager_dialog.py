@@ -31,7 +31,14 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
-from atv_player.ui.theme import FlatComboBox, build_placeholder_label_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.theme import (
+    FlatComboBox,
+    build_form_combobox_qss,
+    build_placeholder_label_qss,
+    build_search_line_edit_qss,
+    configure_form_flat_combobox,
+    current_tokens,
+)
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
@@ -73,11 +80,15 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.enabled_filter_combo.addItem("全部", "all")
         self.enabled_filter_combo.addItem("仅启用", "enabled")
         self.enabled_filter_combo.addItem("仅禁用", "disabled")
+        self.enabled_filter_combo.setStyleSheet(build_form_combobox_qss(tokens, border_radius=15, min_height=26))
+        configure_form_flat_combobox(self.enabled_filter_combo, tokens, border_radius=15, height=26)
         self._configure_filter_combo(self.enabled_filter_combo, minimum_contents_length=6)
         self.sort_combo = FlatComboBox(self)
         self.sort_combo.addItem("当前顺序", "sort_order")
         self.sort_combo.addItem("名称", "name")
         self.sort_combo.addItem("最近加载", "last_loaded_at")
+        self.sort_combo.setStyleSheet(build_form_combobox_qss(tokens, border_radius=15, min_height=26))
+        configure_form_flat_combobox(self.sort_combo, tokens, border_radius=15, height=26)
         self._configure_filter_combo(self.sort_combo, minimum_contents_length=6)
         self.clear_filters_button = QPushButton("清空")
         self.empty_state_label = QLabel("没有匹配的插件", self)
@@ -157,11 +168,11 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
 
         layout = self.content_layout()
         layout.addWidget(self.warning_label)
-        layout.addLayout(self.filters_layout)
         layout.addLayout(actions)
         layout.addWidget(self.plugin_actions_label)
         layout.addWidget(self.plugin_actions_empty_label)
         layout.addWidget(self.plugin_actions_widget)
+        layout.addLayout(self.filters_layout)
         layout.addWidget(self.plugin_table)
         layout.addWidget(self.empty_state_label)
 

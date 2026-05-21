@@ -2831,10 +2831,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_poster_overlay.show()
 
     def _load_poster_pixmap(self, source: str) -> QPixmap:
-        if not source:
-            return QPixmap()
-        source_path = Path(source)
-        if not source_path.is_file():
+        source_path = self._local_poster_source_path(source)
+        if source_path is None:
             return QPixmap()
         pixmap = QPixmap(str(source_path))
         if pixmap.isNull():
@@ -2846,10 +2844,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
 
     def _load_video_poster_pixmap(self, source: str) -> QPixmap:
-        if not source:
-            return QPixmap()
-        source_path = Path(source)
-        if not source_path.is_file():
+        source_path = self._local_poster_source_path(source)
+        if source_path is None:
             return QPixmap()
         pixmap = QPixmap(str(source_path))
         if pixmap.isNull():
@@ -2997,12 +2993,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         normalized_path = urlparse(url or "").path.lower()
         return any(normalized_path.endswith(suffix) for suffix in self._AUDIO_ONLY_SUFFIXES)
 
+    def _local_poster_source_path(self, source: str) -> Path | None:
+        normalized = normalize_poster_url(source)
+        if not normalized or normalized.startswith(("http://", "https://", "data:")):
+            return None
+        source_path = Path(normalized)
+        try:
+            if not source_path.is_file():
+                return None
+        except OSError:
+            return None
+        return source_path
+
     def _preferred_audio_cover_path(self) -> str | None:
         source = self._preferred_video_poster_source().strip()
         if not source:
             return None
-        source_path = Path(source)
-        if source_path.is_file():
+        source_path = self._local_poster_source_path(source)
+        if source_path is not None:
             return str(source_path)
         normalized = normalize_poster_url(source)
         if normalized.startswith(("http://", "https://")):
@@ -3371,12 +3379,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         resolved_url = (current_item.url or "").strip()
         if resolved_url.startswith(self._DASH_DATA_URI_PREFIX):
             return False
+        if self._should_skip_live_m3u8_prepare(current_item, resolved_url):
+            return True
         selected_quality_id = current_item.selected_playback_quality_id or ""
         if current_item.audio_url:
             return True
         if selected_quality_id.startswith("ytdlp_"):
             return True
         return any((quality.id or "").startswith("ytdlp_") for quality in current_item.playback_qualities)
+
+    def _should_skip_live_m3u8_prepare(self, current_item: PlayItem, resolved_url: str) -> bool:
+        if self.session is None or current_item.parse_required:
+            return False
+        if getattr(self.session.vod, "detail_style", "") != "live":
+            return False
+        parsed = urlparse(resolved_url)
+        return parsed.scheme in {"http", "https"} and ".m3u8" in resolved_url.lower()
 
     def _playback_prepare_source_url(self, current_item: PlayItem) -> str:
         preferred_url = (current_item.original_url or current_item.url).strip()
@@ -7968,6 +7986,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._save_config()
             self.closed_to_main.emit()
         super().closeEvent(event)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._apply_visibility_state()
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if not hasattr(self, "video_widget"):

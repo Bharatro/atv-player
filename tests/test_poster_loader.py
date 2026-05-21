@@ -56,6 +56,14 @@ def test_normalize_poster_url_upgrades_douban_ratio_path() -> None:
     assert result == "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
 
 
+def test_normalize_poster_url_decodes_javascript_escaped_remote_url() -> None:
+    result = normalize_poster_url(
+        "https:\\u002F\\u002Fimg.example\\u002Fposter.jpg?foo=1\\u0026bar=2"
+    )
+
+    assert result == "https://img.example/poster.jpg?foo=1&bar=2"
+
+
 def test_build_poster_request_headers_uses_site_specific_referers() -> None:
     assert build_poster_request_headers("https://img3.doubanio.com/view/photo/m/public/p123.jpg")["Referer"] == "https://movie.douban.com/"
     assert build_poster_request_headers("https://i.ytimg.com/vi/123/maxresdefault.jpg")["Referer"] == "https://www.youtube.com/"

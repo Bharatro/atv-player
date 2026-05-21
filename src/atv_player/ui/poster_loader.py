@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from io import BytesIO
 from hashlib import sha256
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -56,6 +57,12 @@ def _looks_like_unsupported_page_url(source: str) -> bool:
 
 def normalize_poster_url(source: str) -> str:
     normalized = (source or "").strip()
+    if "\\u" in normalized or "\\/" in normalized:
+        try:
+            normalized = json.loads(f'"{normalized}"')
+        except json.JSONDecodeError:
+            normalized = normalized.encode("utf-8").decode("unicode_escape")
+        normalized = normalized.replace("\\/", "/")
     if _looks_like_unsupported_page_url(normalized):
         return ""
     if "doubanio.com" in normalized:

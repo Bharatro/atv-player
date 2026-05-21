@@ -13,7 +13,7 @@ from atv_player.models import (
 )
 import atv_player.ui.plugin_manager_dialog as plugin_manager_dialog_module
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
-from atv_player.ui.theme import FlatComboBox
+from atv_player.ui.theme import FlatComboBox, current_tokens
 
 
 def _select_rows(dialog: PluginManagerDialog, *rows: int) -> None:
@@ -184,6 +184,7 @@ def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
 def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
+    tokens = current_tokens()
 
     assert dialog.search_input.placeholderText() == "搜索名称或地址"
     assert isinstance(dialog.enabled_filter_combo, FlatComboBox)
@@ -192,12 +193,20 @@ def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> Non
     assert dialog.enabled_filter_combo.minimumContentsLength() == 6
     assert dialog.enabled_filter_combo.maxVisibleItems() == 12
     assert dialog.enabled_filter_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
+    assert dialog.enabled_filter_combo.styleSheet() != ""
+    assert dialog.enabled_filter_combo.property("flat_combo_field_bg") == tokens.input_bg
+    assert dialog.enabled_filter_combo.property("flat_combo_border_color") == tokens.input_border
+    assert dialog.enabled_filter_combo.property("flat_combo_height") == 26
     assert isinstance(dialog.sort_combo, FlatComboBox)
     assert dialog.sort_combo.currentText() == "当前顺序"
     assert dialog.sort_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
     assert dialog.sort_combo.minimumContentsLength() == 6
     assert dialog.sort_combo.maxVisibleItems() == 12
     assert dialog.sort_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
+    assert dialog.sort_combo.styleSheet() != ""
+    assert dialog.sort_combo.property("flat_combo_field_bg") == tokens.input_bg
+    assert dialog.sort_combo.property("flat_combo_border_color") == tokens.input_border
+    assert dialog.sort_combo.property("flat_combo_height") == 26
     assert dialog.clear_filters_button.text() == "清空"
     assert dialog.filters_layout.spacing() == 12
 
@@ -216,10 +225,14 @@ def test_plugin_manager_dialog_filter_combos_reserve_minimum_width_for_longest_l
 def test_plugin_manager_dialog_uses_history_style_search_field_and_spacing(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(50)
 
     assert dialog.search_input.isClearButtonEnabled() is True
     assert dialog.search_input.styleSheet() != ""
     assert dialog.filters_layout.spacing() == 12
+    assert abs(dialog.search_input.height() - dialog.enabled_filter_combo.height()) <= 2
+    assert abs(dialog.search_input.height() - dialog.sort_combo.height()) <= 2
 
 
 def test_plugin_manager_dialog_filter_bar_keeps_search_input_wider_than_filter_combos(qtbot) -> None:
@@ -231,6 +244,16 @@ def test_plugin_manager_dialog_filter_bar_keeps_search_input_wider_than_filter_c
 
     assert dialog.search_input.width() > dialog.enabled_filter_combo.width()
     assert dialog.search_input.width() > dialog.sort_combo.width()
+
+
+def test_plugin_manager_dialog_places_filter_bar_between_plugin_actions_and_table(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert dialog.search_input.y() > dialog.plugin_actions_widget.y()
+    assert dialog.search_input.y() < dialog.plugin_table.y()
 
 
 def test_plugin_manager_dialog_searches_name_and_source_case_insensitively(qtbot) -> None:

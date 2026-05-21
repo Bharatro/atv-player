@@ -3389,6 +3389,43 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     ]
 
 
+def test_player_window_skips_m3u8_proxy_prepare_for_live_streams(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def should_prepare(self, url: str) -> bool:
+            return ".m3u8" in url
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u?v=proxy-live-1"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="live-1", vod_name="Live", detail_style="live"),
+        playlist=[
+            PlayItem(
+                title="线路 1",
+                url="https://media.example/live/index.m3u8",
+                headers={"Referer": "https://site.example"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/live/index.m3u8", 0)])
+
+    assert filter_service.calls == []
+
+
 def test_player_window_rewrites_remote_iso_to_local_proxy_url(qtbot) -> None:
     class FakeM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:
@@ -5634,6 +5671,66 @@ def test_player_window_starts_remote_poster_load_without_blocking_open_session(q
     assert window.video.load_calls == [("http://m/1.m3u8", False, 0)]
 
 
+def test_player_window_handles_javascript_escaped_remote_poster_url_without_crashing(qtbot, monkeypatch) -> None:
+    started: list[tuple[str, str]] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        started.append((target, source))
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="live-1",
+            vod_name="Live",
+            detail_style="live",
+            vod_pic="https:\\u002F\\u002Fimg.example\\u002Fposter.jpg?foo=1\\u0026bar=2",
+        ),
+        playlist=[PlayItem(title="线路 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert started == [
+        ("detail", "https:\\u002F\\u002Fimg.example\\u002Fposter.jpg?foo=1\\u0026bar=2"),
+        ("video", "https:\\u002F\\u002Fimg.example\\u002Fposter.jpg?foo=1\\u0026bar=2"),
+    ]
+    assert window.video.load_calls == [("http://m/1.m3u8", False, 0)]
+
+
+def test_player_window_load_poster_pixmap_ignores_long_javascript_escaped_remote_url(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    source = "https:\\u002F\\u002Fimg.example\\u002F" + ("a" * 400) + ".jpg"
+
+    pixmap = window._load_poster_pixmap(source)
+
+    assert pixmap.isNull() is True
+
+
 def test_player_window_uses_larger_remote_load_size_for_video_poster_than_detail_poster(qtbot, monkeypatch) -> None:
     requests: list[tuple[str, int, int]] = []
 
@@ -7497,6 +7594,23 @@ def test_player_window_escape_shortcut_exits_fullscreen_instead_of_returning_to_
     assert window.isFullScreen() is False
     assert window.isHidden() is False
     assert emitted["count"] == 0
+
+
+def test_player_window_window_state_change_reapplies_visibility_state(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    window.bottom_area.hide()
+    window.sidebar_actions_widget.hide()
+    window.title_bar().hide()
+
+    QApplication.sendEvent(window, QEvent(QEvent.Type.WindowStateChange))
+
+    assert window.isFullScreen() is False
+    assert window.bottom_area.isHidden() is False
+    assert window.sidebar_actions_widget.isHidden() is False
+    assert window.title_bar().isVisible() is True
 
 
 def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
