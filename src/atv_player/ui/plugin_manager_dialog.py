@@ -59,6 +59,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
         self._refresh_in_progress = False
+        self._refresh_target_plugin_ids: list[int] = []
         self._initial_plugin_snapshot: dict[int, tuple] = {}
         self._initial_plugin_snapshot_captured = False
         self._all_plugins = []
@@ -706,15 +707,17 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _refresh_selected(self) -> None:
         if self._refresh_in_progress:
             return
-        plugin_id = self._selected_plugin_id()
-        if plugin_id is None:
+        plugin_ids = self._selected_plugin_ids()
+        if not plugin_ids:
             return
+        self._refresh_target_plugin_ids = list(plugin_ids)
         self._refresh_in_progress = True
         self._sync_action_state()
 
         def run() -> None:
             try:
-                self.plugin_manager.refresh_plugin(plugin_id)
+                for plugin_id in plugin_ids:
+                    self.plugin_manager.refresh_plugin(plugin_id)
             except Exception as exc:
                 self._refresh_signals.failed.emit(str(exc))
                 return
@@ -723,13 +726,17 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
 
     def _handle_refresh_completed(self) -> None:
+        target_plugin_ids = list(self._refresh_target_plugin_ids)
+        self._refresh_target_plugin_ids = []
         self._refresh_in_progress = False
         self.plugin_tabs_dirty = True
-        self.reload_plugins()
+        self.reload_plugins(target_plugin_ids)
 
     def _handle_refresh_failed(self, message: str) -> None:
+        target_plugin_ids = list(self._refresh_target_plugin_ids)
+        self._refresh_target_plugin_ids = []
         self._refresh_in_progress = False
-        self.reload_plugins()
+        self.reload_plugins(target_plugin_ids)
         QMessageBox.warning(self, "刷新失败", message)
 
     def _delete_selected(self) -> None:
