@@ -232,7 +232,22 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         return search_term in display_name or search_term in source_value
 
     def _sort_plugins(self, plugins) -> list:
-        return sorted(plugins, key=lambda plugin: int(plugin.sort_order))
+        sort_mode = self.sort_combo.currentData()
+        if sort_mode == "sort_order":
+            return sorted(plugins, key=lambda plugin: int(plugin.sort_order))
+        if sort_mode == "name":
+            return sorted(
+                plugins,
+                key=lambda plugin: ((plugin.display_name or plugin.source_value or "").casefold(), int(plugin.sort_order)),
+            )
+        return sorted(
+            plugins,
+            key=lambda plugin: (
+                int(plugin.last_loaded_at) <= 0,
+                -int(plugin.last_loaded_at) if int(plugin.last_loaded_at) > 0 else 0,
+                int(plugin.sort_order),
+            ),
+        )
 
     def _render_plugins(self, plugins, selected_plugin_id: int | None) -> None:
         self.plugin_table.setRowCount(len(plugins))
@@ -294,6 +309,9 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _has_single_selection(self) -> bool:
         return len(self._selected_rows()) == 1
 
+    def _is_current_order_sort(self) -> bool:
+        return self.sort_combo.currentData() == "sort_order"
+
     def _sync_action_state(self) -> None:
         if self._refresh_in_progress:
             self.add_local_button.setEnabled(False)
@@ -314,6 +332,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         has_single_selection = self._has_single_selection()
         row = self.plugin_table.currentRow() if has_single_selection else -1
         last_row = self.plugin_table.rowCount() - 1
+        allow_reorder_nudge = self._is_current_order_sort()
         self.add_local_button.setEnabled(True)
         self.add_remote_button.setEnabled(True)
         self.import_github_button.setEnabled(not self._import_in_progress)
@@ -321,8 +340,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.config_button.setEnabled(has_single_selection)
         self.category_button.setEnabled(has_single_selection)
         self.toggle_button.setEnabled(has_single_selection)
-        self.up_button.setEnabled(has_single_selection and row > 0)
-        self.down_button.setEnabled(has_single_selection and row >= 0 and row < last_row)
+        self.up_button.setEnabled(has_single_selection and allow_reorder_nudge and row > 0)
+        self.down_button.setEnabled(has_single_selection and allow_reorder_nudge and row >= 0 and row < last_row)
         self.reorder_button.setEnabled(True)
         self.refresh_button.setEnabled(has_single_selection)
         self.logs_button.setEnabled(has_single_selection)
@@ -589,6 +608,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.reload_plugins()
 
     def _move_selected(self, direction: int) -> None:
+        if not self._is_current_order_sort():
+            return
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
             return

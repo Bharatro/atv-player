@@ -214,6 +214,85 @@ def test_plugin_manager_dialog_filters_enabled_state(qtbot) -> None:
     assert _visible_plugin_ids(dialog) == [2]
 
 
+def test_plugin_manager_dialog_sorts_by_name_without_mutating_manager_order(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.plugins = [
+        SpiderPluginConfig(
+            id=1,
+            source_type="local",
+            source_value="/plugins/zeta.py",
+            display_name="Zeta",
+            enabled=True,
+            sort_order=0,
+            plugin_version=1,
+        ),
+        SpiderPluginConfig(
+            id=2,
+            source_type="remote",
+            source_value="https://example.com/alpha.py",
+            display_name="Alpha",
+            enabled=True,
+            sort_order=1,
+            plugin_version=1,
+        ),
+        SpiderPluginConfig(
+            id=3,
+            source_type="local",
+            source_value="/plugins/beta.py",
+            display_name="Beta",
+            enabled=False,
+            sort_order=2,
+            plugin_version=1,
+        ),
+    ]
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.sort_combo.setCurrentText("名称")
+
+    assert _visible_plugin_ids(dialog) == [2, 3, 1]
+    assert [plugin.id for plugin in manager.plugins] == [1, 2, 3]
+
+
+def test_plugin_manager_dialog_sorts_by_recently_loaded_descending(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.plugins[0].last_loaded_at = 1713206400
+    manager.plugins[1].last_loaded_at = 1713292800
+    manager.plugins.append(
+        SpiderPluginConfig(
+            id=3,
+            source_type="local",
+            source_value="/plugins/c.py",
+            display_name="本地C",
+            enabled=True,
+            sort_order=2,
+            plugin_version=1,
+        )
+    )
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.sort_combo.setCurrentText("最近加载")
+
+    assert _visible_plugin_ids(dialog) == [2, 1, 3]
+
+
+def test_plugin_manager_dialog_disables_move_buttons_when_view_sort_is_not_current_order(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+
+    dialog.sort_combo.setCurrentText("名称")
+    dialog._sync_action_state()
+
+    assert dialog.up_button.isEnabled() is False
+    assert dialog.down_button.isEnabled() is False
+    assert dialog.reorder_button.isEnabled() is True
+
+
 def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
