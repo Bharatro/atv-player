@@ -10,7 +10,7 @@ from atv_player.danmaku.subtitle import render_danmaku_ass
 from atv_player.paths import app_cache_dir
 
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
-_DANMAKU_ASS_CACHE_VERSION = "v3"
+_DANMAKU_ASS_CACHE_VERSION = "v4"
 _DANMAKU_XML_CACHE_VERSION = "v1"
 _DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v3"
 
@@ -25,6 +25,7 @@ def danmaku_ass_cache_path(
     xml_text: str,
     line_count: int,
     *,
+    intro_episode_label: str = "",
     render_mode: str = "static",
     color_mode: str = "uniform",
     uniform_color: str = "#FFFFFF",
@@ -37,6 +38,7 @@ def danmaku_ass_cache_path(
             (
                 _DANMAKU_ASS_CACHE_VERSION,
                 str(max(1, min(int(line_count), 10))),
+                str(intro_episode_label or "").strip(),
                 render_mode,
                 color_mode,
                 uniform_color,
@@ -54,6 +56,7 @@ def load_or_create_danmaku_ass_cache(
     xml_text: str,
     line_count: int,
     *,
+    intro_episode_label: str = "",
     render_mode: str = "static",
     color_mode: str = "uniform",
     uniform_color: str = "#FFFFFF",
@@ -64,6 +67,7 @@ def load_or_create_danmaku_ass_cache(
     subtitle_text = render_danmaku_ass(
         xml_text,
         line_count=line_count,
+        intro_episode_label=intro_episode_label,
         render_mode=render_mode,
         color_mode=color_mode,
         uniform_color=uniform_color,
@@ -76,6 +80,7 @@ def load_or_create_danmaku_ass_cache(
     cache_path = danmaku_ass_cache_path(
         xml_text,
         line_count,
+        intro_episode_label=intro_episode_label,
         render_mode=render_mode,
         color_mode=color_mode,
         uniform_color=uniform_color,

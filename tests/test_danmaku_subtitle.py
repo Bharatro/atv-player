@@ -94,10 +94,15 @@ def test_render_danmaku_outputs_count_intro_before_real_comments() -> None:
         "</i>"
     )
 
-    subtitle = render_danmaku_ass(xml_text, line_count=2, duration_seconds=4.0)
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=2,
+        duration_seconds=4.0,
+        intro_episode_label="第1集",
+    )
 
-    assert "2条弹幕来袭！" in subtitle
-    assert subtitle.index("2条弹幕来袭！") < subtitle.index("第一条")
+    assert "第1集 · 2条弹幕来袭！" in subtitle
+    assert subtitle.index("第1集 · 2条弹幕来袭！") < subtitle.index("第一条")
 
 
 def test_render_danmaku_keeps_count_intro_visible_for_longer() -> None:
@@ -107,9 +112,14 @@ def test_render_danmaku_keeps_count_intro_visible_for_longer() -> None:
         "</i>"
     )
 
-    subtitle = render_danmaku_ass(xml_text, line_count=1, duration_seconds=4.0)
+    subtitle = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        duration_seconds=4.0,
+        intro_episode_label="第1集",
+    )
 
-    assert "Dialogue: 0,0:00:00.00,0:00:06.00,Danmaku,,0,0,0,,1条弹幕来袭！" in subtitle
+    assert "Dialogue: 0,0:00:00.00,0:00:06.00,Danmaku,,0,0,0,,第1集 · 1条弹幕来袭！" in subtitle
 
 
 def test_render_danmaku_ass_scroll_mode_uses_slower_default_duration() -> None:

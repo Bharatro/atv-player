@@ -14317,6 +14317,43 @@ def test_player_window_open_session_restores_cached_danmaku_via_controller_when_
     assert window.danmaku_combo.currentText() == "弹幕"
 
 
+def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(qtbot, monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load_or_create_danmaku_ass_cache(xml_text: str, line_count: int, **kwargs) -> Path | None:
+        captured["xml_text"] = xml_text
+        captured["line_count"] = line_count
+        captured.update(kwargs)
+        return tmp_path / "demo.ass"
+
+    monkeypatch.setattr(player_window_module, "load_or_create_danmaku_ass_cache", fake_load_or_create_danmaku_ass_cache)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="红果短剧"),
+        playlist=[PlayItem(title="随便起名", original_title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window.current_index = 0
+
+    path = window._build_danmaku_subtitle_file(
+        '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+        2,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+    )
+
+    assert path == tmp_path / "demo.ass"
+    assert captured["intro_episode_label"] == "第1集"
+
+
 def test_player_window_playback_loader_replacement_restores_cached_danmaku_for_current_item(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:

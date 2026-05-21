@@ -64,6 +64,16 @@ def test_danmaku_ass_cache_path_changes_when_render_settings_change(monkeypatch,
     assert first != second
 
 
+def test_danmaku_ass_cache_path_changes_when_intro_episode_label_changes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'
+
+    first = danmaku_cache_module.danmaku_ass_cache_path(xml_text, 1, intro_episode_label="第1集")
+    second = danmaku_cache_module.danmaku_ass_cache_path(xml_text, 1, intro_episode_label="第2集")
+
+    assert first != second
+
+
 def test_purge_stale_danmaku_cache_deletes_files_older_than_three_days(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     cache_dir = danmaku_cache_module.danmaku_cache_dir()

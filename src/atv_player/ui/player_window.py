@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
     MetadataScrapeDialogState,
@@ -5176,9 +5177,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         scroll_speed: float,
         font_size: int,
     ) -> Path | None:
+        intro_episode_label = ""
+        current_item = self._current_play_item()
+        if current_item is not None:
+            episode_number = infer_playlist_episode_number(current_item, self.session.playlist if self.session else None)
+            if episode_number is not None and episode_number > 0:
+                intro_episode_label = f"第{episode_number}集"
         return load_or_create_danmaku_ass_cache(
             xml_text,
             line_count,
+            intro_episode_label=intro_episode_label,
             render_mode=render_mode,
             color_mode=color_mode,
             uniform_color=uniform_color,

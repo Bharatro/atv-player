@@ -414,6 +414,7 @@ def _event_override(mode: str, y: int, color: str) -> str:
 def _build_intro_event(
     records: list[_ParsedDanmaku],
     *,
+    intro_episode_label: str,
     render_mode: str,
     color_mode: str,
     uniform_color: str,
@@ -423,7 +424,9 @@ def _build_intro_event(
         return ""
     intro_start = max(0.0, records[0].time_offset - _INTRO_LEAD_SECONDS)
     intro_end = max(records[0].time_offset, intro_start + _INTRO_MIN_DURATION_SECONDS)
-    text = _escape_ass_text(f"{len(records)}条弹幕来袭！")
+    intro_prefix = str(intro_episode_label or "").strip()
+    intro_text = f"{intro_prefix} · {len(records)}条弹幕来袭！" if intro_prefix else f"{len(records)}条弹幕来袭！"
+    text = _escape_ass_text(intro_text)
     if render_mode == "static":
         return (
             f"Dialogue: 0,{_format_ass_timestamp(intro_start)},{_format_ass_timestamp(intro_end)},"
@@ -497,6 +500,7 @@ def render_danmaku_ass(
     line_count: int = 1,
     duration_seconds: float = 4.0,
     *,
+    intro_episode_label: str = "",
     render_mode: str = "static",
     color_mode: str = "uniform",
     uniform_color: str = _DEFAULT_UNIFORM_COLOR,
@@ -519,6 +523,7 @@ def render_danmaku_ass(
     header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color), normalized_font_size)
     intro_event = _build_intro_event(
         records,
+        intro_episode_label=intro_episode_label,
         render_mode=normalized_render_mode,
         color_mode=normalized_color_mode,
         uniform_color=normalized_uniform_color,
