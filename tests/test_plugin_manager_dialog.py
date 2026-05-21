@@ -126,6 +126,10 @@ class FakePluginManager:
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
         self.toggle_calls.append((plugin_id, enabled))
+        for plugin in self.plugins:
+            if int(plugin.id) == int(plugin_id):
+                plugin.enabled = enabled
+                break
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self.move_calls.append((plugin_id, direction))
@@ -735,6 +739,62 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.toggle_calls == [(2, True)]
     assert manager.move_calls == [(2, -1)]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_bulk_enable_only_updates_disabled_plugins(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._enable_selected()
+
+    assert manager.toggle_calls == [(2, True)]
+
+
+def test_plugin_manager_dialog_bulk_disable_only_updates_enabled_plugins(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._disable_selected()
+
+    assert manager.toggle_calls == [(1, False)]
+
+
+def test_plugin_manager_dialog_bulk_disable_restores_visible_multi_selection(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._disable_selected()
+
+    assert manager.toggle_calls == [(1, False)]
+    assert dialog._selected_plugin_ids() == [1, 2]
+
+
+def test_plugin_manager_dialog_bulk_enable_preserves_filter_and_visible_selection(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.enabled_filter_combo.setCurrentText("仅禁用")
+    _select_rows(dialog, 0)
+
+    dialog._enable_selected()
+
+    assert dialog.enabled_filter_combo.currentText() == "仅禁用"
+    assert _visible_plugin_ids(dialog) == []
+    assert dialog._selected_plugin_ids() == []
 
 
 def test_plugin_manager_dialog_refresh_runs_in_background_and_reloads_on_completion(qtbot, monkeypatch) -> None:
