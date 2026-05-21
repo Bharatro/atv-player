@@ -126,6 +126,10 @@ class FakePluginManager:
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
         self.toggle_calls.append((plugin_id, enabled))
+        for plugin in self.plugins:
+            if int(plugin.id) == int(plugin_id):
+                plugin.enabled = enabled
+                break
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
         self.move_calls.append((plugin_id, direction))
@@ -141,6 +145,7 @@ class FakePluginManager:
 
     def delete_plugin(self, plugin_id: int) -> None:
         self.delete_calls.append(plugin_id)
+        self.plugins = [plugin for plugin in self.plugins if int(plugin.id) != int(plugin_id)]
 
     def list_logs(self, plugin_id: int):
         return self.logs.get(plugin_id, [])
@@ -469,12 +474,63 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
 
     assert dialog.rename_button.isEnabled() is False
     assert dialog.config_button.isEnabled() is False
-    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.enable_button.isEnabled() is False
+    assert dialog.disable_button.isEnabled() is False
     assert dialog.up_button.isEnabled() is False
     assert dialog.down_button.isEnabled() is False
     assert dialog.refresh_button.isEnabled() is False
     assert dialog.logs_button.isEnabled() is False
     assert dialog.delete_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_exposes_explicit_enable_and_disable_buttons(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.enable_button.text() == "启用"
+    assert dialog.disable_button.text() == "禁用"
+
+
+def test_plugin_manager_dialog_disables_bulk_buttons_without_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.clearSelection()
+    dialog._sync_action_state()
+
+    assert dialog.enable_button.isEnabled() is False
+    assert dialog.disable_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is False
+
+
+def test_plugin_manager_dialog_enables_bulk_buttons_based_on_selected_states(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+
+    assert dialog.enable_button.isEnabled() is True
+    assert dialog.disable_button.isEnabled() is True
+    assert dialog.refresh_button.isEnabled() is True
+    assert dialog.delete_button.isEnabled() is True
+
+
+def test_plugin_manager_dialog_keeps_single_item_actions_disabled_for_multi_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+    dialog._sync_action_state()
+
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.config_button.isEnabled() is False
+    assert dialog.category_button.isEnabled() is False
+    assert dialog.logs_button.isEnabled() is False
 
 
 def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtbot) -> None:
@@ -487,10 +543,11 @@ def test_plugin_manager_dialog_limits_non_delete_actions_to_single_selection(qtb
 
     assert dialog.rename_button.isEnabled() is False
     assert dialog.config_button.isEnabled() is False
-    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.enable_button.isEnabled() is True
+    assert dialog.disable_button.isEnabled() is True
     assert dialog.up_button.isEnabled() is False
     assert dialog.down_button.isEnabled() is False
-    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is True
     assert dialog.logs_button.isEnabled() is False
     assert dialog.delete_button.isEnabled() is True
 
@@ -708,6 +765,62 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.delete_calls == [2]
 
 
+def test_plugin_manager_dialog_bulk_enable_only_updates_disabled_plugins(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._enable_selected()
+
+    assert manager.toggle_calls == [(2, True)]
+
+
+def test_plugin_manager_dialog_bulk_disable_only_updates_enabled_plugins(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._disable_selected()
+
+    assert manager.toggle_calls == [(1, False)]
+
+
+def test_plugin_manager_dialog_bulk_disable_restores_visible_multi_selection(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 0, 1)
+
+    dialog._disable_selected()
+
+    assert manager.toggle_calls == [(1, False)]
+    assert dialog._selected_plugin_ids() == [1, 2]
+
+
+def test_plugin_manager_dialog_bulk_enable_preserves_filter_and_visible_selection(qtbot) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.enabled_filter_combo.setCurrentText("仅禁用")
+    _select_rows(dialog, 0)
+
+    dialog._enable_selected()
+
+    assert dialog.enabled_filter_combo.currentText() == "仅禁用"
+    assert _visible_plugin_ids(dialog) == []
+    assert dialog._selected_plugin_ids() == []
+
+
 def test_plugin_manager_dialog_refresh_runs_in_background_and_reloads_on_completion(qtbot, monkeypatch) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
@@ -717,9 +830,12 @@ def test_plugin_manager_dialog_refresh_runs_in_background_and_reloads_on_complet
 
     reload_calls: list[str] = []
 
-    def tracked_reload() -> None:
+    def tracked_reload(selected_plugin_ids=None) -> None:
         reload_calls.append("reload")
-        PluginManagerDialog.reload_plugins(dialog)
+        if selected_plugin_ids is None:
+            PluginManagerDialog.reload_plugins(dialog)
+        else:
+            PluginManagerDialog.reload_plugins(dialog, selected_plugin_ids)
 
     monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
 
@@ -755,6 +871,53 @@ def test_plugin_manager_dialog_refresh_runs_in_background_and_reloads_on_complet
     assert dialog.refresh_button.isEnabled() is True
 
 
+def test_plugin_manager_dialog_bulk_refresh_runs_selected_plugins_in_background(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    _select_rows(dialog, 0, 1)
+
+    reload_calls: list[str] = []
+    original_reload = dialog.reload_plugins
+
+    def tracked_reload(selected_plugin_ids=None) -> None:
+        reload_calls.append("reload")
+        if selected_plugin_ids is None:
+            original_reload()
+        else:
+            original_reload(selected_plugin_ids)
+
+    started_threads: list[object] = []
+
+    class FakeThread:
+        def __init__(self, *, target, daemon) -> None:
+            self.target = target
+            self.daemon = daemon
+            self.started = False
+            started_threads.append(self)
+
+        def start(self) -> None:
+            self.started = True
+
+    monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
+    monkeypatch.setattr(
+        plugin_manager_dialog_module,
+        "threading",
+        types.SimpleNamespace(Thread=FakeThread),
+        raising=False,
+    )
+
+    dialog._refresh_selected()
+
+    assert len(started_threads) == 1
+    assert dialog.refresh_button.isEnabled() is False
+
+    started_threads[0].target()
+    qtbot.waitUntil(lambda: manager.refresh_calls == [1, 2], timeout=1000)
+    qtbot.waitUntil(lambda: reload_calls == ["reload"], timeout=1000)
+
+
 def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
@@ -766,6 +929,32 @@ def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
     dialog._delete_selected()
 
     assert manager.delete_calls == [1, 2]
+
+
+def test_plugin_manager_dialog_bulk_delete_keeps_remaining_selected_rows_visible(qtbot) -> None:
+    manager = FakePluginManager()
+    manager.plugins.append(
+        SpiderPluginConfig(
+            id=3,
+            source_type="local",
+            source_value="/plugins/c.py",
+            display_name="本地C",
+            enabled=False,
+            sort_order=2,
+            plugin_version=1,
+        )
+    )
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    _select_rows(dialog, 1, 2)
+
+    dialog._delete_selected()
+
+    assert manager.delete_calls == [2, 3]
+    assert _visible_plugin_ids(dialog) == [1]
+    assert dialog._selected_plugin_ids() == []
 
 
 def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:

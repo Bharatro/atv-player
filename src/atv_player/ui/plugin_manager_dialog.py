@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import partial
 import threading
 
-from PySide6.QtCore import QObject, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, QObject, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -66,6 +66,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
         self._refresh_in_progress = False
+        self._refresh_target_plugin_ids: list[int] = []
         self._initial_plugin_snapshot: dict[int, tuple] = {}
         self._initial_plugin_snapshot_captured = False
         self._all_plugins = []
@@ -119,7 +120,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button = QPushButton("编辑名称")
         self.config_button = QPushButton("编辑配置")
         self.category_button = QPushButton("分类管理")
-        self.toggle_button = QPushButton("启用/禁用")
+        self.enable_button = QPushButton("启用")
+        self.disable_button = QPushButton("禁用")
         self.up_button = QPushButton("上移")
         self.down_button = QPushButton("下移")
         self.reorder_button = QPushButton("调整顺序")
@@ -149,7 +151,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.rename_button,
             self.config_button,
             self.category_button,
-            self.toggle_button,
+            self.enable_button,
+            self.disable_button,
             self.up_button,
             self.down_button,
             self.reorder_button,
@@ -182,7 +185,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button.clicked.connect(self._rename_selected)
         self.config_button.clicked.connect(self._edit_selected_config)
         self.category_button.clicked.connect(self._open_category_manager_dialog)
-        self.toggle_button.clicked.connect(self._toggle_selected_enabled)
+        self.enable_button.clicked.connect(self._enable_selected)
+        self.disable_button.clicked.connect(self._disable_selected)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
         self.reorder_button.clicked.connect(self._open_reorder_dialog)
@@ -197,8 +201,9 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
 
         self.reload_plugins()
 
-    def reload_plugins(self) -> None:
-        selected_plugin_id = self._selected_plugin_id()
+    def reload_plugins(self, selected_plugin_ids: list[int] | None = None) -> None:
+        if selected_plugin_ids is None:
+            selected_plugin_ids = self._selected_plugin_ids()
         self._plugin_action_reload_timer.stop()
         self._pending_plugin_action_id = None
         self._plugin_actions_cache.clear()
@@ -210,11 +215,11 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.changed_plugin_ids = self._diff_plugin_ids(self._initial_plugin_snapshot, current_snapshot)
         self.plugin_tabs_dirty = bool(self.changed_plugin_ids)
         self._all_plugins = list(plugins)
-        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_id)
+        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_ids)
 
     def _apply_view_filters(self) -> None:
-        selected_plugin_id = self._selected_plugin_id()
-        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_id)
+        selected_plugin_ids = self._selected_plugin_ids()
+        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_ids)
 
     def _clear_view_filters(self) -> None:
         blockers = [
@@ -277,7 +282,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             ),
         )
 
-    def _render_plugins(self, plugins, selected_plugin_id: int | None) -> None:
+    def _render_plugins(self, plugins, selected_plugin_ids: list[int]) -> None:
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
             name_item = QTableWidgetItem(plugin.display_name or "")
@@ -293,7 +298,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 6, QTableWidgetItem(loaded_at))
         self.empty_state_label.setVisible(len(plugins) == 0)
-        self._restore_selection(selected_plugin_id)
+        self._restore_selection(selected_plugin_ids)
         self._sync_action_state()
 
     def _plugin_snapshot(self, plugins) -> dict[int, tuple]:
@@ -340,6 +345,21 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _is_current_order_sort(self) -> bool:
         return self.sort_combo.currentData() == "sort_order"
 
+    def _selected_plugins(self) -> list:
+        plugin_by_id = {int(plugin.id): plugin for plugin in self._all_plugins}
+        plugins = []
+        for plugin_id in self._selected_plugin_ids():
+            plugin = plugin_by_id.get(int(plugin_id))
+            if plugin is not None:
+                plugins.append(plugin)
+        return plugins
+
+    def _has_selected_enabled_plugin(self) -> bool:
+        return any(bool(plugin.enabled) for plugin in self._selected_plugins())
+
+    def _has_selected_disabled_plugin(self) -> bool:
+        return any(not bool(plugin.enabled) for plugin in self._selected_plugins())
+
     def _sync_action_state(self) -> None:
         if self._refresh_in_progress:
             self.add_local_button.setEnabled(False)
@@ -348,7 +368,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self.rename_button.setEnabled(False)
             self.config_button.setEnabled(False)
             self.category_button.setEnabled(False)
-            self.toggle_button.setEnabled(False)
+            self.enable_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
             self.up_button.setEnabled(False)
             self.down_button.setEnabled(False)
             self.reorder_button.setEnabled(False)
@@ -358,6 +379,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         has_selection = self._has_selection()
         has_single_selection = self._has_single_selection()
+        has_selected_enabled_plugin = self._has_selected_enabled_plugin()
+        has_selected_disabled_plugin = self._has_selected_disabled_plugin()
         row = self.plugin_table.currentRow() if has_single_selection else -1
         last_row = self.plugin_table.rowCount() - 1
         allow_reorder_nudge = self._is_current_order_sort()
@@ -367,11 +390,12 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.rename_button.setEnabled(has_single_selection)
         self.config_button.setEnabled(has_single_selection)
         self.category_button.setEnabled(has_single_selection)
-        self.toggle_button.setEnabled(has_single_selection)
+        self.enable_button.setEnabled(has_selected_disabled_plugin)
+        self.disable_button.setEnabled(has_selected_enabled_plugin)
         self.up_button.setEnabled(has_single_selection and allow_reorder_nudge and row > 0)
         self.down_button.setEnabled(has_single_selection and allow_reorder_nudge and row >= 0 and row < last_row)
         self.reorder_button.setEnabled(True)
-        self.refresh_button.setEnabled(has_single_selection)
+        self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_single_selection)
         self.delete_button.setEnabled(has_selection)
         self._schedule_plugin_action_reload()
@@ -455,28 +479,34 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_tabs_dirty = True
         self.reload_plugins()
 
-    def _restore_selection(self, plugin_id: int | None) -> None:
+    def _restore_selection(self, plugin_ids: list[int]) -> None:
+        target_ids = {int(plugin_id) for plugin_id in plugin_ids}
         self.plugin_table.clearSelection()
         self.plugin_table.setCurrentCell(-1, -1)
-        if plugin_id is None:
+        selection_model = self.plugin_table.selectionModel()
+        if selection_model is None or not target_ids:
             return
+        first_row = -1
         for row in range(self.plugin_table.rowCount()):
             item = self.plugin_table.item(row, 0)
-            if item is None or int(item.data(256)) != plugin_id:
+            if item is None or int(item.data(256)) not in target_ids:
                 continue
-            self.plugin_table.selectRow(row)
-            return
+            if first_row < 0:
+                first_row = row
+            index = self.plugin_table.model().index(row, 0)
+            selection_model.select(
+                index,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+        if first_row >= 0:
+            current_index = self.plugin_table.model().index(first_row, 0)
+            selection_model.setCurrentIndex(current_index, QItemSelectionModel.SelectionFlag.NoUpdate)
 
     def _selected_plugin_id(self) -> int | None:
-        if not self._has_single_selection():
+        selected_plugin_ids = self._selected_plugin_ids()
+        if len(selected_plugin_ids) != 1:
             return None
-        row = self.plugin_table.currentRow()
-        if row < 0:
-            return None
-        item = self.plugin_table.item(row, 0)
-        if item is None:
-            return None
-        return int(item.data(256))
+        return selected_plugin_ids[0]
 
     def _selected_plugin_ids(self) -> list[int]:
         plugin_ids: list[int] = []
@@ -617,6 +647,29 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         self.reload_plugins()
 
+    def _set_selected_enabled(self, enabled: bool) -> None:
+        selected_plugin_ids = self._selected_plugin_ids()
+        if not selected_plugin_ids:
+            return
+        plugin_by_id = {int(plugin.id): plugin for plugin in self._all_plugins}
+        changed = False
+        for plugin_id in selected_plugin_ids:
+            plugin = plugin_by_id.get(int(plugin_id))
+            if plugin is None or bool(plugin.enabled) == enabled:
+                continue
+            self.plugin_actions.apply_toggle_enabled(plugin_id, enabled)
+            changed = True
+        if not changed:
+            return
+        self.plugin_tabs_dirty = True
+        self.reload_plugins(selected_plugin_ids)
+
+    def _enable_selected(self) -> None:
+        self._set_selected_enabled(True)
+
+    def _disable_selected(self) -> None:
+        self._set_selected_enabled(False)
+
     def _toggle_selected_enabled(self) -> None:
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
@@ -665,15 +718,17 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _refresh_selected(self) -> None:
         if self._refresh_in_progress:
             return
-        plugin_id = self._selected_plugin_id()
-        if plugin_id is None:
+        plugin_ids = self._selected_plugin_ids()
+        if not plugin_ids:
             return
+        self._refresh_target_plugin_ids = list(plugin_ids)
         self._refresh_in_progress = True
         self._sync_action_state()
 
         def run() -> None:
             try:
-                self.plugin_manager.refresh_plugin(plugin_id)
+                for plugin_id in plugin_ids:
+                    self.plugin_manager.refresh_plugin(plugin_id)
             except Exception as exc:
                 self._refresh_signals.failed.emit(str(exc))
                 return
@@ -682,13 +737,17 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
 
     def _handle_refresh_completed(self) -> None:
+        target_plugin_ids = list(self._refresh_target_plugin_ids)
+        self._refresh_target_plugin_ids = []
         self._refresh_in_progress = False
         self.plugin_tabs_dirty = True
-        self.reload_plugins()
+        self.reload_plugins(target_plugin_ids)
 
     def _handle_refresh_failed(self, message: str) -> None:
+        target_plugin_ids = list(self._refresh_target_plugin_ids)
+        self._refresh_target_plugin_ids = []
         self._refresh_in_progress = False
-        self.reload_plugins()
+        self.reload_plugins(target_plugin_ids)
         QMessageBox.warning(self, "刷新失败", message)
 
     def _delete_selected(self) -> None:
