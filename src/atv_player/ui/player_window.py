@@ -642,6 +642,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._auto_switched_failure_sources: set[tuple[int, int]] = set()
         self._danmaku_track_id: int | None = None
         self._danmaku_temp_path: Path | None = None
+        self._danmaku_temp_path_is_ephemeral = False
         self._danmaku_active = False
         self._danmaku_line_count = 1
         self._danmaku_retry_attempts = 0
@@ -4996,7 +4997,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return self.session.playlist[self.current_index].danmaku_xml
 
     def _cleanup_danmaku_temp_file(self) -> None:
+        if self._danmaku_temp_path_is_ephemeral and self._danmaku_temp_path is not None:
+            try:
+                self._danmaku_temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         self._danmaku_temp_path = None
+        self._danmaku_temp_path_is_ephemeral = False
 
     def _restore_secondary_subtitle_position_after_danmaku(self) -> None:
         if self._danmaku_restore_secondary_position is None:
@@ -5144,8 +5151,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         if temp_path is None:
             return None
-        self._danmaku_temp_path = temp_path
         return temp_path
+
+    def _prepare_danmaku_subtitle_load_path(self, subtitle_path: Path) -> Path:
+        suffix = subtitle_path.suffix or ".ass"
+        temp_file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        try:
+            temp_file.write(subtitle_path.read_bytes())
+        finally:
+            temp_file.close()
+        self._danmaku_temp_path = Path(temp_file.name)
+        self._danmaku_temp_path_is_ephemeral = True
+        return self._danmaku_temp_path
 
     def _build_danmaku_subtitle_file(
         self,
@@ -5218,10 +5235,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _attach_danmaku_subtitle_file(self, subtitle_path: Path, line_count: int) -> None:
         self._clear_active_danmaku(restore_position=False)
-        self._danmaku_temp_path = subtitle_path
+        load_path = self._prepare_danmaku_subtitle_load_path(subtitle_path)
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
-        track_id = self._load_primary_danmaku_subtitle(subtitle_path)
+        track_id = self._load_primary_danmaku_subtitle(load_path)
         if track_id is None:
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id

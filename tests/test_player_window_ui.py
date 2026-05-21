@@ -14563,6 +14563,93 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert "当前播放: 第2集" in log_text
 
 
+def test_player_window_playlist_click_reloads_same_danmaku_xml_with_fresh_subtitle_path(qtbot) -> None:
+    shared_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">同一集弹幕</d></i>'
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_danmaku_paths: list[str] = []
+            self.removed_danmaku_track_ids: list[int] = []
+            self._next_track_id = 70
+            self._seen_paths: set[str] = set()
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def pause(self) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            if path in self._seen_paths:
+                return None
+            self._seen_paths.add(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self.removed_danmaku_track_ids.append(track_id)
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(title="第1集 天屎驾到真案降临", url="http://m/1@128362", media_title="同一剧", danmaku_xml=shared_xml),
+            PlayItem(title="第1集 天屎驾到真案降临", url="http://m/1@128386", media_title="同一剧", danmaku_xml=shared_xml),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+
+    target_item = window.playlist.item(1)
+    assert target_item is not None
+    initial_path = window.video.loaded_danmaku_paths[-1]
+
+    window._play_clicked_item(target_item)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 2)
+    assert window.video.removed_danmaku_track_ids == [70]
+    assert window.video.loaded_danmaku_paths[-1] != initial_path
+    assert "弹幕加载失败" not in window.log_view.toPlainText()
+    assert window.danmaku_combo.currentText() == "弹幕"
+
+
 def test_player_window_logs_rewritten_episode_title_for_current_playback(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
