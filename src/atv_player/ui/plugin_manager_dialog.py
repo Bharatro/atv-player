@@ -4,16 +4,18 @@ from datetime import datetime
 from functools import partial
 import threading
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -58,8 +60,22 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._refresh_in_progress = False
         self._initial_plugin_snapshot: dict[int, tuple] = {}
         self._initial_plugin_snapshot_captured = False
+        self._all_plugins = []
         self.resize(920, 520)
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
+        self.search_input = QLineEdit(self)
+        self.search_input.setPlaceholderText("搜索名称或地址")
+        self.enabled_filter_combo = QComboBox(self)
+        self.enabled_filter_combo.addItem("全部", "all")
+        self.enabled_filter_combo.addItem("仅启用", "enabled")
+        self.enabled_filter_combo.addItem("仅禁用", "disabled")
+        self.sort_combo = QComboBox(self)
+        self.sort_combo.addItem("当前顺序", "sort_order")
+        self.sort_combo.addItem("名称", "name")
+        self.sort_combo.addItem("最近加载", "last_loaded_at")
+        self.clear_filters_button = QPushButton("清空")
+        self.empty_state_label = QLabel("没有匹配的插件", self)
+        self.empty_state_label.hide()
 
         self.plugin_table = QTableWidget(0, 7, self)
         self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "版本", "地址", "启用", "状态", "最近加载"])
@@ -126,13 +142,21 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         ):
             actions.addWidget(button)
 
+        filters = QHBoxLayout()
+        filters.addWidget(self.search_input, 1)
+        filters.addWidget(self.enabled_filter_combo)
+        filters.addWidget(self.sort_combo)
+        filters.addWidget(self.clear_filters_button)
+
         layout = self.content_layout()
         layout.addWidget(self.warning_label)
+        layout.addLayout(filters)
         layout.addLayout(actions)
         layout.addWidget(self.plugin_actions_label)
         layout.addWidget(self.plugin_actions_empty_label)
         layout.addWidget(self.plugin_actions_widget)
         layout.addWidget(self.plugin_table)
+        layout.addWidget(self.empty_state_label)
 
         self.add_local_button.clicked.connect(self._add_local_plugin)
         self.add_remote_button.clicked.connect(self._add_remote_plugin)
@@ -147,6 +171,10 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.logs_button.clicked.connect(self._show_logs)
         self.delete_button.clicked.connect(self._delete_selected)
+        self.search_input.textChanged.connect(self._apply_view_filters)
+        self.enabled_filter_combo.currentIndexChanged.connect(self._apply_view_filters)
+        self.sort_combo.currentIndexChanged.connect(self._apply_view_filters)
+        self.clear_filters_button.clicked.connect(self._clear_view_filters)
         self.plugin_table.itemSelectionChanged.connect(self._sync_action_state)
 
         self.reload_plugins()
@@ -163,6 +191,50 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             self._initial_plugin_snapshot_captured = True
         self.changed_plugin_ids = self._diff_plugin_ids(self._initial_plugin_snapshot, current_snapshot)
         self.plugin_tabs_dirty = bool(self.changed_plugin_ids)
+        self._all_plugins = list(plugins)
+        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_id)
+
+    def _apply_view_filters(self) -> None:
+        selected_plugin_id = self._selected_plugin_id()
+        self._render_plugins(self._visible_plugins(self._all_plugins), selected_plugin_id)
+
+    def _clear_view_filters(self) -> None:
+        blockers = [
+            QSignalBlocker(self.search_input),
+            QSignalBlocker(self.enabled_filter_combo),
+            QSignalBlocker(self.sort_combo),
+        ]
+        self.search_input.clear()
+        self.enabled_filter_combo.setCurrentIndex(0)
+        self.sort_combo.setCurrentIndex(0)
+        del blockers
+        self._apply_view_filters()
+
+    def _visible_plugins(self, plugins) -> list:
+        search_term = self.search_input.text().strip().casefold()
+        enabled_filter = self.enabled_filter_combo.currentData()
+        filtered = []
+        for plugin in plugins:
+            if not self._matches_search(plugin, search_term):
+                continue
+            if enabled_filter == "enabled" and not plugin.enabled:
+                continue
+            if enabled_filter == "disabled" and plugin.enabled:
+                continue
+            filtered.append(plugin)
+        return self._sort_plugins(filtered)
+
+    def _matches_search(self, plugin, search_term: str) -> bool:
+        if not search_term:
+            return True
+        display_name = (plugin.display_name or "").casefold()
+        source_value = (plugin.source_value or "").casefold()
+        return search_term in display_name or search_term in source_value
+
+    def _sort_plugins(self, plugins) -> list:
+        return sorted(plugins, key=lambda plugin: int(plugin.sort_order))
+
+    def _render_plugins(self, plugins, selected_plugin_id: int | None) -> None:
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
             name_item = QTableWidgetItem(plugin.display_name or "")
@@ -177,6 +249,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 6, QTableWidgetItem(loaded_at))
+        self.empty_state_label.setVisible(len(plugins) == 0)
         self._restore_selection(selected_plugin_id)
         self._sync_action_state()
 

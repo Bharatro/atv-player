@@ -27,6 +27,15 @@ def _select_rows(dialog: PluginManagerDialog, *rows: int) -> None:
         )
 
 
+def _visible_plugin_ids(dialog: PluginManagerDialog) -> list[int]:
+    plugin_ids: list[int] = []
+    for row in range(dialog.plugin_table.rowCount()):
+        item = dialog.plugin_table.item(row, 0)
+        assert item is not None
+        plugin_ids.append(int(item.data(256)))
+    return plugin_ids
+
+
 class FakePluginManager:
     def __init__(self) -> None:
         self.plugins = [
@@ -169,6 +178,40 @@ def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
     assert dialog.plugin_table.item(1, 1).text() == "远程"
     assert dialog.plugin_table.item(1, 2).text() == "7"
     assert dialog.plugin_table.item(1, 5).text() == "下载失败"
+
+
+def test_plugin_manager_dialog_renders_search_filter_sort_controls(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.search_input.placeholderText() == "搜索名称或地址"
+    assert dialog.enabled_filter_combo.currentText() == "全部"
+    assert dialog.sort_combo.currentText() == "当前顺序"
+    assert dialog.clear_filters_button.text() == "清空"
+
+
+def test_plugin_manager_dialog_searches_name_and_source_case_insensitively(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.search_input.setText("远程b")
+    assert _visible_plugin_ids(dialog) == [2]
+
+    dialog.search_input.setText(" EXAMPLE.COM/B.PY ")
+    assert _visible_plugin_ids(dialog) == [2]
+
+
+def test_plugin_manager_dialog_filters_enabled_state(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.enabled_filter_combo.setCurrentText("仅启用")
+    assert _visible_plugin_ids(dialog) == [1]
+
+    dialog.enabled_filter_combo.setCurrentText("仅禁用")
+    assert _visible_plugin_ids(dialog) == [2]
 
 
 def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> None:
