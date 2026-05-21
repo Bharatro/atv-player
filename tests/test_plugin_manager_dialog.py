@@ -213,6 +213,26 @@ def test_plugin_manager_dialog_filter_combos_reserve_minimum_width_for_longest_l
         assert combo.minimumWidth() >= longest_label_width + left_padding + indicator_padding
 
 
+def test_plugin_manager_dialog_uses_history_style_search_field_and_spacing(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.search_input.isClearButtonEnabled() is True
+    assert dialog.search_input.styleSheet() != ""
+    assert dialog.filters_layout.spacing() == 12
+
+
+def test_plugin_manager_dialog_filter_bar_keeps_search_input_wider_than_filter_combos(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.resize(1200, 520)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert dialog.search_input.width() > dialog.enabled_filter_combo.width()
+    assert dialog.search_input.width() > dialog.sort_combo.width()
+
+
 def test_plugin_manager_dialog_searches_name_and_source_case_insensitively(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)

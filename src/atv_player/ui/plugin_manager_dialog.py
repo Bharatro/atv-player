@@ -31,7 +31,7 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_reorder_dialog import PluginReorderDialog
-from atv_player.ui.theme import FlatComboBox, build_placeholder_label_qss, current_tokens
+from atv_player.ui.theme import FlatComboBox, build_placeholder_label_qss, build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
@@ -63,9 +63,12 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._initial_plugin_snapshot_captured = False
         self._all_plugins = []
         self.resize(920, 520)
+        tokens = current_tokens()
         self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
         self.search_input = QLineEdit(self)
         self.search_input.setPlaceholderText("搜索名称或地址")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setStyleSheet(build_search_line_edit_qss(tokens))
         self.enabled_filter_combo = FlatComboBox(self)
         self.enabled_filter_combo.addItem("全部", "all")
         self.enabled_filter_combo.addItem("仅启用", "enabled")
