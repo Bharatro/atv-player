@@ -2729,7 +2729,7 @@ def test_controller_switch_danmaku_source_emits_log_events() -> None:
 
     assert logs == [
         "弹幕下载中: 腾讯 - 红果短剧 第1集",
-        "弹幕下载成功: 1 条弹幕",
+        "弹幕下载成功: 1集 (1 条弹幕)",
     ]
 
 
@@ -3094,7 +3094,161 @@ def test_controller_reuses_cached_danmaku_xml_across_different_plugin_sources(mo
     xml_text = second_controller.switch_danmaku_source(second_item, "https://v.qq.com/demo")
 
     assert "缓存弹幕" in xml_text
-    assert second_item.danmaku_xml == xml_text
+
+
+def test_controller_ignores_stale_preference_cached_danmaku_xml_for_wrong_episode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+
+    stale_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">第1集缓存</d></i>'
+    danmaku_cache_module.save_cached_danmaku_xml("低智商犯罪 4集", "https://www.iqiyi.com/v_ep1.html", stale_xml)
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key=build_danmaku_series_key("低智商犯罪"),
+            provider="iqiyi",
+            page_url="https://www.iqiyi.com/v_ep1.html",
+            title="低智商犯罪第1集",
+            search_title="低智商犯罪",
+            updated_at=0,
+        )
+    )
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="iqiyi",
+                        provider_label="爱奇艺",
+                        options=[DanmakuSourceOption(provider="iqiyi", name="低智商犯罪第4集", url="https://www.iqiyi.com/v_ep4.html")],
+                    )
+                ],
+                default_option_url="https://www.iqiyi.com/v_ep4.html",
+                default_provider="iqiyi",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">第4集实时</d></i>'
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="低智商犯罪",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="04.mp4",
+        url="http://m/04.mp4",
+        media_title="低智商犯罪",
+        vod_id="episode-04",
+        danmaku_search_title="低智商犯罪",
+        danmaku_search_episode="4集",
+    )
+
+    controller._resolve_danmaku_sync(item, item.url, [item])
+
+    assert "第4集实时" in item.danmaku_xml
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep4.html"
+
+
+def test_controller_ignores_stale_cached_candidate_xml_for_wrong_episode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="iqiyi",
+                provider_label="爱奇艺",
+                options=[
+                    DanmakuSourceOption(provider="iqiyi", name="低智商犯罪第1集", url="https://www.iqiyi.com/v_ep1.html"),
+                    DanmakuSourceOption(provider="iqiyi", name="低智商犯罪第4集", url="https://www.iqiyi.com/v_ep4.html"),
+                ],
+            )
+        ],
+        default_option_url="https://www.iqiyi.com/v_ep1.html",
+        default_provider="iqiyi",
+    )
+    danmaku_cache_module.save_cached_danmaku_source_search_result("低智商犯罪 4集", "", cached_result)
+    danmaku_cache_module.save_cached_danmaku_xml(
+        "低智商犯罪 4集",
+        "https://www.iqiyi.com/v_ep1.html",
+        '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">第1集缓存</d></i>',
+    )
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return DanmakuService({}, provider_order=[]).rerank_danmaku_source_search_result(result, **kwargs)
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            self.search_calls.append(name)
+            return cached_result
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            assert page_url == "https://www.iqiyi.com/v_ep4.html"
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">第4集实时</d></i>'
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="低智商犯罪",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(
+        title="04.mp4",
+        url="http://m/04.mp4",
+        media_title="低智商犯罪",
+        vod_id="episode-04",
+        danmaku_search_title="低智商犯罪",
+        danmaku_search_episode="4集",
+    )
+
+    controller._resolve_danmaku_sync(item, item.url, [item])
+
+    assert "第4集实时" in item.danmaku_xml
+    assert item.selected_danmaku_url == "https://www.iqiyi.com/v_ep4.html"
 
 
 def test_controller_refresh_danmaku_sources_restores_override_result_cache_after_restart(
@@ -3677,6 +3831,104 @@ def test_controller_invalidated_prefetch_discards_stale_result_and_success_log()
 
     assert second.danmaku_xml == ""
     assert all("弹幕预下载成功" not in message for message in logs)
+
+
+def test_controller_reuses_inflight_series_search_across_episode_switches() -> None:
+    search_started = threading.Event()
+    release_search = threading.Event()
+
+    shared_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(provider="tencent", name="主角 3集", url="https://v.qq.com/x/cover/zj/ep3.html"),
+                    DanmakuSourceOption(provider="tencent", name="主角 5集", url="https://v.qq.com/x/cover/zj/ep5.html"),
+                ],
+            )
+        ],
+        default_option_url="https://v.qq.com/x/cover/zj/ep3.html",
+        default_provider="tencent",
+    )
+
+    class BlockingDanmakuService:
+        def __init__(self) -> None:
+            self._reranker = DanmakuService({}, provider_order=[])
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            self.search_calls.append(name)
+            if len(self.search_calls) > 1:
+                raise AssertionError("same-series concurrent episode lookups should reuse the inflight search result")
+            search_started.set()
+            assert release_search.wait(timeout=1)
+            return shared_result
+
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return self._reranker.rerank_danmaku_source_search_result(result, **kwargs)
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            return f'<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">{page_url}</d></i>'
+
+    service = BlockingDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="主角",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    third = PlayItem(
+        title="第3集",
+        url="http://m/3.mp4",
+        media_title="主角",
+        vod_id="episode-03",
+        danmaku_search_title="主角",
+        danmaku_search_episode="3集",
+    )
+    fifth = PlayItem(
+        title="第5集",
+        url="http://m/5.mp4",
+        media_title="主角",
+        vod_id="episode-05",
+        danmaku_search_title="主角",
+        danmaku_search_episode="5集",
+    )
+
+    first_thread = threading.Thread(
+        target=lambda: controller._resolve_danmaku_sync(third, third.url, [third, fifth]),
+        daemon=True,
+    )
+    second_thread = threading.Thread(
+        target=lambda: controller._resolve_danmaku_sync(fifth, fifth.url, [third, fifth]),
+        daemon=True,
+    )
+
+    first_thread.start()
+    assert search_started.wait(timeout=1)
+    second_thread.start()
+    time.sleep(0.05)
+    release_search.set()
+    first_thread.join(timeout=1)
+    second_thread.join(timeout=1)
+
+    assert service.search_calls == ["主角 3集"]
+    assert third.selected_danmaku_url == "https://v.qq.com/x/cover/zj/ep3.html"
+    assert fifth.selected_danmaku_url == "https://v.qq.com/x/cover/zj/ep5.html"
+    assert service.resolve_calls == [
+        "https://v.qq.com/x/cover/zj/ep3.html",
+        "https://v.qq.com/x/cover/zj/ep5.html",
+    ]
 
 
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 import inspect
 import json
@@ -67,6 +67,13 @@ _GROUPED_ROUTE_RE = re.compile(r"^(?P<group>\S*?\D)(?P<number>\d+)$")
 _MOVIE_LIKE_TITLE_MARKERS = ("剧场版",)
 _MOVIE_CATEGORY_MARKERS = ("电影",)
 _SINGLE_VIDEO_GENERIC_TITLES = {"正片", "完整版", "全片"}
+
+
+@dataclass
+class _InflightDanmakuSourceSearch:
+    event: threading.Event
+    result: object | None = None
+    error: Exception | None = None
 
 
 def _format_spider_method_call_message(plugin_name: str, method_name: str, **params: object) -> str:
@@ -393,6 +400,16 @@ def _cached_danmaku_source_result_matches_query(query_name: str, result) -> bool
     return not has_related_candidate
 
 
+def _cached_danmaku_title_matches_query(query_name: str, candidate_title: str) -> bool:
+    explicit_episode_requested, requested_episode = _query_requests_explicit_episode(query_name)
+    if not explicit_episode_requested or requested_episode is None:
+        return True
+    return (
+        extract_episode_number(candidate_title) == requested_episode
+        and episode_title_matches(query_name, candidate_title)
+    )
+
+
 def _load_series_level_cached_danmaku_source_result(
     item: PlayItem,
     reg_src: str,
@@ -401,6 +418,26 @@ def _load_series_level_cached_danmaku_source_result(
     if not search_title:
         return None
     return _load_cached_danmaku_source_search_result_variants(search_title, reg_src)
+
+
+def _build_danmaku_success_detail(
+    item: PlayItem,
+    danmaku_count: int,
+    playlist: list[PlayItem] | None = None,
+) -> str:
+    label = (
+        str(item.danmaku_search_episode or "").strip()
+        or _extract_episode_label(item, playlist).strip()
+    )
+    if not label:
+        selected_title = str(item.selected_danmaku_title or "").strip()
+        selected_episode = extract_episode_number(selected_title)
+        if selected_episode is not None:
+            label = f"{selected_episode}集"
+    count_label = f"{danmaku_count} 条弹幕"
+    if not label:
+        return count_label
+    return f"{label} ({count_label})"
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -738,6 +775,7 @@ class SpiderPluginController:
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
         self._warming_danmaku_source_cache_keys: set[str] = set()
+        self._inflight_danmaku_source_searches: dict[str, _InflightDanmakuSourceSearch] = {}
         self._danmaku_prefetch_generation = 0
         self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
@@ -1299,7 +1337,7 @@ class SpiderPluginController:
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
                     self._log_danmaku_event(
                         "弹幕下载成功",
-                        detail=f"{danmaku_count} 条弹幕",
+                        detail=_build_danmaku_success_detail(item, danmaku_count, playlist),
                     )
                 logger.info(
                     "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
@@ -1469,6 +1507,18 @@ class SpiderPluginController:
             )
             if not cached_xml:
                 continue
+            if explicit_episode_requested and not episode_match:
+                logger.info(
+                    (
+                        "Spider plugin ignore cached danmaku candidate xml plugin=%s query=%s candidate=%s "
+                        "candidate_title=%s reason=no_matching_episode"
+                    ),
+                    self._plugin_name,
+                    query_name,
+                    candidate.url,
+                    candidate.name,
+                )
+                continue
             item.danmaku_xml = cached_xml
             item.selected_danmaku_provider = candidate.provider
             item.selected_danmaku_url = candidate.url
@@ -1589,6 +1639,18 @@ class SpiderPluginController:
     ) -> bool:
         if preference is None or not preference.page_url:
             return False
+        if not _cached_danmaku_title_matches_query(query_name, preference.title):
+            logger.info(
+                (
+                    "Spider plugin ignore cached danmaku preference xml plugin=%s query=%s "
+                    "page_url=%s title=%s reason=no_matching_episode"
+                ),
+                self._plugin_name,
+                query_name,
+                preference.page_url,
+                preference.title,
+            )
+            return False
         cached_xml = load_cached_danmaku_xml(query_name, preference.page_url)
         if not cached_xml:
             return False
@@ -1672,27 +1734,65 @@ class SpiderPluginController:
         ):
             return item.selected_danmaku_url
         requested_query_name = query_name
-        result = execute_source_search(requested_query_name)
-        fallback_query_name = item.danmaku_search_title.strip()
+        explicit_episode_requested, _ = _query_requests_explicit_episode(requested_query_name)
+        inflight_search_key = ""
+        inflight_search: _InflightDanmakuSourceSearch | None = None
+        owns_inflight_search = False
         if (
-            hasattr(self._danmaku_service, "search_danmu_sources")
-            and not result.groups
-            and fallback_query_name
-            and fallback_query_name != requested_query_name
-            and _should_retry_danmaku_search_title_only(item)
+            not force_refresh
+            and item.danmaku_search_title
+            and explicit_episode_requested
         ):
-            result = execute_source_search(fallback_query_name)
-            rerank_result = getattr(self._danmaku_service, "rerank_danmaku_source_search_result", None)
-            if callable(rerank_result):
-                result = rerank_result(
+            inflight_search_key = f"{item.danmaku_search_title.strip()}\n{provider_filter.strip()}"
+            inflight_search, owns_inflight_search = self._acquire_inflight_danmaku_source_search(inflight_search_key)
+            if inflight_search is not None and not owns_inflight_search:
+                inflight_search.event.wait()
+                joined_result = inflight_search.result
+                if joined_result is not None and _cached_danmaku_source_result_matches_query(requested_query_name, joined_result):
+                    result = self._rerank_danmaku_source_search_result_for_item(
+                        joined_result,
+                        item=item,
+                        query_name=requested_query_name,
+                        reg_src=reg_src,
+                        preferred_provider=preference.provider if preference is not None else "",
+                        preferred_page_url=preference.page_url if preference is not None else "",
+                        media_duration_seconds=target_duration,
+                    )
+                    self._apply_danmaku_source_search_result(item, result)
+                    if result.groups and item.danmaku_search_title:
+                        self._save_danmaku_search_title_preference(item)
+                    return result.default_option_url
+        try:
+            result = execute_source_search(requested_query_name)
+            fallback_query_name = item.danmaku_search_title.strip()
+            if (
+                hasattr(self._danmaku_service, "search_danmu_sources")
+                and not result.groups
+                and fallback_query_name
+                and fallback_query_name != requested_query_name
+                and _should_retry_danmaku_search_title_only(item)
+            ):
+                result = execute_source_search(fallback_query_name)
+                result = self._rerank_danmaku_source_search_result_for_item(
                     result,
+                    item=item,
                     query_name=requested_query_name,
                     reg_src=reg_src,
                     preferred_provider=preference.provider if preference is not None else "",
                     preferred_page_url=preference.page_url if preference is not None else "",
                     media_duration_seconds=target_duration,
                 )
-            result = _prioritize_requested_episode_in_source_search_result(requested_query_name, result)
+                result = _prioritize_requested_episode_in_source_search_result(requested_query_name, result)
+            if inflight_search is not None and owns_inflight_search:
+                inflight_search.result = result
+        except Exception as exc:
+            if inflight_search is not None and owns_inflight_search:
+                inflight_search.error = exc
+            raise
+        finally:
+            if inflight_search is not None and owns_inflight_search:
+                inflight_search.event.set()
+                self._release_inflight_danmaku_source_search(inflight_search_key, inflight_search)
         if not provider_filter:
             for cache_query_name in _danmaku_cache_query_names(item, requested_query_name, playlist):
                 _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)
@@ -1727,6 +1827,56 @@ class SpiderPluginController:
         item.selected_danmaku_url = result.default_option_url
         item.selected_danmaku_title = self._lookup_selected_danmaku_title(result.groups, result.default_option_url)
         item.danmaku_error = ""
+
+    def _acquire_inflight_danmaku_source_search(
+        self,
+        key: str,
+    ) -> tuple[_InflightDanmakuSourceSearch | None, bool]:
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            return None, False
+        with self._danmaku_lock:
+            existing = self._inflight_danmaku_source_searches.get(normalized_key)
+            if existing is not None:
+                return existing, False
+            created = _InflightDanmakuSourceSearch(event=threading.Event())
+            self._inflight_danmaku_source_searches[normalized_key] = created
+            return created, True
+
+    def _release_inflight_danmaku_source_search(
+        self,
+        key: str,
+        search: _InflightDanmakuSourceSearch | None,
+    ) -> None:
+        normalized_key = str(key or "").strip()
+        if not normalized_key or search is None:
+            return
+        with self._danmaku_lock:
+            existing = self._inflight_danmaku_source_searches.get(normalized_key)
+            if existing is search:
+                self._inflight_danmaku_source_searches.pop(normalized_key, None)
+
+    def _rerank_danmaku_source_search_result_for_item(
+        self,
+        result,
+        *,
+        item: PlayItem,
+        query_name: str,
+        reg_src: str,
+        preferred_provider: str = "",
+        preferred_page_url: str = "",
+        media_duration_seconds: int = 0,
+    ):
+        if hasattr(self._danmaku_service, "rerank_danmaku_source_search_result"):
+            return self._danmaku_service.rerank_danmaku_source_search_result(
+                result,
+                query_name=query_name,
+                reg_src=reg_src,
+                preferred_provider=preferred_provider,
+                preferred_page_url=preferred_page_url,
+                media_duration_seconds=media_duration_seconds,
+            )
+        return result
 
     def load_cached_danmaku_sources(
         self,
@@ -1895,7 +2045,7 @@ class SpiderPluginController:
         self._save_danmaku_source_preference(item)
         self._schedule_series_level_danmaku_source_cache_warm(item, reg_src)
         danmaku_count = _count_danmaku_entries(xml_text)
-        self._log_danmaku_event("弹幕下载成功", detail=f"{danmaku_count} 条弹幕")
+        self._log_danmaku_event("弹幕下载成功", detail=_build_danmaku_success_detail(item, danmaku_count))
         return xml_text
 
     def prefetch_next_episode_danmaku(
@@ -1975,11 +2125,10 @@ class SpiderPluginController:
                     prefetch_still_valid=prefetch_still_valid,
                 )
                 if is_prefetch and item.danmaku_xml and prefetch_still_valid():
-                    success_label = (item.selected_danmaku_title or _build_danmaku_search_name(item, playlist) or item.media_title or item.title).strip()
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
                     self._log_danmaku_event(
                         "弹幕预下载成功",
-                        detail=f"{success_label} ({danmaku_count} 条弹幕)",
+                        detail=_build_danmaku_success_detail(item, danmaku_count, playlist),
                     )
             finally:
                 item.danmaku_pending = False
