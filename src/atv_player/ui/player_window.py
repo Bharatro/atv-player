@@ -98,7 +98,6 @@ from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
 from atv_player.request_headers import normalize_media_request_headers
-from atv_player.youtube_subtitle_ass import convert_youtube_subtitle_text_to_ass
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
@@ -7724,35 +7723,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not text.strip():
             raise ValueError("字幕内容为空")
         self._validate_external_subtitle_text(subtitle, text)
-        subtitle_text = text
         suffix = self._external_subtitle_suffix(subtitle, text)
-        if self._should_convert_ytdlp_youtube_subtitle_to_ass(subtitle, text):
-            try:
-                converted = convert_youtube_subtitle_text_to_ass(text)
-            except Exception as exc:
-                logger.warning("Failed to convert yt-dlp YouTube subtitle to ASS: %s", exc)
-            else:
-                if converted:
-                    subtitle_text = converted
-                    suffix = ".ass"
-        subtitle_path = self._write_external_subtitle_file(subtitle_text, suffix)
+        subtitle_path = self._write_external_subtitle_file(text, suffix)
         track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=secondary)
         return track_id, subtitle_path
-
-    def _should_convert_ytdlp_youtube_subtitle_to_ass(
-        self,
-        subtitle: ExternalSubtitleOption,
-        text: str,
-    ) -> bool:
-        if subtitle.source != "ytdlp":
-            return False
-        normalized_suffix = self._external_subtitle_suffix(subtitle, text)
-        if normalized_suffix not in {".vtt", ".srt"}:
-            return False
-        current_item = self._current_play_item()
-        source_url = "" if current_item is None else str(current_item.original_url or current_item.url or "").strip()
-        host = urlparse(source_url).netloc.casefold()
-        return host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 
     def _external_subtitle_suffix(self, subtitle: ExternalSubtitleOption, text: str) -> str:
         url_suffix = Path(urlparse(subtitle.url).path).suffix.lower()
