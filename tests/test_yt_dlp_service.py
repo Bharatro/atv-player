@@ -194,6 +194,7 @@ class TestCanResolve:
         assert service.can_resolve("https://twitter.com/user/status/123") is True
         assert service.can_resolve("https://x.com/user/status/123") is True
         assert service.can_resolve("https://youtu.be/test123") is True
+        assert service.can_resolve("yt:video:test123") is True
 
     def test_unknown_domain(self, service):
         assert service.can_resolve("https://example.com/video.mp4") is False
@@ -1034,6 +1035,20 @@ class TestResolve:
 
         assert len(calls) == 2
 
+    def test_canonical_youtube_id_and_watch_url_share_cache(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info()
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(ttl_seconds=300.0, now=lambda: clock["now"])
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        first = service.resolve("yt:video:test123")
+        second = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert second.url == first.url
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+
     def test_quality_specific_resolve_reuses_unbounded_cache_when_selected_quality_matches(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
@@ -1320,6 +1335,17 @@ class TestResolveToPlayItem:
         assert item.duration_seconds == 300
         assert item.selected_playback_quality_id == "ytdlp_1080"
         assert item.ytdl_format == ""
+
+    def test_resolve_to_play_item_normalizes_youtube_id_source_url(self, monkeypatch, service):
+        info = _sample_info()
+        _stub_extract_info(monkeypatch, service, info)
+
+        vod, item = service.resolve_to_play_item("yt:video:test123")
+
+        assert vod.vod_id == "https://www.youtube.com/watch?v=test123"
+        assert vod.vod_name == "Test Video"
+        assert item.original_url == "https://www.youtube.com/watch?v=test123"
+        assert item.vod_id == "https://www.youtube.com/watch?v=test123"
 
     def test_apply_result_overwrites_vod_and_play_item(self, monkeypatch, service):
         info = _sample_info(

@@ -90,6 +90,17 @@ _ENGLISH_AUDIO_PREFIXES = ("en", "eng", "en-")
 _CHINESE_AUDIO_PREFIXES = ("zh", "chi", "zho", "cmn", "zh-", "zh_")
 
 
+def _canonicalize_ytdlp_url(url: str) -> str:
+    candidate = str(url or "").strip()
+    if not candidate:
+        return ""
+    if candidate.startswith("yt:video:"):
+        video_id = candidate.removeprefix("yt:video:").strip()
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+    return candidate
+
+
 def _has_muxed_audio(fmt: dict) -> bool:
     acodec = fmt.get("acodec", "") or ""
     return acodec != "none"
@@ -712,7 +723,7 @@ class YtdlpPlaybackService:
         self._config_loader = config_loader
 
     def _cache_key(self, url: str, max_height: int | None, audio_track_id: str = "") -> str:
-        key = url.strip()
+        key = _canonicalize_ytdlp_url(url)
         audio_key = str(audio_track_id or "").strip() or "auto"
         if max_height and max_height > 0:
             return f"{key}#h={max_height}#a={audio_key}"
@@ -839,7 +850,7 @@ class YtdlpPlaybackService:
     def can_resolve(self, url: str) -> bool:
         if not self.is_available():
             return False
-        candidate = url.strip()
+        candidate = _canonicalize_ytdlp_url(url)
         if not candidate:
             return False
         parsed = urlparse(candidate)
@@ -864,15 +875,16 @@ class YtdlpPlaybackService:
         max_height: int | None = None,
         selected_audio_track_id: str = "",
     ) -> YtdlpResolveResult:
+        canonical_url = _canonicalize_ytdlp_url(url)
         configured_default_height = self._configured_max_height() if max_height is None else None
         cache_height = max_height if max_height is not None else configured_default_height
         extraction_max_height = max_height
-        logger.info("yt-dlp resolve start url=%s max_height=%s", url, cache_height)
-        cached = self._get_cached_result(url, cache_height, selected_audio_track_id)
+        logger.info("yt-dlp resolve start url=%s max_height=%s", canonical_url, cache_height)
+        cached = self._get_cached_result(canonical_url, cache_height, selected_audio_track_id)
         if cached is not None:
             logger.info(
                 "yt-dlp resolve cache-hit url=%s max_height=%s selected_quality=%s selected_audio=%s video=%s audio=%s",
-                url,
+                canonical_url,
                 cache_height,
                 cached.selected_quality_id,
                 cached.selected_audio_track_id,
@@ -889,18 +901,18 @@ class YtdlpPlaybackService:
         if not self.is_available():
             raise ValueError("yt-dlp 未安装")
         try:
-            info = self._extract_info_via_command(url, extraction_max_height, include_subtitles=True)
+            info = self._extract_info_via_command(canonical_url, extraction_max_height, include_subtitles=True)
         except ValueError as exc:
             if str(exc) != "yt-dlp 解析超时":
                 raise
             logger.warning(
                 "yt-dlp resolve timeout with subtitles url=%s max_height=%s retry_without_subtitles=True",
-                url,
+                canonical_url,
                 cache_height,
             )
             if callable(log):
                 log("yt-dlp 字幕信息提取超时，正在重试播放地址...")
-            info = self._extract_info_via_command(url, extraction_max_height, include_subtitles=False)
+            info = self._extract_info_via_command(canonical_url, extraction_max_height, include_subtitles=False)
 
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
@@ -1017,7 +1029,7 @@ class YtdlpPlaybackService:
         ]
         logger.info(
             "yt-dlp resolve done url=%s max_height=%s elapsed=%.3fs selected_quality=%s selected_audio=%s height=%s format_id=%s requested_formats=%s video=%s audio=%s",
-            url,
+            canonical_url,
             cache_height,
             monotonic() - started_at,
             selected_quality_id,
@@ -1028,7 +1040,7 @@ class YtdlpPlaybackService:
             _summarize_media_url(result.url),
             _summarize_media_url(result.audio_url),
         )
-        self._store_cached_result(url, cache_height, selected_audio_track_id, result)
+        self._store_cached_result(canonical_url, cache_height, selected_audio_track_id, result)
         return result
 
     def resolve_for_quality(
@@ -1051,7 +1063,7 @@ class YtdlpPlaybackService:
         source_url: str = "",
     ) -> None:
         resolved_source_url = (
-            str(source_url or "")
+            _canonicalize_ytdlp_url(str(source_url or ""))
             or (item.original_url if item is not None else "")
             or (item.vod_id if item is not None else "")
             or result.url
@@ -1095,16 +1107,17 @@ class YtdlpPlaybackService:
         *,
         max_height: int | None = None,
     ) -> tuple[VodItem, PlayItem]:
-        result = self.resolve(url, max_height=max_height)
-        vod = VodItem(vod_id=url, vod_name=url)
+        resolved_url = _canonicalize_ytdlp_url(url)
+        result = self.resolve(resolved_url, max_height=max_height)
+        vod = VodItem(vod_id=resolved_url, vod_name=resolved_url)
         item = PlayItem(
-            title=url,
+            title=resolved_url,
             url="",
-            original_url=url,
-            vod_id=url,
-            media_title=url,
+            original_url=resolved_url,
+            vod_id=resolved_url,
+            media_title=resolved_url,
         )
-        self.apply_result(result, vod=vod, item=item, source_url=url)
+        self.apply_result(result, vod=vod, item=item, source_url=resolved_url)
         return vod, item
 
 
