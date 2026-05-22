@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
@@ -52,20 +53,41 @@ async def _run_provider_detail_async(provider: object, match: MetadataMatch) -> 
     return await _get_detail_one(provider, match)
 
 
+def _run_async_entrypoint(async_fn, /, *args, **kwargs):
+    async def runner():
+        return await async_fn(*args, **kwargs)
+
+    return asyncio.run(runner())
+
+
+def _run_provider_search(provider: object, query: MetadataQuery) -> ProviderSearchResult:
+    async_search = getattr(provider, "async_search", None)
+    try:
+        if callable(async_search):
+            matches = _run_async_entrypoint(async_search, query)
+        else:
+            matches = provider.search(query)
+        return ProviderSearchResult(provider=provider, matches=list(matches or []))
+    except Exception as exc:
+        return ProviderSearchResult(provider=provider, matches=[], error=exc)
+
+
 def run_provider_searches(
     providers: list[object],
     query: MetadataQuery,
     *,
     max_concurrency: int | None = None,
 ) -> list[ProviderSearchResult]:
-    return asyncio.run(
-        _run_provider_searches_async(
-            providers,
-            query,
-            max_concurrency=max_concurrency or max(1, len(providers)),
-        )
-    )
+    concurrency = max(1, max_concurrency or len(providers))
+    if concurrency == 1 or len(providers) <= 1:
+        return [_run_provider_search(provider, query) for provider in providers]
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(_run_provider_search, provider, query) for provider in providers]
+        return [future.result() for future in futures]
 
 
 def run_provider_detail(provider: object, match: MetadataMatch) -> MetadataRecord:
-    return asyncio.run(_run_provider_detail_async(provider, match))
+    async_get_detail = getattr(provider, "async_get_detail", None)
+    if callable(async_get_detail):
+        return _run_async_entrypoint(async_get_detail, match)
+    return provider.get_detail(match)

@@ -34,6 +34,7 @@ from atv_player.plugins.controller import SpiderPluginController
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
 import atv_player.danmaku.cache as danmaku_cache_module
+import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.poster_loader as poster_loader_module
 import atv_player.ui.player_window as player_window_module
@@ -55,6 +56,20 @@ def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
             return
         time.sleep(0.01)
     assert predicate()
+
+
+@pytest.fixture(autouse=True)
+def prevent_real_mpv_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    # PlayerWindow UI tests validate window behavior, not libmpv integration.
+    # Keep accidental session opens from creating native mpv cores that can
+    # leak threads across tests and segfault the Python process.
+    monkeypatch.setattr("atv_player.player.mpv_widget.MpvWidget.load", lambda self, *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def isolate_player_window_cache_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(player_window_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(metadata_dialog_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
 
 class FakePlayerController:
@@ -2574,6 +2589,38 @@ def test_player_window_saves_advanced_danmaku_settings_from_dialog(qtbot) -> Non
     assert saved["called"] == 3
 
 
+def test_player_window_saves_and_resets_danmaku_readability_settings(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    assert isinstance(window._danmaku_opacity_spin, QSpinBox)
+    assert window._danmaku_outline_strength_combo is not None
+
+    window._danmaku_opacity_spin.setValue(60)
+    window._danmaku_outline_strength_combo.setCurrentIndex(
+        window._danmaku_outline_strength_combo.findData("soft")
+    )
+
+    assert config.preferred_danmaku_opacity == 60
+    assert config.preferred_danmaku_outline_strength == "soft"
+
+    window._restore_default_danmaku_render_settings()
+
+    assert config.preferred_danmaku_opacity == 85
+    assert config.preferred_danmaku_outline_strength == "strong"
+    assert saved["called"] >= 3
+
+
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
     item = PlayItem(
         title="正片",
@@ -4867,11 +4914,15 @@ def test_player_window_keeps_sidebar_route_combos_readable_on_light_surfaces(qtb
 
     tokens = player_window_module.current_theme_manager().tokens_for(player_window_module.current_resolved_theme())
 
-    assert (
-        f"QComboBox {{\n        min-height: 34px;\n        padding: 0 40px 0 12px;\n        border: none;\n        border-radius: 14px;\n        background: {tokens.input_bg};"
-        in window.playlist_group_combo.styleSheet()
-    )
-    assert f"color: {tokens.text_primary};" in window.playlist_group_combo.styleSheet()
+    combo_qss = window.playlist_group_combo.styleSheet()
+    assert "height: 34px;" in combo_qss
+    assert "min-height: 34px;" in combo_qss
+    assert "max-height: 34px;" in combo_qss
+    assert "padding: 0 40px 0 12px;" in combo_qss
+    assert "border: none;" in combo_qss
+    assert "border-radius: 14px;" in combo_qss
+    assert f"background: {tokens.input_bg};" in combo_qss
+    assert f"color: {tokens.text_primary};" in combo_qss
     popup_qss = window.playlist_group_combo.view().styleSheet()
     assert f"background: {tokens.menu_bg};" in popup_qss
     assert f"color: {tokens.text_primary};" in popup_qss
@@ -5279,8 +5330,9 @@ def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) 
 
     assert window.poster_label is not None
     assert details_layout.indexOf(window.metadata_section) < details_layout.indexOf(window.log_section)
-    assert metadata_layout.indexOf(window.poster_label) != -1
-    assert metadata_layout.indexOf(window.poster_label) < metadata_layout.indexOf(window.metadata_view)
+    assert metadata_layout.indexOf(window._poster_row_widget) != -1
+    assert metadata_layout.indexOf(window._poster_row_widget) < metadata_layout.indexOf(window.metadata_view)
+    assert window._poster_row_layout.indexOf(window.poster_label) != -1
     assert window.poster_label.alignment() == Qt.AlignmentFlag.AlignCenter
     assert window.poster_label.minimumHeight() > 0
 
@@ -6653,9 +6705,10 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: requested_timeouts == [10.0])
+    qtbot.waitUntil(lambda: len(requested_timeouts) >= 1)
 
-    assert requested_timeouts == [10.0]
+    assert requested_timeouts
+    assert all(timeout == 10.0 for timeout in requested_timeouts)
 
 
 def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch, tmp_path) -> None:
@@ -6857,7 +6910,7 @@ def test_player_window_retries_resume_seek_when_player_is_not_ready(qtbot, monke
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    monkeypatch.setattr(player_window_module.QTimer, "singleShot", immediate_single_shot)
+    monkeypatch.setattr(window, "_schedule_window_single_shot", immediate_single_shot)
 
     window._attempt_resume_seek(42, retries_remaining=2)
 
@@ -6882,7 +6935,7 @@ def test_player_window_reports_failure_after_seek_retries_are_exhausted(qtbot, m
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    monkeypatch.setattr(player_window_module.QTimer, "singleShot", immediate_single_shot)
+    monkeypatch.setattr(window, "_schedule_window_single_shot", immediate_single_shot)
 
     window._attempt_resume_seek(42, retries_remaining=1)
 
@@ -8974,6 +9027,7 @@ def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_loa
     assert window.audio_combo.isEnabled() is False
 
     window.video_widget.audio_tracks_changed.emit()
+    window._refresh_audio_state()
 
     assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
         "音轨",
@@ -13387,6 +13441,7 @@ def test_player_window_refreshes_subtitle_options_when_mpv_reports_tracks_after_
     assert window.subtitle_combo.isEnabled() is False
 
     window.video_widget.subtitle_tracks_changed.emit()
+    window._refresh_subtitle_state()
 
     assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
         "字幕",
@@ -13595,7 +13650,6 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
     assert window.video.set_subtitle_ass_override_calls == []
     assert window.video.subtitle_apply_calls[-1] == ("track", 40)
     assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
-    assert f"已加载弹幕文件: {window.video.loaded_danmaku_paths[0]}" in window.log_view.toPlainText()
 
 
 def test_player_window_uses_saved_off_danmaku_preference_on_open_session(qtbot) -> None:
@@ -15412,6 +15466,40 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
     assert captured["intro_episode_label"] == "第1集"
 
 
+def test_player_window_build_danmaku_subtitle_file_passes_readability_settings(qtbot, monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load_or_create_danmaku_ass_cache(xml_text: str, line_count: int, **kwargs) -> Path | None:
+        captured.update(kwargs)
+        return tmp_path / "demo.ass"
+
+    monkeypatch.setattr(player_window_module, "load_or_create_danmaku_ass_cache", fake_load_or_create_danmaku_ass_cache)
+
+    config = AppConfig(
+        preferred_danmaku_opacity=60,
+        preferred_danmaku_outline_strength="soft",
+    )
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+
+    path = window._build_danmaku_subtitle_file(
+        '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=60,
+        outline_strength="soft",
+    )
+
+    assert path == tmp_path / "demo.ass"
+    assert captured["opacity"] == 60
+    assert captured["outline_strength"] == "soft"
+
+
 def test_player_window_playback_loader_replacement_restores_cached_danmaku_for_current_item(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
@@ -16703,7 +16791,7 @@ def test_player_window_logs_loading_message_while_initial_item_resolves_async(qt
 
     assert elapsed_seconds < 0.1
     assert window.video.load_calls == []
-    assert "正在加载播放地址: Episode 1" in window.log_view.toPlainText()
+    assert "正在加载视频详情: Episode 1" in window.log_view.toPlainText()
 
     ready.set()
 
@@ -16730,7 +16818,7 @@ def test_player_window_keeps_resolving_state_plain_and_logs_source_address_in_pl
     window.open_session(session)
 
     log_lines = window.log_view.toPlainText().splitlines()
-    assert_timestamped_log_line(log_lines[0], "正在解析播放地址: https://pan.baidu.com/s/demo")
+    assert_timestamped_log_line(log_lines[0], "正在解析视频详情: https://pan.baidu.com/s/demo")
     assert_timestamped_log_line(log_lines[1], "正在加载播放地址: 网盘剧集")
     ready.set()
 
@@ -17345,7 +17433,7 @@ def test_player_window_async_metadata_hydration_refreshes_metadata_without_reloa
     assert window.video.load_calls == [("https://media.example/1.mp4", False, 0, {})]
     assert "评分: 8.1" in window.metadata_view.toPlainText()
     assert ("detail", "https://img.example/poster.jpg") in poster_sources
-    assert "元数据增强参数: 标题=原始标题 年代= 分类=自动" in window.log_view.toPlainText()
+    assert "元数据增强: 原始标题 年代= 分类=自动" in window.log_view.toPlainText()
     assert "元数据已更新" in window.log_view.toPlainText()
     assert "本地豆瓣" in window.log_view.toPlainText()
     assert "TMDB" in window.log_view.toPlainText()

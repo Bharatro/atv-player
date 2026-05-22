@@ -72,6 +72,8 @@ def test_build_mpv_script_requires_nasm_unless_disable_x86asm(tmp_path: Path) ->
 
 
 def test_build_mpv_script_auto_installs_liblua52_dev_when_missing(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
@@ -86,13 +88,13 @@ def test_build_mpv_script_auto_installs_liblua52_dev_when_missing(tmp_path: Path
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 0
@@ -100,6 +102,8 @@ def test_build_mpv_script_auto_installs_liblua52_dev_when_missing(tmp_path: Path
 
 
 def test_build_mpv_script_fails_when_lua_dev_runtime_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname"):
@@ -114,13 +118,13 @@ def test_build_mpv_script_fails_when_lua_dev_runtime_missing_and_apt_get_unavail
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": str(fake_bin)},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 1
@@ -129,6 +133,8 @@ def test_build_mpv_script_fails_when_lua_dev_runtime_missing_and_apt_get_unavail
 
 
 def test_build_mpv_script_auto_installs_libxpresent_dev_for_x11_sessions(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
@@ -143,17 +149,17 @@ def test_build_mpv_script_auto_installs_libxpresent_dev_for_x11_sessions(tmp_pat
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "XDG_SESSION_TYPE": "x11",
         },
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 0
@@ -161,6 +167,8 @@ def test_build_mpv_script_auto_installs_libxpresent_dev_for_x11_sessions(tmp_pat
 
 
 def test_build_mpv_script_auto_installs_hardware_decode_dev_packages_when_missing(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
@@ -175,13 +183,13 @@ def test_build_mpv_script_auto_installs_hardware_decode_dev_packages_when_missin
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 0
@@ -189,6 +197,8 @@ def test_build_mpv_script_auto_installs_hardware_decode_dev_packages_when_missin
 
 
 def test_build_mpv_script_fails_when_hardware_decode_dev_packages_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname", "mkdir"):
@@ -203,13 +213,13 @@ def test_build_mpv_script_fails_when_hardware_decode_dev_packages_missing_and_ap
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": str(fake_bin)},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 1
@@ -219,6 +229,8 @@ def test_build_mpv_script_fails_when_hardware_decode_dev_packages_missing_and_ap
 
 
 def test_build_mpv_script_auto_installs_nvcodec_headers_when_missing(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
@@ -233,13 +245,13 @@ def test_build_mpv_script_auto_installs_nvcodec_headers_when_missing(tmp_path: P
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 0
@@ -247,6 +259,8 @@ def test_build_mpv_script_auto_installs_nvcodec_headers_when_missing(tmp_path: P
 
 
 def test_build_mpv_script_fails_when_nvcodec_headers_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname", "mkdir"):
@@ -261,13 +275,13 @@ def test_build_mpv_script_fails_when_nvcodec_headers_missing_and_apt_get_unavail
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={**os.environ, "PATH": str(fake_bin)},
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 1
@@ -276,6 +290,8 @@ def test_build_mpv_script_fails_when_nvcodec_headers_missing_and_apt_get_unavail
 
 
 def test_build_mpv_script_fails_when_x11_session_needs_xpresent_and_apt_get_unavailable(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     for tool in ("git", "meson", "ninja", "sudo", "nasm", "dirname", "mkdir"):
@@ -290,17 +306,17 @@ def test_build_mpv_script_fails_when_x11_session_needs_xpresent_and_apt_get_unav
     )
     os.chmod(fake_bin / "pkg-config", 0o755)
 
-    result = subprocess.run(
-        ["/bin/bash", str(SCRIPT_PATH), "--dry-run", "--no-install"],
-        cwd=tmp_path,
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
         env={
             **os.environ,
             "PATH": str(fake_bin),
             "XDG_SESSION_TYPE": "x11",
         },
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert result.returncode == 1

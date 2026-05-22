@@ -767,7 +767,7 @@ def test_api_client_gets_live_detail_by_ids() -> None:
 
     client.get_live_detail("bili$1785607569")
 
-    assert seen == {"path": "/live/Harold", "query": "ids=bili%241785607569"}
+    assert seen == {"path": "/live/Harold", "query": "ids=bili%241785607569&platform=gui"}
 
 
 def test_api_client_lists_emby_categories() -> None:

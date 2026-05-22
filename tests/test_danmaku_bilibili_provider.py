@@ -131,7 +131,7 @@ def test_bilibili_search_orders_bangumi_and_ft_results_and_skips_normal_video_se
     assert items[1].url == "https://www.bilibili.com/bangumi/play/ep5002"
 
 
-def test_bilibili_search_falls_back_to_video_results_when_pgc_search_is_empty() -> None:
+def test_bilibili_search_skips_video_fallback_when_pgc_search_is_empty() -> None:
     search_types: list[str] = []
 
     def fake_get(url: str, **kwargs):
@@ -177,10 +177,8 @@ def test_bilibili_search_falls_back_to_video_results_when_pgc_search_is_empty() 
 
     items = provider.search("凡人修仙传 第1集")
 
-    assert search_types == ["media_bangumi", "media_ft", "video"]
-    assert [(item.name, item.url, item.bvid, item.cid, item.duration_seconds, item.search_type) for item in items] == [
-        ("凡人修仙传 第1集", "https://www.bilibili.com/video/BVvideo1", "BVvideo1", 777001, 1440, "video"),
-    ]
+    assert search_types == ["media_bangumi", "media_ft"]
+    assert items == []
 
 
 def test_bilibili_search_maps_duration_from_search_payload() -> None:
@@ -261,7 +259,7 @@ def test_bilibili_search_retries_once_after_ticket_refresh() -> None:
     items = provider.search("凡人修仙传 第1集")
 
     assert items == []
-    assert search_attempts["count"] == 4
+    assert search_attempts["count"] == 3
     assert any("GenWebTicket" in url for url in calls)
 
 

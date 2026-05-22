@@ -7,6 +7,7 @@ from atv_player.sqlite_utils import managed_connection
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
+_VALID_DANMAKU_OUTLINE_STRENGTHS = {"soft", "strong"}
 _VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
@@ -67,6 +68,19 @@ def _normalize_danmaku_font_size(value: object) -> int:
     except (TypeError, ValueError):
         return 32
     return max(16, min(normalized, 72))
+
+
+def _normalize_danmaku_opacity(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 85
+    return max(30, min(normalized, 100))
+
+
+def _normalize_danmaku_outline_strength(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_DANMAKU_OUTLINE_STRENGTHS else "strong"
 
 
 def _normalize_global_search_history(value: object) -> list[str]:
@@ -270,6 +284,8 @@ class SettingsRepository:
                     preferred_danmaku_position_preset TEXT NOT NULL DEFAULT 'top',
                     preferred_danmaku_scroll_speed REAL NOT NULL DEFAULT 1.0,
                     preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32,
+                    preferred_danmaku_opacity INTEGER NOT NULL DEFAULT 85,
+                    preferred_danmaku_outline_strength TEXT NOT NULL DEFAULT 'strong',
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB,
@@ -450,6 +466,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_danmaku_font_size INTEGER NOT NULL DEFAULT 32"
                 )
+            if "preferred_danmaku_opacity" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_opacity INTEGER NOT NULL DEFAULT 85"
+                )
+            if "preferred_danmaku_outline_strength" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_outline_strength TEXT NOT NULL DEFAULT 'strong'"
+                )
             if "main_window_geometry" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN main_window_geometry BLOB"
@@ -539,6 +563,8 @@ class SettingsRepository:
                     preferred_danmaku_position_preset,
                     preferred_danmaku_scroll_speed,
                     preferred_danmaku_font_size,
+                    preferred_danmaku_opacity,
+                    preferred_danmaku_outline_strength,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -551,7 +577,7 @@ class SettingsRepository:
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 0, 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32,
+                    0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
                 ON CONFLICT(id) DO NOTHING
@@ -609,6 +635,8 @@ class SettingsRepository:
                     preferred_danmaku_position_preset,
                     preferred_danmaku_scroll_speed,
                     preferred_danmaku_font_size,
+                    preferred_danmaku_opacity,
+                    preferred_danmaku_outline_strength,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -670,6 +698,8 @@ class SettingsRepository:
             preferred_danmaku_position_preset,
             preferred_danmaku_scroll_speed,
             preferred_danmaku_font_size,
+            preferred_danmaku_opacity,
+            preferred_danmaku_outline_strength,
             main_window_geometry,
             player_window_geometry,
             player_main_splitter_state,
@@ -731,6 +761,8 @@ class SettingsRepository:
             preferred_danmaku_position_preset=_normalize_danmaku_position_preset(preferred_danmaku_position_preset),
             preferred_danmaku_scroll_speed=_normalize_danmaku_scroll_speed(preferred_danmaku_scroll_speed),
             preferred_danmaku_font_size=_normalize_danmaku_font_size(preferred_danmaku_font_size),
+            preferred_danmaku_opacity=_normalize_danmaku_opacity(preferred_danmaku_opacity),
+            preferred_danmaku_outline_strength=_normalize_danmaku_outline_strength(preferred_danmaku_outline_strength),
             main_window_geometry=main_window_geometry,
             player_window_geometry=player_window_geometry,
             player_main_splitter_state=player_main_splitter_state,
@@ -794,6 +826,8 @@ class SettingsRepository:
                     preferred_danmaku_position_preset = ?,
                     preferred_danmaku_scroll_speed = ?,
                     preferred_danmaku_font_size = ?,
+                    preferred_danmaku_opacity = ?,
+                    preferred_danmaku_outline_strength = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
                     player_main_splitter_state = ?,
@@ -852,6 +886,8 @@ class SettingsRepository:
                     _normalize_danmaku_position_preset(config.preferred_danmaku_position_preset),
                     _normalize_danmaku_scroll_speed(config.preferred_danmaku_scroll_speed),
                     _normalize_danmaku_font_size(config.preferred_danmaku_font_size),
+                    _normalize_danmaku_opacity(config.preferred_danmaku_opacity),
+                    _normalize_danmaku_outline_strength(config.preferred_danmaku_outline_strength),
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,

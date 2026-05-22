@@ -163,6 +163,54 @@ def test_render_danmaku_ass_applies_custom_scroll_speed_and_font_size() -> None:
     assert "Dialogue: 0,0:00:00.00,0:00:24.00" in subtitle
 
 
+def test_render_danmaku_ass_applies_text_alpha_to_uniform_and_source_color_paths() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16711680">红色</d>'
+        "</i>"
+    )
+
+    uniform = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        opacity=85,
+    )
+    source = render_danmaku_ass(
+        xml_text,
+        line_count=1,
+        render_mode="scroll_only",
+        color_mode="source",
+        uniform_color="#FFFFFF",
+        opacity=85,
+    )
+
+    assert "&H26FFFFFF&" in uniform
+    assert r"\1a&H26&" in source
+
+
+def test_render_danmaku_ass_uses_soft_and_strong_outline_presets() -> None:
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="0.0,1,25,16777215">第一条</d>'
+        "</i>"
+    )
+
+    soft = render_danmaku_ass(xml_text, outline_strength="soft")
+    strong = render_danmaku_ass(xml_text, outline_strength="strong")
+
+    assert (
+        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,8,24,24,4,1"
+        in soft
+    )
+    assert (
+        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,8,24,24,4,1"
+        in strong
+    )
+
+
 def test_render_danmaku_ass_places_top_scroll_comments_closer_to_top_edge() -> None:
     xml_text = (
         '<?xml version="1.0" encoding="UTF-8"?><i>'
@@ -179,7 +227,7 @@ def test_render_danmaku_ass_places_top_scroll_comments_closer_to_top_edge() -> N
         position_preset="top",
     )
 
-    assert "{\\an8\\move(2000,10,-400,10)\\1c&HFFFFFF&}更靠上" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&HFFFFFF&\\1a&H26&}更靠上" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
@@ -221,8 +269,8 @@ def test_render_danmaku_ass_uses_source_color_in_static_mode() -> None:
         position_preset="top",
     )
 
-    assert "{\\1c&H0000FF&}红色" in subtitle
-    assert "{\\1c&HFF0000&}蓝色" in subtitle
+    assert "{\\1c&H0000FF&\\1a&H26&}红色" in subtitle
+    assert "{\\1c&HFF0000&\\1a&H26&}蓝色" in subtitle
 
 
 def test_render_danmaku_ass_keeps_static_comments_top_aligned_regardless_of_position_preset() -> None:
@@ -265,7 +313,7 @@ def test_render_danmaku_ass_prioritizes_colored_static_comments_when_lines_are_l
     )
 
     assert "白色占位" in subtitle
-    assert "{\\1c&H0000FF&}红色保留" in subtitle
+    assert "{\\1c&H0000FF&\\1a&H26&}红色保留" in subtitle
 
 
 def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_limited() -> None:
@@ -287,4 +335,4 @@ def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_l
     )
 
     assert "白色滚动" in subtitle
-    assert "{\\an8\\move(2000,10,-400,10)\\1c&H00FF00&}绿色滚动" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&H00FF00&\\1a&H26&}绿色滚动" in subtitle
