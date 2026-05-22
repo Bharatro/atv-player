@@ -227,7 +227,7 @@ def test_render_danmaku_ass_places_top_scroll_comments_closer_to_top_edge() -> N
         position_preset="top",
     )
 
-    assert "{\\an8\\move(2000,10,-400,10)\\1c&HFFFFFF&}更靠上" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&HFFFFFF&\\1a&H26&}更靠上" in subtitle
 
 
 def test_render_danmaku_ass_preserves_source_top_and_bottom_in_mixed_mode() -> None:
@@ -269,8 +269,8 @@ def test_render_danmaku_ass_uses_source_color_in_static_mode() -> None:
         position_preset="top",
     )
 
-    assert "{\\1c&H0000FF&}红色" in subtitle
-    assert "{\\1c&HFF0000&}蓝色" in subtitle
+    assert "{\\1c&H0000FF&\\1a&H26&}红色" in subtitle
+    assert "{\\1c&HFF0000&\\1a&H26&}蓝色" in subtitle
 
 
 def test_render_danmaku_ass_keeps_static_comments_top_aligned_regardless_of_position_preset() -> None:
@@ -313,7 +313,7 @@ def test_render_danmaku_ass_prioritizes_colored_static_comments_when_lines_are_l
     )
 
     assert "白色占位" in subtitle
-    assert "{\\1c&H0000FF&}红色保留" in subtitle
+    assert "{\\1c&H0000FF&\\1a&H26&}红色保留" in subtitle
 
 
 def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_limited() -> None:
@@ -335,4 +335,4 @@ def test_render_danmaku_ass_prioritizes_colored_scroll_comments_when_lines_are_l
     )
 
     assert "白色滚动" in subtitle
-    assert "{\\an8\\move(2000,10,-400,10)\\1c&H00FF00&}绿色滚动" in subtitle
+    assert "{\\an8\\move(2000,10,-400,10)\\1c&H00FF00&\\1a&H26&}绿色滚动" in subtitle
