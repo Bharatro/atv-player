@@ -26,6 +26,23 @@ class FakeBangumiClient:
         return list(self.episodes)
 
 
+def _fake_vod(**overrides):
+    base = {
+        "vod_name": "",
+        "vod_year": "",
+        "category_name": "",
+        "type_name": "",
+        "vod_id": "",
+        "dbid": 0,
+        "vod_area": "",
+        "vod_lang": "",
+        "vod_director": "",
+        "vod_actor": "",
+    }
+    base.update(overrides)
+    return type("Vod", (), base)()
+
+
 def test_is_bangumi_anime_query_uses_category_name_and_type_name() -> None:
     assert is_bangumi_anime_query(MetadataQuery(title="葬送的芙莉莲", category_name="动漫")) is True
     assert is_bangumi_anime_query(MetadataQuery(title="葬送的芙莉莲", type_name="番剧")) is True
@@ -36,10 +53,10 @@ def test_bangumi_provider_can_only_enrich_anime_context() -> None:
     provider = BangumiMetadataProvider(FakeBangumiClient())
 
     assert provider.can_enrich(
-        MetadataContext(vod=type("Vod", (), {"vod_name": "牧神记", "vod_year": "2024", "category_name": "动漫", "type_name": "", "vod_id": "", "dbid": 0})(), source_kind="browse")
+        MetadataContext(vod=_fake_vod(vod_name="牧神记", vod_year="2024", category_name="动漫"), source_kind="browse")
     ) is True
     assert provider.can_enrich(
-        MetadataContext(vod=type("Vod", (), {"vod_name": "深空彼岸", "vod_year": "2026", "category_name": "电影", "type_name": "", "vod_id": "", "dbid": 0})(), source_kind="browse")
+        MetadataContext(vod=_fake_vod(vod_name="深空彼岸", vod_year="2026", category_name="电影"), source_kind="browse")
     ) is False
 
 

@@ -7702,7 +7702,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._slider_dragging:
             return
         duration = self.video.duration_seconds() if hasattr(self.video, "duration_seconds") else 0
-        position = self.video.position_seconds() or 0
+        if hasattr(self.video, "position_seconds"):
+            try:
+                position = self.video.position_seconds() or 0
+            except Exception:
+                position = 0
+        else:
+            position = 0
         if (
             not self._auto_advance_locked
             and self.session is not None

@@ -1,4 +1,8 @@
 import asyncio
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
 
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
@@ -91,3 +95,39 @@ def test_run_provider_searches_collects_provider_error_without_failing_whole_bat
     assert results[1].provider is good
     assert results[1].error is None
     assert results[1].matches[0].title == "剑来"
+
+
+def test_sync_wrappers_complete_when_async_impl_uses_to_thread() -> None:
+    script = textwrap.dedent(
+        """
+        from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
+        from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
+
+        class SyncProvider:
+            name = "sync"
+
+            def search(self, candidate):
+                return [MetadataMatch(provider="sync", provider_id="1", title=candidate.title)]
+
+            def get_detail(self, match):
+                return MetadataRecord(provider="sync", provider_id=match.provider_id, title=match.title)
+
+        provider = SyncProvider()
+        matches = run_provider_searches([provider], MetadataQuery(title="凡人修仙传"))
+        record = run_provider_detail(provider, matches[0].matches[0])
+        print(matches[0].matches[0].title)
+        print(record.title)
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.splitlines() == ["凡人修仙传", "凡人修仙传"]

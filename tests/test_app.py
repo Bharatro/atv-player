@@ -1765,7 +1765,7 @@ def visible_shortcut_help_dialogs() -> list[QDialog]:
         widget
         for widget in QApplication.topLevelWidgets()
         if isinstance(widget, QDialog)
-        and widget.windowTitle() == "快捷键帮助"
+        and widget.windowTitle() == "帮助"
         and widget.isVisible()
     ]
 
@@ -1824,7 +1824,7 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     rows = shortcut_table_rows(dialog)
     system_rows = system_info_table_rows(dialog)
 
-    assert ("F1", "打开快捷键帮助") in rows
+    assert ("F1", "打开帮助") in rows
     assert ("Ctrl+P", "显示或返回播放器") in rows
     assert ("Esc", "显示或返回播放器") in rows
     assert any(description == "退出应用" for _, description in rows)
@@ -3901,6 +3901,7 @@ def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> No
             created["enabled"] = enabled_getter()
             created["max_bytes"] = max_bytes
             created["max_archives"] = max_archives
+            self.active_path = logs_dir / "application.jsonl"
 
         def write_event(self, event) -> None:
             created["last_event"] = event
@@ -4871,8 +4872,8 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_p
 
     client_holder: dict[str, FakeTMDBClient] = {}
 
-    def build_tmdb_client(api_key: str) -> FakeTMDBClient:
-        client = FakeTMDBClient(api_key)
+    def build_tmdb_client(api_key: str, proxy_decider=None) -> FakeTMDBClient:
+        client = FakeTMDBClient(api_key, proxy_decider=proxy_decider)
         client_holder["client"] = client
         return client
 
@@ -5151,6 +5152,15 @@ def test_app_coordinator_episode_title_enhancer_uses_provider_fallback_for_unres
         def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
             return []
 
+    class EmptyBangumiProvider:
+        name = "bangumi"
+
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
     class FakeTMDBClient:
         def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
@@ -5172,6 +5182,7 @@ def test_app_coordinator_episode_title_enhancer_uses_provider_fallback_for_unres
             raise AssertionError((tmdb_id, season_number))
 
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", EmptyBangumiProvider)
     monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyTencentProvider)
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", FakeIqiyiProvider)
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
@@ -5230,6 +5241,13 @@ def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for
 
     seen: list[tuple[str, int]] = []
 
+    class EmptyProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
     class FakeTMDBClient:
         def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
@@ -5276,6 +5294,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: EmptyProvider("tencent"))
     monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: EmptyProvider("iqiyi"))
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", lambda *args, **kwargs: EmptyProvider("bangumi"))
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: EmptyProvider("tencent"))
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: EmptyProvider("iqiyi"))
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
@@ -5435,7 +5456,17 @@ def test_app_coordinator_episode_title_enhancer_prefers_candidate_with_requested
                 return {"episodes": [{"episode_number": 1, "name": "第二季首集"}]}
             raise AssertionError((tmdb_id, season_number))
 
+    class EmptyProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+            return []
+
     monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", lambda *args, **kwargs: EmptyProvider("bangumi"))
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: EmptyProvider("tencent"))
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: EmptyProvider("iqiyi"))
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     coordinator = AppCoordinator(FakeRepo())
     factory = coordinator._build_episode_title_enhancer_factory(object())
@@ -5692,8 +5723,9 @@ def test_app_coordinator_episode_title_enhancer_falls_back_to_vod_name_season_wh
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen["title"] = title
@@ -5740,8 +5772,9 @@ def test_app_coordinator_episode_title_enhancer_prefers_filename_season_over_vod
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen["title"] = title
@@ -5788,8 +5821,9 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     seen: dict[str, object] = {}
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen["title"] = title
@@ -6100,8 +6134,9 @@ def test_app_coordinator_browse_episode_title_enhancer_falls_back_to_playlist_in
     seen: list[tuple[str, str]] = []
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             seen.append((title, year))
@@ -6171,8 +6206,9 @@ def test_app_coordinator_episode_title_enhancer_preserves_grouped_multi_version_
             )
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "超能路人甲"
@@ -6239,8 +6275,9 @@ def test_app_coordinator_episode_title_enhancer_sorts_each_multi_version_block_i
             )
 
     class FakeTMDBClient:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
             assert api_key == "tmdb-key"
+            del proxy_decider
 
         def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
             assert title == "超能路人甲"
@@ -7151,8 +7188,8 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
             return self.config
 
     class RecordingLocalDoubanClient:
-        def __init__(self, cookie: str = "", transport=None) -> None:
-            del transport
+        def __init__(self, cookie: str = "", transport=None, proxy_decider=None) -> None:
+            del transport, proxy_decider
             seen_cookies.append(cookie)
 
     class RecordingLocalDoubanProvider:
@@ -7186,8 +7223,8 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
             raise AssertionError("not used")
 
     class RecordingTMDBClient:
-        def __init__(self, api_key: str, transport=None) -> None:
-            del transport
+        def __init__(self, api_key: str, transport=None, proxy_decider=None) -> None:
+            del transport, proxy_decider
             captured["tmdb_api_key"] = api_key
 
     class RecordingTMDBProvider:
@@ -7316,8 +7353,8 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
             )
 
     class RecordingLocalDoubanClient:
-        def __init__(self, cookie: str = "", transport=None) -> None:
-            del cookie, transport
+        def __init__(self, cookie: str = "", transport=None, proxy_decider=None) -> None:
+            del cookie, transport, proxy_decider
             raise AssertionError("local douban client should not be created without cookie")
 
     class RecordingLocalDoubanProvider:
@@ -7327,8 +7364,8 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
             raise AssertionError(f"unexpected local douban provider: {local_client!r}")
 
     class RecordingTMDBClient:
-        def __init__(self, api_key: str, transport=None) -> None:
-            del api_key, transport
+        def __init__(self, api_key: str, transport=None, proxy_decider=None) -> None:
+            del api_key, transport, proxy_decider
             raise AssertionError("tmdb client should not be created without api key")
 
     class RecordingTMDBProvider:

@@ -22,7 +22,13 @@ from atv_player.plugins.repository import SpiderPluginRepository
 
 
 class FakeLoader:
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        del initialize
         return LoadedSpiderPlugin(
             config=SpiderPluginConfig(
                 id=config.id,
@@ -43,7 +49,13 @@ class FakeLoader:
 
 
 class FailingLoader:
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        del config, force_refresh, initialize
         raise RuntimeError("network down")
 
 
@@ -105,8 +117,13 @@ class ParseRequiredSpider(FakeSpider):
 
 
 class ParseLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=ParseRequiredSpider(),
@@ -116,8 +133,13 @@ class ParseLoader(FakeLoader):
 
 
 class HistoryLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=FakeSpider(),
@@ -127,8 +149,13 @@ class HistoryLoader(FakeLoader):
 
 
 class SearchHistoryLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=FakeSpider(),
@@ -161,8 +188,13 @@ class InvalidActionSpider(FakeSpider):
 
 
 class ActionLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=ActionSpider(),
@@ -172,8 +204,13 @@ class ActionLoader(FakeLoader):
 
 
 class InvalidActionLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=InvalidActionSpider(),
@@ -201,9 +238,14 @@ class RunnableActionLoader(FakeLoader):
         self.spider = RunnableActionSpider()
         self.force_refresh_calls: list[bool] = []
 
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
         self.force_refresh_calls.append(force_refresh)
-        loaded = super().load(config, force_refresh=force_refresh)
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         return LoadedSpiderPlugin(
             config=loaded.config,
             spider=self.spider,
@@ -213,8 +255,13 @@ class RunnableActionLoader(FakeLoader):
 
 
 class CategoryLoader(FakeLoader):
-    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
-        loaded = super().load(config, force_refresh=force_refresh)
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
         spider = FakeSpider()
         spider.homeContent = lambda filter: {  # type: ignore[method-assign]
             "class": [
@@ -642,9 +689,9 @@ def test_manager_import_plugins_rejects_invalid_source_url(tmp_path: Path) -> No
 def test_manager_iter_enabled_plugins_prioritizes_requested_plugin_ids(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
     manager = SpiderPluginManager(repository, FakeLoader())
-    plugin1 = repository.add_plugin("local", "/tmp/1.py", "插件1")
-    plugin2 = repository.add_plugin("local", "/tmp/2.py", "插件2")
-    plugin3 = repository.add_plugin("local", "/tmp/3.py", "插件3")
+    plugin1 = repository.add_plugin("local", "/tmp/1.py", "插件1", enabled=True)
+    plugin2 = repository.add_plugin("local", "/tmp/2.py", "插件2", enabled=True)
+    plugin3 = repository.add_plugin("local", "/tmp/3.py", "插件3", enabled=True)
     repository.move_plugin(plugin3.id, -1)
     repository.move_plugin(plugin3.id, -1)
 
@@ -791,7 +838,7 @@ def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_pat
 def test_manager_load_enabled_plugins_wires_local_repository_playback_history_callbacks(tmp_path: Path) -> None:
     plugin_repository = SpiderPluginRepository(tmp_path / "app.db")
     local_history_repository = LocalPlaybackHistoryRepository(tmp_path / "app.db")
-    plugin = plugin_repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    plugin = plugin_repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧", enabled=True)
     local_history_repository.save_history(
         "spider_plugin",
         "detail-1",
@@ -861,7 +908,7 @@ def test_manager_set_plugin_config_persists_raw_text_and_survives_other_updates(
 
 def test_manager_load_enabled_plugins_wires_built_in_parser_service(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧", enabled=True)
 
     class FakeParserService:
         def resolve(self, flag: str, url: str, preferred_key: str = ""):
@@ -893,7 +940,7 @@ def test_manager_load_enabled_plugins_wires_built_in_parser_service(tmp_path: Pa
 
 def test_manager_persists_spider_method_call_logs_to_plugin_logs(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧", enabled=True)
     manager = SpiderPluginManager(repository, SearchHistoryLoader())
 
     definitions = manager.load_enabled_plugins()
@@ -915,7 +962,7 @@ def test_manager_persists_spider_method_call_logs_to_plugin_logs(tmp_path: Path)
 
 def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧", enabled=True)
 
     class FakeDanmakuService:
         def search_danmu(self, name: str, reg_src: str = ""):
@@ -934,7 +981,7 @@ def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> N
 
 def test_manager_load_enabled_plugins_wires_ytdlp_service(tmp_path: Path) -> None:
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧", enabled=True)
 
     class FakeYtdlpService:
         def is_available(self) -> bool:
@@ -968,7 +1015,7 @@ def test_manager_load_enabled_plugins_persists_manual_danmaku_source_preference_
         danmaku_cache_module.save_cached_danmaku_source_search_result,
     )
     repository = SpiderPluginRepository(tmp_path / "app.db")
-    repository.add_plugin("local", "/plugins/玄界之门3D版.py", "玄界之门3D版")
+    repository.add_plugin("local", "/plugins/玄界之门3D版.py", "玄界之门3D版", enabled=True)
     result = DanmakuSourceSearchResult(
         groups=[
             DanmakuSourceGroup(
