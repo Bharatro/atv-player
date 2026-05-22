@@ -6,10 +6,10 @@ import pytest
 import threading
 import time
 from types import SimpleNamespace
-from PySide6.QtCore import QRect, Qt, QUrl
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QPoint, QRect, Qt, QUrl
+from PySide6.QtGui import QIcon, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QTableWidget, QToolButton
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QTableWidget, QTextBrowser, QToolButton
 
 import atv_player.app as app_module
 import atv_player.ui.help_dialog as help_dialog_module
@@ -23,6 +23,7 @@ from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
 from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
+from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.theme import DARK_TOKENS
 
 
@@ -1786,17 +1787,37 @@ def system_info_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
     assert table is not None
     rows: list[tuple[str, str]] = []
     for row in range(table.rowCount()):
-        rows.append((table.item(row, 0).text(), table.item(row, 1).text()))
+        value_widget = table.cellWidget(row, 1)
+        if isinstance(value_widget, QLabel):
+            document = QTextDocument()
+            document.setHtml(value_widget.text())
+            value = document.toPlainText().strip()
+        else:
+            value = table.item(row, 1).text()
+        rows.append((table.item(row, 0).text(), value))
     return rows
 
 
 def click_system_info_value_cell(qtbot, dialog: QDialog, row: int) -> None:
     table = dialog.findChild(QTableWidget, "systemInfoTable")
     assert table is not None
+    cell_widget = table.cellWidget(row, 1)
+    if isinstance(cell_widget, QLabel):
+        link = cell_widget.text()
+        assert 'href="' in link
+        href = link.split('href="', 1)[1].split('"', 1)[0]
+        cell_widget.linkActivated.emit(href)
+        return
     index = table.model().index(row, 1)
     rect = table.visualRect(index)
     assert rect.isValid()
     qtbot.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+
+
+def system_info_value_widget(dialog: QDialog, row: int):
+    table = dialog.findChild(QTableWidget, "systemInfoTable")
+    assert table is not None
+    return table.cellWidget(row, 1)
 
 
 def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
@@ -1905,6 +1926,61 @@ def test_main_window_help_dialog_opens_system_info_links_except_platform(qtbot, 
         "https://www.ffmpeg.org/download.html",
         "https://github.com/yt-dlp/yt-dlp/releases/latest",
     ]
+
+
+def test_main_window_help_dialog_renders_system_info_links_like_player_metadata(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [
+            SystemInfoEntry("Python", "3.12.8", "https://www.python.org/downloads/"),
+            SystemInfoEntry("Platform", "Linux", None),
+        ],
+        "diagnostic text",
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    link_widget = system_info_value_widget(dialog, 0)
+    plain_widget = system_info_value_widget(dialog, 1)
+    table = dialog.findChild(QTableWidget, "systemInfoTable")
+    assert table is not None
+
+    player_window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(player_window)
+    expected_link_html = player_window._external_metadata_link_html(
+        "https://www.python.org/downloads/",
+        "3.12.8",
+    )
+
+    assert isinstance(link_widget, QLabel)
+    assert plain_widget is None
+    assert table.item(0, 1) is None
+    assert table.item(1, 1).text() == "Linux"
+    assert bool(link_widget.alignment() & Qt.AlignmentFlag.AlignVCenter)
+    expected_accent = expected_link_html.split("color:")[1].split(";")[0]
+    rendered_html = link_widget.text()
+    assert 'href="https://www.python.org/downloads/"' in rendered_html
+    assert "font-weight:600" in expected_link_html
+    assert "font-weight:600" in rendered_html
+    assert "text-decoration:none" in expected_link_html
+    assert "text-decoration: underline" not in rendered_html
+    assert expected_accent in rendered_html
 
 
 def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> None:

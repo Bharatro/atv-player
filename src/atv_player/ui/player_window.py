@@ -98,6 +98,7 @@ from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartu
 from atv_player.paths import app_cache_dir
 from atv_player.request_headers import normalize_media_request_headers
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.external_links import external_link_html
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon, tint_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
@@ -1891,13 +1892,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return f"{field.label}: {values}".rstrip()
 
     def _external_metadata_link_html(self, url: str, label: str) -> str:
-        escaped_url = html.escape(url)
-        escaped_label = html.escape(label)
-        return (
-            f'<a href="{escaped_url}" style=" text-decoration:none; '
-            f'color:{current_theme_manager().tokens_for(current_resolved_theme()).accent}; font-weight:600;">'
-            f"{escaped_label}</a>"
-        )
+        return external_link_html(url, label)
 
     def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
         text = str(value or "").strip()

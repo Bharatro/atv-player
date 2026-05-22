@@ -22,10 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from atv_player.diagnostics import SystemInfoEntry
+from atv_player.ui.external_links import external_link_html
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 HelpContext = Literal["main_window", "player_window"]
-_SYSTEM_INFO_URL_ROLE = Qt.ItemDataRole.UserRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,8 +105,10 @@ class ShortcutHelpDialog(ThemedDialogBase):
             self.system_info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
             for row, entry in enumerate(system_info_rows):
                 self.system_info_table.setItem(row, 0, QTableWidgetItem(entry.label))
-                self.system_info_table.setItem(row, 1, self._build_system_info_value_item(entry))
-            self.system_info_table.cellClicked.connect(self._open_system_info_link)
+                if entry.url:
+                    self.system_info_table.setCellWidget(row, 1, self._build_system_info_link_widget(entry))
+                    continue
+                self.system_info_table.setItem(row, 1, QTableWidgetItem(entry.value))
             layout.addWidget(self.system_info_table)
 
             actions = QHBoxLayout()
@@ -138,28 +140,22 @@ class ShortcutHelpDialog(ThemedDialogBase):
 
         layout.addWidget(self.shortcuts_table)
 
-    def _build_system_info_value_item(self, entry: SystemInfoEntry) -> QTableWidgetItem:
-        item = QTableWidgetItem(entry.value)
-        if entry.url:
-            font = item.font()
-            font.setUnderline(True)
-            item.setFont(font)
-            item.setForeground(Qt.GlobalColor.blue)
-            item.setToolTip(entry.url)
-            item.setData(_SYSTEM_INFO_URL_ROLE, entry.url)
-        return item
+    def _build_system_info_link_widget(self, entry: SystemInfoEntry) -> QLabel:
+        label = QLabel(self.system_info_table)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        label.setOpenExternalLinks(False)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        label.setStyleSheet("background: transparent; padding: 0; margin: 0;")
+        label.setText(external_link_html(entry.url or "", entry.value))
+        label.setToolTip(entry.url or "")
+        label.linkActivated.connect(lambda href: self._open_external_url(QUrl(href)))
+        return label
 
-    def _open_system_info_link(self, row: int, column: int) -> None:
-        if column != 1:
-            return
-        item = self.system_info_table.item(row, column)
-        if item is None:
-            return
-        url_text = item.data(_SYSTEM_INFO_URL_ROLE)
-        if not isinstance(url_text, str) or not url_text:
-            return
-        if not QDesktopServices.openUrl(QUrl(url_text)):
-            QMessageBox.warning(self, "错误", f"打开链接失败: {url_text}")
+    def _open_external_url(self, url: QUrl) -> None:
+        if not QDesktopServices.openUrl(url):
+            QMessageBox.warning(self, "错误", f"打开链接失败: {url.toString()}")
 
     def _copy_diagnostics_to_clipboard(self) -> None:
         clipboard = QApplication.clipboard()
