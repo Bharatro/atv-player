@@ -161,6 +161,8 @@ class PlayItem:
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
     audio_url: str = ""
+    audio_tracks: list["YtdlpAudioTrackOption"] = field(default_factory=list)
+    selected_audio_track_id: str = ""
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
     selected_playback_quality_id: str = ""
@@ -198,6 +200,17 @@ class VideoQualityOption:
     height: int = 0
     bandwidth: int = 0
     codecs: str = ""
+
+
+@dataclass(slots=True)
+class YtdlpAudioTrackOption:
+    id: str
+    label: str
+    lang: str = ""
+    format_id: str = ""
+    is_original: bool = False
+    is_default: bool = False
+    ytdl_format: str = ""
 
 
 @dataclass(slots=True)

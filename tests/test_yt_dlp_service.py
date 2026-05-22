@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from atv_player.models import AppConfig, PlayItem, VodItem
+from atv_player.models import AppConfig, PlayItem, VodItem, YtdlpAudioTrackOption
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
@@ -981,6 +981,47 @@ class TestResolveToPlayItem:
         assert item.selected_playback_quality_id == "ytdlp_1080"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
+
+    def test_apply_result_copies_ytdlp_audio_tracks_and_selected_audio_id(self, monkeypatch, service):
+        from atv_player.yt_dlp_service import YtdlpResolveResult
+
+        result = YtdlpResolveResult(
+            url="https://stream.test/video.mp4",
+            audio_url="https://stream.test/audio-en.m4a",
+            ytdl_format="137+140",
+            video_format_id="137",
+            audio_format_id="140",
+            audio_tracks=[
+                YtdlpAudioTrackOption(
+                    id="ytdlp_audio_en_140",
+                    label="English Original",
+                    lang="en",
+                    format_id="140",
+                    is_original=True,
+                ),
+                YtdlpAudioTrackOption(
+                    id="ytdlp_audio_zh_140-dub",
+                    label="中文配音",
+                    lang="zh",
+                    format_id="140-dub",
+                ),
+            ],
+            selected_audio_track_id="ytdlp_audio_en_140",
+            title="Test Video",
+            thumbnail="https://img.test/thumb.jpg",
+            description="A test video description",
+            duration_seconds=300,
+            headers={"Referer": "https://www.youtube.com/"},
+            subtitles=[],
+            qualities=[],
+            selected_quality_id="",
+            extractor="youtube",
+        )
+        item = PlayItem(title="Episode", url="", original_url="", vod_id="video-1")
+        service.apply_result(result, item=item, source_url="https://www.youtube.com/watch?v=test123")
+
+        assert [track.id for track in item.audio_tracks] == ["ytdlp_audio_en_140", "ytdlp_audio_zh_140-dub"]
+        assert item.selected_audio_track_id == "ytdlp_audio_en_140"
 
 
 class TestBuildQualityOptions:

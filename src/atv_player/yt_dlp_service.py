@@ -16,6 +16,7 @@ from atv_player.models import (
     PlayItem,
     VideoQualityOption,
     VodItem,
+    YtdlpAudioTrackOption,
 )
 from atv_player.network_proxy import ProxyDecider, build_ytdlp_proxy_args
 from atv_player.player.ytdlp_runtime import (
@@ -432,6 +433,8 @@ class YtdlpResolveResult:
     ytdl_format: str
     video_format_id: str
     audio_format_id: str
+    audio_tracks: list[YtdlpAudioTrackOption]
+    selected_audio_track_id: str
     title: str
     thumbnail: str
     description: str
@@ -713,6 +716,8 @@ class YtdlpPlaybackService:
             ytdl_format=ytdl_format,
             video_format_id=str((selected_video or {}).get("format_id") or ""),
             audio_format_id=str((selected_audio or {}).get("format_id") or ""),
+            audio_tracks=[],
+            selected_audio_track_id="",
             title=info.get("title", ""),
             thumbnail=info.get("thumbnail", ""),
             description=info.get("description", ""),
@@ -781,12 +786,16 @@ class YtdlpPlaybackService:
         item.original_url = resolved_source_url
         item.headers = dict(result.headers)
         item.audio_url = str(result.audio_url or "")
+        item.audio_tracks = list(result.audio_tracks)
+        item.selected_audio_track_id = str(result.selected_audio_track_id or "").strip()
         item.ytdl_format = str(result.ytdl_format or "")
         item.playback_qualities = list(result.qualities)
         item.external_subtitles = list(result.subtitles)
         item.duration_seconds = int(result.duration_seconds or 0)
         item.title = resolved_title
         item.media_title = resolved_title
+        if not item.selected_audio_track_id and item.audio_tracks:
+            item.selected_audio_track_id = item.audio_tracks[0].id
 
         resolved_quality_id = str(result.selected_quality_id or "").strip()
         if resolved_quality_id:
