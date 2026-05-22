@@ -1000,7 +1000,8 @@ def test_controller_build_request_hydrates_prefilled_youtube_url_via_ytdlp() -> 
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             self.calls.append((url, max_height))
             return type(
                 "Result",
@@ -1076,7 +1077,8 @@ def test_controller_build_request_resolves_playercontent_youtube_url_via_ytdlp()
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             self.calls.append((url, max_height))
             return type(
                 "Result",
@@ -1152,11 +1154,13 @@ def test_controller_resolve_play_item_preserves_selected_ytdlp_quality_when_url_
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             self.resolve_calls.append((url, max_height))
             raise AssertionError("resolve() should not be used when a ytdlp quality is selected")
 
-        def resolve_for_quality(self, url: str, quality_id: str):
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            del audio_track_id
             self.resolve_for_quality_calls.append((url, quality_id))
             return type(
                 "Result",
@@ -1228,6 +1232,98 @@ def test_controller_resolve_play_item_preserves_selected_ytdlp_quality_when_url_
     assert first.selected_playback_quality_id == "ytdlp_720"
 
 
+def test_controller_resolve_play_item_passes_selected_ytdlp_audio_track() -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[tuple[str, int | None, str]] = []
+            self.resolve_for_quality_calls: list[tuple[str, str, str]] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            self.resolve_calls.append((url, max_height, selected_audio_track_id))
+            raise AssertionError("resolve() should not be used when a ytdlp quality is selected")
+
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            self.resolve_for_quality_calls.append((url, quality_id, audio_track_id))
+            return type(
+                "Result",
+                (),
+                {
+                    "url": f"https://stream.example/{quality_id}.m3u8",
+                    "audio_url": "",
+                    "headers": {"Referer": "https://www.youtube.com/"},
+                    "subtitles": [],
+                    "qualities": [],
+                    "audio_tracks": [],
+                    "selected_audio_track_id": audio_track_id,
+                    "ytdl_format": "298+140-dub",
+                    "selected_quality_id": quality_id,
+                    "title": "YouTube 剧集",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 0,
+                },
+            )()
+
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            del vod
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.audio_tracks = list(result.audio_tracks)
+            item.selected_audio_track_id = result.selected_audio_track_id
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = result.title
+            item.media_title = result.title
+            item.selected_playback_quality_id = result.selected_quality_id
+
+    service = FakeYtdlpService()
+    controller = SpiderPluginController(
+        YoutubePlayerSpider(),
+        plugin_name="YouTube插件",
+        search_enabled=True,
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("/detail/youtube-player")
+    first = request.playlists[0][0]
+    session = type(
+        "Session",
+        (),
+        {
+            "vod": request.vod,
+            "playlist": request.playlist,
+            "video_cover_override": "",
+        },
+    )()
+
+    first.url = ""
+    first.original_url = "https://www.youtube.com/watch?v=test123"
+    first.selected_playback_quality_id = "ytdlp_720"
+    first.selected_audio_track_id = "ytdlp_audio_zh_140-dub"
+
+    assert request.playback_loader is not None
+    request.playback_loader(session, first)
+
+    assert service.resolve_calls == []
+    assert service.resolve_for_quality_calls == [
+        ("https://www.youtube.com/watch?v=test123", "ytdlp_720", "ytdlp_audio_zh_140-dub")
+    ]
+    assert first.selected_audio_track_id == "ytdlp_audio_zh_140-dub"
+    assert first.ytdl_format == "298+140-dub"
+
+
 def test_controller_playback_loader_overwrites_session_vod_with_ytdlp_metadata() -> None:
     class FakeYtdlpService:
         def is_available(self) -> bool:
@@ -1236,7 +1332,8 @@ def test_controller_playback_loader_overwrites_session_vod_with_ytdlp_metadata()
         def can_resolve(self, url: str) -> bool:
             return "youtube.com" in url
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del max_height, selected_audio_track_id
             return type(
                 "Result",
                 (),

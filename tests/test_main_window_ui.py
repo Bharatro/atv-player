@@ -2850,7 +2850,8 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                 f"best[height<={max_height}]/bestvideo+bestaudio/best"
             )
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             assert max_height is None
             self.resolve_calls.append(url)
             return type(
@@ -2872,7 +2873,8 @@ def test_main_window_global_search_treats_youtube_url_as_async_ytdlp_request(qtb
                 },
             )()
 
-        def resolve_for_quality(self, url: str, quality_id: str):
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            del audio_track_id
             return self.resolve(url)
 
         def resolve_to_play_item(self, url: str):
@@ -2968,7 +2970,8 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 f"best[height<={max_height}]/bestvideo+bestaudio/best"
             )
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             assert max_height is None
             self.resolve_calls.append(url)
             return type(
@@ -2990,7 +2993,8 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
                 },
             )()
 
-        def resolve_for_quality(self, url: str, quality_id: str):
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            del audio_track_id
             self.resolve_for_quality_calls.append((url, quality_id))
             return type(
                 "Result",
@@ -3064,6 +3068,101 @@ def test_main_window_ytdlp_loader_resolves_selected_quality_on_reload(qtbot) -> 
     assert item.ytdl_format == "298+140"
 
 
+def test_main_window_ytdlp_loader_passes_selected_audio_track_id(qtbot) -> None:
+    class FakeYtdlpService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[tuple[str, int | None, str]] = []
+            self.resolve_for_quality_calls: list[tuple[str, str, str]] = []
+
+        def is_available(self) -> bool:
+            return True
+
+        def can_resolve(self, url: str) -> bool:
+            return "youtube.com" in url
+
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            self.resolve_calls.append((url, max_height, selected_audio_track_id))
+            raise AssertionError("resolve() should not be used when a ytdlp quality is selected")
+
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            self.resolve_for_quality_calls.append((url, quality_id, audio_track_id))
+            return type(
+                "Result",
+                (),
+                {
+                    "url": "https://www.youtube.com/watch?v=test123",
+                    "title": "Async Test Video",
+                    "thumbnail": "",
+                    "description": "",
+                    "duration_seconds": 321,
+                    "headers": {},
+                    "subtitles": [],
+                    "qualities": [],
+                    "audio_url": "",
+                    "audio_tracks": [],
+                    "selected_audio_track_id": audio_track_id,
+                    "ytdl_format": "298+140-dub",
+                    "extractor": "youtube",
+                    "selected_quality_id": quality_id,
+                },
+            )()
+
+        def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
+            resolved_title = result.title or source_url
+            if vod is not None:
+                vod.vod_name = resolved_title
+                vod.vod_pic = result.thumbnail
+                vod.vod_content = result.description
+            if item is None:
+                return
+            item.url = result.url
+            item.original_url = source_url
+            item.headers = dict(result.headers)
+            item.audio_url = result.audio_url
+            item.audio_tracks = list(result.audio_tracks)
+            item.selected_audio_track_id = result.selected_audio_track_id
+            item.ytdl_format = result.ytdl_format
+            item.playback_qualities = list(result.qualities)
+            item.external_subtitles = list(result.subtitles)
+            item.duration_seconds = result.duration_seconds
+            item.title = resolved_title
+            item.media_title = resolved_title
+            item.selected_playback_quality_id = result.selected_quality_id
+
+    service = FakeYtdlpService()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        yt_dlp_service=service,
+    )
+
+    qtbot.addWidget(window)
+
+    request = window._build_ytdlp_parse_request("https://www.youtube.com/watch?v=test123")
+    session = type("Session", (), {"vod": request.vod})()
+    item = request.playlist[0]
+    item.selected_playback_quality_id = "ytdlp_720"
+    item.selected_audio_track_id = "ytdlp_audio_zh_140-dub"
+
+    request.playback_loader(session, item)
+
+    assert service.resolve_calls == []
+    assert service.resolve_for_quality_calls == [
+        ("https://www.youtube.com/watch?v=test123", "ytdlp_720", "ytdlp_audio_zh_140-dub")
+    ]
+    assert item.selected_audio_track_id == "ytdlp_audio_zh_140-dub"
+    assert item.ytdl_format == "298+140-dub"
+
+
 def test_main_window_direct_parse_fallback_to_ytdlp_overwrites_session_metadata(qtbot) -> None:
     class FailingParserService:
         def resolve(self, flag: str, url: str, preferred_key: str = ""):
@@ -3073,7 +3172,8 @@ def test_main_window_direct_parse_fallback_to_ytdlp_overwrites_session_metadata(
         def is_available(self) -> bool:
             return True
 
-        def resolve(self, url: str, *, max_height: int | None = None):
+        def resolve(self, url: str, *, max_height: int | None = None, selected_audio_track_id: str = ""):
+            del selected_audio_track_id
             return type(
                 "Result",
                 (),
@@ -3093,7 +3193,8 @@ def test_main_window_direct_parse_fallback_to_ytdlp_overwrites_session_metadata(
                 },
             )()
 
-        def resolve_for_quality(self, url: str, quality_id: str):
+        def resolve_for_quality(self, url: str, quality_id: str, *, audio_track_id: str = ""):
+            del audio_track_id
             return self.resolve(url)
 
         def apply_result(self, result, *, vod=None, item=None, source_url: str = "") -> None:
