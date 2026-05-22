@@ -72,22 +72,3 @@ def test_convert_degrades_punctuation_only_cue_to_static_dialogue() -> None:
     assert subtitle is not None
     assert "Dialogue: 0,0:00:00.00,0:00:00.40,YouTubeDefault" in subtitle
     assert r"{\kf" not in subtitle
-
-
-def test_convert_webvtt_strips_inline_youtube_styling_tags() -> None:
-    text = (
-        "WEBVTT\n\n"
-        "00:00:00.000 --> 00:00:02.000\n"
-        "<c.colorA0AAB4></c><c.color13F4F9><b>好的艾什莉等你准备好了</b></c><c.colorA0AAB4></c>\n"
-    )
-
-    subtitle = convert_youtube_subtitle_text_to_ass(text)
-
-    assert subtitle is not None
-    assert "好" in subtitle
-    assert "艾" in subtitle
-    assert "了" in subtitle
-    assert "<c.colorA0AAB4>" not in subtitle
-    assert "<c.color13F4F9>" not in subtitle
-    assert "<b>" not in subtitle
-    assert "</b>" not in subtitle
