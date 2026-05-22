@@ -339,6 +339,19 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert "border: 1px solid" in window.ending_spin.styleSheet()
 
 
+def test_player_window_volume_label_shows_current_volume(qtbot) -> None:
+    config = AppConfig(player_volume=35)
+    window = PlayerWindow(FakePlayerController(), config=config)
+
+    qtbot.addWidget(window)
+
+    assert window.volume_value_label.text() == "35%"
+
+    window.volume_slider.setValue(72)
+
+    assert window.volume_value_label.text() == "72%"
+
+
 def test_player_window_icon_updates_use_cached_icon_loader(qtbot, monkeypatch) -> None:
     calls: list[str] = []
 

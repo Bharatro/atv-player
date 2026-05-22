@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from atv_player.models import (
     AppConfig,
     ExternalSubtitleOption,
+    PlaybackDetailField,
     PlayItem,
     VideoQualityOption,
     VodItem,
@@ -143,6 +144,93 @@ def _resolve_startup_selection_height(
 def _is_youtube_extractor(info: dict) -> bool:
     extractor = str(info.get("extractor") or "").strip().lower()
     return extractor.startswith("youtube")
+
+
+def _format_detail_stat_value(raw_value: object) -> str:
+    if isinstance(raw_value, bool):
+        return str(raw_value)
+    if isinstance(raw_value, int | float):
+        numeric_value = float(raw_value)
+        if numeric_value >= 10000:
+            return f"{numeric_value / 10000:.1f}万"
+        if numeric_value.is_integer():
+            return str(int(numeric_value))
+        return str(raw_value)
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    try:
+        numeric_value = float(value)
+    except ValueError:
+        return value
+    if numeric_value >= 10000:
+        return f"{numeric_value / 10000:.1f}万"
+    if numeric_value.is_integer():
+        return str(int(numeric_value))
+    return value
+
+
+def _format_detail_date(raw_value: object) -> str:
+    value = str(raw_value or "").strip()
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:8]}"
+    return value
+
+
+def _format_detail_duration(raw_value: object) -> str:
+    try:
+        total_seconds = int(raw_value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if total_seconds <= 0:
+        return ""
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def _append_detail_field(fields: list[PlaybackDetailField], label: str, value: object) -> None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return
+    fields.append(PlaybackDetailField(label=label, value=normalized))
+
+
+def _build_detail_fields(info: dict) -> list[PlaybackDetailField]:
+    fields: list[PlaybackDetailField] = []
+    _append_detail_field(fields, "频道", info.get("channel") or info.get("uploader") or info.get("creator"))
+    _append_detail_field(fields, "发布", _format_detail_date(info.get("upload_date") or info.get("release_date")))
+    _append_detail_field(fields, "时长", _format_detail_duration(info.get("duration")))
+    _append_detail_field(fields, "播放", _format_detail_stat_value(info.get("view_count")))
+    _append_detail_field(fields, "点赞", _format_detail_stat_value(info.get("like_count")))
+    _append_detail_field(fields, "评论", _format_detail_stat_value(info.get("comment_count")))
+    return fields
+
+
+def _merge_detail_fields(
+    existing_fields: list[PlaybackDetailField],
+    incoming_fields: list[PlaybackDetailField],
+) -> list[PlaybackDetailField]:
+    if not incoming_fields:
+        return list(existing_fields)
+    merged = list(existing_fields)
+    label_to_index = {
+        str(field.label).strip(): index
+        for index, field in enumerate(merged)
+        if str(field.label).strip()
+    }
+    for field in incoming_fields:
+        label = str(field.label).strip()
+        if not label:
+            continue
+        if label in label_to_index:
+            merged[label_to_index[label]] = field
+            continue
+        label_to_index[label] = len(merged)
+        merged.append(field)
+    return merged
 
 
 def _pick_requested_stream_pair(info: dict) -> tuple[str, str]:
@@ -698,6 +786,7 @@ class YtdlpResolveResult:
     qualities: list[VideoQualityOption]
     selected_quality_id: str
     extractor: str
+    detail_fields: list[PlaybackDetailField]
 
 
 @dataclass(slots=True)
@@ -990,6 +1079,7 @@ class YtdlpPlaybackService:
         headers = _merge_http_headers(info, selected_video, selected_audio)
 
         subtitles = _build_subtitle_options(info)
+        detail_fields = _build_detail_fields(info)
         selected_quality_id = _resolve_selected_quality_id(
             info,
             qualities,
@@ -1020,6 +1110,7 @@ class YtdlpPlaybackService:
             qualities=qualities,
             selected_quality_id=selected_quality_id,
             extractor=info.get("extractor", ""),
+            detail_fields=detail_fields,
         )
         requested_formats = info.get("requested_formats") or []
         requested_format_ids = [
@@ -1074,6 +1165,7 @@ class YtdlpPlaybackService:
             vod.vod_name = resolved_title
             vod.vod_pic = str(result.thumbnail or "")
             vod.vod_content = str(result.description or "")
+            vod.detail_fields = _merge_detail_fields(vod.detail_fields, result.detail_fields)
 
         if item is None:
             return
@@ -1090,6 +1182,7 @@ class YtdlpPlaybackService:
         item.duration_seconds = int(result.duration_seconds or 0)
         item.title = resolved_title
         item.media_title = resolved_title
+        item.detail_fields = _merge_detail_fields(item.detail_fields, result.detail_fields)
         if not item.selected_audio_track_id and item.audio_tracks:
             item.selected_audio_track_id = item.audio_tracks[0].id
 

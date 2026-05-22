@@ -15,7 +15,7 @@
 
 ## YouTube / yt-dlp
 
-- [ ] YouTube 详情信息不完整
+- [x] YouTube 详情信息不完整
 - [x] YouTube 字幕切换失败
 - [ ] YouTube网页播放，不同角色的字幕颜色不同
 - [x] YouTube 音轨切换

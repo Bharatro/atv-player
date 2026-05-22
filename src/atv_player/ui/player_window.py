@@ -879,6 +879,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         self.volume_slider.setValue(initial_volume)
         self.volume_slider.setMaximumWidth(180)
+        self.volume_value_label = QLabel()
+        self.volume_value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.volume_value_label.setMinimumWidth(40)
+        self._update_volume_value_label(initial_volume)
         self.poster_label = QLabel()
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
@@ -1046,6 +1050,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.volume_layout.setContentsMargins(0, 0, 0, 0)
         self.volume_layout.addWidget(self.mute_button)
         self.volume_layout.addWidget(self.volume_slider)
+        self.volume_layout.addWidget(self.volume_value_label)
         controls.addWidget(volume_group, 0, Qt.AlignmentFlag.AlignRight)
         bottom_layout.addLayout(controls)
 
@@ -1117,6 +1122,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.parse_combo.currentIndexChanged.connect(self._change_parse_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
+        self.volume_slider.valueChanged.connect(self._update_volume_value_label)
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
@@ -7714,6 +7720,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.video.toggle_video_info()
         except Exception as exc:
             self._append_log(f"视频信息显示失败: {exc}")
+
+    def _update_volume_value_label(self, value: int) -> None:
+        self.volume_value_label.setText(f"{value}%")
 
     def _change_volume(self, value: int) -> None:
         try:

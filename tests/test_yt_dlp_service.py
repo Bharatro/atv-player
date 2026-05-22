@@ -30,7 +30,14 @@ def _sample_info(**overrides):
         "thumbnail": "https://img.test/thumb.jpg",
         "description": "A test video description",
         "duration": 300,
+        "duration_string": "5:00",
         "extractor": "youtube",
+        "channel": "OpenAI",
+        "uploader": "OpenAI",
+        "upload_date": "20260520",
+        "view_count": 1234567,
+        "like_count": 54321,
+        "comment_count": 987,
         "url": "https://stream.test/direct.mp4",
         "http_headers": {"Referer": "https://www.youtube.com/", "User-Agent": "test"},
         "formats": [
@@ -985,8 +992,8 @@ class TestResolve:
         first = service.resolve("https://www.youtube.com/watch?v=test123")
         second = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert first.url == "https://stream.test/direct.mp4"
-        assert second.url == "https://stream.test/direct.mp4"
+        assert first.url == "https://stream.test/1080.mp4"
+        assert second.url == "https://stream.test/1080.mp4"
         assert len(calls) == 1
 
     def test_cache_key_includes_selected_audio_track(self, monkeypatch):
@@ -1135,7 +1142,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/direct.mp4"
+        assert result.url == "https://stream.test/1080.mp4"
         assert result.audio_url == ""
         assert result.title == "Test Video"
         assert result.thumbnail == "https://img.test/thumb.jpg"
@@ -1256,7 +1263,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert result.url == "https://stream.test/direct.mp4"
+        assert result.url == "https://stream.test/1080.mp4"
         assert len(run_calls) == 2
         assert "--all-subs" in run_calls[0]
         assert "--all-subs" not in run_calls[1]
@@ -1328,7 +1335,7 @@ class TestResolveToPlayItem:
         assert isinstance(item, PlayItem)
         assert vod.vod_name == "Test Video"
         assert vod.vod_pic == "https://img.test/thumb.jpg"
-        assert item.url == "https://stream.test/direct.mp4"
+        assert item.url == "https://stream.test/1080.mp4"
         assert item.original_url == "https://www.youtube.com/watch?v=test123"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
@@ -1384,7 +1391,7 @@ class TestResolveToPlayItem:
         assert vod.vod_name == "Resolved Title"
         assert vod.vod_pic == "https://img.test/resolved.jpg"
         assert vod.vod_content == ""
-        assert item.url == "https://stream.test/direct.mp4"
+        assert item.url == "https://stream.test/1080.mp4"
         assert item.original_url == "https://www.youtube.com/watch?v=test123"
         assert item.title == "Resolved Title"
         assert item.media_title == "Resolved Title"
@@ -1392,6 +1399,22 @@ class TestResolveToPlayItem:
         assert item.selected_playback_quality_id == "ytdlp_1080"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
+        assert [(field.label, field.value) for field in vod.detail_fields] == [
+            ("频道", "OpenAI"),
+            ("发布", "2026-05-20"),
+            ("时长", "5:21"),
+            ("播放", "123.5万"),
+            ("点赞", "5.4万"),
+            ("评论", "987"),
+        ]
+        assert [(field.label, field.value) for field in item.detail_fields] == [
+            ("频道", "OpenAI"),
+            ("发布", "2026-05-20"),
+            ("时长", "5:21"),
+            ("播放", "123.5万"),
+            ("点赞", "5.4万"),
+            ("评论", "987"),
+        ]
 
     def test_apply_result_copies_ytdlp_audio_tracks_and_selected_audio_id(self, monkeypatch, service):
         from atv_player.yt_dlp_service import YtdlpResolveResult
@@ -1427,12 +1450,28 @@ class TestResolveToPlayItem:
             qualities=[],
             selected_quality_id="",
             extractor="youtube",
+            detail_fields=[],
         )
         item = PlayItem(title="Episode", url="", original_url="", vod_id="video-1")
         service.apply_result(result, item=item, source_url="https://www.youtube.com/watch?v=test123")
 
         assert [track.id for track in item.audio_tracks] == ["ytdlp_audio_en_140", "ytdlp_audio_zh_140-dub"]
         assert item.selected_audio_track_id == "ytdlp_audio_en_140"
+
+    def test_resolve_builds_ytdlp_detail_fields(self, monkeypatch, service):
+        info = _sample_info()
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert [(field.label, field.value) for field in result.detail_fields] == [
+            ("频道", "OpenAI"),
+            ("发布", "2026-05-20"),
+            ("时长", "5:00"),
+            ("播放", "123.5万"),
+            ("点赞", "5.4万"),
+            ("评论", "987"),
+        ]
 
 
 class TestBuildQualityOptions:
