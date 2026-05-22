@@ -6,11 +6,14 @@ from xml.etree import ElementTree
 _VALID_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_COLOR_MODES = {"uniform", "source"}
 _VALID_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
+_VALID_OUTLINE_STRENGTHS = {"soft", "strong"}
 _PLAY_RES_X = 1920
 _PLAY_RES_Y = 1080
 _LANE_HEIGHT = 40
 _DEFAULT_FONT_SIZE = 32
 _DEFAULT_UNIFORM_COLOR = "#FFFFFF"
+_DEFAULT_OPACITY = 85
+_DEFAULT_OUTLINE_STRENGTH = "strong"
 _SCROLL_MIN_DURATION_SECONDS = 12.0
 _DEFAULT_SCROLL_SPEED = 1.0
 _INTRO_LEAD_SECONDS = 1.0
@@ -320,6 +323,32 @@ def _normalize_font_size(value: int) -> int:
     return max(16, min(normalized, 72))
 
 
+def _normalize_opacity(value: int) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_OPACITY
+    return max(30, min(normalized, 100))
+
+
+def _normalize_outline_strength(value: str) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_OUTLINE_STRENGTHS else _DEFAULT_OUTLINE_STRENGTH
+
+
+def _opacity_to_ass_alpha(opacity: int) -> str:
+    alpha = round((100 - _normalize_opacity(opacity)) * 255 / 100)
+    return f"{alpha:02X}"
+
+
+def _ass_color_with_alpha(color: str, alpha: str) -> str:
+    return color.replace("&H", f"&H{alpha}", 1)
+
+
+def _outline_style_values(outline_strength: str) -> tuple[int, int]:
+    return (1, 0) if outline_strength == "soft" else (2, 1)
+
+
 def _scroll_duration_seconds(duration_seconds: float, scroll_speed: float) -> float:
     return max(1.0, max(duration_seconds, _SCROLL_MIN_DURATION_SECONDS) / _normalize_scroll_speed(scroll_speed))
 
@@ -350,7 +379,10 @@ def _escape_ass_text(value: str) -> str:
     return value.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
 
 
-def _build_ass_header(primary_color: str, font_size: int) -> str:
+def _build_ass_header(primary_color: str, font_size: int, *, opacity: int, outline_strength: str) -> str:
+    alpha = _opacity_to_ass_alpha(opacity)
+    text_color = _ass_color_with_alpha(primary_color, alpha)
+    outline_width, shadow = _outline_style_values(_normalize_outline_strength(outline_strength))
     return "\n".join(
         [
             "[Script Info]",
@@ -362,7 +394,7 @@ def _build_ass_header(primary_color: str, font_size: int) -> str:
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Danmaku,sans-serif,{font_size},{primary_color},{primary_color},&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,8,24,24,4,1",
+            f"Style: Danmaku,sans-serif,{font_size},{text_color},{text_color},&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,{outline_width},{shadow},8,24,24,4,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -376,12 +408,13 @@ def _line_color(color_mode: str, uniform_color: str, source_color: str) -> str:
     return _hex_color_to_ass(uniform_color)
 
 
-def _render_static_text(cue: _SubtitleCue, color_mode: str, uniform_color: str) -> str:
+def _render_static_text(cue: _SubtitleCue, color_mode: str, uniform_color: str, opacity: int) -> str:
+    alpha = _opacity_to_ass_alpha(opacity)
     parts: list[str] = []
     for line in cue.lines:
         text = _escape_ass_text(line.content)
         if color_mode == "source":
-            text = rf"{{\1c{line.color}}}{text}"
+            text = rf"{{\1c{line.color}\1a&H{alpha}&}}{text}"
         parts.append(text)
     return r"\N".join(parts)
 
@@ -403,12 +436,13 @@ def _lane_y(position_preset: str, line_index: int, mode: str) -> int:
     return min(_PLAY_RES_Y - 80, band_start + (line_index * _LANE_HEIGHT))
 
 
-def _event_override(mode: str, y: int, color: str) -> str:
+def _event_override(mode: str, y: int, color: str, opacity: int) -> str:
+    alpha = _opacity_to_ass_alpha(opacity)
     if mode == "scroll":
-        return rf"{{\an8\move({_PLAY_RES_X + 80},{y},-400,{y})\1c{color}}}"
+        return rf"{{\an8\move({_PLAY_RES_X + 80},{y},-400,{y})\1c{color}\1a&H{alpha}&}}"
     if mode == "bottom":
-        return rf"{{\an2\pos(960,{y})\1c{color}}}"
-    return rf"{{\an8\pos(960,{y})\1c{color}}}"
+        return rf"{{\an2\pos(960,{y})\1c{color}\1a&H{alpha}&}}"
+    return rf"{{\an8\pos(960,{y})\1c{color}\1a&H{alpha}&}}"
 
 
 def _build_intro_event(
@@ -419,6 +453,7 @@ def _build_intro_event(
     color_mode: str,
     uniform_color: str,
     position_preset: str,
+    opacity: int,
 ) -> str:
     if not records:
         return ""
@@ -434,7 +469,7 @@ def _build_intro_event(
         )
     color = _line_color(color_mode, uniform_color, "16777215")
     y = max(20, _position_band_start(position_preset) - _LANE_HEIGHT)
-    override = _event_override("top", y, color)
+    override = _event_override("top", y, color, opacity)
     return (
         f"Dialogue: 0,{_format_ass_timestamp(intro_start)},{_format_ass_timestamp(intro_end)},"
         f"Danmaku,,0,0,0,,{override}{text}"
@@ -451,6 +486,7 @@ def _build_dynamic_events(
     uniform_color: str,
     position_preset: str,
     scroll_speed: float,
+    opacity: int,
 ) -> list[str]:
     grouped = {"scroll": [], "top": [], "bottom": []}
     for record in records:
@@ -488,7 +524,7 @@ def _build_dynamic_events(
         color = _line_color(color_mode, uniform_color, item.record.color)
         y = _lane_y(position_preset, item.line_index, mode)
         text = _escape_ass_text(item.record.content)
-        override = _event_override(mode, y, color)
+        override = _event_override(mode, y, color, opacity)
         events.append(
             f"Dialogue: 0,{_format_ass_timestamp(item.start)},{_format_ass_timestamp(item.end)},Danmaku,,0,0,0,,{override}{text}"
         )
@@ -507,6 +543,8 @@ def render_danmaku_ass(
     position_preset: str = "top",
     scroll_speed: float = _DEFAULT_SCROLL_SPEED,
     font_size: int = _DEFAULT_FONT_SIZE,
+    opacity: int = _DEFAULT_OPACITY,
+    outline_strength: str = _DEFAULT_OUTLINE_STRENGTH,
 ) -> str:
     normalized_line_count = max(1, min(int(line_count), 10))
     normalized_duration = max(1.0, float(duration_seconds))
@@ -516,11 +554,18 @@ def render_danmaku_ass(
     normalized_position_preset = _normalize_position_preset(position_preset)
     normalized_scroll_speed = _normalize_scroll_speed(scroll_speed)
     normalized_font_size = _normalize_font_size(font_size)
+    normalized_opacity = _normalize_opacity(opacity)
+    normalized_outline_strength = _normalize_outline_strength(outline_strength)
     records = _parse_danmaku_xml_records(xml_text)
     if not records:
         return ""
 
-    header = _build_ass_header(_hex_color_to_ass(normalized_uniform_color), normalized_font_size)
+    header = _build_ass_header(
+        _hex_color_to_ass(normalized_uniform_color),
+        normalized_font_size,
+        opacity=normalized_opacity,
+        outline_strength=normalized_outline_strength,
+    )
     intro_event = _build_intro_event(
         records,
         intro_episode_label=intro_episode_label,
@@ -528,6 +573,7 @@ def render_danmaku_ass(
         color_mode=normalized_color_mode,
         uniform_color=normalized_uniform_color,
         position_preset=normalized_position_preset,
+        opacity=normalized_opacity,
     )
     if normalized_render_mode == "static":
         lines = _assign_static_lines_with_priority(
@@ -538,7 +584,7 @@ def render_danmaku_ass(
         )
         cues = _build_cues(lines, normalized_line_count)
         events = [
-            f"Dialogue: 0,{_format_ass_timestamp(cue.start)},{_format_ass_timestamp(cue.end)},Danmaku,,0,0,0,,{_render_static_text(cue, normalized_color_mode, normalized_uniform_color)}"
+            f"Dialogue: 0,{_format_ass_timestamp(cue.start)},{_format_ass_timestamp(cue.end)},Danmaku,,0,0,0,,{_render_static_text(cue, normalized_color_mode, normalized_uniform_color, normalized_opacity)}"
             for cue in cues
         ]
         return "\n".join([header, intro_event, *events, ""])
@@ -552,5 +598,6 @@ def render_danmaku_ass(
         uniform_color=normalized_uniform_color,
         position_preset=normalized_position_preset,
         scroll_speed=normalized_scroll_speed,
+        opacity=normalized_opacity,
     )
     return "\n".join([header, intro_event, *events, ""])
