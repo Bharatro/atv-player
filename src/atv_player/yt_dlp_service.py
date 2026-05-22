@@ -86,6 +86,9 @@ _DIRECT_SUBTITLE_FORMAT_RANK: dict[str, int] = {
     "ssa": 3,
 }
 
+_ENGLISH_AUDIO_PREFIXES = ("en", "eng", "en-")
+_CHINESE_AUDIO_PREFIXES = ("zh", "chi", "zho", "cmn", "zh-", "zh_")
+
 
 def _has_muxed_audio(fmt: dict) -> bool:
     acodec = fmt.get("acodec", "") or ""
@@ -174,6 +177,181 @@ def _audio_codec_rank(acodec: object, *, preferred_ext: str = "") -> int:
     if normalized.startswith(("mp4a", "aac")):
         return 1
     return 2
+
+
+def _normalize_audio_lang(value: object) -> str:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    if not normalized:
+        return ""
+    if normalized.startswith(_ENGLISH_AUDIO_PREFIXES):
+        return "en"
+    if normalized.startswith(_CHINESE_AUDIO_PREFIXES):
+        return "zh"
+    return normalized
+
+
+def _audio_candidate_is_original(fmt: dict) -> bool:
+    haystacks = [
+        str(fmt.get("format_note") or ""),
+        str(fmt.get("format") or ""),
+        str(fmt.get("name") or ""),
+    ]
+    tokens = " ".join(haystacks).casefold()
+    return any(token in tokens for token in ("original", "orig", "source", "原声", "原版"))
+
+
+def _audio_candidate_is_default(fmt: dict) -> bool:
+    if bool(fmt.get("default")):
+        return True
+    try:
+        return int(fmt.get("language_preference") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _audio_track_label(
+    lang: str,
+    *,
+    is_original: bool,
+    is_default: bool,
+    fmt: dict,
+) -> str:
+    title = str(fmt.get("name") or fmt.get("format_note") or "").strip()
+    if title and title.casefold() not in {"original", "dubbed"}:
+        base = title
+    else:
+        base = {
+            "en": "English",
+            "zh": "中文",
+        }.get(lang, _LANG_CODE_NAMES.get(lang, lang or "音轨"))
+    suffixes: list[str] = []
+    if is_original:
+        suffixes.append("原声")
+    if is_default and not is_original:
+        suffixes.append("默认")
+    if suffixes:
+        return f"{base} ({'/'.join(suffixes)})"
+    return base
+
+
+def _audio_track_option_id(fmt: dict, lang: str) -> str:
+    format_id = str(fmt.get("format_id") or "").strip() or "audio"
+    normalized_lang = lang or "und"
+    return f"ytdlp_audio_{normalized_lang}_{format_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class _YtdlpAudioCandidate:
+    option: YtdlpAudioTrackOption
+    format_entry: dict
+
+
+def _audio_track_sort_key(candidate: _YtdlpAudioCandidate) -> tuple[int, int, int, str, str]:
+    option = candidate.option
+    return (
+        0 if option.lang == "en" and option.is_original else 1,
+        0 if option.lang == "en" else 1,
+        0 if option.is_default else 1,
+        option.label.casefold(),
+        option.format_id,
+    )
+
+
+def _audio_candidate_formats(info: dict) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    candidates: list[dict] = []
+    for source_key in ("formats", "requested_formats"):
+        source = info.get(source_key) or []
+        if not isinstance(source, list):
+            continue
+        for fmt in source:
+            if not isinstance(fmt, dict):
+                continue
+            if not fmt.get("url"):
+                continue
+            if (fmt.get("acodec", "") or "") == "none":
+                continue
+            if (fmt.get("vcodec", "") or "") != "none":
+                continue
+            key = (
+                str(fmt.get("format_id") or "").strip(),
+                str(fmt.get("url") or "").strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(fmt)
+    return candidates
+
+
+def _build_audio_track_candidates(info: dict) -> list[_YtdlpAudioCandidate]:
+    candidates: list[_YtdlpAudioCandidate] = []
+    for fmt in _audio_candidate_formats(info):
+        lang = _normalize_audio_lang(fmt.get("language") or fmt.get("lang"))
+        is_original = _audio_candidate_is_original(fmt)
+        is_default = _audio_candidate_is_default(fmt)
+        option = YtdlpAudioTrackOption(
+            id=_audio_track_option_id(fmt, lang),
+            label=_audio_track_label(lang, is_original=is_original, is_default=is_default, fmt=fmt),
+            lang=lang,
+            format_id=str(fmt.get("format_id") or "").strip(),
+            is_original=is_original,
+            is_default=is_default,
+            ytdl_format=str(fmt.get("format_id") or "").strip(),
+        )
+        candidates.append(_YtdlpAudioCandidate(option=option, format_entry=fmt))
+    return sorted(candidates, key=_audio_track_sort_key)
+
+
+def _resolve_selected_audio_track_id(
+    audio_tracks: list[YtdlpAudioTrackOption],
+    requested_audio_track_id: str,
+    *,
+    fallback_format_id: str = "",
+) -> str:
+    requested = str(requested_audio_track_id or "").strip()
+    if requested and any(track.id == requested for track in audio_tracks):
+        return requested
+    for track in audio_tracks:
+        if track.lang == "en" and track.is_original:
+            return track.id
+    for track in audio_tracks:
+        if track.lang == "en":
+            return track.id
+    for track in audio_tracks:
+        if track.is_default:
+            return track.id
+    fallback_format = str(fallback_format_id or "").strip()
+    if fallback_format:
+        for track in audio_tracks:
+            if track.format_id == fallback_format:
+                return track.id
+    if audio_tracks:
+        return audio_tracks[0].id
+    return ""
+
+
+def _select_audio_candidate(
+    candidates: list[_YtdlpAudioCandidate],
+    selected_audio_track_id: str,
+) -> _YtdlpAudioCandidate | None:
+    for candidate in candidates:
+        if candidate.option.id == selected_audio_track_id:
+            return candidate
+    return None
+
+
+def _audio_track_id_for_format(
+    candidates: list[_YtdlpAudioCandidate],
+    fmt: dict | None,
+) -> str:
+    format_id = str((fmt or {}).get("format_id") or "").strip()
+    if not format_id:
+        return ""
+    for candidate in candidates:
+        if candidate.option.format_id == format_id:
+            return candidate.option.id
+    return ""
 
 
 def _preferred_video_formats(info: dict, max_height: int | None) -> list[dict]:
@@ -468,14 +646,15 @@ class YtdlpPlaybackService:
         self._proxy_decider = proxy_decider
         self._config_loader = config_loader
 
-    def _cache_key(self, url: str, max_height: int | None) -> str:
+    def _cache_key(self, url: str, max_height: int | None, audio_track_id: str = "") -> str:
         key = url.strip()
+        audio_key = str(audio_track_id or "").strip() or "auto"
         if max_height and max_height > 0:
-            return f"{key}#h={max_height}"
-        return f"{key}#h=any"
+            return f"{key}#h={max_height}#a={audio_key}"
+        return f"{key}#h=any#a={audio_key}"
 
-    def _get_cached_result(self, url: str, max_height: int | None) -> YtdlpResolveResult | None:
-        key = self._cache_key(url, max_height)
+    def _get_cached_result(self, url: str, max_height: int | None, audio_track_id: str = "") -> YtdlpResolveResult | None:
+        key = self._cache_key(url, max_height, audio_track_id)
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -484,16 +663,22 @@ class YtdlpPlaybackService:
             return None
         return entry.result
 
-    def _store_cached_result(self, url: str, max_height: int | None, result: YtdlpResolveResult) -> None:
+    def _store_cached_result(
+        self,
+        url: str,
+        max_height: int | None,
+        audio_track_id: str,
+        result: YtdlpResolveResult,
+    ) -> None:
         entry = _YtdlpCacheEntry(
             result=result,
             expires_at=self._now() + self._ttl_seconds,
         )
-        key = self._cache_key(url, max_height)
+        key = self._cache_key(url, max_height, audio_track_id)
         self._cache[key] = entry
         selected_height = _quality_height_from_id(str(result.selected_quality_id or ""))
         if selected_height is not None and selected_height != max_height:
-            self._cache[self._cache_key(url, selected_height)] = entry
+            self._cache[self._cache_key(url, selected_height, audio_track_id)] = entry
 
     def is_available(self) -> bool:
         if self._ytdlp_path is None:
@@ -612,18 +797,20 @@ class YtdlpPlaybackService:
         log: object = None,
         *,
         max_height: int | None = None,
+        selected_audio_track_id: str = "",
     ) -> YtdlpResolveResult:
         configured_default_height = self._configured_max_height() if max_height is None else None
         cache_height = max_height if max_height is not None else configured_default_height
         extraction_max_height = max_height
         logger.info("yt-dlp resolve start url=%s max_height=%s", url, cache_height)
-        cached = self._get_cached_result(url, cache_height)
+        cached = self._get_cached_result(url, cache_height, selected_audio_track_id)
         if cached is not None:
             logger.info(
-                "yt-dlp resolve cache-hit url=%s max_height=%s selected_quality=%s video=%s audio=%s",
+                "yt-dlp resolve cache-hit url=%s max_height=%s selected_quality=%s selected_audio=%s video=%s audio=%s",
                 url,
                 cache_height,
                 cached.selected_quality_id,
+                cached.selected_audio_track_id,
                 _summarize_media_url(cached.url),
                 _summarize_media_url(cached.audio_url),
             )
@@ -661,6 +848,30 @@ class YtdlpPlaybackService:
         )
 
         selected_video, selected_audio = _select_stream_pair(info, selection_max_height)
+        audio_candidates = _build_audio_track_candidates(info)
+        audio_tracks = [candidate.option for candidate in audio_candidates]
+        fallback_audio_track_id = _audio_track_id_for_format(audio_candidates, selected_audio)
+        resolved_audio_track_id = _resolve_selected_audio_track_id(
+            audio_tracks,
+            selected_audio_track_id,
+            fallback_format_id=str((selected_audio or {}).get("format_id") or ""),
+        )
+        preferred_audio_candidate = _select_audio_candidate(audio_candidates, resolved_audio_track_id)
+        should_override_audio_selection = bool(str(selected_audio_track_id or "").strip()) or (
+            resolved_audio_track_id != fallback_audio_track_id
+        )
+        if preferred_audio_candidate is not None and should_override_audio_selection:
+            if selected_video is None or _has_muxed_audio(selected_video):
+                video_only_candidates = [
+                    fmt
+                    for fmt in _preferred_video_formats(info, selection_max_height)
+                    if not _has_muxed_audio(fmt)
+                ]
+                if video_only_candidates:
+                    selected_video = video_only_candidates[0]
+                    selected_audio = preferred_audio_candidate.format_entry
+            else:
+                selected_audio = preferred_audio_candidate.format_entry
         direct_url = _pick_direct_url(info, selection_max_height)
         if not direct_url:
             raise ValueError("未获取到播放地址")
@@ -716,8 +927,8 @@ class YtdlpPlaybackService:
             ytdl_format=ytdl_format,
             video_format_id=str((selected_video or {}).get("format_id") or ""),
             audio_format_id=str((selected_audio or {}).get("format_id") or ""),
-            audio_tracks=[],
-            selected_audio_track_id="",
+            audio_tracks=audio_tracks,
+            selected_audio_track_id=resolved_audio_track_id,
             title=info.get("title", ""),
             thumbnail=info.get("thumbnail", ""),
             description=info.get("description", ""),
@@ -735,18 +946,19 @@ class YtdlpPlaybackService:
             if isinstance(fmt, dict) and fmt.get("format_id")
         ]
         logger.info(
-            "yt-dlp resolve done url=%s max_height=%s elapsed=%.3fs selected_quality=%s height=%s format_id=%s requested_formats=%s video=%s audio=%s",
+            "yt-dlp resolve done url=%s max_height=%s elapsed=%.3fs selected_quality=%s selected_audio=%s height=%s format_id=%s requested_formats=%s video=%s audio=%s",
             url,
             cache_height,
             monotonic() - started_at,
             selected_quality_id,
+            resolved_audio_track_id,
             info.get("height") or 0,
             result.video_format_id or info.get("format_id") or "",
             requested_format_ids,
             _summarize_media_url(result.url),
             _summarize_media_url(result.audio_url),
         )
-        self._store_cached_result(url, cache_height, result)
+        self._store_cached_result(url, cache_height, selected_audio_track_id, result)
         return result
 
     def resolve_for_quality(
@@ -754,9 +966,11 @@ class YtdlpPlaybackService:
         url: str,
         quality_id: str,
         log: object = None,
+        *,
+        audio_track_id: str = "",
     ) -> YtdlpResolveResult:
         max_height = _quality_height_from_id(quality_id)
-        return self.resolve(url, log=log, max_height=max_height)
+        return self.resolve(url, log=log, max_height=max_height, selected_audio_track_id=audio_track_id)
 
     def apply_result(
         self,
