@@ -1382,6 +1382,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             combos.append(self._danmaku_position_preset_combo)
         if self._danmaku_color_mode_combo is not None:
             combos.append(self._danmaku_color_mode_combo)
+        if self._danmaku_outline_strength_combo is not None:
+            combos.append(self._danmaku_outline_strength_combo)
         return combos
 
     def _dialog_line_edits(self) -> list[QLineEdit]:
@@ -1402,6 +1404,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             spinboxes.append(self._danmaku_line_count_spin)
         if self._danmaku_font_size_spin is not None:
             spinboxes.append(self._danmaku_font_size_spin)
+        if self._danmaku_opacity_spin is not None:
+            spinboxes.append(self._danmaku_opacity_spin)
         if self._danmaku_scroll_speed_spin is not None:
             spinboxes.append(self._danmaku_scroll_speed_spin)
         return spinboxes

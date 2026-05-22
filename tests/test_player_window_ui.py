@@ -2521,11 +2521,15 @@ def test_player_window_applies_bordered_form_styles_in_danmaku_settings_dialog(q
 
     assert window._danmaku_render_mode_combo is not None
     assert window._danmaku_position_preset_combo is not None
+    assert window._danmaku_outline_strength_combo is not None
     assert window._danmaku_line_count_spin is not None
+    assert window._danmaku_opacity_spin is not None
     assert window._danmaku_scroll_speed_spin is not None
     assert window._danmaku_render_mode_combo.property("flat_combo_border_color") == tokens.input_border
     assert window._danmaku_position_preset_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
+    assert window._danmaku_outline_strength_combo.property("flat_combo_border_color") == tokens.input_border
     assert f"border: 1px solid {tokens.input_border};" in window._danmaku_line_count_spin.styleSheet()
+    assert f"border: 1px solid {tokens.input_border};" in window._danmaku_opacity_spin.styleSheet()
     assert f"background-color: {tokens.input_bg};" in window._danmaku_scroll_speed_spin.styleSheet()
 
     window._danmaku_render_mode_combo.setCurrentIndex(window._danmaku_render_mode_combo.findData("static"))
