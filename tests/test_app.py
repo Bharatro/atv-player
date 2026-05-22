@@ -17,6 +17,7 @@ import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
 from atv_player.diagnostics import SystemInfoEntry
+from atv_player.log_store import AppLogEvent
 from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
@@ -1847,6 +1848,7 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
             SystemInfoEntry("Platform", "Linux", None),
         ],
         "diagnostic text",
+        "detailed diagnostic text",
     )
 
     QTest.keyClick(window, Qt.Key.Key_F1)
@@ -1896,6 +1898,7 @@ def test_main_window_help_dialog_opens_system_info_links_except_platform(qtbot, 
             SystemInfoEntry("Platform", "Linux", None),
         ],
         "diagnostic text",
+        "detailed diagnostic text",
     )
 
     opened: list[str] = []
@@ -1950,6 +1953,7 @@ def test_main_window_help_dialog_renders_system_info_links_like_player_metadata(
             SystemInfoEntry("Platform", "Linux", None),
         ],
         "diagnostic text",
+        "detailed diagnostic text",
     )
 
     QTest.keyClick(window, Qt.Key.Key_F1)
@@ -2002,6 +2006,7 @@ def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> N
     window._build_main_window_help_payload = lambda: (
         [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
         "atv-player: 0.8.2\nPython: 3.12.8",
+        "系统信息\natv-player: 0.8.2",
     )
 
     clipboard = QApplication.clipboard()
@@ -2039,6 +2044,7 @@ def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, mo
     window._build_main_window_help_payload = lambda: (
         [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
         "atv-player: 0.8.2\nPython: 3.12.8",
+        "系统信息\natv-player: 0.8.2",
     )
 
     export_path = tmp_path / "diagnostics.txt"
@@ -2057,6 +2063,70 @@ def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, mo
     QTest.mouseClick(export_button, Qt.MouseButton.LeftButton)
 
     assert export_path.read_text(encoding="utf-8") == "atv-player: 0.8.2\nPython: 3.12.8"
+
+
+def test_main_window_help_dialog_export_detailed_diagnostics_button_writes_file(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
+        "atv-player: 0.8.2",
+        (
+            "系统信息\n"
+            "atv-player: 0.8.2\n\n"
+            "运行环境\n"
+            "Qt 平台: xcb\n\n"
+            "应用配置摘要\n"
+            "主题: dark\n\n"
+            "插件摘要\n"
+            "已启用插件数: 1\n\n"
+            "最近日志\n"
+            "[2026-05-22T12:00:00.000] INFO app/app 启动完成"
+        ),
+    )
+
+    export_path = tmp_path / "detailed.txt"
+    monkeypatch.setattr(
+        "atv_player.ui.help_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(export_path), "Text Files (*.txt)"),
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    export_button = dialog.findChild(QPushButton, "exportDetailedDiagnosticsButton")
+    assert export_button is not None
+
+    QTest.mouseClick(export_button, Qt.MouseButton.LeftButton)
+
+    assert export_path.read_text(encoding="utf-8") == (
+        "系统信息\n"
+        "atv-player: 0.8.2\n\n"
+        "运行环境\n"
+        "Qt 平台: xcb\n\n"
+        "应用配置摘要\n"
+        "主题: dark\n\n"
+        "插件摘要\n"
+        "已启用插件数: 1\n\n"
+        "最近日志\n"
+        "[2026-05-22T12:00:00.000] INFO app/app 启动完成"
+    )
 
 
 def test_main_window_help_payload_diagnostics_text_excludes_shortcuts(qtbot, monkeypatch) -> None:
@@ -2082,13 +2152,128 @@ def test_main_window_help_payload_diagnostics_text_excludes_shortcuts(qtbot, mon
     )
     qtbot.addWidget(window)
 
-    system_info_rows, diagnostics_text = window._build_main_window_help_payload()
+    system_info_rows, diagnostics_text, detailed_diagnostics_text = window._build_main_window_help_payload()
 
     assert system_info_rows == [
         SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
         SystemInfoEntry("Platform", "Linux 6.8.0 (x86_64)"),
     ]
     assert diagnostics_text == "系统信息\natv-player: 0.8.2\nPlatform: Linux 6.8.0 (x86_64)"
+    assert "系统信息" in detailed_diagnostics_text
+    assert "快捷键" not in detailed_diagnostics_text
+
+
+def test_main_window_help_payload_builds_detailed_diagnostics_text(qtbot, monkeypatch, tmp_path) -> None:
+    class FakePluginManager:
+        def list_plugins(self):
+            return [
+                SimpleNamespace(display_name="插件一", enabled=True),
+                SimpleNamespace(display_name="插件二", enabled=False),
+            ]
+
+    class FakeLogService:
+        def load_records(self, *, limit, log_filter):
+            del log_filter
+            assert limit == 20
+            return [
+                AppLogEvent(
+                    timestamp="2026-05-22T12:00:00.000",
+                    level="INFO",
+                    source="app",
+                    category="app",
+                    message="启动完成",
+                    module="main",
+                )
+            ]
+
+    monkeypatch.setattr(
+        main_window_module,
+        "collect_system_info_entries",
+        lambda: (
+            SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+            SystemInfoEntry("Platform", "Linux 6.8.0 (x86_64)"),
+        ),
+    )
+    monkeypatch.setattr(main_window_module.QGuiApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(main_window_module, "app_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(main_window_module, "app_cache_dir", lambda: tmp_path / "cache")
+
+    config = AppConfig(theme_mode="dark", network_proxy_mode="direct", base_url="http://127.0.0.1:4567")
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+        app_log_service=FakeLogService(),
+    )
+    qtbot.addWidget(window)
+
+    system_info_rows, diagnostics_text, detailed_text = window._build_main_window_help_payload()
+
+    assert system_info_rows == [
+        SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+        SystemInfoEntry("Platform", "Linux 6.8.0 (x86_64)"),
+    ]
+    assert diagnostics_text == "系统信息\natv-player: 0.8.2\nPlatform: Linux 6.8.0 (x86_64)"
+    assert "系统信息" in detailed_text
+    assert "运行环境" in detailed_text
+    assert "Qt 平台: xcb" in detailed_text
+    assert "应用配置摘要" in detailed_text
+    assert "主题: dark" in detailed_text
+    assert "代理模式: direct" in detailed_text
+    assert "后端地址: http://127.0.0.1:4567" in detailed_text
+    assert "插件摘要" in detailed_text
+    assert "已启用插件数: 1" in detailed_text
+    assert "插件一" in detailed_text
+    assert "最近日志" in detailed_text
+    assert "[2026-05-22T12:00:00.000] INFO app/app 启动完成" in detailed_text
+
+
+def test_main_window_help_dialog_detailed_export_uses_dedicated_default_filename(
+    qtbot, monkeypatch
+) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
+        "atv-player: 0.8.2",
+        "系统信息\natv-player: 0.8.2",
+    )
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "atv_player.ui.help_dialog.QFileDialog.getSaveFileName",
+        lambda parent, title, default_name, filters: calls.append((title, default_name)) or ("", filters),
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    button = dialog.findChild(QPushButton, "exportDetailedDiagnosticsButton")
+    assert button is not None
+
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+    assert calls == [("导出详细诊断", "atv-player-diagnostics-detailed.txt")]
 
 
 def test_main_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:

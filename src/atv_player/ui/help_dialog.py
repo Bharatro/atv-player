@@ -80,11 +80,13 @@ class ShortcutHelpDialog(ThemedDialogBase):
         *,
         system_info_rows: Sequence[SystemInfoEntry] | None = None,
         diagnostics_text: str = "",
+        detailed_diagnostics_text: str = "",
     ) -> None:
         super().__init__(title="帮助", parent=parent)
         self.setModal(True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._diagnostics_text = diagnostics_text
+        self._detailed_diagnostics_text = detailed_diagnostics_text
         if system_info_rows is not None:
             self.resize(640, 520)
         else:
@@ -121,6 +123,10 @@ class ShortcutHelpDialog(ThemedDialogBase):
             self.export_diagnostics_button.setObjectName("exportDiagnosticsButton")
             self.export_diagnostics_button.clicked.connect(self._export_diagnostics)
             actions.addWidget(self.export_diagnostics_button)
+            self.export_detailed_diagnostics_button = QPushButton("导出详细诊断", self)
+            self.export_detailed_diagnostics_button.setObjectName("exportDetailedDiagnosticsButton")
+            self.export_detailed_diagnostics_button.clicked.connect(self._export_detailed_diagnostics)
+            actions.addWidget(self.export_detailed_diagnostics_button)
             layout.addLayout(actions)
             layout.addWidget(QLabel("快捷键", self))
 
@@ -176,6 +182,20 @@ class ShortcutHelpDialog(ThemedDialogBase):
         except OSError as exc:
             QMessageBox.critical(self, "错误", f"导出诊断信息失败: {exc}")
 
+    def _export_detailed_diagnostics(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出详细诊断",
+            "atv-player-diagnostics-detailed.txt",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(self._detailed_diagnostics_text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "错误", f"导出详细诊断失败: {exc}")
+
 
 def show_shortcut_help_dialog(
     parent: QWidget,
@@ -185,6 +205,7 @@ def show_shortcut_help_dialog(
     quit_sequence: QKeySequence,
     system_info_rows: Sequence[SystemInfoEntry] | None = None,
     diagnostics_text: str = "",
+    detailed_diagnostics_text: str = "",
 ) -> ShortcutHelpDialog:
     if existing_dialog is not None:
         existing_dialog.show()
@@ -197,6 +218,7 @@ def show_shortcut_help_dialog(
         parent,
         system_info_rows=system_info_rows,
         diagnostics_text=diagnostics_text,
+        detailed_diagnostics_text=detailed_diagnostics_text,
     )
     dialog.show()
     dialog.raise_()

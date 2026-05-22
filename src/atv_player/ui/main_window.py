@@ -1,6 +1,7 @@
 from __future__ import annotations
 import inspect
 import json
+import platform
 import re
 import threading
 from collections.abc import Iterable
@@ -11,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent, QRect
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut, QMouseEvent
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QGuiApplication, QKeySequence, QShortcut, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,14 +34,17 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
+from atv_player.log_store import AppLogFilter
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
+    AppConfig,
     HistoryRecord,
     OpenPlayerRequest,
     PlayItem,
     PlaybackDetailFieldAction,
     VodItem,
 )
+from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, show_shortcut_help_dialog
@@ -4075,14 +4079,102 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
 
-    def _build_main_window_help_payload(self) -> tuple[list[SystemInfoEntry], str]:
+    def _build_main_window_help_payload(self) -> tuple[list[SystemInfoEntry], str, str]:
         system_info_rows = list(collect_system_info_entries())
         lines = ["系统信息"]
         lines.extend(f"{entry.label}: {entry.value}" for entry in system_info_rows)
-        return system_info_rows, "\n".join(lines)
+        return system_info_rows, "\n".join(lines), self._build_detailed_diagnostics_text(system_info_rows)
+
+    def _build_detailed_diagnostics_text(self, system_info_rows: list[SystemInfoEntry]) -> str:
+        sections = [
+            self._build_detailed_system_info_section(system_info_rows),
+            self._build_detailed_runtime_section(),
+            self._build_detailed_config_section(),
+            self._build_detailed_plugin_section(),
+            self._build_detailed_log_section(),
+        ]
+        return "\n\n".join(section for section in sections if section.strip())
+
+    def _build_detailed_system_info_section(self, system_info_rows: list[SystemInfoEntry]) -> str:
+        lines = ["系统信息"]
+        lines.extend(f"{entry.label}: {entry.value}" for entry in system_info_rows)
+        return "\n".join(lines)
+
+    def _build_detailed_runtime_section(self) -> str:
+        executable_path = ""
+        app = QApplication.instance()
+        if app is not None:
+            executable_path = app.applicationFilePath().strip()
+        lines = ["运行环境"]
+        lines.append(f"Qt 平台: {QGuiApplication.platformName() or '不可用'}")
+        lines.append(f"CPU 架构: {platform.machine() or '不可用'}")
+        lines.append(f"可执行文件: {executable_path or '不可用'}")
+        lines.append(f"数据目录: {app_data_dir()}")
+        lines.append(f"缓存目录: {app_cache_dir()}")
+        return "\n".join(lines)
+
+    def _build_detailed_config_section(self) -> str:
+        lines = ["应用配置摘要"]
+        lines.append(f"主题: {self.config.theme_mode}")
+        lines.append(f"代理模式: {self.config.network_proxy_mode}")
+        lines.append(f"后端地址: {self.config.base_url}")
+        lines.append(f"最后活动窗口: {self.config.last_active_window}")
+        lines.append(f"日志记录: {'开启' if self.config.logging_enabled else '关闭'}")
+        lines.append(f"元数据增强: {'开启' if self.config.metadata_enhancement_enabled else '关闭'}")
+        return "\n".join(lines)
+
+    def _build_detailed_plugin_section(self) -> str:
+        plugin_names = self._list_enabled_plugin_names()
+        lines = ["插件摘要", f"已启用插件数: {len(plugin_names)}"]
+        lines.extend(plugin_names or ["无"])
+        return "\n".join(lines)
+
+    def _list_enabled_plugin_names(self) -> list[str]:
+        if self._plugin_manager is None:
+            return []
+        list_plugins = getattr(self._plugin_manager, "list_plugins", None)
+        if not callable(list_plugins):
+            return []
+        names: list[str] = []
+        for plugin in list_plugins() or []:
+            if not bool(getattr(plugin, "enabled", False)):
+                continue
+            display_name = str(getattr(plugin, "display_name", "") or getattr(plugin, "name", "") or "").strip()
+            if display_name:
+                names.append(display_name)
+        return names
+
+    def _build_detailed_log_section(self) -> str:
+        lines = ["最近日志"]
+        lines.extend(self._load_recent_app_log_lines(limit=20) or ["无"])
+        return "\n".join(lines)
+
+    def _load_recent_app_log_lines(self, limit: int) -> list[str]:
+        if self._app_log_service is None:
+            return []
+        load_records = getattr(self._app_log_service, "load_records", None)
+        if not callable(load_records):
+            return []
+        try:
+            records = load_records(limit=limit, log_filter=AppLogFilter())
+        except Exception:
+            return ["不可用"]
+        lines: list[str] = []
+        for record in records or []:
+            try:
+                parts = [
+                    f"[{record.timestamp}]",
+                    str(record.level),
+                    f"{record.source}/{record.category}",
+                    str(record.message),
+                ]
+            except Exception:
+                continue
+            lines.append(" ".join(parts))
+        return lines
 
     def _show_shortcut_help(self) -> None:
-        system_info_rows, diagnostics_text = self._build_main_window_help_payload()
+        system_info_rows, diagnostics_text, detailed_diagnostics_text = self._build_main_window_help_payload()
         dialog = show_shortcut_help_dialog(
             self,
             context="main_window",
@@ -4090,6 +4182,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             quit_sequence=self.quit_shortcut.key(),
             system_info_rows=system_info_rows,
             diagnostics_text=diagnostics_text,
+            detailed_diagnostics_text=detailed_diagnostics_text,
         )
         if dialog is self.help_dialog:
             return
