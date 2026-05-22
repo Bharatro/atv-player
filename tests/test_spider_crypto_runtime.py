@@ -24,6 +24,7 @@ class Spider:
     module = runtime.load_module(package, "spider_plugin_fixture")
 
     assert module.Spider().getName() == "Fixture Spider"
+    assert package.header("id").endswith("53df")
 
 
 def test_runtime_loads_signed_package_with_dataclass_spider() -> None:
@@ -48,9 +49,25 @@ class Spider:
     assert module.Spider().getName() == "Fixture Spider"
 
 
+def test_runtime_loads_legacy_signed_package_without_id() -> None:
+    package_text, keyring = build_secspider_package(
+        "class Spider:\n    pass\n",
+        package_id=None,
+    )
+    runtime = SecSpiderRuntime(keyring)
+    package = SecSpiderPackage.parse(package_text)
+
+    module = runtime.load_module(package, "spider_plugin_legacy_fixture")
+
+    assert module.Spider is not None
+    assert "id" not in package.headers
+
+
 def test_runtime_rejects_unknown_kid() -> None:
     package_text, _ = build_secspider_package("class Spider:\n    pass\n")
-    package = SecSpiderPackage.parse(package_text.replace("//@kid:fixture-kid", "//@kid:missing-kid"))
+    package = SecSpiderPackage.parse(
+        package_text.replace("//@kid:fixture-kid", "//@kid:missing-kid")
+    )
     runtime = SecSpiderRuntime.from_dicts(public_keys={}, master_secrets={})
 
     with pytest.raises(SecSpiderKeyError, match="missing key material"):
@@ -59,7 +76,9 @@ def test_runtime_rejects_unknown_kid() -> None:
 
 def test_runtime_rejects_tampered_signature() -> None:
     package_text, keyring = build_secspider_package("class Spider:\n    pass\n")
-    package = SecSpiderPackage.parse(package_text.replace("payload.base64:", "payload.base64:A", 1))
+    package = SecSpiderPackage.parse(
+        package_text.replace("payload.base64:", "payload.base64:A", 1)
+    )
     runtime = SecSpiderRuntime(keyring)
 
     with pytest.raises(SecSpiderSignatureError, match="signature verify failed"):
@@ -67,7 +86,10 @@ def test_runtime_rejects_tampered_signature() -> None:
 
 
 def test_runtime_rejects_hash_mismatch() -> None:
-    package_text, keyring = build_secspider_package("class Spider:\n    pass\n", hash_override="deadbeef" * 8)
+    package_text, keyring = build_secspider_package(
+        "class Spider:\n    pass\n",
+        hash_override="deadbeef" * 8,
+    )
     package = SecSpiderPackage.parse(package_text)
     runtime = SecSpiderRuntime(keyring)
 

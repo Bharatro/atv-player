@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from base64 import b64decode
+from binascii import crc_hqx
 from dataclasses import dataclass
+from uuid import uuid4
 
 from atv_player.plugins.spider_crypto.errors import SecSpiderFormatError
 
@@ -19,7 +21,7 @@ _REQUIRED_HEADERS = (
     "hash",
     "sig",
 )
-_SIGNING_HEADERS = (
+_LEGACY_SIGNING_HEADERS = (
     "name",
     "version",
     "remark",
@@ -32,6 +34,45 @@ _SIGNING_HEADERS = (
     "ek",
     "hash",
 )
+_PACKAGE_HEADER_ORDER = (
+    "name",
+    "version",
+    "remark",
+    "id",
+    "tags",
+    "format",
+    "alg",
+    "wrap",
+    "sign",
+    "kid",
+    "nonce",
+    "ek",
+    "hash",
+    "sig",
+)
+
+
+def crc16_hex(text: str) -> str:
+    return f"{crc_hqx(text.encode('utf-8'), 0):04x}"
+
+
+def generate_secspider_id(name: str) -> str:
+    return uuid4().hex + crc16_hex(name)
+
+
+def iter_package_header_keys(headers: dict[str, str]) -> tuple[str, ...]:
+    ordered_keys = [key for key in _PACKAGE_HEADER_ORDER if key in headers]
+    ordered_keys.extend(key for key in headers if key not in _PACKAGE_HEADER_ORDER)
+    return tuple(ordered_keys)
+
+
+def serialize_package_text(headers: dict[str, str], payload_b64: str) -> str:
+    lines = ["// ignore"]
+    lines.extend(
+        f"//@{key}:{headers[key]}" for key in iter_package_header_keys(headers)
+    )
+    lines.extend(["// ignore", f"payload.base64:{payload_b64}"])
+    return "\n".join(lines)
 
 
 @dataclass(slots=True)
@@ -40,7 +81,7 @@ class SecSpiderPackage:
     payload_b64: str
 
     @classmethod
-    def parse(cls, text: str) -> "SecSpiderPackage":
+    def parse(cls, text: str) -> SecSpiderPackage:
         headers: dict[str, str] = {}
         payload_b64 = ""
         for raw_line in text.splitlines():
@@ -81,6 +122,9 @@ class SecSpiderPackage:
         return b64decode(raw.removeprefix("base64:"))
 
     def signing_bytes(self) -> bytes:
-        lines = [f"//@{key}:{self.header(key)}" for key in _SIGNING_HEADERS]
+        signing_headers = list(_LEGACY_SIGNING_HEADERS)
+        if "id" in self.headers:
+            signing_headers.insert(3, "id")
+        lines = [f"//@{key}:{self.header(key)}" for key in signing_headers]
         lines.append(f"payload.base64:{self.payload_b64}")
         return "\n".join(lines).encode("utf-8")

@@ -21,6 +21,7 @@
 - [x] YouTube 音轨切换
 - [ ] YouTube TIME STAMPS / Chapters 解析与跳转
 - [ ] 优化 YouTube 字幕与翻译字幕加载策略
+- [ ] YouTube更多设置：默认字幕、默认音轨
 - [x] 修复 YouTube 播放卡顿
 - [x] 全局解析 YouTube 无法恢复播放进度
 - [x] Windows 未安装 Chrome 时 YouTube Cookie 提取失败处理
