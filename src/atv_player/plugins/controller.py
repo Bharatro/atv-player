@@ -2430,10 +2430,19 @@ class SpiderPluginController:
         if not candidate or not yt_dlp.can_resolve(candidate):
             return False
         selected_quality_id = item.selected_playback_quality_id or ""
+        selected_audio_track_id = item.selected_audio_track_id or ""
         if selected_quality_id.startswith("ytdlp_"):
-            result = yt_dlp.resolve_for_quality(candidate, selected_quality_id)
+            result = yt_dlp.resolve_for_quality(
+                candidate,
+                selected_quality_id,
+                audio_track_id=selected_audio_track_id,
+            )
         else:
-            result = yt_dlp.resolve(candidate, max_height=None)
+            result = yt_dlp.resolve(
+                candidate,
+                max_height=None,
+                selected_audio_track_id=selected_audio_track_id,
+            )
         yt_dlp.apply_result(result, vod=vod, item=item, source_url=candidate)
         return True
 

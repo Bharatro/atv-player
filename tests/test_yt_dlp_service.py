@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from atv_player.models import AppConfig, PlayItem, VodItem
+from atv_player.models import AppConfig, PlayItem, VodItem, YtdlpAudioTrackOption
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
@@ -210,6 +210,108 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_prefers_original_english_audio_track(self, monkeypatch, service):
+        info = _sample_info(
+            formats=[
+                {
+                    "format_id": "137",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "140-zh",
+                    "url": "https://stream.test/audio-zh.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "zh",
+                    "format_note": "dubbed",
+                },
+                {
+                    "format_id": "140-en",
+                    "url": "https://stream.test/audio-en.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "en",
+                    "format_note": "original",
+                    "language_preference": 10,
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert [track.id for track in result.audio_tracks] == ["ytdlp_audio_en_140-en", "ytdlp_audio_zh_140-zh"]
+        assert result.selected_audio_track_id == "ytdlp_audio_en_140-en"
+        assert result.audio_format_id == "140-en"
+
+    def test_resolve_for_quality_preserves_requested_audio_track(self, monkeypatch, service):
+        info = _sample_info(
+            formats=[
+                {
+                    "format_id": "137",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "136",
+                    "url": "https://stream.test/video-720.mp4",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2500,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "140-en",
+                    "url": "https://stream.test/audio-en.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "en",
+                    "format_note": "original",
+                },
+                {
+                    "format_id": "140-zh",
+                    "url": "https://stream.test/audio-zh.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "zh",
+                    "format_note": "dubbed",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve_for_quality(
+            "https://www.youtube.com/watch?v=test123",
+            "ytdlp_720",
+            audio_track_id="ytdlp_audio_zh_140-zh",
+        )
+
+        assert result.selected_quality_id == "ytdlp_720"
+        assert result.video_format_id == "136"
+        assert result.selected_audio_track_id == "ytdlp_audio_zh_140-zh"
+        assert result.audio_format_id == "140-zh"
+
     def test_prefers_same_height_muxed_youtube_stream_over_requested_split_pair(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",
@@ -649,6 +751,52 @@ class TestResolve:
         assert second.url == "https://stream.test/direct.mp4"
         assert len(calls) == 1
 
+    def test_cache_key_includes_selected_audio_track(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(
+            formats=[
+                {
+                    "format_id": "137",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "140-en",
+                    "url": "https://stream.test/audio-en.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "en",
+                    "format_note": "original",
+                },
+                {
+                    "format_id": "140-zh",
+                    "url": "https://stream.test/audio-zh.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "zh",
+                    "format_note": "dubbed",
+                },
+            ],
+        )
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(ttl_seconds=300.0, now=lambda: clock["now"])
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        service.resolve("https://www.youtube.com/watch?v=test123", selected_audio_track_id="ytdlp_audio_en_140-en")
+        service.resolve("https://www.youtube.com/watch?v=test123", selected_audio_track_id="ytdlp_audio_zh_140-zh")
+
+        assert len(calls) == 2
+
     def test_quality_specific_resolve_reuses_unbounded_cache_when_selected_quality_matches(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
@@ -981,6 +1129,47 @@ class TestResolveToPlayItem:
         assert item.selected_playback_quality_id == "ytdlp_1080"
         assert len(item.playback_qualities) == 3
         assert len(item.external_subtitles) == 2
+
+    def test_apply_result_copies_ytdlp_audio_tracks_and_selected_audio_id(self, monkeypatch, service):
+        from atv_player.yt_dlp_service import YtdlpResolveResult
+
+        result = YtdlpResolveResult(
+            url="https://stream.test/video.mp4",
+            audio_url="https://stream.test/audio-en.m4a",
+            ytdl_format="137+140",
+            video_format_id="137",
+            audio_format_id="140",
+            audio_tracks=[
+                YtdlpAudioTrackOption(
+                    id="ytdlp_audio_en_140",
+                    label="English Original",
+                    lang="en",
+                    format_id="140",
+                    is_original=True,
+                ),
+                YtdlpAudioTrackOption(
+                    id="ytdlp_audio_zh_140-dub",
+                    label="中文配音",
+                    lang="zh",
+                    format_id="140-dub",
+                ),
+            ],
+            selected_audio_track_id="ytdlp_audio_en_140",
+            title="Test Video",
+            thumbnail="https://img.test/thumb.jpg",
+            description="A test video description",
+            duration_seconds=300,
+            headers={"Referer": "https://www.youtube.com/"},
+            subtitles=[],
+            qualities=[],
+            selected_quality_id="",
+            extractor="youtube",
+        )
+        item = PlayItem(title="Episode", url="", original_url="", vod_id="video-1")
+        service.apply_result(result, item=item, source_url="https://www.youtube.com/watch?v=test123")
+
+        assert [track.id for track in item.audio_tracks] == ["ytdlp_audio_en_140", "ytdlp_audio_zh_140-dub"]
+        assert item.selected_audio_track_id == "ytdlp_audio_en_140"
 
 
 class TestBuildQualityOptions:

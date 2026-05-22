@@ -2653,9 +2653,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if yt_dlp is None or not yt_dlp.is_available():
                 raise ValueError("yt-dlp 不可用")
             selected_quality_id = current_item.selected_playback_quality_id or ""
+            selected_audio_track_id = current_item.selected_audio_track_id or ""
             if selected_quality_id.startswith("ytdlp_"):
-                return yt_dlp.resolve_for_quality(source_url, selected_quality_id)
-            return yt_dlp.resolve(source_url, max_height=None)
+                return yt_dlp.resolve_for_quality(
+                    source_url,
+                    selected_quality_id,
+                    audio_track_id=selected_audio_track_id,
+                )
+            return yt_dlp.resolve(
+                source_url,
+                max_height=None,
+                selected_audio_track_id=selected_audio_track_id,
+            )
 
         def load_item(
             session_or_item,
@@ -2721,10 +2730,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             selected_quality_id = current_item.selected_playback_quality_id or ""
+            selected_audio_track_id = current_item.selected_audio_track_id or ""
             if selected_quality_id.startswith("ytdlp_"):
-                result = self._yt_dlp_service.resolve_for_quality(source_url, selected_quality_id)
+                result = self._yt_dlp_service.resolve_for_quality(
+                    source_url,
+                    selected_quality_id,
+                    audio_track_id=selected_audio_track_id,
+                )
             else:
-                result = self._yt_dlp_service.resolve(source_url, max_height=None)
+                result = self._yt_dlp_service.resolve(
+                    source_url,
+                    max_height=None,
+                    selected_audio_track_id=selected_audio_track_id,
+                )
             self._yt_dlp_service.apply_result(
                 result,
                 vod=session.vod,
