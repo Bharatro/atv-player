@@ -4374,7 +4374,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             value = int(getattr(self.config, "preferred_danmaku_opacity", 85))
         except (TypeError, ValueError):
             return 85
-        return max(30, min(value, 100))
+        clamped = max(30, min(value, 100))
+        return max(30, min(int(round(clamped / 5) * 5), 100))
 
     def _preferred_danmaku_outline_strength(self) -> str:
         if self.config is None:
@@ -4490,7 +4491,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _save_danmaku_opacity(self, value: int) -> None:
         if self.config is None:
             return
-        normalized = max(30, min(int(value), 100))
+        clamped = max(30, min(int(value), 100))
+        normalized = max(30, min(int(round(clamped / 5) * 5), 100))
         if int(getattr(self.config, "preferred_danmaku_opacity", 85)) == normalized:
             return
         self.config.preferred_danmaku_opacity = normalized

@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.danmaku.subtitle import render_danmaku_ass, resolved_outline_style
+from atv_player.danmaku.subtitle import _normalize_opacity, render_danmaku_ass, resolved_outline_style
 from atv_player.paths import app_cache_dir
 
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
@@ -35,6 +35,7 @@ def danmaku_ass_cache_path(
     opacity: int = 85,
     outline_strength: str = "strong",
 ) -> Path:
+    normalized_opacity = _normalize_opacity(opacity)
     outline_width, shadow = resolved_outline_style(outline_strength)
     digest = sha256(
         "\0".join(
@@ -48,7 +49,7 @@ def danmaku_ass_cache_path(
                 position_preset,
                 f"{float(scroll_speed):.2f}",
                 str(int(font_size)),
-                str(int(opacity)),
+                str(normalized_opacity),
                 str(outline_width),
                 str(shadow),
                 xml_text,

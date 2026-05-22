@@ -75,7 +75,8 @@ def _normalize_danmaku_opacity(value: object) -> int:
         normalized = int(value)
     except (TypeError, ValueError):
         return 85
-    return max(30, min(normalized, 100))
+    clamped = max(30, min(normalized, 100))
+    return max(30, min(int(round(clamped / 5) * 5), 100))
 
 
 def _normalize_danmaku_outline_strength(value: object) -> str:

@@ -2607,9 +2607,10 @@ def test_player_window_saves_and_resets_danmaku_readability_settings(qtbot) -> N
     qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
 
     assert isinstance(window._danmaku_opacity_spin, QSpinBox)
-    window._danmaku_opacity_spin.setValue(60)
+    window._danmaku_opacity_spin.setValue(63)
 
-    assert config.preferred_danmaku_opacity == 60
+    assert config.preferred_danmaku_opacity == 65
+    assert window._danmaku_opacity_spin.value() == 65
     assert window._danmaku_outline_strength_combo is None
     assert config.preferred_danmaku_outline_strength == "strong"
 

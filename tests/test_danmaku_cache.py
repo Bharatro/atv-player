@@ -96,6 +96,38 @@ def test_danmaku_ass_cache_path_changes_when_opacity_or_outline_changes(monkeypa
     assert first != second
 
 
+def test_danmaku_ass_cache_path_reuses_same_bucket_for_nearby_opacity_values(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'
+
+    first = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=63,
+        outline_strength="strong",
+    )
+    second = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=65,
+        outline_strength="strong",
+    )
+
+    assert first == second
+
+
 def test_danmaku_ass_cache_path_changes_when_outline_rendering_changes(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'

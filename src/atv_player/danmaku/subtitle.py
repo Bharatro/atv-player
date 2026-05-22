@@ -13,6 +13,7 @@ _LANE_HEIGHT = 40
 _DEFAULT_FONT_SIZE = 32
 _DEFAULT_UNIFORM_COLOR = "#FFFFFF"
 _DEFAULT_OPACITY = 85
+_OPACITY_STEP = 5
 _DEFAULT_OUTLINE_STRENGTH = "strong"
 _SCROLL_MIN_DURATION_SECONDS = 12.0
 _DEFAULT_SCROLL_SPEED = 1.0
@@ -328,7 +329,8 @@ def _normalize_opacity(value: int) -> int:
         normalized = int(value)
     except (TypeError, ValueError):
         return _DEFAULT_OPACITY
-    return max(30, min(normalized, 100))
+    clamped = max(30, min(normalized, 100))
+    return max(30, min(int(round(clamped / _OPACITY_STEP) * _OPACITY_STEP), 100))
 
 
 def _normalize_outline_strength(value: str) -> str:
