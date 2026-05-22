@@ -16,9 +16,9 @@
 ## YouTube / yt-dlp
 
 - [ ] YouTube 详情信息不完整
-- [ ] YouTube 字幕切换失败（429 Too Many Requests）
-  - `GET https://www.youtube.com/api/timedtext?v=wlpBCazAY9Q&ei=DXcJaouDFIKv2roPt4y-uAw&caps=asr&opi=112496729&xoaf=5&xowf=1&xospf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1779030397&sparams=ip%2Cipbits%2Cexpire%2Cv%2Cei%2Ccaps%2Copi%2Cxoaf&signature=6D3789B362EDD5A64D0B6239AB9BE3C41833669E.89EABCD2D71FCB3AA8D40B42244C5C64A370A490&key=yt8&kind=asr&lang=en&tlang=zh-Hans&fmt=json3`
-  - `HTTP/1.1 429 Too Many Requests`
+- [x] YouTube 字幕切换失败
+- [ ] YouTube网页播放，不同角色的字幕颜色不同
+- [x] YouTube 音轨切换
 - [ ] YouTube TIME STAMPS / Chapters 解析与跳转
 - [ ] 优化 YouTube 字幕与翻译字幕加载策略
 - [x] 修复 YouTube 播放卡顿
@@ -57,7 +57,7 @@
 ## 播放器 UI
 
 - [ ] 播放详情：点击封面查看大图
-- [ ] 多海报切换显示
+- [x] 多海报切换显示
 - [ ] 播放控制区域进一步视觉优化
 - [ ] 视频列表支持更多卡片布局
 - [ ] 播放记录支持表格 / 列表 / 卡片模式
@@ -66,7 +66,9 @@
 - [ ] 播放列表支持排序 / 逆序
 - [ ] 定时关闭
 - [ ] 打开外部播放器 / 浏览器 / 复制播放地址
-- [ ] 系统信息中的版本链接到官网下载地址
+- [ ] F1帮助系统信息中的版本链接到官网下载地址
+- [ ] F1帮助系统信息，平台显示更多信息，比如Linux内核版本、Windows系统版本，CPU架构
+- [ ] F1帮助一键复制、导出诊断信息不要包含快捷键
 - [x] 播放日志增加时间前缀
 - [x] Slider 背景透明
 - [x] 下拉框视觉优化

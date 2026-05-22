@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -21,9 +21,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from atv_player.diagnostics import SystemInfoEntry
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 HelpContext = Literal["main_window", "player_window"]
+_SYSTEM_INFO_URL_ROLE = Qt.ItemDataRole.UserRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +78,7 @@ class ShortcutHelpDialog(ThemedDialogBase):
         entries: Sequence[ShortcutEntry],
         parent: QWidget | None = None,
         *,
-        system_info_rows: Sequence[tuple[str, str]] | None = None,
+        system_info_rows: Sequence[SystemInfoEntry] | None = None,
         diagnostics_text: str = "",
     ) -> None:
         super().__init__(title="帮助", parent=parent)
@@ -101,9 +103,10 @@ class ShortcutHelpDialog(ThemedDialogBase):
             self.system_info_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.system_info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             self.system_info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            for row, (label, value) in enumerate(system_info_rows):
-                self.system_info_table.setItem(row, 0, QTableWidgetItem(label))
-                self.system_info_table.setItem(row, 1, QTableWidgetItem(value))
+            for row, entry in enumerate(system_info_rows):
+                self.system_info_table.setItem(row, 0, QTableWidgetItem(entry.label))
+                self.system_info_table.setItem(row, 1, self._build_system_info_value_item(entry))
+            self.system_info_table.cellClicked.connect(self._open_system_info_link)
             layout.addWidget(self.system_info_table)
 
             actions = QHBoxLayout()
@@ -135,6 +138,29 @@ class ShortcutHelpDialog(ThemedDialogBase):
 
         layout.addWidget(self.shortcuts_table)
 
+    def _build_system_info_value_item(self, entry: SystemInfoEntry) -> QTableWidgetItem:
+        item = QTableWidgetItem(entry.value)
+        if entry.url:
+            font = item.font()
+            font.setUnderline(True)
+            item.setFont(font)
+            item.setForeground(Qt.GlobalColor.blue)
+            item.setToolTip(entry.url)
+            item.setData(_SYSTEM_INFO_URL_ROLE, entry.url)
+        return item
+
+    def _open_system_info_link(self, row: int, column: int) -> None:
+        if column != 1:
+            return
+        item = self.system_info_table.item(row, column)
+        if item is None:
+            return
+        url_text = item.data(_SYSTEM_INFO_URL_ROLE)
+        if not isinstance(url_text, str) or not url_text:
+            return
+        if not QDesktopServices.openUrl(QUrl(url_text)):
+            QMessageBox.warning(self, "错误", f"打开链接失败: {url_text}")
+
     def _copy_diagnostics_to_clipboard(self) -> None:
         clipboard = QApplication.clipboard()
         if clipboard is not None:
@@ -161,7 +187,7 @@ def show_shortcut_help_dialog(
     context: HelpContext,
     existing_dialog: ShortcutHelpDialog | None,
     quit_sequence: QKeySequence,
-    system_info_rows: Sequence[tuple[str, str]] | None = None,
+    system_info_rows: Sequence[SystemInfoEntry] | None = None,
     diagnostics_text: str = "",
 ) -> ShortcutHelpDialog:
     if existing_dialog is not None:

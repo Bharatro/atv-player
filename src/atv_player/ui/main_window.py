@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
-from atv_player.diagnostics import collect_system_info_entries
+from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
     HistoryRecord,
@@ -4057,14 +4057,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
 
-    def _build_main_window_help_payload(self) -> tuple[list[tuple[str, str]], str]:
-        system_info_rows = [
-            (entry.label, entry.value)
-            for entry in collect_system_info_entries()
-        ]
+    def _build_main_window_help_payload(self) -> tuple[list[SystemInfoEntry], str]:
+        system_info_rows = list(collect_system_info_entries())
         shortcut_entries = shortcut_entries_for("main_window", self.quit_shortcut.key())
         lines = ["系统信息"]
-        lines.extend(f"{label}: {value}" for label, value in system_info_rows)
+        lines.extend(f"{entry.label}: {entry.value}" for entry in system_info_rows)
         lines.append("")
         lines.append("快捷键")
         lines.extend(f"{entry.key}: {entry.description}" for entry in shortcut_entries)

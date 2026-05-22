@@ -26,17 +26,26 @@ _TIMEOUT_VALUE = "超时"
 class SystemInfoEntry:
     label: str
     value: str
+    url: str | None = None
+
+
+_ATV_PLAYER_DOWNLOAD_URL = "https://github.com/power721/atv-player/releases/latest"
+_PYTHON_DOWNLOAD_URL = "https://www.python.org/downloads/"
+_PYSIDE6_HOME_URL = "https://doc.qt.io/qtforpython-6/"
+_MPV_HOME_URL = "https://mpv.io/installation/"
+_FFMPEG_HOME_URL = "https://www.ffmpeg.org/download.html"
+_YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest"
 
 
 def collect_system_info_entries() -> tuple[SystemInfoEntry, ...]:
     ytdlp_path = resolve_system_ytdlp_path() or "yt-dlp"
     return (
-        SystemInfoEntry("atv-player", resolve_app_version()),
-        SystemInfoEntry("Python", platform.python_version()),
-        SystemInfoEntry("PySide6", pyside_version),
-        SystemInfoEntry("mpv", _read_command_version(["mpv", "--version"], _parse_mpv_version)),
-        SystemInfoEntry("ffmpeg", _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version)),
-        SystemInfoEntry("yt-dlp", _read_command_version([ytdlp_path, "--version"], _parse_ytdlp_version)),
+        SystemInfoEntry("atv-player", resolve_app_version(), _ATV_PLAYER_DOWNLOAD_URL),
+        SystemInfoEntry("Python", platform.python_version(), _PYTHON_DOWNLOAD_URL),
+        SystemInfoEntry("PySide6", pyside_version, _PYSIDE6_HOME_URL),
+        SystemInfoEntry("mpv", _read_command_version(["mpv", "--version"], _parse_mpv_version), _MPV_HOME_URL),
+        SystemInfoEntry("ffmpeg", _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version), _FFMPEG_HOME_URL),
+        SystemInfoEntry("yt-dlp", _read_command_version([ytdlp_path, "--version"], _parse_ytdlp_version), _YTDLP_DOWNLOAD_URL),
         SystemInfoEntry("Platform", platform.system() or platform.platform() or "Unknown"),
     )
 

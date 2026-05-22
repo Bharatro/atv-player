@@ -44,3 +44,26 @@ def test_resolve_app_version_prefers_bundled_build_version(monkeypatch, tmp_path
     monkeypatch.setattr(diagnostics, "_BUNDLED_VERSION_PATH", Path(version_path))
 
     assert diagnostics.resolve_app_version() == "1.2.3"
+
+
+def test_collect_system_info_entries_adds_links_for_all_non_platform_rows(monkeypatch) -> None:
+    monkeypatch.setattr(diagnostics, "resolve_app_version", lambda: "0.8.2")
+    monkeypatch.setattr(diagnostics.platform, "python_version", lambda: "3.12.8")
+    monkeypatch.setattr(diagnostics.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(diagnostics, "pyside_version", "6.8.1")
+    monkeypatch.setattr(diagnostics, "resolve_system_ytdlp_path", lambda: "yt-dlp")
+
+    versions = iter(["0.39", "7.1", "2026.05.17"])
+    monkeypatch.setattr(diagnostics, "_read_command_version", lambda command, parser: next(versions))
+
+    entries = diagnostics.collect_system_info_entries()
+
+    assert entries == (
+        diagnostics.SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+        diagnostics.SystemInfoEntry("Python", "3.12.8", "https://www.python.org/downloads/"),
+        diagnostics.SystemInfoEntry("PySide6", "6.8.1", "https://doc.qt.io/qtforpython-6/"),
+        diagnostics.SystemInfoEntry("mpv", "0.39", "https://mpv.io/installation/"),
+        diagnostics.SystemInfoEntry("ffmpeg", "7.1", "https://www.ffmpeg.org/download.html"),
+        diagnostics.SystemInfoEntry("yt-dlp", "2026.05.17", "https://github.com/yt-dlp/yt-dlp/releases/latest"),
+        diagnostics.SystemInfoEntry("Platform", "Linux"),
+    )

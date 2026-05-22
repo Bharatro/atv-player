@@ -6,15 +6,17 @@ import pytest
 import threading
 import time
 from types import SimpleNamespace
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QRect, Qt, QUrl
 from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QTableWidget, QToolButton
 
 import atv_player.app as app_module
+import atv_player.ui.help_dialog as help_dialog_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
+from atv_player.diagnostics import SystemInfoEntry
 from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
@@ -1765,7 +1767,7 @@ def visible_shortcut_help_dialogs() -> list[QDialog]:
         widget
         for widget in QApplication.topLevelWidgets()
         if isinstance(widget, QDialog)
-        and widget.windowTitle() == "快捷键帮助"
+        and widget.windowTitle() == "帮助"
         and widget.isVisible()
     ]
 
@@ -1788,6 +1790,15 @@ def system_info_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
     return rows
 
 
+def click_system_info_value_cell(qtbot, dialog: QDialog, row: int) -> None:
+    table = dialog.findChild(QTableWidget, "systemInfoTable")
+    assert table is not None
+    index = table.model().index(row, 1)
+    rect = table.visualRect(index)
+    assert rect.isValid()
+    qtbot.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+
+
 def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -1806,13 +1817,13 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     window.setFocus()
     window._build_main_window_help_payload = lambda: (
         [
-            ("atv-player", "0.8.2"),
-            ("Python", "3.12.8"),
-            ("PySide6", "6.8.1"),
-            ("mpv", "0.39"),
-            ("ffmpeg", "7.1"),
-            ("yt-dlp", "2026.05.17"),
-            ("Platform", "Linux"),
+            SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+            SystemInfoEntry("Python", "3.12.8", "https://www.python.org/downloads/"),
+            SystemInfoEntry("PySide6", "6.8.1", "https://doc.qt.io/qtforpython-6/"),
+            SystemInfoEntry("mpv", "0.39", "https://mpv.io/installation/"),
+            SystemInfoEntry("ffmpeg", "7.1", "https://www.ffmpeg.org/download.html"),
+            SystemInfoEntry("yt-dlp", "2026.05.17", "https://github.com/yt-dlp/yt-dlp/releases/latest"),
+            SystemInfoEntry("Platform", "Linux", None),
         ],
         "diagnostic text",
     )
@@ -1824,7 +1835,7 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     rows = shortcut_table_rows(dialog)
     system_rows = system_info_table_rows(dialog)
 
-    assert ("F1", "打开快捷键帮助") in rows
+    assert ("F1", "打开帮助") in rows
     assert ("Ctrl+P", "显示或返回播放器") in rows
     assert ("Esc", "显示或返回播放器") in rows
     assert any(description == "退出应用" for _, description in rows)
@@ -1835,6 +1846,65 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("ffmpeg", "7.1") in system_rows
     assert ("yt-dlp", "2026.05.17") in system_rows
     assert ("Platform", "Linux") in system_rows
+
+
+def test_main_window_help_dialog_opens_system_info_links_except_platform(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [
+            SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+            SystemInfoEntry("Python", "3.12.8", "https://www.python.org/downloads/"),
+            SystemInfoEntry("PySide6", "6.8.1", "https://doc.qt.io/qtforpython-6/"),
+            SystemInfoEntry("mpv", "0.39", "https://mpv.io/installation/"),
+            SystemInfoEntry("ffmpeg", "7.1", "https://www.ffmpeg.org/download.html"),
+            SystemInfoEntry("yt-dlp", "2026.05.17", "https://github.com/yt-dlp/yt-dlp/releases/latest"),
+            SystemInfoEntry("Platform", "Linux", None),
+        ],
+        "diagnostic text",
+    )
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        help_dialog_module.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(QUrl(url).toString()) or True,
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+
+    click_system_info_value_cell(qtbot, dialog, 0)
+    click_system_info_value_cell(qtbot, dialog, 1)
+    click_system_info_value_cell(qtbot, dialog, 2)
+    click_system_info_value_cell(qtbot, dialog, 3)
+    click_system_info_value_cell(qtbot, dialog, 4)
+    click_system_info_value_cell(qtbot, dialog, 5)
+    click_system_info_value_cell(qtbot, dialog, 6)
+
+    assert opened == [
+        "https://github.com/power721/atv-player/releases/latest",
+        "https://www.python.org/downloads/",
+        "https://doc.qt.io/qtforpython-6/",
+        "https://mpv.io/installation/",
+        "https://www.ffmpeg.org/download.html",
+        "https://github.com/yt-dlp/yt-dlp/releases/latest",
+    ]
 
 
 def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> None:
@@ -1854,7 +1924,7 @@ def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> N
     window.activateWindow()
     window.setFocus()
     window._build_main_window_help_payload = lambda: (
-        [("atv-player", "0.8.2")],
+        [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
         "atv-player: 0.8.2\nPython: 3.12.8",
     )
 
@@ -1891,7 +1961,7 @@ def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, mo
     window.activateWindow()
     window.setFocus()
     window._build_main_window_help_payload = lambda: (
-        [("atv-player", "0.8.2")],
+        [SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest")],
         "atv-player: 0.8.2\nPython: 3.12.8",
     )
 
