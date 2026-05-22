@@ -46,8 +46,32 @@ def collect_system_info_entries() -> tuple[SystemInfoEntry, ...]:
         SystemInfoEntry("mpv", _read_command_version(["mpv", "--version"], _parse_mpv_version), _MPV_HOME_URL),
         SystemInfoEntry("ffmpeg", _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version), _FFMPEG_HOME_URL),
         SystemInfoEntry("yt-dlp", _read_command_version([ytdlp_path, "--version"], _parse_ytdlp_version), _YTDLP_DOWNLOAD_URL),
-        SystemInfoEntry("Platform", platform.system() or platform.platform() or "Unknown"),
+        SystemInfoEntry("Platform", _resolve_platform_display_value()),
     )
+
+
+def _resolve_platform_display_value() -> str:
+    system = (platform.system() or "").strip()
+    release = (platform.release() or "").strip()
+    version = (platform.version() or "").strip()
+    machine = (platform.machine() or "").strip()
+
+    details: list[str] = []
+    if system:
+        details.append(system)
+    if release and release not in details:
+        details.append(release)
+    if system == "Windows" and version:
+        details.append(version)
+    if not details:
+        fallback = (platform.platform() or "").strip()
+        if fallback:
+            details.append(fallback)
+    if not details:
+        details.append("Unknown")
+    if machine:
+        return f"{' '.join(details)} ({machine})"
+    return " ".join(details)
 
 
 def resolve_app_version() -> str:

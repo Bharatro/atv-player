@@ -2059,6 +2059,38 @@ def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, mo
     assert export_path.read_text(encoding="utf-8") == "atv-player: 0.8.2\nPython: 3.12.8"
 
 
+def test_main_window_help_payload_diagnostics_text_excludes_shortcuts(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_window_module,
+        "collect_system_info_entries",
+        lambda: (
+            SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+            SystemInfoEntry("Platform", "Linux 6.8.0 (x86_64)"),
+        ),
+    )
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    system_info_rows, diagnostics_text = window._build_main_window_help_payload()
+
+    assert system_info_rows == [
+        SystemInfoEntry("atv-player", "0.8.2", "https://github.com/power721/atv-player/releases/latest"),
+        SystemInfoEntry("Platform", "Linux 6.8.0 (x86_64)"),
+    ]
+    assert diagnostics_text == "系统信息\natv-player: 0.8.2\nPlatform: Linux 6.8.0 (x86_64)"
+
+
 def test_main_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),

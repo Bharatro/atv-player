@@ -4077,12 +4077,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _build_main_window_help_payload(self) -> tuple[list[SystemInfoEntry], str]:
         system_info_rows = list(collect_system_info_entries())
-        shortcut_entries = shortcut_entries_for("main_window", self.quit_shortcut.key())
         lines = ["系统信息"]
         lines.extend(f"{entry.label}: {entry.value}" for entry in system_info_rows)
-        lines.append("")
-        lines.append("快捷键")
-        lines.extend(f"{entry.key}: {entry.description}" for entry in shortcut_entries)
         return system_info_rows, "\n".join(lines)
 
     def _show_shortcut_help(self) -> None:
