@@ -28,6 +28,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
+    YtdlpAudioTrackOption,
 )
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
@@ -3917,6 +3918,94 @@ def test_player_window_switches_ytdlp_quality_via_selected_ytdl_format_with_posi
     assert video.load_calls[-1] == ("https://www.youtube.com/watch?v=test123", True, 93, "298+140")
     assert loader_calls == ["ytdlp_1080"]
     assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
+
+
+def test_player_window_switches_ytdlp_quality_via_loader_when_audio_track_is_selected(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, str]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds, ytdl_format))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    loader_calls: list[tuple[str, str]] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        loader_calls.append((item.selected_playback_quality_id, item.selected_audio_track_id))
+        item.url = "https://www.youtube.com/watch?v=test123"
+        suffix = "141" if item.selected_audio_track_id == "ytdlp_audio_zh_141" else "140"
+        height = (item.selected_playback_quality_id or "ytdlp_1080").removeprefix("ytdlp_")
+        item.audio_url = ""
+        item.ytdl_format = f"{'299' if height == '1080' else '298'}+{suffix}"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://www.youtube.com/watch?v=test123",
+                original_url="https://www.youtube.com/watch?v=test123",
+                playback_qualities=[
+                    VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140"),
+                    VideoQualityOption(id="ytdlp_720", label="720p", ytdl_format="298+140"),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="299+141",
+                audio_tracks=[
+                    YtdlpAudioTrackOption(id="ytdlp_audio_en_140", label="English Original", lang="en", is_original=True),
+                    YtdlpAudioTrackOption(id="ytdlp_audio_zh_141", label="中文配音", lang="zh"),
+                ],
+                selected_audio_track_id="ytdlp_audio_zh_141",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert loader_calls == [("ytdlp_1080", "ytdlp_audio_zh_141")]
+    assert video.load_calls == [("https://www.youtube.com/watch?v=test123", False, 0, "299+141")]
+
+    window.is_playing = False
+    window.video_quality_combo.setCurrentIndex(1)
+
+    assert loader_calls == [
+        ("ytdlp_1080", "ytdlp_audio_zh_141"),
+        ("ytdlp_720", "ytdlp_audio_zh_141"),
+    ]
+    assert video.load_calls[-1] == ("https://www.youtube.com/watch?v=test123", True, 93, "298+141")
+    assert session.playlist[0].selected_playback_quality_id == "ytdlp_720"
+    assert session.playlist[0].selected_audio_track_id == "ytdlp_audio_zh_141"
 
 
 def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
@@ -8522,6 +8611,168 @@ def test_player_window_user_selection_applies_selected_audio_track(qtbot) -> Non
     window.audio_combo.setCurrentIndex(2)
 
     assert window.video.audio_apply_calls == [("track", 32)]
+
+
+def test_player_window_populates_audio_combo_from_ytdlp_audio_tracks(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://www.youtube.com/watch?v=test123",
+                original_url="https://www.youtube.com/watch?v=test123",
+                audio_tracks=[
+                    YtdlpAudioTrackOption(id="ytdlp_audio_en_140", label="English Original", lang="en", is_original=True),
+                    YtdlpAudioTrackOption(id="ytdlp_audio_zh_141", label="中文配音", lang="zh"),
+                ],
+                selected_audio_track_id="ytdlp_audio_en_140",
+                playback_qualities=[VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140")],
+                selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="299+140",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = lambda item: None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
+        "音轨",
+        "English Original",
+        "中文配音",
+    ]
+    assert window.audio_combo.currentText() == "English Original"
+    assert window.audio_combo.isEnabled() is True
+    assert window.video.audio_apply_calls == []
+
+
+def test_player_window_switches_ytdlp_audio_via_reload_preserving_quality_position_and_pause(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, str]] = []
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds, ytdl_format))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return None
+
+        def position_seconds(self) -> int:
+            return 93
+
+    loader_calls: list[tuple[str, str]] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        loader_calls.append((item.selected_playback_quality_id, item.selected_audio_track_id))
+        item.url = "https://www.youtube.com/watch?v=test123"
+        item.audio_url = ""
+        item.ytdl_format = "299+141" if item.selected_audio_track_id == "ytdlp_audio_zh_141" else "299+140"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://www.youtube.com/watch?v=test123",
+                original_url="https://www.youtube.com/watch?v=test123",
+                audio_tracks=[
+                    YtdlpAudioTrackOption(id="ytdlp_audio_en_140", label="English Original", lang="en", is_original=True),
+                    YtdlpAudioTrackOption(id="ytdlp_audio_zh_141", label="中文配音", lang="zh"),
+                ],
+                selected_audio_track_id="ytdlp_audio_en_140",
+                playback_qualities=[VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140")],
+                selected_playback_quality_id="ytdlp_1080",
+                ytdl_format="299+140",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    assert loader_calls == [("ytdlp_1080", "ytdlp_audio_en_140")]
+    assert video.load_calls == [("https://www.youtube.com/watch?v=test123", False, 0, "299+140")]
+
+    window.is_playing = False
+    window.audio_combo.setCurrentIndex(2)
+
+    assert loader_calls == [
+        ("ytdlp_1080", "ytdlp_audio_en_140"),
+        ("ytdlp_1080", "ytdlp_audio_zh_141"),
+    ]
+    assert video.load_calls[-1] == ("https://www.youtube.com/watch?v=test123", True, 93, "299+141")
+    assert video.audio_apply_calls == []
+    assert session.playlist[0].selected_audio_track_id == "ytdlp_audio_zh_141"
 
 
 def test_player_window_reuses_audio_track_preference_for_next_episode(qtbot) -> None:

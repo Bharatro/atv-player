@@ -88,6 +88,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
+    YtdlpAudioTrackOption,
 )
 from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
 from atv_player.log_store import AppLogEvent
@@ -4521,6 +4522,28 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return []
         return list(current_item.external_subtitles)
 
+    def _current_item_ytdlp_audio_tracks(self) -> list[YtdlpAudioTrackOption]:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return []
+        return list(getattr(current_item, "audio_tracks", []) or [])
+
+    def _current_item_has_ytdlp_audio_tracks(self) -> bool:
+        return bool(self._current_item_ytdlp_audio_tracks())
+
+    def _selected_ytdlp_audio_combo_index(self) -> int:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return 0
+        selected_audio_track_id = str(getattr(current_item, "selected_audio_track_id", "") or "").strip()
+        if not selected_audio_track_id:
+            return 0
+        for index in range(1, self.audio_combo.count()):
+            item_data = self.audio_combo.itemData(index)
+            if item_data == ("ytdlp", selected_audio_track_id):
+                return index
+        return 0
+
     def _current_item_secondary_external_subtitles(self) -> list[ExternalSubtitleOption]:
         return [subtitle for subtitle in self._current_item_external_subtitles() if subtitle.source != "spider"]
 
@@ -4848,14 +4871,28 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.subtitle_combo.blockSignals(False)
 
     def _populate_audio_combo(self, tracks: list[AudioTrack]) -> None:
+        ytdlp_tracks = self._current_item_ytdlp_audio_tracks()
         self.audio_combo.blockSignals(True)
         self.audio_combo.clear()
         self.audio_combo.addItem("音轨", ("auto", None))
-        if len(tracks) > 1:
+        if ytdlp_tracks:
+            selected_index = 0
+            current_item = self._current_play_item()
+            selected_audio_track_id = "" if current_item is None else str(current_item.selected_audio_track_id or "").strip()
+            for index, track in enumerate(ytdlp_tracks, start=1):
+                self.audio_combo.addItem(track.label, ("ytdlp", track.id))
+                if track.id == selected_audio_track_id:
+                    selected_index = index
+            self.audio_combo.setEnabled(len(ytdlp_tracks) > 1)
+            self.audio_combo.setCurrentIndex(selected_index)
+        elif len(tracks) > 1:
             for track in tracks:
                 self.audio_combo.addItem(track.label, ("track", track.id))
-        self.audio_combo.setEnabled(len(tracks) > 1)
-        self.audio_combo.setCurrentIndex(0)
+            self.audio_combo.setEnabled(True)
+            self.audio_combo.setCurrentIndex(0)
+        else:
+            self.audio_combo.setEnabled(False)
+            self.audio_combo.setCurrentIndex(0)
         self.audio_combo.blockSignals(False)
 
     def _populate_video_quality_combo(
@@ -4910,6 +4947,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return best_track
 
     def _apply_audio_preference(self) -> None:
+        if self._current_item_has_ytdlp_audio_tracks():
+            self.audio_combo.blockSignals(True)
+            try:
+                self.audio_combo.setCurrentIndex(self._selected_ytdlp_audio_combo_index())
+            finally:
+                self.audio_combo.blockSignals(False)
+            return
         self.audio_combo.blockSignals(True)
         try:
             if self._audio_preference.mode == "track":
@@ -5684,6 +5728,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log(f"音轨加载失败: {exc}")
             return
         self._populate_audio_combo(self._audio_tracks)
+        if self._current_item_has_ytdlp_audio_tracks():
+            self._audio_preference = AudioPreference()
+            return
         if not self._audio_tracks:
             self._audio_preference = AudioPreference()
             return
@@ -5825,7 +5872,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     return
                 can_switch_via_selected_ytdl_format = bool(selected_quality.ytdl_format) and (
                     str(current_item.url or "").strip() == str(current_item.original_url or "").strip()
-                ) and bool(str(current_item.ytdl_format or "").strip())
+                ) and bool(str(current_item.ytdl_format or "").strip()) and not current_item.audio_tracks
                 if can_switch_via_selected_ytdl_format:
                     previous_url = current_item.url
                     previous_audio_url = current_item.audio_url
@@ -5840,6 +5887,36 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         self._start_current_item_playback(
                             start_position_seconds=start_position_seconds,
                             pause=not self.is_playing,
+                        )
+                    except Exception as exc:
+                        current_item.url = previous_url
+                        current_item.audio_url = previous_audio_url
+                        current_item.ytdl_format = previous_ytdl_format
+                        current_item.selected_playback_quality_id = previous_selected_quality_id
+                        self._refresh_video_quality_state()
+                        self._append_log(f"清晰度切换失败: {exc}")
+                    return
+                if (
+                    current_item.audio_tracks
+                    and self.session.playback_loader is not None
+                    and current_item.original_url
+                    and target_quality_id.startswith("ytdlp_")
+                ):
+                    previous_url = current_item.url
+                    previous_audio_url = current_item.audio_url
+                    previous_ytdl_format = current_item.ytdl_format
+                    previous_selected_quality_id = current_item.selected_playback_quality_id
+                    current_item.url = ""
+                    current_item.audio_url = ""
+                    current_item.ytdl_format = ""
+                    current_item.selected_playback_quality_id = target_quality_id
+                    self._refresh_video_quality_state()
+                    try:
+                        self._play_item_at_index(
+                            self.current_index,
+                            start_position_seconds=start_position_seconds,
+                            pause=not self.is_playing,
+                            preserve_primary_external_subtitle_selection=True,
                         )
                     except Exception as exc:
                         current_item.url = previous_url
@@ -5927,14 +6004,63 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         mode, track_id = item_data
         if mode == "auto":
+            if self._current_item_has_ytdlp_audio_tracks():
+                target_index = self._selected_ytdlp_audio_combo_index()
+                self.audio_combo.blockSignals(True)
+                try:
+                    self.audio_combo.setCurrentIndex(target_index)
+                finally:
+                    self.audio_combo.blockSignals(False)
+                return
             self._audio_preference = AudioPreference()
             self.video.apply_audio_mode("auto")
+            return
+        if mode == "ytdlp":
+            self._change_ytdlp_audio_selection(str(track_id or ""))
             return
         track = next((track for track in self._audio_tracks if track.id == track_id), None)
         if track is None:
             return
         self._remember_audio_track_preference(track)
         self.video.apply_audio_mode("track", track_id=track_id)
+
+    def _change_ytdlp_audio_selection(self, track_id: str) -> None:
+        if self.session is None:
+            return
+        current_item = self._current_play_item()
+        if current_item is None:
+            return
+        selected_audio_track_id = str(track_id or "").strip()
+        if not selected_audio_track_id or selected_audio_track_id == str(current_item.selected_audio_track_id or "").strip():
+            return
+        if self.session.playback_loader is None:
+            return
+        try:
+            start_position_seconds = int(self.video.position_seconds() or 0)
+        except Exception:
+            start_position_seconds = 0
+        previous_selected_audio_track_id = current_item.selected_audio_track_id
+        previous_url = current_item.url
+        previous_audio_url = current_item.audio_url
+        previous_ytdl_format = current_item.ytdl_format
+        current_item.selected_audio_track_id = selected_audio_track_id
+        current_item.url = ""
+        current_item.audio_url = ""
+        current_item.ytdl_format = ""
+        try:
+            self._play_item_at_index(
+                self.current_index,
+                start_position_seconds=start_position_seconds,
+                pause=not self.is_playing,
+                preserve_primary_external_subtitle_selection=True,
+            )
+        except Exception as exc:
+            current_item.selected_audio_track_id = previous_selected_audio_track_id
+            current_item.url = previous_url
+            current_item.audio_url = previous_audio_url
+            current_item.ytdl_format = previous_ytdl_format
+            self._refresh_audio_state()
+            self._append_log(f"音轨切换失败: {exc}")
 
     def _show_video_context_menu(self, pos) -> None:
         global_pos = self.video_widget.mapToGlobal(pos)
@@ -7322,19 +7448,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         auto_action = menu.addAction("自动选择")
         auto_action.setCheckable(True)
-        auto_action.setChecked(self._audio_preference.mode == "auto")
+        auto_action.setChecked(self.audio_combo.currentIndex() == 0)
         auto_action.triggered.connect(lambda: self._set_audio_from_menu("auto", None))
         group.addAction(auto_action)
 
-        for track in self._audio_tracks:
-            action = menu.addAction(track.label)
+        for index in range(1, self.audio_combo.count()):
+            item_data = self.audio_combo.itemData(index)
+            if not isinstance(item_data, tuple) or len(item_data) != 2:
+                continue
+            mode, track_id = item_data
+            action = menu.addAction(self.audio_combo.itemText(index))
             action.setCheckable(True)
-            action.setChecked(
-                self._audio_preference.mode == "track"
-                and self._audio_preference.title == track.title
-                and self._audio_preference.lang == track.lang
+            action.setChecked(self.audio_combo.currentIndex() == index)
+            action.triggered.connect(
+                lambda _checked=False, mode=mode, track_id=track_id: self._set_audio_from_menu(mode, track_id)
             )
-            action.triggered.connect(lambda _checked=False, track_id=track.id: self._set_audio_from_menu("track", track_id))
             group.addAction(action)
 
         return menu
@@ -7429,7 +7557,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.audio_combo.setCurrentIndex(0)
             return
         for index in range(self.audio_combo.count()):
-            if self.audio_combo.itemData(index) == ("track", track_id):
+            if self.audio_combo.itemData(index) == (mode, track_id):
                 self.audio_combo.setCurrentIndex(index)
                 return
 
