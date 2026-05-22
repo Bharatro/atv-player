@@ -11838,6 +11838,167 @@ def test_player_window_rejects_blocked_ytdlp_translated_vtt_html_response(qtbot,
         )
 
 
+def test_player_window_converts_ytdlp_youtube_vtt_to_ass_before_loading(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nAlice: hello\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt1", vod_name="YT"),
+        playlist=[
+            PlayItem(
+                title="Video",
+                url="https://stream.test/video.mp4",
+                original_url="https://www.youtube.com/watch?v=test123",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="English [yt-dlp]",
+                        lang="en",
+                        url="https://sub.example/en.vtt",
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+
+    track_id, subtitle_path = window._load_external_subtitle(
+        session.playlist[0].external_subtitles[0],
+        secondary=False,
+    )
+
+    assert track_id == 91
+    assert subtitle_path.suffix == ".ass"
+    assert "[Script Info]" in subtitle_path.read_text(encoding="utf-8")
+    assert window.video.loaded_external_subtitles == [(str(subtitle_path), False)]
+
+
+def test_player_window_keeps_non_youtube_ytdlp_vtt_as_vtt(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            return 91
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="vm1", vod_name="VM"),
+        playlist=[
+            PlayItem(
+                title="Video",
+                url="https://stream.test/video.mp4",
+                original_url="https://vimeo.com/123456",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="English [yt-dlp]",
+                        lang="en",
+                        url="https://sub.example/en.vtt",
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+
+    _track_id, subtitle_path = window._load_external_subtitle(
+        session.playlist[0].external_subtitles[0],
+        secondary=False,
+    )
+
+    assert subtitle_path.suffix == ".vtt"
+
+
+def test_player_window_falls_back_to_original_vtt_when_conversion_raises(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            return 91
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"),
+    )
+    monkeypatch.setattr(
+        player_window_module,
+        "convert_youtube_subtitle_text_to_ass",
+        lambda text: (_ for _ in ()).throw(RuntimeError("boom")),
+        raising=False,
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt1", vod_name="YT"),
+        playlist=[
+            PlayItem(
+                title="Video",
+                url="https://stream.test/video.mp4",
+                original_url="https://www.youtube.com/watch?v=test123",
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="English [yt-dlp]",
+                        lang="en",
+                        url="https://sub.example/en.vtt",
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+
+    _track_id, subtitle_path = window._load_external_subtitle(
+        session.playlist[0].external_subtitles[0],
+        secondary=False,
+    )
+
+    assert subtitle_path.suffix == ".vtt"
+    assert subtitle_path.read_text(encoding="utf-8").startswith("WEBVTT")
+
+
 def test_player_window_retries_first_manual_external_subtitle_selection_when_track_id_is_delayed(
     qtbot, monkeypatch
 ) -> None:
