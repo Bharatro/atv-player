@@ -1286,6 +1286,11 @@ class MpvWidget(QWidget):
         except (TypeError, ValueError):
             return None
 
+    def has_subtitle_track(self, track_id: int) -> bool:
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(lambda: self.has_subtitle_track(track_id)))
+        return track_id in self._subtitle_track_ids()
+
     def _subtitle_track_ids(self) -> set[int]:
         if self._player is None:
             return set()

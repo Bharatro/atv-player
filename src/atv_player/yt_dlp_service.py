@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from time import monotonic
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from atv_player.models import (
     AppConfig,
@@ -77,6 +77,13 @@ _LANG_CODE_NAMES: dict[str, str] = {
 
 _DEFAULT_STARTUP_MAX_HEIGHT = 1080
 _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
+_DIRECT_SUBTITLE_FORMAT_RANK: dict[str, int] = {
+    "vtt": 0,
+    "srt": 1,
+    "subrip": 1,
+    "ass": 2,
+    "ssa": 3,
+}
 
 
 def _has_muxed_audio(fmt: dict) -> bool:
@@ -908,25 +915,61 @@ def _build_subtitle_options(info: dict) -> list[ExternalSubtitleOption]:
                 continue
             if not isinstance(subs, list):
                 continue
+            supported_candidates: list[dict] = []
             for sub in subs:
                 if not isinstance(sub, dict):
                     continue
-                sub_url = sub.get("url", "")
+                sub_url = str(sub.get("url", "") or "").strip()
                 if not sub_url or sub_url in seen_urls:
                     continue
-                seen_urls.add(sub_url)
-                ext = sub.get("ext", "")
-                lang_name = _LANG_CODE_NAMES.get(lang_code, lang_code)
-                name = lang_name
-                if is_auto:
-                    name += " (自动生成)"
-                name += " [yt-dlp]"
-                result.append(ExternalSubtitleOption(
-                    name=name,
-                    lang=lang_code,
-                    url=sub_url,
-                    format=ext,
-                    source="ytdlp",
-                ))
+                ext = _normalized_direct_subtitle_format(sub)
+                if ext is None:
+                    continue
+                supported_candidates.append({"url": sub_url, "ext": ext})
+
+            if not supported_candidates:
+                continue
+
+            supported_candidates.sort(key=lambda candidate: _DIRECT_SUBTITLE_FORMAT_RANK[candidate["ext"]])
+            best_candidate = supported_candidates[0]
+            seen_urls.add(best_candidate["url"])
+            lang_name = _LANG_CODE_NAMES.get(lang_code, lang_code)
+            name = lang_name
+            if is_auto:
+                name += " (自动生成)"
+            name += " [yt-dlp]"
+            result.append(ExternalSubtitleOption(
+                name=name,
+                lang=lang_code,
+                url=best_candidate["url"],
+                format=best_candidate["ext"],
+                source="ytdlp",
+            ))
 
     return result
+
+
+def _normalized_direct_subtitle_format(sub: dict) -> str | None:
+    sub_url = str(sub.get("url", "") or "").strip()
+    if _is_translated_youtube_caption_url(sub_url):
+        return None
+
+    ext = str(sub.get("ext", "") or "").strip().lower()
+    if ext in _DIRECT_SUBTITLE_FORMAT_RANK:
+        return "srt" if ext == "subrip" else ext
+
+    parsed_path = urlparse(sub_url.lower()).path
+    if "." in parsed_path:
+        suffix = parsed_path.rsplit(".", 1)[-1]
+        if suffix in _DIRECT_SUBTITLE_FORMAT_RANK:
+            return "srt" if suffix == "subrip" else suffix
+    return None
+
+
+def _is_translated_youtube_caption_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc not in {"www.youtube.com", "youtube.com", "m.youtube.com"}:
+        return False
+    if parsed.path != "/api/timedtext":
+        return False
+    return bool(parse_qs(parsed.query).get("tlang"))

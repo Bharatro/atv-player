@@ -1899,6 +1899,20 @@ def test_mpv_widget_can_disable_or_select_a_specific_embedded_subtitle_track(qtb
     assert player.sid == 9
 
 
+def test_mpv_widget_reports_when_subtitle_track_is_present(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 9, "type": "audio"},
+            {"id": 11, "type": "sub", "external": True},
+        ]
+    )
+
+    assert widget.has_subtitle_track(11) is True
+    assert widget.has_subtitle_track(12) is False
+
+
 def test_mpv_widget_can_disable_or_select_a_specific_secondary_subtitle_track(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

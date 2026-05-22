@@ -1131,3 +1131,40 @@ class TestBuildSubtitleOptions:
         info: dict = {}
         result = _build_subtitle_options(info)
         assert len(result) == 0
+
+    def test_prefers_supported_direct_subtitle_format_per_language(self):
+        from atv_player.yt_dlp_service import _build_subtitle_options
+        info = {
+            "automatic_captions": {
+                "en": [
+                    {"url": "https://sub/en.json3", "ext": "json3"},
+                    {"url": "https://sub/en.ttml", "ext": "ttml"},
+                    {"url": "https://sub/en.vtt", "ext": "vtt"},
+                ],
+            },
+        }
+
+        result = _build_subtitle_options(info)
+
+        assert [(subtitle.url, subtitle.format) for subtitle in result] == [
+            ("https://sub/en.vtt", "vtt"),
+        ]
+
+    def test_skips_translated_youtube_caption_candidates_with_tlang(self):
+        from atv_player.yt_dlp_service import _build_subtitle_options
+        info = {
+            "automatic_captions": {
+                "zh-Hans": [
+                    {"url": "https://www.youtube.com/api/timedtext?lang=en&fmt=vtt&tlang=zh-Hans", "ext": "vtt"},
+                ],
+                "en": [
+                    {"url": "https://www.youtube.com/api/timedtext?lang=en&fmt=vtt", "ext": "vtt"},
+                ],
+            },
+        }
+
+        result = _build_subtitle_options(info)
+
+        assert [(subtitle.lang, subtitle.url) for subtitle in result] == [
+            ("en", "https://www.youtube.com/api/timedtext?lang=en&fmt=vtt"),
+        ]

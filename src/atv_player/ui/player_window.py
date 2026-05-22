@@ -4635,6 +4635,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._sync_subtitle_combo_without_tracks()
         return True
 
+    def _primary_external_subtitle_track_is_stale(self) -> bool:
+        current_external_subtitle = self._current_primary_external_subtitle()
+        track_id = self._primary_external_subtitle_track_id
+        if current_external_subtitle is None or track_id is None:
+            return False
+        has_track = getattr(self.video, "has_subtitle_track", None)
+        if not callable(has_track):
+            return False
+        try:
+            return not bool(has_track(track_id))
+        except Exception:
+            return False
+
+    def _invalidate_primary_external_subtitle_track(self) -> None:
+        self._primary_external_subtitle_track_id = None
+        self._primary_external_subtitle_path = None
+
     def _primary_external_subtitle_track_needs_reapply(self) -> bool:
         current_external_subtitle = self._current_primary_external_subtitle()
         track_id = self._primary_external_subtitle_track_id
@@ -4731,9 +4748,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if track_id is None:
             self._schedule_primary_external_subtitle_retry_for_pending_track()
             return False
+        current_track_getter = getattr(self.video, "current_subtitle_track_id", None)
+        if callable(current_track_getter):
+            try:
+                if current_track_getter() == track_id:
+                    self._stop_primary_external_subtitle_retry()
+                    return True
+            except Exception:
+                pass
         try:
             self.video.apply_subtitle_mode("track", track_id=track_id)
         except Exception as exc:
+            if callable(current_track_getter):
+                try:
+                    if current_track_getter() == track_id:
+                        self._stop_primary_external_subtitle_retry()
+                        return True
+                except Exception:
+                    pass
             if self._should_retry_primary_external_subtitle_apply(exc):
                 self._schedule_primary_external_subtitle_retry()
                 return False
@@ -4898,6 +4930,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _apply_subtitle_preference(self) -> None:
         self.subtitle_combo.blockSignals(True)
         try:
+            if self._primary_external_subtitle_track_is_stale():
+                self._invalidate_primary_external_subtitle_track()
             current_external_subtitle = self._current_primary_external_subtitle()
             if current_external_subtitle is not None:
                 if self._primary_external_subtitle_track_id is not None:
@@ -4918,7 +4952,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 elif self._subtitle_preference.mode == "external" or (
                     self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
                 ):
-                    self._sync_subtitle_combo_to_preference()
+                    if not self._reload_selected_primary_external_subtitle_if_needed():
+                        self._sync_subtitle_combo_to_preference()
                     return
             elif self._subtitle_preference.mode == "external":
                 self._subtitle_preference = SubtitlePreference()
@@ -5523,6 +5558,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             except Exception:
                 pass
         self._populate_subtitle_combo(self._subtitle_tracks)
+        if self._primary_external_subtitle_track_is_stale():
+            self._invalidate_primary_external_subtitle_track()
+            manual_switch_refresh = False
         if manual_switch_refresh:
             if not self._subtitle_tracks:
                 self._sync_subtitle_combo_without_tracks()
@@ -5560,6 +5598,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 self._secondary_subtitle_scale = current_secondary_subtitle_scale
         if not self._subtitle_tracks:
             try:
+                if self._primary_external_subtitle_track_is_stale():
+                    self._invalidate_primary_external_subtitle_track()
                 if self._reload_selected_primary_external_subtitle_if_needed():
                     return
                 if self._primary_external_subtitle_track_needs_reapply():
@@ -7471,10 +7511,40 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         text = self._fetch_external_subtitle_text(subtitle)
         if not text.strip():
             raise ValueError("字幕内容为空")
-        suffix = ".srt" if subtitle.format.endswith("subrip") else ".txt"
+        self._validate_external_subtitle_text(subtitle, text)
+        suffix = self._external_subtitle_suffix(subtitle, text)
         subtitle_path = self._write_external_subtitle_file(text, suffix)
         track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=secondary)
         return track_id, subtitle_path
+
+    def _external_subtitle_suffix(self, subtitle: ExternalSubtitleOption, text: str) -> str:
+        url_suffix = Path(urlparse(subtitle.url).path).suffix.lower()
+        if url_suffix in {".srt", ".vtt", ".ass", ".ssa"}:
+            return url_suffix
+
+        normalized_format = str(subtitle.format or "").strip().lower()
+        if normalized_format in {"vtt", "text/vtt"}:
+            return ".vtt"
+        if normalized_format == "srt" or "subrip" in normalized_format:
+            return ".srt"
+        if normalized_format in {"ass", "text/x-ass", "application/x-ass"}:
+            return ".ass"
+        if normalized_format in {"ssa", "text/x-ssa", "application/x-ssa"}:
+            return ".ssa"
+
+        stripped_text = text.lstrip()
+        if stripped_text.startswith("WEBVTT"):
+            return ".vtt"
+        if stripped_text.startswith("[Script Info]"):
+            return ".ass"
+        return ".txt"
+
+    def _validate_external_subtitle_text(self, subtitle: ExternalSubtitleOption, text: str) -> None:
+        stripped_text = text.lstrip()
+        if subtitle.source == "ytdlp" and "youtube.com/api/timedtext" in subtitle.url and "<html" in stripped_text[:64].lower():
+            if "tlang=" in subtitle.url:
+                raise ValueError("YouTube 翻译字幕被 Google 拦截，当前无法直接加载")
+            raise ValueError("YouTube 字幕请求返回了网页而不是字幕内容")
 
     def _set_subtitle_position_from_menu(self, value: int, secondary: bool) -> None:
         clamped = max(0, min(int(value), 100))

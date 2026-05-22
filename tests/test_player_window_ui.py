@@ -11399,6 +11399,181 @@ def test_player_window_reapplies_auto_spider_subtitle_when_player_sid_drifts_to_
     assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
 
 
+def test_player_window_reloads_manual_ytdlp_subtitle_when_saved_external_track_is_stale(
+    qtbot, monkeypatch
+) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self._next_track_id = 91
+            self._current_sid: int | None = None
+            self._active_track_ids: set[int] = set()
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def current_subtitle_track_id(self) -> int | None:
+            return self._current_sid
+
+        def has_subtitle_track(self, track_id: int) -> bool:
+            return track_id in self._active_track_ids
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            if mode == "track" and track_id not in self._active_track_ids:
+                raise RuntimeError(("Error running mpv command", -12, (object(), object(), object())))
+            self._current_sid = track_id
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            self._active_track_ids = {track_id}
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self._active_track_ids.discard(track_id)
+                if self._current_sid == track_id:
+                    self._current_sid = None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt1", vod_name="YouTube 视频"),
+        playlist=[
+            PlayItem(
+                title="Video 1",
+                url="https://media.example/youtube.mp4",
+                headers={"Referer": "https://www.youtube.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="English [yt-dlp]",
+                        lang="en",
+                        url="https://sub.example/en.vtt",
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.subtitle_combo.setCurrentIndex(2)
+
+    assert window.video.loaded_external_subtitles == [(window.video.loaded_external_subtitles[0][0], False)]
+    assert window.video.subtitle_apply_calls == [("track", 91)]
+
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+    window.video._active_track_ids.clear()
+    window.video._current_sid = None
+
+    window._refresh_subtitle_state()
+
+    assert window.video.loaded_external_subtitles == [(window.video.loaded_external_subtitles[0][0], False)]
+    assert window.video.subtitle_apply_calls == [("track", 92)]
+    assert "字幕切换失败" not in window.log_view.toPlainText()
+    assert window.subtitle_combo.currentText() == "English [yt-dlp]"
+
+
+def test_player_window_loads_ytdlp_webvtt_with_vtt_suffix(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            return 91
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    track_id, subtitle_path = window._load_external_subtitle(
+        ExternalSubtitleOption(
+            name="English [yt-dlp]",
+            lang="en",
+            url="https://sub.example/en.vtt",
+            format="vtt",
+            source="ytdlp",
+        ),
+        secondary=False,
+    )
+
+    assert track_id == 91
+    assert subtitle_path.suffix == ".vtt"
+    assert window.video.loaded_external_subtitles == [(str(subtitle_path), False)]
+
+
+def test_player_window_rejects_blocked_ytdlp_translated_vtt_html_response(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            raise AssertionError("mpv should not receive an HTML error page as a subtitle file")
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("<html><title>Sorry...</title><body>We're sorry...</body></html>"),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    with pytest.raises(ValueError, match="YouTube 翻译字幕"):
+        window._load_external_subtitle(
+            ExternalSubtitleOption(
+                name="简体中文 [yt-dlp]",
+                lang="zh-Hans",
+                url="https://www.youtube.com/api/timedtext?lang=en&fmt=vtt&tlang=zh-Hans",
+                format="vtt",
+                source="ytdlp",
+            ),
+            secondary=False,
+        )
+
+
 def test_player_window_retries_first_manual_external_subtitle_selection_when_track_id_is_delayed(
     qtbot, monkeypatch
 ) -> None:
@@ -12151,6 +12326,89 @@ def test_player_window_retries_manual_external_subtitle_when_mpv_is_not_ready(qt
     assert window.video.subtitle_apply_calls == [("track", 91), ("track", 91)]
     assert "字幕切换失败" not in window.log_view.toPlainText()
     assert window.subtitle_combo.currentText() == "中文 [B站]"
+
+
+def test_player_window_keeps_manual_external_subtitle_when_mpv_already_selected_loaded_track(
+    qtbot, monkeypatch
+) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self._current_sid: int | None = None
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def current_subtitle_track_id(self) -> int | None:
+            return self._current_sid
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            self._current_sid = 91
+            return 91
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            raise RuntimeError(("Error running mpv command", -12, (object(), object(), object())))
+
+        def position_seconds(self) -> int:
+            return 0
+
+    class TextResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr(
+        player_window_module.httpx,
+        "get",
+        lambda url, **kwargs: TextResponse("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"),
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV1", vod_name="B站视频"),
+        playlist=[
+            PlayItem(
+                title="第1话",
+                url="http://m/1.m3u8",
+                headers={"Referer": "https://www.bilibili.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="English [yt-dlp]",
+                        lang="en",
+                        url="https://sub.example/en.vtt",
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.video.loaded_external_subtitles.clear()
+
+    window.subtitle_combo.setCurrentIndex(2)
+    qtbot.wait(50)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == []
+    assert "字幕切换失败" not in window.log_view.toPlainText()
+    assert window.subtitle_combo.currentText() == "English [yt-dlp]"
 
 
 def test_player_window_does_not_reapply_auto_spider_subtitle_after_user_turns_subtitles_off(qtbot, monkeypatch) -> None:
