@@ -1382,8 +1382,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             combos.append(self._danmaku_position_preset_combo)
         if self._danmaku_color_mode_combo is not None:
             combos.append(self._danmaku_color_mode_combo)
-        if self._danmaku_outline_strength_combo is not None:
-            combos.append(self._danmaku_outline_strength_combo)
         return combos
 
     def _dialog_line_edits(self) -> list[QLineEdit]:
@@ -4382,7 +4380,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is None:
             return "strong"
         value = str(getattr(self.config, "preferred_danmaku_outline_strength", "strong") or "").strip()
-        return value if value in {"soft", "strong"} else "strong"
+        return value if value in {"off", "soft", "strong"} else "strong"
 
     def _preferred_danmaku_combo_index(self) -> int:
         if not self._preferred_danmaku_enabled():
@@ -4503,7 +4501,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _save_danmaku_outline_strength(self, value: str) -> None:
         if self.config is None:
             return
-        normalized = value if value in {"soft", "strong"} else "strong"
+        normalized = value if value in {"off", "soft", "strong"} else "strong"
         if str(getattr(self.config, "preferred_danmaku_outline_strength", "strong") or "").strip() == normalized:
             return
         self.config.preferred_danmaku_outline_strength = normalized
@@ -5253,6 +5251,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         finally:
             self._danmaku_restore_main_ass_override = None
 
+    def _apply_main_subtitle_ass_override_for_danmaku(self) -> None:
+        if (
+            not hasattr(self.video, "set_subtitle_ass_override")
+            or not getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
+        ):
+            return
+        if self._danmaku_restore_main_ass_override is None and hasattr(self.video, "subtitle_ass_override"):
+            try:
+                self._danmaku_restore_main_ass_override = self.video.subtitle_ass_override()
+            except Exception as exc:
+                self._append_log(f"主字幕样式读取失败: {exc}")
+                self._danmaku_restore_main_ass_override = "scale"
+        try:
+            self.video.set_subtitle_ass_override("no")
+        except Exception as exc:
+            self._append_log(f"弹幕样式设置失败: {exc}")
+
     def _restore_secondary_subtitle_ass_override_after_danmaku(self) -> None:
         if self._danmaku_restore_secondary_ass_override is None:
             return
@@ -5491,6 +5506,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
             ):
                 self.video.set_subtitle_ass_force_margins("yes")
+            self._apply_main_subtitle_ass_override_for_danmaku()
             if not subtitle_path_text:
                 raise ValueError("弹幕为空")
             self._attach_danmaku_subtitle_file(Path(subtitle_path_text), line_count)
@@ -5530,6 +5546,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
         ):
             self.video.set_subtitle_ass_force_margins("yes")
+        self._apply_main_subtitle_ass_override_for_danmaku()
         subtitle_path = self._write_danmaku_subtitle_file(xml_text, line_count)
         if subtitle_path is None:
             raise ValueError("弹幕为空")
@@ -6393,13 +6410,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         opacity_row.addWidget(self._danmaku_opacity_spin, 1)
         layout.addLayout(opacity_row)
 
-        outline_row = QHBoxLayout()
-        outline_row.addWidget(QLabel("描边强度", host))
-        self._danmaku_outline_strength_combo = FlatComboBox(host)
-        self._danmaku_outline_strength_combo.addItem("柔和", "soft")
-        self._danmaku_outline_strength_combo.addItem("清晰", "strong")
-        outline_row.addWidget(self._danmaku_outline_strength_combo, 1)
-        layout.addLayout(outline_row)
+        self._danmaku_outline_strength_combo = None
 
         scroll_speed_row = QHBoxLayout()
         scroll_speed_row.addWidget(QLabel("滚动速率", host))
@@ -6432,9 +6443,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._danmaku_font_size_spin.valueChanged.connect(self._save_danmaku_font_size)
         self._danmaku_opacity_spin.valueChanged.connect(self._save_danmaku_opacity)
-        self._danmaku_outline_strength_combo.currentIndexChanged.connect(
-            lambda index: self._save_danmaku_outline_strength(self._danmaku_outline_strength_combo.itemData(index))
-        )
         self._danmaku_scroll_speed_spin.valueChanged.connect(self._save_danmaku_scroll_speed)
         reset_button.clicked.connect(self._restore_default_danmaku_render_settings)
         close_button.clicked.connect(dialog.close)

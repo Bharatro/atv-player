@@ -2521,13 +2521,12 @@ def test_player_window_applies_bordered_form_styles_in_danmaku_settings_dialog(q
 
     assert window._danmaku_render_mode_combo is not None
     assert window._danmaku_position_preset_combo is not None
-    assert window._danmaku_outline_strength_combo is not None
     assert window._danmaku_line_count_spin is not None
     assert window._danmaku_opacity_spin is not None
     assert window._danmaku_scroll_speed_spin is not None
     assert window._danmaku_render_mode_combo.property("flat_combo_border_color") == tokens.input_border
     assert window._danmaku_position_preset_combo.property("flat_combo_disabled_border_color") == tokens.border_subtle
-    assert window._danmaku_outline_strength_combo.property("flat_combo_border_color") == tokens.input_border
+    assert window._danmaku_outline_strength_combo is None
     assert f"border: 1px solid {tokens.input_border};" in window._danmaku_line_count_spin.styleSheet()
     assert f"border: 1px solid {tokens.input_border};" in window._danmaku_opacity_spin.styleSheet()
     assert f"background-color: {tokens.input_bg};" in window._danmaku_scroll_speed_spin.styleSheet()
@@ -2608,21 +2607,17 @@ def test_player_window_saves_and_resets_danmaku_readability_settings(qtbot) -> N
     qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
 
     assert isinstance(window._danmaku_opacity_spin, QSpinBox)
-    assert window._danmaku_outline_strength_combo is not None
-
     window._danmaku_opacity_spin.setValue(60)
-    window._danmaku_outline_strength_combo.setCurrentIndex(
-        window._danmaku_outline_strength_combo.findData("soft")
-    )
 
     assert config.preferred_danmaku_opacity == 60
-    assert config.preferred_danmaku_outline_strength == "soft"
+    assert window._danmaku_outline_strength_combo is None
+    assert config.preferred_danmaku_outline_strength == "strong"
 
     window._restore_default_danmaku_render_settings()
 
     assert config.preferred_danmaku_opacity == 85
     assert config.preferred_danmaku_outline_strength == "strong"
-    assert saved["called"] >= 3
+    assert saved["called"] >= 2
 
 
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
@@ -13490,7 +13485,7 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
     assert window.danmaku_combo.currentText() == "弹幕"
     assert len(window.video.loaded_danmaku_paths) == 1
     assert window.video.set_secondary_subtitle_position_calls == []
-    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.set_subtitle_ass_override_calls == ["no"]
     assert window.video.subtitle_apply_calls[-1] == ("track", 40)
     assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
 
@@ -13681,6 +13676,7 @@ def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) ->
             self.loaded_danmaku_paths: list[str] = []
             self.removed_danmaku_track_ids: list[int] = []
             self.set_secondary_subtitle_position_calls: list[int] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
             self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
             self._next_track_id = 70
 
@@ -13714,6 +13710,15 @@ def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) ->
 
         def set_secondary_subtitle_position(self, value: int) -> None:
             self.set_secondary_subtitle_position_calls.append(value)
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
 
         def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
             self.secondary_subtitle_apply_calls.append((mode, track_id))
@@ -13749,6 +13754,7 @@ def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) ->
 
     assert len(window.video.loaded_danmaku_paths) == initial_loaded_count + 1
     assert window.video.removed_danmaku_track_ids == [70]
+    assert window.video.set_subtitle_ass_override_calls == ["no", "scale", "no"]
     assert window.video.secondary_subtitle_apply_calls == []
     assert window.danmaku_combo.currentText() == "3行"
 
@@ -14134,7 +14140,7 @@ def test_player_window_loads_danmaku_with_primary_slot_even_when_secondary_ass_o
     assert window.danmaku_combo.isEnabled() is True
     assert window.danmaku_combo.currentText() == "弹幕"
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
-    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.set_subtitle_ass_override_calls == ["no"]
     assert window.video.subtitle_apply_calls[-1] == ("track", 70)
     assert Path(window.video.loaded_danmaku_paths[-1][0]).read_text(encoding="utf-8").startswith("[Script Info]")
     assert "弹幕加载失败" not in window.log_view.toPlainText()
@@ -14216,7 +14222,7 @@ def test_player_window_uses_primary_slot_when_secondary_ass_override_is_unsuppor
     window.open_session(session)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
-    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.set_subtitle_ass_override_calls == ["no"]
     assert window.video.subtitle_apply_calls[-1] == ("track", 90)
 
 
@@ -14304,7 +14310,7 @@ def test_player_window_does_not_use_secondary_slot_when_secondary_ass_override_i
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
     assert window.video.set_secondary_subtitle_ass_override_calls == []
-    assert window.video.set_subtitle_ass_override_calls == []
+    assert window.video.set_subtitle_ass_override_calls == ["no"]
     assert window.video.subtitle_apply_calls[-1] == ("track", 70)
 
 

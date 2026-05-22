@@ -6,7 +6,7 @@ from xml.etree import ElementTree
 _VALID_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_COLOR_MODES = {"uniform", "source"}
 _VALID_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
-_VALID_OUTLINE_STRENGTHS = {"soft", "strong"}
+_VALID_OUTLINE_STRENGTHS = {"off", "soft", "strong"}
 _PLAY_RES_X = 1920
 _PLAY_RES_Y = 1080
 _LANE_HEIGHT = 40
@@ -345,8 +345,11 @@ def _ass_color_with_alpha(color: str, alpha: str) -> str:
     return color.replace("&H", f"&H{alpha}", 1)
 
 
-def _outline_style_values(outline_strength: str) -> tuple[int, int]:
-    return (1, 0) if outline_strength == "soft" else (2, 1)
+def resolved_outline_style(outline_strength: str) -> tuple[int, int]:
+    normalized = _normalize_outline_strength(outline_strength)
+    if normalized == "off":
+        return (0, 0)
+    return (2, 0) if normalized == "soft" else (4, 1)
 
 
 def _scroll_duration_seconds(duration_seconds: float, scroll_speed: float) -> float:
@@ -382,7 +385,7 @@ def _escape_ass_text(value: str) -> str:
 def _build_ass_header(primary_color: str, font_size: int, *, opacity: int, outline_strength: str) -> str:
     alpha = _opacity_to_ass_alpha(opacity)
     text_color = _ass_color_with_alpha(primary_color, alpha)
-    outline_width, shadow = _outline_style_values(_normalize_outline_strength(outline_strength))
+    outline_width, shadow = resolved_outline_style(outline_strength)
     return "\n".join(
         [
             "[Script Info]",

@@ -191,22 +191,28 @@ def test_render_danmaku_ass_applies_text_alpha_to_uniform_and_source_color_paths
     assert r"\1a&H26&" in source
 
 
-def test_render_danmaku_ass_uses_soft_and_strong_outline_presets() -> None:
+def test_render_danmaku_ass_uses_off_soft_and_strong_outline_presets() -> None:
     xml_text = (
         '<?xml version="1.0" encoding="UTF-8"?><i>'
         '<d p="0.0,1,25,16777215">第一条</d>'
         "</i>"
     )
 
+    off = render_danmaku_ass(xml_text, outline_strength="off")
     soft = render_danmaku_ass(xml_text, outline_strength="soft")
     strong = render_danmaku_ass(xml_text, outline_strength="strong")
 
     assert (
-        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,8,24,24,4,1"
+        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,0,0,8,24,24,4,1"
+        in off
+    )
+
+    assert (
+        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,8,24,24,4,1"
         in soft
     )
     assert (
-        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,8,24,24,4,1"
+        "Style: Danmaku,sans-serif,32,&H26FFFFFF&,&H26FFFFFF&,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,4,1,8,24,24,4,1"
         in strong
     )
 

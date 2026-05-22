@@ -7,7 +7,7 @@ from atv_player.sqlite_utils import managed_connection
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_DANMAKU_COLOR_MODES = {"uniform", "source"}
 _VALID_DANMAKU_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
-_VALID_DANMAKU_OUTLINE_STRENGTHS = {"soft", "strong"}
+_VALID_DANMAKU_OUTLINE_STRENGTHS = {"off", "soft", "strong"}
 _VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}

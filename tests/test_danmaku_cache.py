@@ -96,6 +96,39 @@ def test_danmaku_ass_cache_path_changes_when_opacity_or_outline_changes(monkeypa
     assert first != second
 
 
+def test_danmaku_ass_cache_path_changes_when_outline_rendering_changes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'
+
+    first = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=85,
+        outline_strength="soft",
+    )
+    monkeypatch.setattr(danmaku_cache_module, "resolved_outline_style", lambda _value: (9, 3))
+    second = danmaku_cache_module.danmaku_ass_cache_path(
+        xml_text,
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=85,
+        outline_strength="soft",
+    )
+
+    assert first != second
+
+
 def test_danmaku_ass_cache_path_changes_when_intro_episode_label_changes(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">一条</d></i>'

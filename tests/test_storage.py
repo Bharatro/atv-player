@@ -652,14 +652,14 @@ def test_settings_repository_round_trip_persists_danmaku_readability_settings(tm
     repo = SettingsRepository(tmp_path / "app.db")
     config = AppConfig(
         preferred_danmaku_opacity=60,
-        preferred_danmaku_outline_strength="soft",
+        preferred_danmaku_outline_strength="off",
     )
 
     repo.save_config(config)
     saved = repo.load_config()
 
     assert saved.preferred_danmaku_opacity == 60
-    assert saved.preferred_danmaku_outline_strength == "soft"
+    assert saved.preferred_danmaku_outline_strength == "off"
 
 
 def test_settings_repository_normalizes_invalid_danmaku_readability_settings(tmp_path: Path) -> None:
