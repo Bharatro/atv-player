@@ -254,6 +254,243 @@ class TestResolve:
         assert result.selected_audio_track_id == "ytdlp_audio_en_140-en"
         assert result.audio_format_id == "140-en"
 
+    def test_prefers_multilingual_youtube_muxed_tracks_over_split_audio_only_tracks(self, monkeypatch, service):
+        info = _sample_info(
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-en.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "language": "en",
+                    "format_note": "English original (default), medium",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "95-11",
+                    "url": "https://stream.test/hls-720-zh.m3u8",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2565,
+                    "vcodec": "avc1.4D401F",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "zh-Hans",
+                    "format_note": "Chinese (Simplified)",
+                },
+                {
+                    "format_id": "95-22",
+                    "url": "https://stream.test/hls-720-en.m3u8",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2565,
+                    "vcodec": "avc1.4D401F",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original (default)",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "96-11",
+                    "url": "https://stream.test/hls-1080-zh.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "zh-Hans",
+                    "format_note": "Chinese (Simplified)",
+                },
+                {
+                    "format_id": "96-22",
+                    "url": "https://stream.test/hls-1080-en.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original (default)",
+                    "language_preference": 10,
+                },
+            ],
+            requested_formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-en.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "language": "en",
+                    "format_note": "English original (default), medium",
+                    "language_preference": 10,
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert [track.id for track in result.audio_tracks] == [
+            "ytdlp_audio_en_muxed",
+            "ytdlp_audio_zh-Hans_muxed",
+        ]
+        assert result.selected_audio_track_id == "ytdlp_audio_en_muxed"
+        assert result.url == "https://stream.test/hls-1080-en.m3u8"
+        assert result.audio_url == ""
+        assert result.video_format_id == "96-22"
+        assert result.audio_format_id == ""
+
+    def test_resolve_for_quality_preserves_selected_muxed_audio_language(self, monkeypatch, service):
+        info = _sample_info(
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-en.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "language": "en",
+                    "format_note": "English original (default), medium",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "95-11",
+                    "url": "https://stream.test/hls-720-zh.m3u8",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2565,
+                    "vcodec": "avc1.4D401F",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "zh-Hans",
+                    "format_note": "Chinese (Simplified)",
+                },
+                {
+                    "format_id": "95-22",
+                    "url": "https://stream.test/hls-720-en.m3u8",
+                    "height": 720,
+                    "width": 1280,
+                    "tbr": 2565,
+                    "vcodec": "avc1.4D401F",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original (default)",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "96-11",
+                    "url": "https://stream.test/hls-1080-zh.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "zh-Hans",
+                    "format_note": "Chinese (Simplified)",
+                },
+                {
+                    "format_id": "96-22",
+                    "url": "https://stream.test/hls-1080-en.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original (default)",
+                    "language_preference": 10,
+                },
+            ],
+            requested_formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-en.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "language": "en",
+                    "format_note": "English original (default), medium",
+                    "language_preference": 10,
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve_for_quality(
+            "https://www.youtube.com/watch?v=test123",
+            "ytdlp_720",
+            audio_track_id="ytdlp_audio_zh-Hans_muxed",
+        )
+
+        assert result.selected_quality_id == "ytdlp_720"
+        assert result.selected_audio_track_id == "ytdlp_audio_zh-Hans_muxed"
+        assert result.url == "https://stream.test/hls-720-zh.m3u8"
+        assert result.audio_url == ""
+        assert result.video_format_id == "95-11"
+        assert result.audio_format_id == ""
+
     def test_resolve_for_quality_preserves_requested_audio_track(self, monkeypatch, service):
         info = _sample_info(
             formats=[

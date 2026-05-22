@@ -183,6 +183,10 @@ def _normalize_audio_lang(value: object) -> str:
     normalized = str(value or "").strip().lower().replace("_", "-")
     if not normalized:
         return ""
+    if normalized in {"zh-hans", "zh-cn"}:
+        return "zh-Hans"
+    if normalized in {"zh-hant", "zh-tw"}:
+        return "zh-Hant"
     if normalized.startswith(_ENGLISH_AUDIO_PREFIXES):
         return "en"
     if normalized.startswith(_CHINESE_AUDIO_PREFIXES):
@@ -244,6 +248,7 @@ def _audio_track_option_id(fmt: dict, lang: str) -> str:
 class _YtdlpAudioCandidate:
     option: YtdlpAudioTrackOption
     format_entry: dict
+    is_muxed: bool = False
 
 
 def _audio_track_sort_key(candidate: _YtdlpAudioCandidate) -> tuple[int, int, int, str, str]:
@@ -284,7 +289,67 @@ def _audio_candidate_formats(info: dict) -> list[dict]:
     return candidates
 
 
-def _build_audio_track_candidates(info: dict) -> list[_YtdlpAudioCandidate]:
+def _best_muxed_audio_variant(variants: list[dict], max_height: int | None) -> dict | None:
+    if not variants:
+        return None
+    if max_height and max_height > 0:
+        bounded = [fmt for fmt in variants if int(fmt.get("height") or 0) <= max_height]
+        if bounded:
+            variants = bounded
+    return max(
+        variants,
+        key=lambda fmt: (
+            int(fmt.get("height") or 0),
+            int(fmt.get("tbr") or 0),
+        ),
+    )
+
+
+def _build_muxed_audio_track_candidates(
+    info: dict,
+    max_height: int | None,
+) -> list[_YtdlpAudioCandidate]:
+    if not _is_youtube_extractor(info):
+        return []
+    grouped_variants: dict[str, list[dict]] = {}
+    for fmt in info.get("formats") or []:
+        if not isinstance(fmt, dict) or not fmt.get("url"):
+            continue
+        if not _has_muxed_audio(fmt):
+            continue
+        if (fmt.get("vcodec", "") or "") == "none":
+            continue
+        lang = _normalize_audio_lang(fmt.get("language") or fmt.get("lang"))
+        if not lang:
+            continue
+        grouped_variants.setdefault(lang, []).append(fmt)
+    if len(grouped_variants) <= 1:
+        return []
+
+    candidates: list[_YtdlpAudioCandidate] = []
+    for lang, variants in grouped_variants.items():
+        selected_variant = _best_muxed_audio_variant(variants, max_height)
+        if selected_variant is None:
+            continue
+        is_original = _audio_candidate_is_original(selected_variant)
+        is_default = _audio_candidate_is_default(selected_variant)
+        option = YtdlpAudioTrackOption(
+            id=f"ytdlp_audio_{lang}_muxed",
+            label=_audio_track_label(lang, is_original=is_original, is_default=is_default, fmt=selected_variant),
+            lang=lang,
+            format_id=str(selected_variant.get("format_id") or "").strip(),
+            is_original=is_original,
+            is_default=is_default,
+            ytdl_format=str(selected_variant.get("format_id") or "").strip(),
+        )
+        candidates.append(_YtdlpAudioCandidate(option=option, format_entry=selected_variant, is_muxed=True))
+    return sorted(candidates, key=_audio_track_sort_key)
+
+
+def _build_audio_track_candidates(info: dict, max_height: int | None = None) -> list[_YtdlpAudioCandidate]:
+    muxed_candidates = _build_muxed_audio_track_candidates(info, max_height)
+    if muxed_candidates:
+        return muxed_candidates
     candidates: list[_YtdlpAudioCandidate] = []
     for fmt in _audio_candidate_formats(info):
         lang = _normalize_audio_lang(fmt.get("language") or fmt.get("lang"))
@@ -299,7 +364,7 @@ def _build_audio_track_candidates(info: dict) -> list[_YtdlpAudioCandidate]:
             is_default=is_default,
             ytdl_format=str(fmt.get("format_id") or "").strip(),
         )
-        candidates.append(_YtdlpAudioCandidate(option=option, format_entry=fmt))
+        candidates.append(_YtdlpAudioCandidate(option=option, format_entry=fmt, is_muxed=False))
     return sorted(candidates, key=_audio_track_sort_key)
 
 
@@ -848,9 +913,9 @@ class YtdlpPlaybackService:
         )
 
         selected_video, selected_audio = _select_stream_pair(info, selection_max_height)
-        audio_candidates = _build_audio_track_candidates(info)
+        audio_candidates = _build_audio_track_candidates(info, selection_max_height)
         audio_tracks = [candidate.option for candidate in audio_candidates]
-        fallback_audio_track_id = _audio_track_id_for_format(audio_candidates, selected_audio)
+        fallback_audio_track_id = _audio_track_id_for_format(audio_candidates, selected_audio or selected_video)
         resolved_audio_track_id = _resolve_selected_audio_track_id(
             audio_tracks,
             selected_audio_track_id,
@@ -861,7 +926,10 @@ class YtdlpPlaybackService:
             resolved_audio_track_id != fallback_audio_track_id
         )
         if preferred_audio_candidate is not None and should_override_audio_selection:
-            if selected_video is None or _has_muxed_audio(selected_video):
+            if preferred_audio_candidate.is_muxed:
+                selected_video = preferred_audio_candidate.format_entry
+                selected_audio = None
+            elif selected_video is None or _has_muxed_audio(selected_video):
                 video_only_candidates = [
                     fmt
                     for fmt in _preferred_video_formats(info, selection_max_height)
@@ -873,6 +941,8 @@ class YtdlpPlaybackService:
             else:
                 selected_audio = preferred_audio_candidate.format_entry
         direct_url = _pick_direct_url(info, selection_max_height)
+        if selected_video is not None and selected_video.get("url") and _has_muxed_audio(selected_video):
+            direct_url = str(selected_video["url"])
         if not direct_url:
             raise ValueError("未获取到播放地址")
         playback_url = direct_url
