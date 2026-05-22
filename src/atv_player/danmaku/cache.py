@@ -10,7 +10,7 @@ from atv_player.danmaku.subtitle import render_danmaku_ass
 from atv_player.paths import app_cache_dir
 
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
-_DANMAKU_ASS_CACHE_VERSION = "v4"
+_DANMAKU_ASS_CACHE_VERSION = "v5"
 _DANMAKU_XML_CACHE_VERSION = "v1"
 _DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v3"
 
@@ -32,6 +32,8 @@ def danmaku_ass_cache_path(
     position_preset: str = "top",
     scroll_speed: float = 1.0,
     font_size: int = 32,
+    opacity: int = 85,
+    outline_strength: str = "strong",
 ) -> Path:
     digest = sha256(
         "\0".join(
@@ -45,6 +47,8 @@ def danmaku_ass_cache_path(
                 position_preset,
                 f"{float(scroll_speed):.2f}",
                 str(int(font_size)),
+                str(int(opacity)),
+                str(outline_strength),
                 xml_text,
             )
         ).encode("utf-8")
@@ -63,6 +67,8 @@ def load_or_create_danmaku_ass_cache(
     position_preset: str = "top",
     scroll_speed: float = 1.0,
     font_size: int = 32,
+    opacity: int = 85,
+    outline_strength: str = "strong",
 ) -> Path | None:
     subtitle_text = render_danmaku_ass(
         xml_text,
@@ -74,6 +80,8 @@ def load_or_create_danmaku_ass_cache(
         position_preset=position_preset,
         scroll_speed=scroll_speed,
         font_size=font_size,
+        opacity=opacity,
+        outline_strength=outline_strength,
     )
     if not subtitle_text:
         return None
@@ -87,6 +95,8 @@ def load_or_create_danmaku_ass_cache(
         position_preset=position_preset,
         scroll_speed=scroll_speed,
         font_size=font_size,
+        opacity=opacity,
+        outline_strength=outline_strength,
     )
     if not cache_path.exists():
         cache_path.write_text(subtitle_text, encoding="utf-8")

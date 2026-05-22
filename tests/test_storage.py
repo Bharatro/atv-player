@@ -648,6 +648,36 @@ def test_settings_repository_round_trip_persists_episode_title_enhancement_toggl
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_danmaku_readability_settings(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = AppConfig(
+        preferred_danmaku_opacity=60,
+        preferred_danmaku_outline_strength="soft",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.preferred_danmaku_opacity == 60
+    assert saved.preferred_danmaku_outline_strength == "soft"
+
+
+def test_settings_repository_normalizes_invalid_danmaku_readability_settings(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+
+    repo.save_config(
+        AppConfig(
+            preferred_danmaku_opacity=999,
+            preferred_danmaku_outline_strength="neon",
+        )
+    )
+
+    saved = repo.load_config()
+
+    assert saved.preferred_danmaku_opacity == 100
+    assert saved.preferred_danmaku_outline_strength == "strong"
+
+
 def test_settings_repository_migrates_missing_metadata_credential_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
