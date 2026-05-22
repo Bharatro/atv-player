@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import html
 import re
 
 
@@ -30,6 +31,7 @@ _SRT_TIMING_RE = re.compile(
 _BRACKET_SPEAKER_RE = re.compile(r"^(?:\[(?P<speaker1>[^\]]+)\]|【(?P<speaker2>[^】]+)】)\s*(?P<text>.+)$")
 _COLON_SPEAKER_RE = re.compile(r"^(?P<speaker>[^:：]{1,40})[:：]\s*(?P<text>.+)$")
 _DASH_SPEAKER_RE = re.compile(r"^(?P<speaker>[^-]{1,40})\s-\s(?P<text>.+)$")
+_WEBVTT_INLINE_TAG_RE = re.compile(r"<[^>]+>")
 _ATTACHED_PUNCTUATION = ".,!?;:，。！？；：…"
 _SPEAKER_PALETTE = ("YouTubeSpeaker1", "YouTubeSpeaker2", "YouTubeSpeaker3", "YouTubeSpeaker4")
 
@@ -68,7 +70,7 @@ def _parse_webvtt_cues(text: str) -> list[Cue]:
         index += 1
         payload: list[str] = []
         while index < len(lines) and lines[index].strip():
-            payload.append(lines[index].strip())
+            payload.append(_clean_webvtt_payload_text(lines[index]))
             index += 1
         cue_text = " ".join(part for part in payload if part).strip()
         if cue_text:
@@ -81,6 +83,12 @@ def _parse_webvtt_cues(text: str) -> list[Cue]:
             )
         index += 1
     return [cue for cue in cues if cue.end_ms > cue.start_ms]
+
+
+def _clean_webvtt_payload_text(text: str) -> str:
+    without_tags = _WEBVTT_INLINE_TAG_RE.sub("", str(text or ""))
+    unescaped = html.unescape(without_tags)
+    return unescaped.strip()
 
 
 def _parse_srt_cues(text: str) -> list[Cue]:
