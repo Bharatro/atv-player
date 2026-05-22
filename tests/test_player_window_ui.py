@@ -2560,6 +2560,38 @@ def test_player_window_saves_advanced_danmaku_settings_from_dialog(qtbot) -> Non
     assert saved["called"] == 3
 
 
+def test_player_window_saves_and_resets_danmaku_readability_settings(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    assert isinstance(window._danmaku_opacity_spin, QSpinBox)
+    assert window._danmaku_outline_strength_combo is not None
+
+    window._danmaku_opacity_spin.setValue(60)
+    window._danmaku_outline_strength_combo.setCurrentIndex(
+        window._danmaku_outline_strength_combo.findData("soft")
+    )
+
+    assert config.preferred_danmaku_opacity == 60
+    assert config.preferred_danmaku_outline_strength == "soft"
+
+    window._restore_default_danmaku_render_settings()
+
+    assert config.preferred_danmaku_opacity == 85
+    assert config.preferred_danmaku_outline_strength == "strong"
+    assert saved["called"] >= 3
+
+
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
     item = PlayItem(
         title="正片",
@@ -14727,6 +14759,40 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
 
     assert path == tmp_path / "demo.ass"
     assert captured["intro_episode_label"] == "第1集"
+
+
+def test_player_window_build_danmaku_subtitle_file_passes_readability_settings(qtbot, monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load_or_create_danmaku_ass_cache(xml_text: str, line_count: int, **kwargs) -> Path | None:
+        captured.update(kwargs)
+        return tmp_path / "demo.ass"
+
+    monkeypatch.setattr(player_window_module, "load_or_create_danmaku_ass_cache", fake_load_or_create_danmaku_ass_cache)
+
+    config = AppConfig(
+        preferred_danmaku_opacity=60,
+        preferred_danmaku_outline_strength="soft",
+    )
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+
+    path = window._build_danmaku_subtitle_file(
+        '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+        1,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+        opacity=60,
+        outline_strength="soft",
+    )
+
+    assert path == tmp_path / "demo.ass"
+    assert captured["opacity"] == 60
+    assert captured["outline_strength"] == "soft"
 
 
 def test_player_window_playback_loader_replacement_restores_cached_danmaku_for_current_item(qtbot) -> None:

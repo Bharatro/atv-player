@@ -649,8 +649,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_uniform_color_preview_original: str | None = None
         self._danmaku_line_count_spin: QSpinBox | None = None
         self._danmaku_font_size_spin: QSpinBox | None = None
+        self._danmaku_opacity_spin: QSpinBox | None = None
         self._danmaku_scroll_speed_spin: QDoubleSpinBox | None = None
         self._danmaku_position_preset_combo: QComboBox | None = None
+        self._danmaku_outline_strength_combo: QComboBox | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
@@ -4361,6 +4363,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return 32
         return max(16, min(value, 72))
 
+    def _preferred_danmaku_opacity(self) -> int:
+        if self.config is None:
+            return 85
+        try:
+            value = int(getattr(self.config, "preferred_danmaku_opacity", 85))
+        except (TypeError, ValueError):
+            return 85
+        return max(30, min(value, 100))
+
+    def _preferred_danmaku_outline_strength(self) -> str:
+        if self.config is None:
+            return "strong"
+        value = str(getattr(self.config, "preferred_danmaku_outline_strength", "strong") or "").strip()
+        return value if value in {"soft", "strong"} else "strong"
+
     def _preferred_danmaku_combo_index(self) -> int:
         if not self._preferred_danmaku_enabled():
             return 1
@@ -4462,6 +4479,28 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if int(getattr(self.config, "preferred_danmaku_font_size", 32)) == normalized:
             return
         self.config.preferred_danmaku_font_size = normalized
+        self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_opacity(self, value: int) -> None:
+        if self.config is None:
+            return
+        normalized = max(30, min(int(value), 100))
+        if int(getattr(self.config, "preferred_danmaku_opacity", 85)) == normalized:
+            return
+        self.config.preferred_danmaku_opacity = normalized
+        self._save_config()
+        self._refresh_danmaku_settings_dialog_controls()
+        self._reload_active_danmaku_for_render_settings()
+
+    def _save_danmaku_outline_strength(self, value: str) -> None:
+        if self.config is None:
+            return
+        normalized = value if value in {"soft", "strong"} else "strong"
+        if str(getattr(self.config, "preferred_danmaku_outline_strength", "strong") or "").strip() == normalized:
+            return
+        self.config.preferred_danmaku_outline_strength = normalized
         self._save_config()
         self._refresh_danmaku_settings_dialog_controls()
         self._reload_active_danmaku_for_render_settings()
@@ -5197,6 +5236,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             position_preset=self._preferred_danmaku_position_preset(),
             scroll_speed=self._preferred_danmaku_scroll_speed(),
             font_size=self._preferred_danmaku_font_size(),
+            opacity=self._preferred_danmaku_opacity(),
+            outline_strength=self._preferred_danmaku_outline_strength(),
         )
         if temp_path is None:
             return None
@@ -5224,6 +5265,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         position_preset: str,
         scroll_speed: float,
         font_size: int,
+        opacity: int = 85,
+        outline_strength: str = "strong",
     ) -> Path | None:
         intro_episode_label = ""
         current_item = self._current_play_item()
@@ -5241,6 +5284,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             position_preset=position_preset,
             scroll_speed=scroll_speed,
             font_size=font_size,
+            opacity=opacity,
+            outline_strength=outline_strength,
         )
 
     def _current_danmaku_render_settings(self) -> dict[str, object]:
@@ -5251,6 +5296,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             "position_preset": self._preferred_danmaku_position_preset(),
             "scroll_speed": self._preferred_danmaku_scroll_speed(),
             "font_size": self._preferred_danmaku_font_size(),
+            "opacity": self._preferred_danmaku_opacity(),
+            "outline_strength": self._preferred_danmaku_outline_strength(),
         }
 
     def _apply_danmaku_secondary_scale(self) -> None:
@@ -5324,6 +5371,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     position_preset=str(settings["position_preset"]),
                     scroll_speed=float(settings["scroll_speed"]),
                     font_size=int(settings["font_size"]),
+                    opacity=int(settings["opacity"]),
+                    outline_strength=str(settings["outline_strength"]),
                 )
             except Exception as exc:
                 if self._is_window_alive():
@@ -6091,6 +6140,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._danmaku_font_size_spin.blockSignals(True)
             self._danmaku_font_size_spin.setValue(self._preferred_danmaku_font_size())
             self._danmaku_font_size_spin.blockSignals(False)
+        if self._danmaku_opacity_spin is not None:
+            self._danmaku_opacity_spin.blockSignals(True)
+            self._danmaku_opacity_spin.setValue(self._preferred_danmaku_opacity())
+            self._danmaku_opacity_spin.blockSignals(False)
+        if self._danmaku_outline_strength_combo is not None:
+            self._danmaku_outline_strength_combo.blockSignals(True)
+            self._danmaku_outline_strength_combo.setCurrentIndex(
+                max(0, self._danmaku_outline_strength_combo.findData(self._preferred_danmaku_outline_strength()))
+            )
+            self._danmaku_outline_strength_combo.blockSignals(False)
         if self._danmaku_scroll_speed_spin is not None:
             self._danmaku_scroll_speed_spin.blockSignals(True)
             self._danmaku_scroll_speed_spin.setValue(self._preferred_danmaku_scroll_speed())
@@ -6154,6 +6213,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         font_size_row.addWidget(self._danmaku_font_size_spin, 1)
         layout.addLayout(font_size_row)
 
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("透明度", host))
+        self._danmaku_opacity_spin = QSpinBox(host)
+        self._danmaku_opacity_spin.setRange(30, 100)
+        self._danmaku_opacity_spin.setSingleStep(5)
+        self._danmaku_opacity_spin.setSuffix("%")
+        opacity_row.addWidget(self._danmaku_opacity_spin, 1)
+        layout.addLayout(opacity_row)
+
+        outline_row = QHBoxLayout()
+        outline_row.addWidget(QLabel("描边强度", host))
+        self._danmaku_outline_strength_combo = FlatComboBox(host)
+        self._danmaku_outline_strength_combo.addItem("柔和", "soft")
+        self._danmaku_outline_strength_combo.addItem("清晰", "strong")
+        outline_row.addWidget(self._danmaku_outline_strength_combo, 1)
+        layout.addLayout(outline_row)
+
         scroll_speed_row = QHBoxLayout()
         scroll_speed_row.addWidget(QLabel("滚动速率", host))
         self._danmaku_scroll_speed_spin = QDoubleSpinBox(host)
@@ -6184,6 +6260,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             lambda index: self._save_danmaku_position_preset(self._danmaku_position_preset_combo.itemData(index))
         )
         self._danmaku_font_size_spin.valueChanged.connect(self._save_danmaku_font_size)
+        self._danmaku_opacity_spin.valueChanged.connect(self._save_danmaku_opacity)
+        self._danmaku_outline_strength_combo.currentIndexChanged.connect(
+            lambda index: self._save_danmaku_outline_strength(self._danmaku_outline_strength_combo.itemData(index))
+        )
         self._danmaku_scroll_speed_spin.valueChanged.connect(self._save_danmaku_scroll_speed)
         reset_button.clicked.connect(self._restore_default_danmaku_render_settings)
         close_button.clicked.connect(dialog.close)
@@ -6203,6 +6283,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.config.preferred_danmaku_line_count = 1
         self.config.preferred_danmaku_scroll_speed = 1.0
         self.config.preferred_danmaku_font_size = 32
+        self.config.preferred_danmaku_opacity = 85
+        self.config.preferred_danmaku_outline_strength = "strong"
         self._save_config()
         self._refresh_danmaku_combo_from_preferences()
         self._refresh_danmaku_settings_dialog_controls()
