@@ -191,12 +191,6 @@ def load_youtube_category_config(
 
 def normalize_youtube_vod_id(value: str) -> str:
     text = str(value or "").strip()
-    if text.startswith("yt:video:"):
-        return text.split(":", 2)[2]
-    if text.startswith("yt:channel:"):
-        return f"channel@{text.split(':', 2)[2]}"
-    if text.startswith("yt:playlist:"):
-        return f"playlist@{text.split(':', 2)[2]}"
     return text
 
 
@@ -213,10 +207,12 @@ def plan_youtube_query(category_id: str, filters: dict[str, str] | None = None) 
     suffixes = [active.pop("time", "")]
     suffixes.extend(active.values())
     query = " ".join(part for part in [base, *suffixes] if part).strip()
-    if query.startswith("playlist@"):
-        return YouTubeQueryPlan("playlist", query.removeprefix("playlist@"), unsupported)
-    if query.startswith("channel@"):
-        return YouTubeQueryPlan("channel", query.removeprefix("channel@"), unsupported)
+    if query.startswith("yt:playlist:"):
+        return YouTubeQueryPlan("playlist", query.removeprefix("yt:playlist:"), unsupported)
+    if query.startswith("yt:channel:"):
+        return YouTubeQueryPlan("channel", query.removeprefix("yt:channel:"), unsupported)
+    if query.startswith("yt:video:"):
+        return YouTubeQueryPlan("video", query.removeprefix("yt:video:"), unsupported)
     if query.startswith("@"):
         return YouTubeQueryPlan("channel", query, unsupported)
     return YouTubeQueryPlan("search", query, unsupported)

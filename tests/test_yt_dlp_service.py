@@ -310,6 +310,48 @@ class TestCanResolve:
 
 
 class TestResolve:
+    def test_resolve_fast_uses_get_url_without_subtitle_or_json_enumeration(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(
+                returncode=0,
+                stdout="https://video.test/1080.mp4\nhttps://audio.test/audio.webm\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        result = service.resolve_fast("https://www.youtube.com/watch?v=test123")
+
+        assert result.url == "https://video.test/1080.mp4"
+        assert result.audio_url == "https://audio.test/audio.webm"
+        assert result.selected_quality_id == "ytdlp_1080"
+        command = run_calls[0]
+        assert "--get-url" in command
+        assert "--dump-single-json" not in command
+        assert "--all-subs" not in command
+
+    def test_resolve_fast_falls_back_when_get_url_returns_video_only_stream(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+        video_only_url = "https://rr4---sn-i3b7kn6k.googlevideo.com/videoplayback?expire=4102444800&itag=399"
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            if "--get-url" in command:
+                return SimpleNamespace(returncode=0, stdout=f"{video_only_url}\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout=json.dumps(_sample_info()), stderr="")
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        result = service.resolve_fast("https://www.youtube.com/watch?v=test123")
+
+        assert result.url == "https://stream.test/1080.mp4"
+        assert result.selected_quality_id == "ytdlp_1080"
+        assert any("--get-url" in command for command in run_calls)
+        assert any("--dump-single-json" in command for command in run_calls)
+
     def test_prefers_original_english_audio_track(self, monkeypatch, service):
         info = _sample_info(
             formats=[
@@ -724,7 +766,7 @@ class TestResolve:
 
         result = service.resolve_for_quality("https://www.youtube.com/watch?v=test123", "ytdlp_1080")
 
-        assert calls == [(1080, True, True), (1080, True, False)]
+        assert calls == [(1080, False, True), (1080, False, False)]
         assert result.url == "https://stream.test/hls-1080.m3u8"
         assert result.video_format_id == "96"
 
@@ -1015,7 +1057,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, False)]
         assert result.selected_quality_id == "ytdlp_1080"
         assert result.video_format_id == "1080"
 
@@ -1043,7 +1085,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, False)]
         assert result.selected_quality_id == "ytdlp_720"
         assert result.video_format_id == "720"
 
@@ -1091,7 +1133,7 @@ class TestResolve:
 
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, False)]
         assert result.selected_quality_id == "ytdlp_2160"
         assert result.video_format_id == "2160"
 
@@ -1177,7 +1219,7 @@ class TestResolve:
 
         service.resolve("https://www.youtube.com/watch?v=test123", max_height=480)
 
-        assert calls == [("https://www.youtube.com/watch?v=test123", 480, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", 480, False)]
 
     def test_prefers_muxed_fallback_url_when_info_url_missing(self, monkeypatch, service):
         info = _sample_info(
@@ -1340,7 +1382,7 @@ class TestResolve:
         second = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert second.url == first.url
-        assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+        assert calls == [("https://www.youtube.com/watch?v=test123", None, False)]
 
     def test_bare_youtube_video_id_and_watch_url_share_cache(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
@@ -1353,7 +1395,7 @@ class TestResolve:
         second = service.resolve("https://www.youtube.com/watch?v=abc123xyz89")
 
         assert second.url == first.url
-        assert calls == [("https://www.youtube.com/watch?v=abc123xyz89", None, True)]
+        assert calls == [("https://www.youtube.com/watch?v=abc123xyz89", None, False)]
 
     def test_quality_specific_resolve_reuses_unbounded_cache_when_selected_quality_matches(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
@@ -1545,16 +1587,29 @@ class TestResolve:
         with pytest.raises(ValueError, match="未返回结果"):
             service.resolve("https://www.youtube.com/watch?v=test123")
 
-    def test_retries_without_subtitle_enumeration_after_timeout(self, monkeypatch, service):
+    def test_startup_timeout_does_not_retry_subtitle_free_command(self, monkeypatch, service):
         run_calls: list[list[str]] = []
 
         def fake_run(command, **_kwargs):
             run_calls.append(command)
-            if len(run_calls) == 1:
-                raise subprocess.TimeoutExpired(command, timeout=60)
+            raise subprocess.TimeoutExpired(command, timeout=60)
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+
+        with pytest.raises(ValueError, match="yt-dlp 解析超时"):
+            service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert len(run_calls) == 1
+        assert "--all-subs" not in run_calls[0]
+
+    def test_startup_resolve_skips_subtitle_enumeration(self, monkeypatch, service):
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
             return SimpleNamespace(
                 returncode=0,
-                stdout=json.dumps(_sample_info()),
+                stdout=json.dumps(_sample_info(subtitles={}, automatic_captions={})),
                 stderr="",
             )
 
@@ -1563,9 +1618,8 @@ class TestResolve:
         result = service.resolve("https://www.youtube.com/watch?v=test123")
 
         assert result.url == "https://stream.test/1080.mp4"
-        assert len(run_calls) == 2
-        assert "--all-subs" in run_calls[0]
-        assert "--all-subs" not in run_calls[1]
+        assert len(run_calls) == 1
+        assert "--all-subs" not in run_calls[0]
 
     def test_not_available(self, monkeypatch, service):
         service._ytdlp_path = None

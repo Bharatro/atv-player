@@ -111,7 +111,9 @@ class PlayerController:
             lowered = normalized.lower()
             if looks_like_youtube_video_id(normalized):
                 return True
-            if lowered.startswith("yt:video:") or "youtube.com" in lowered or "youtu.be" in lowered:
+            if lowered.startswith(("yt:video:", "yt:channel:", "yt:playlist:")):
+                return True
+            if "youtube.com" in lowered or "youtu.be" in lowered:
                 return True
         return False
 
@@ -136,13 +138,42 @@ class PlayerController:
                 return int(parts[index + 1])
         return 0
 
+    def _is_googlevideo_videoplayback_url(self, url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        if hostname != "googlevideo.com" and not hostname.endswith(".googlevideo.com"):
+            return False
+        return any(part == "videoplayback" for part in parsed.path.split("/") if part)
+
     def _is_reusable_youtube_history_url(self, url: str) -> bool:
         parsed = urlparse(str(url or "").strip())
         hostname = (parsed.hostname or "").lower()
         if hostname != "googlevideo.com" and not hostname.endswith(".googlevideo.com"):
             return False
+        if self._is_googlevideo_videoplayback_url(url):
+            return False
         expire_seconds = self._googlevideo_expire_seconds(url)
         return expire_seconds > int(time()) + 120
+
+    def _should_skip_history_report_for_youtube_placeholder(
+        self,
+        session: PlayerSession,
+        current_item: PlayItem,
+    ) -> bool:
+        if session.playback_loader is None or len(session.playlist) != 1:
+            return False
+        normalized_vod_id = str(current_item.vod_id or "").strip().lower()
+        return normalized_vod_id.startswith(("yt:channel:", "yt:playlist:"))
+
+    def _history_episode_url(self, current_item: PlayItem) -> str:
+        url = str(current_item.url or "").strip()
+        original_url = str(current_item.original_url or "").strip()
+        if original_url and self._is_youtube_play_item(current_item):
+            if current_item.audio_url:
+                return original_url
+            if self._is_googlevideo_videoplayback_url(url):
+                return original_url
+        return url
 
     def _prefill_reusable_history_url(
         self,
@@ -483,6 +514,14 @@ class PlayerController:
         position_ms = position_seconds * 1000
         if session.playback_progress_reporter is not None and (not paused or force_remote_report):
             session.playback_progress_reporter(current_item, position_ms, paused)
+        if self._should_skip_history_report_for_youtube_placeholder(session, current_item):
+            logger.info(
+                "Skip playback history report for unresolved YouTube placeholder vod_id=%s index=%s position_ms=%s",
+                session.vod.vod_id,
+                current_index,
+                position_ms,
+            )
+            return
         logger.info(
             "Report playback progress vod_id=%s index=%s position_ms=%s paused=%s",
             session.vod.vod_id,
@@ -497,7 +536,7 @@ class PlayerController:
             "vodPic": session.vod.vod_pic,
             "vodRemarks": playlist_item_display_title(current_item, "episode"),
             "episode": current_index,
-            "episodeUrl": current_item.url,
+            "episodeUrl": self._history_episode_url(current_item),
             "position": position_ms,
             "opening": opening_seconds * 1000,
             "ending": ending_seconds * 1000,

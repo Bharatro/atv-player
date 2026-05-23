@@ -4221,6 +4221,91 @@ def test_player_window_skips_mpv_warmup_when_async_playback_loader_returns_quick
     assert video.warm_up_calls == 0
 
 
+def test_player_window_preloads_ytdlp_passthrough_before_initial_load(qtbot) -> None:
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, str]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            ytdl_format: str = "",
+        ) -> None:
+            del pause, start_seconds, headers, poster_image_path
+            self.load_calls.append((url, ytdl_format))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    loader_calls: list[str] = []
+    hydration_calls: list[str] = []
+
+    def playback_loader(item: PlayItem) -> None:
+        if item.url == "https://www.youtube.com/watch?v=abc123xyz89":
+            loader_calls.append(item.url)
+            item.url = "https://stream.test/1080/video.mp4"
+            item.audio_url = "https://stream.test/audio.webm"
+            item.ytdl_format = ""
+            item.playback_qualities = [VideoQualityOption(id="ytdlp_1080", label="1080p", ytdl_format="299+140")]
+            return
+        hydration_calls.append(item.url)
+        item.audio_tracks = [
+            YtdlpAudioTrackOption(id="ytdlp_audio_en_140", label="English", lang="en", format_id="140")
+        ]
+        item.external_subtitles = [
+            ExternalSubtitleOption(
+                name="English [yt-dlp]",
+                lang="en",
+                url="https://sub.example/en.vtt",
+                format="vtt",
+                source="ytdlp",
+            )
+        ]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="abc123xyz89", vod_name="YouTube"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://www.youtube.com/watch?v=abc123xyz89",
+                original_url="https://www.youtube.com/watch?v=abc123xyz89",
+                ytdl_format="bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: loader_calls == ["https://www.youtube.com/watch?v=abc123xyz89"])
+    qtbot.waitUntil(lambda: video.load_calls == [("https://stream.test/1080/video.mp4", "")])
+    window._handle_video_file_loaded()
+    qtbot.waitUntil(lambda: hydration_calls == ["https://stream.test/1080/video.mp4"], timeout=3000)
+
+
 def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
     class PassThroughM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:

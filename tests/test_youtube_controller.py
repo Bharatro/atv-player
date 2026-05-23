@@ -18,6 +18,12 @@ class FakeYtdlpService:
     def is_available(self) -> bool:
         return True
 
+    def playback_format_selector(self, max_height: int | None = 1080) -> str:
+        return (
+            f"bestvideo[height<={max_height}]+bestaudio/"
+            f"best[height<={max_height}]/bestvideo+bestaudio/best"
+        )
+
     def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30):
         self.flat_calls.append((url, page, page_size))
         return [
@@ -61,7 +67,32 @@ class ChannelYtdlpService(FakeYtdlpService):
 class ResolvingChannelYtdlpService(ChannelYtdlpService):
     def __init__(self) -> None:
         super().__init__()
+        self.resolve_fast_calls: list[str] = []
         self.resolve_calls: list[str] = []
+
+    def resolve_fast(self, url: str, *, max_height=None):
+        del max_height
+        self.resolve_fast_calls.append(url)
+        return type(
+            "Result",
+            (),
+            {
+                "url": "https://rr.example/video.mp4",
+                "headers": {},
+                "audio_url": "https://rr.example/audio.webm",
+                "audio_tracks": [],
+                "selected_audio_track_id": "",
+                "ytdl_format": "",
+                "qualities": [],
+                "subtitles": [],
+                "duration_seconds": 0,
+                "title": "",
+                "thumbnail": "",
+                "description": "",
+                "selected_quality_id": "ytdlp_1080",
+                "detail_fields": [],
+            },
+        )()
 
     def resolve(
         self,
@@ -105,14 +136,18 @@ class ResolvingChannelYtdlpService(ChannelYtdlpService):
 
     def apply_result(self, result, *, vod, item, source_url: str) -> None:
         if vod is not None:
-            vod.vod_name = result.title
-            vod.vod_pic = result.thumbnail
+            if result.title:
+                vod.vod_name = result.title
+            if result.thumbnail:
+                vod.vod_pic = result.thumbnail
         item.url = result.url
         item.original_url = source_url
         item.headers = dict(result.headers)
-        item.title = result.title
-        item.media_title = result.title
+        if result.title:
+            item.title = result.title
+            item.media_title = result.title
         item.duration_seconds = result.duration_seconds
+        item.audio_url = result.audio_url
         item.selected_playback_quality_id = result.selected_quality_id
 
 
@@ -156,7 +191,7 @@ def test_youtube_controller_loads_login_feed_through_ytdlp_shortcut() -> None:
 
     assert service.flat_calls == [(":ytsubs", 1, 30)]
     assert total == 1
-    assert items[0].vod_id == "abc123"
+    assert items[0].vod_id == "yt:video:abc123"
     assert items[0].vod_name == "订阅视频"
     assert items[0].vod_remarks == "频道 | 3:21"
 
@@ -196,7 +231,7 @@ def test_youtube_controller_build_request_accepts_bare_channel_id_from_history()
     assert service.flat_calls == [
         ("https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos", 1, 200)
     ]
-    assert request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
     assert request.vod.vod_name == "MrBeast 野兽先生"
     assert request.source_groups == []
     assert request.playlists == [request.playlist]
@@ -204,8 +239,8 @@ def test_youtube_controller_build_request_accepts_bare_channel_id_from_history()
         "Survive 30 Days On An Island With Your Ex, Win $250,000",
         "I Built a Train To Cross America",
     ]
-    assert request.playlist[1].url == ""
-    assert request.playlist[1].vod_id == "train123456"
+    assert request.playlist[1].url == "https://www.youtube.com/watch?v=train123456"
+    assert request.playlist[1].vod_id == "yt:video:train123456"
 
 
 def test_youtube_controller_reuses_channel_video_list_cache_for_30_minutes() -> None:
@@ -218,11 +253,11 @@ def test_youtube_controller_reuses_channel_video_list_cache_for_30_minutes() -> 
         now=lambda: now[0],
     )
 
-    first_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    first_request = controller.build_request("yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA")
     now[0] += 29 * 60
-    cached_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    cached_request = controller.build_request("yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA")
     now[0] += 61
-    refreshed_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    refreshed_request = controller.build_request("yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA")
 
     assert [item.title for item in first_request.playlist] == [
         "Survive 30 Days On An Island With Your Ex, Win $250,000",
@@ -251,7 +286,7 @@ def test_youtube_controller_synthesizes_video_thumbnails_when_flat_items_omit_th
 
     items, _total = controller.load_items("cat_sub_feed", 1)
 
-    assert items[1].vod_id == "train123456"
+    assert items[1].vod_id == "yt:video:train123456"
     assert items[1].vod_pic == "https://i.ytimg.com/vi/train123456/hqdefault.jpg"
 
 
@@ -340,7 +375,7 @@ def test_youtube_controller_emits_new_id_formats() -> None:
 
     items, _total = controller.load_items("cat_recommend", 1)
 
-    assert items[0].vod_id == "abc123"
+    assert items[0].vod_id == "yt:video:abc123"
 
 
 def test_youtube_controller_accepts_new_and_legacy_request_ids() -> None:
@@ -348,10 +383,10 @@ def test_youtube_controller_accepts_new_and_legacy_request_ids() -> None:
     controller = YouTubeController(AppConfig(), yt_dlp_service=service)
 
     video_request = controller.build_request("yt:video:island12345")
-    channel_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    channel_request = controller.build_request("yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA")
 
     assert video_request.vod.vod_id == "island12345"
-    assert channel_request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert channel_request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
 
 
 def test_youtube_controller_uses_last_ytdlp_thumbnail_candidate() -> None:
@@ -460,7 +495,9 @@ def test_youtube_controller_builds_fast_video_request_from_card_without_loading_
     assert request.vod.vod_name == "卡片标题"
     assert request.vod.vod_pic == "https://i.ytimg.com/vi/abc123/hqdefault.jpg"
     assert request.playlist[0].title == "卡片标题"
+    assert request.playlist[0].url == "https://www.youtube.com/watch?v=abc123"
     assert request.playlist[0].original_url == "https://www.youtube.com/watch?v=abc123"
+    assert request.playlist[0].ytdl_format == "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
     assert request.playback_loader is not None
     assert request.async_playback_loader is True
 
@@ -520,14 +557,14 @@ def test_youtube_controller_builds_fast_channel_request_from_card_without_loadin
     request = controller.build_request_from_item(card)
 
     assert service.flat_calls == []
-    assert request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
     assert request.vod.vod_name == "MrBeast 野兽先生"
     assert request.vod.vod_pic == "https://yt3.googleusercontent.com/channel.jpg"
     assert request.playlist == [
         PlayItem(
             title="MrBeast 野兽先生",
             url="",
-            vod_id="channel@UCX6OQ3DkcsbYNE6H8uQQuVA",
+            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
             media_title="MrBeast 野兽先生",
             video_cover_override="https://yt3.googleusercontent.com/channel.jpg",
             play_source="YouTube",
@@ -579,17 +616,16 @@ def test_youtube_controller_channel_loader_replaces_playlist_and_resolves_start_
         "Resolved Island Video",
         "I Built a Train To Cross America",
     ]
-    assert (
-        result.replacement_playlist[0].url
-        == "https://manifest.googlevideo.com/playlist/index.m3u8"
-    )
-    assert result.replacement_playlist[1].url == ""
-    assert session.vod.vod_name == "Resolved Island Video"
-    assert session.vod.vod_pic == "https://i.ytimg.com/vi/island12345/hqdefault.jpg"
+    assert result.replacement_playlist[0].url == "https://manifest.googlevideo.com/playlist/index.m3u8"
+    assert result.replacement_playlist[0].audio_url == ""
+    assert result.replacement_playlist[1].url == "https://www.youtube.com/watch?v=train123456"
+    assert session.vod.vod_name == "MrBeast 野兽先生"
+    assert session.vod.vod_pic == "https://yt3.googleusercontent.com/channel.jpg"
+    assert service.resolve_fast_calls == []
+    assert service.resolve_calls == ["https://www.youtube.com/watch?v=island12345"]
     assert service.flat_calls == [
         ("https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos", 1, 200)
     ]
-    assert service.resolve_calls == ["https://www.youtube.com/watch?v=island12345"]
 
 
 def test_youtube_controller_builds_youtube_detail_fields_from_ytdlp_metadata() -> None:
@@ -699,7 +735,7 @@ def test_youtube_controller_maps_subscription_channel_urls() -> None:
         ("https://www.youtube.com/feed/channels", 1, 30),
         ("https://www.youtube.com/@channel-a", 1, 1),
     ]
-    assert items[0].vod_id == "channel@https://www.youtube.com/@channel-a"
+    assert items[0].vod_id == "yt:channel:https://www.youtube.com/@channel-a"
     assert items[0].vod_remarks == "频道"
 
 

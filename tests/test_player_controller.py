@@ -1,6 +1,6 @@
 import logging
 
-from atv_player.controllers.player_controller import PlayerController
+from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.models import (
     HistoryRecord,
     PlaybackDetailField,
@@ -445,6 +445,143 @@ def test_player_controller_prefills_unexpired_youtube_history_url_for_async_load
     assert session.start_position_seconds == 22
     assert session.playlist[0].url == history_url
     assert session.playlist[0].original_url == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_player_controller_prefills_unexpired_youtube_history_url_for_channel_placeholder() -> None:
+    controller = PlayerController(FakeApiClient())
+    history_url = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8"
+    vod = VodItem(vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA", vod_name="MrBeast 野兽先生")
+    playlist = [
+        PlayItem(
+            title="MrBeast 野兽先生",
+            url="",
+            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            media_title="MrBeast 野兽先生",
+            play_source="YouTube",
+        )
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_loader=lambda item: None,
+        async_playback_loader=True,
+        playback_history_loader=lambda: HistoryRecord(
+            id=1,
+            key="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            vod_name="MrBeast 野兽先生",
+            vod_pic="",
+            vod_remarks="频道",
+            episode=3,
+            episode_url=history_url,
+            position=224000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+
+    assert session.start_index == 0
+    assert session.start_position_seconds == 224
+    assert session.playlist[0].url == history_url
+    assert session.playlist[0].original_url == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
+
+
+def test_player_controller_does_not_prefill_video_only_youtube_history_url() -> None:
+    controller = PlayerController(FakeApiClient())
+    history_url = "https://rr4---sn-i3b7kn6k.googlevideo.com/videoplayback?expire=4102444800&itag=399"
+    vod = VodItem(vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA", vod_name="MrBeast 野兽先生")
+    playlist = [
+        PlayItem(
+            title="MrBeast 野兽先生",
+            url="",
+            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            media_title="MrBeast 野兽先生",
+            play_source="YouTube",
+        )
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_loader=lambda item: None,
+        async_playback_loader=True,
+        playback_history_loader=lambda: HistoryRecord(
+            id=1,
+            key="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            vod_name="MrBeast 野兽先生",
+            vod_pic="",
+            vod_remarks="频道",
+            episode=3,
+            episode_url=history_url,
+            position=224000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+
+    assert session.start_index == 0
+    assert session.start_position_seconds == 224
+    assert session.playlist[0].url == ""
+
+
+def test_player_controller_skips_history_report_for_unresolved_youtube_channel_placeholder() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA", vod_name="MrBeast 野兽先生"),
+        playlist=[
+            PlayItem(
+                title="MrBeast 野兽先生",
+                url="https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8",
+                original_url="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+                vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+                play_source="YouTube",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=224,
+        speed=1.0,
+        use_local_history=True,
+        playback_loader=lambda item: None,
+    )
+
+    controller.report_progress(session, 0, 229, 1.0, 0, 0, paused=False)
+
+    assert api.saved_payloads == []
+
+
+def test_player_controller_saves_original_youtube_url_instead_of_video_only_resolved_url() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    session = PlayerSession(
+        vod=VodItem(vod_id="abc123xyz89", vod_name="YouTube"),
+        playlist=[
+            PlayItem(
+                title="Video",
+                url="https://rr4---sn-i3b7kn6k.googlevideo.com/videoplayback?expire=4102444800&itag=399",
+                original_url="https://www.youtube.com/watch?v=abc123xyz89",
+                vod_id="abc123xyz89",
+                audio_url="https://rr4---sn-i3b7kn6k.googlevideo.com/videoplayback?expire=4102444800&itag=140",
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        use_local_history=True,
+    )
+
+    controller.report_progress(session, 0, 12, 1.0, 0, 0, paused=False)
+
+    assert api.saved_payloads[0]["episodeUrl"] == "https://www.youtube.com/watch?v=abc123xyz89"
 
 
 def test_player_controller_prefers_plugin_local_history_loader() -> None:

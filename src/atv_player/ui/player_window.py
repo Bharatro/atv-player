@@ -761,6 +761,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video = self.video_widget
         self._pending_post_load_item: PlayItem | None = None
         self._pending_post_load_pause = False
+        self._pending_ytdlp_metadata_hydration: tuple[PlayItem, int] | None = None
         self._danmaku_render_request_id = 0
         self._pending_danmaku_render_item: PlayItem | None = None
         self.title_bar_return_button = QPushButton("", self.title_bar())
@@ -2515,6 +2516,52 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _should_preload_ytdlp_passthrough(self, item: PlayItem) -> bool:
+        if not self._is_youtube_page_url(str(item.url or "").strip()):
+            return False
+        if not str(item.ytdl_format or "").strip():
+            return False
+        return not (item.playback_qualities or item.audio_tracks or item.external_subtitles)
+
+    def _is_youtube_resolved_direct_item(self, item: PlayItem) -> bool:
+        source_url = str(item.original_url or "").strip()
+        resolved_url = str(item.url or "").strip()
+        return bool(
+            source_url
+            and resolved_url
+            and self._is_youtube_page_url(source_url)
+            and not self._is_youtube_page_url(resolved_url)
+        )
+
+    def _should_delay_ytdlp_metadata_hydration(self, item: PlayItem) -> bool:
+        if not self._is_youtube_resolved_direct_item(item):
+            return False
+        return not (item.playback_qualities and item.audio_tracks and item.external_subtitles)
+
+    def _schedule_ytdlp_metadata_hydration(self, *, expected_item: PlayItem, previous_index: int) -> None:
+        self._pending_ytdlp_metadata_hydration = (expected_item, previous_index)
+
+    def _start_pending_ytdlp_metadata_hydration_if_current(self) -> None:
+        pending = self._pending_ytdlp_metadata_hydration
+        if pending is None:
+            return
+        expected_item, previous_index = pending
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            self._pending_ytdlp_metadata_hydration = None
+            return
+        if self.session.playlist[self.current_index] is not expected_item:
+            self._pending_ytdlp_metadata_hydration = None
+            return
+        if self._pending_playback_loader is not None:
+            return
+        self._pending_ytdlp_metadata_hydration = None
+        self._start_playback_loader(
+            previous_index=previous_index,
+            start_position_seconds=0,
+            pause=False,
+            hydrate_only=True,
+        )
+
     def _prepare_current_play_item(
         self,
         *,
@@ -2528,13 +2575,27 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
             if self.session.async_playback_loader:
+                if self._should_preload_ytdlp_passthrough(current_item):
+                    self._start_playback_loader(
+                        previous_index=previous_index,
+                        start_position_seconds=start_position_seconds,
+                        pause=pause,
+                        hydrate_only=False,
+                    )
+                    return False
                 has_playable_url = bool(current_item.url) and not self._is_unresolved_ytdlp_page_item(current_item)
-                self._start_playback_loader(
-                    previous_index=previous_index,
-                    start_position_seconds=start_position_seconds,
-                    pause=pause,
-                    hydrate_only=has_playable_url,
-                )
+                if has_playable_url and self._should_delay_ytdlp_metadata_hydration(current_item):
+                    self._schedule_ytdlp_metadata_hydration(
+                        expected_item=current_item,
+                        previous_index=previous_index,
+                    )
+                else:
+                    self._start_playback_loader(
+                        previous_index=previous_index,
+                        start_position_seconds=start_position_seconds,
+                        pause=pause,
+                        hydrate_only=has_playable_url,
+                    )
                 if not has_playable_url:
                     return False
             else:
@@ -2599,11 +2660,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if defer_post_load_configuration:
             self._pending_post_load_item = current_item
             self._pending_post_load_pause = pause
+        playback_ytdl_format = current_item.ytdl_format
+        if self._is_youtube_resolved_direct_item(current_item):
+            playback_ytdl_format = ""
         logger.info(
             "PlayerWindow start playback index=%s quality=%s ytdl_format=%s url=%s audio=%s start=%s pause=%s subtitles=%s",
             self.current_index,
             current_item.selected_playback_quality_id,
-            current_item.ytdl_format,
+            playback_ytdl_format,
             _summarize_media_url(current_item.url),
             _summarize_media_url(current_item.audio_url),
             effective_start_seconds,
@@ -2618,7 +2682,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 headers=current_item.headers,
                 poster_image_path=poster_image_path,
                 audio_files=current_item.audio_url,
-                ytdl_format=current_item.ytdl_format,
+                ytdl_format=playback_ytdl_format,
             )
         except Exception:
             if defer_post_load_configuration:
@@ -2675,6 +2739,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._configure_danmaku_for_current_item()
 
     def _handle_video_file_loaded(self) -> None:
+        self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
         pending_item = self._pending_post_load_item
         if pending_item is None:
             return
@@ -3682,6 +3747,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
+        if self._should_delay_ytdlp_metadata_hydration(current_item):
+            self._schedule_ytdlp_metadata_hydration(
+                expected_item=current_item,
+                previous_index=pending_loader.previous_index,
+            )
         if not current_item.url:
             if self._try_auto_switch_source_after_failure():
                 return

@@ -2790,16 +2790,42 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self._yt_dlp_service is None or not self._yt_dlp_service.is_available():
             raise ValueError("yt-dlp 不可用")
         history_loader, history_saver = self._direct_parse_history_hooks(url)
+        playback_format_selector = getattr(self._yt_dlp_service, "playback_format_selector", None)
+        startup_ytdl_format = (
+            playback_format_selector()
+            if callable(playback_format_selector)
+            else "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        )
 
         def load_item(session, current_item: PlayItem):
             source_url = (current_item.original_url or current_item.vod_id or url).strip() or url
             selected_quality_id = current_item.selected_playback_quality_id or ""
             selected_audio_track_id = current_item.selected_audio_track_id or ""
-            if selected_quality_id.startswith("ytdlp_"):
-                result = self._yt_dlp_service.resolve_for_quality(
+            current_url = str(current_item.url or "").strip()
+            full_metadata = bool(current_url and current_url != source_url)
+            if (
+                (not current_url or current_url == source_url)
+                and not selected_audio_track_id
+                and not selected_quality_id.startswith("ytdlp_")
+                and hasattr(self._yt_dlp_service, "resolve_fast")
+            ):
+                result = self._yt_dlp_service.resolve_fast(source_url)
+            elif selected_quality_id.startswith("ytdlp_"):
+                resolver = (
+                    self._yt_dlp_service.resolve_for_quality_full
+                    if full_metadata and hasattr(self._yt_dlp_service, "resolve_for_quality_full")
+                    else self._yt_dlp_service.resolve_for_quality
+                )
+                result = resolver(
                     source_url,
                     selected_quality_id,
                     audio_track_id=selected_audio_track_id,
+                )
+            elif full_metadata and hasattr(self._yt_dlp_service, "resolve_full"):
+                result = self._yt_dlp_service.resolve_full(
+                    source_url,
+                    max_height=None,
+                    selected_audio_track_id=selected_audio_track_id,
                 )
             else:
                 result = self._yt_dlp_service.resolve(
@@ -2817,12 +2843,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
         item = PlayItem(
             title=url,
-            url="",
+            url=url,
             original_url=url,
             vod_id=url,
             media_title=url,
             selected_playback_quality_id="",
-            ytdl_format="",
+            ytdl_format=startup_ytdl_format,
             playback_qualities=[],
         )
         return OpenPlayerRequest(

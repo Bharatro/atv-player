@@ -291,6 +291,47 @@ def _format_detail_duration(raw_value: object) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
+def _is_youtube_page_url(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    hostname = (parsed.hostname or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
+
+
+def _youtube_video_vod_id(video_id: str) -> str:
+    return f"yt:video:{video_id}"
+
+
+def _youtube_channel_vod_id(channel_ref: str) -> str:
+    return f"yt:channel:{channel_ref}"
+
+
+def _youtube_playlist_vod_id(playlist_id: str) -> str:
+    return f"yt:playlist:{playlist_id}"
+
+
+def _youtube_video_id_from_vod_id(vod_id: str) -> str:
+    normalized = normalize_youtube_vod_id(vod_id)
+    if normalized.startswith("yt:video:"):
+        return normalized.removeprefix("yt:video:").strip()
+    return normalized
+
+
+def _youtube_channel_ref_from_vod_id(vod_id: str) -> str:
+    normalized = normalize_youtube_vod_id(vod_id)
+    if normalized.startswith("yt:channel:"):
+        return normalized.removeprefix("yt:channel:").strip()
+    return normalized
+
+
+def _youtube_playlist_id_from_vod_id(vod_id: str) -> str:
+    normalized = normalize_youtube_vod_id(vod_id)
+    if normalized.startswith("yt:playlist:"):
+        return normalized.removeprefix("yt:playlist:").strip()
+    return normalized
+
+
 def _format_detail_list(raw_value: object, *, limit: int = 8) -> str:
     if isinstance(raw_value, (list, tuple)):
         parts = [str(item or "").strip() for item in raw_value]
@@ -473,7 +514,7 @@ class YouTubeController:
         channel_id = _channel_id(entry, url)
         if channel_id and not video_id and not playlist_id:
             return VodItem(
-                vod_id=f"channel@{channel_id}",
+                vod_id=_youtube_channel_vod_id(channel_id),
                 vod_name=_entry_title(entry, channel_id),
                 vod_pic=_entry_thumbnail(entry),
                 vod_remarks="频道",
@@ -481,7 +522,7 @@ class YouTubeController:
             )
         if playlist_id and not video_id:
             return VodItem(
-                vod_id=f"playlist@{playlist_id}",
+                vod_id=_youtube_playlist_vod_id(playlist_id),
                 vod_name=_entry_title(entry, playlist_id),
                 vod_pic=_entry_thumbnail(entry),
                 vod_remarks="Playlist",
@@ -489,7 +530,7 @@ class YouTubeController:
             )
         if video_id:
             return VodItem(
-                vod_id=video_id,
+                vod_id=_youtube_video_vod_id(video_id),
                 vod_name=_entry_title(entry, video_id),
                 vod_pic=_entry_thumbnail(entry, video_id),
                 vod_remarks=_entry_remarks(entry),
@@ -504,9 +545,9 @@ class YouTubeController:
             item = self._map_entry(entry)
             if item is None:
                 continue
-            if channels_only and not item.vod_id.startswith("channel@"):
+            if channels_only and not item.vod_id.startswith("yt:channel:"):
                 continue
-            if videos_only and item.vod_id.startswith(("channel@", "playlist@")):
+            if videos_only and item.vod_id.startswith(("yt:channel:", "yt:playlist:")):
                 continue
             if item.vod_id in seen:
                 continue
@@ -515,9 +556,9 @@ class YouTubeController:
         return items
 
     def _channel_ref_from_vod_id(self, vod_id: str) -> str:
-        if not vod_id.startswith("channel@"):
+        if not vod_id.startswith("yt:channel:"):
             return ""
-        return vod_id.removeprefix("channel@").strip()
+        return vod_id.removeprefix("yt:channel:").strip()
 
     def _channel_metadata_url(self, channel_ref: str) -> str:
         if channel_ref.startswith(("http://", "https://")):
@@ -556,7 +597,7 @@ class YouTubeController:
     def _enrich_channel_thumbnails(self, items: list[VodItem]) -> list[VodItem]:
         enriched = []
         for item in items:
-            if item.vod_pic or not item.vod_id.startswith("channel@"):
+            if item.vod_pic or not item.vod_id.startswith("yt:channel:"):
                 enriched.append(item)
                 continue
             thumbnail = self._load_channel_thumbnail(self._channel_ref_from_vod_id(item.vod_id))
@@ -668,7 +709,7 @@ class YouTubeController:
             if not plan.value:
                 return [], 0
             if plan.kind == "channel":
-                request = self._build_channel_request(plan.value, f"channel@{plan.value}")
+                request = self._build_channel_request(plan.value, _youtube_channel_vod_id(plan.value))
                 items = [
                     VodItem(
                         vod_id=item.vod_id,
@@ -680,7 +721,7 @@ class YouTubeController:
                 ]
                 return items, len(items)
             if plan.kind == "playlist":
-                request = self._build_playlist_request(plan.value, f"playlist@{plan.value}")
+                request = self._build_playlist_request(plan.value, _youtube_playlist_vod_id(plan.value))
                 items = [
                     VodItem(
                         vod_id=item.vod_id,
@@ -741,15 +782,17 @@ class YouTubeController:
         if not video_id:
             return None
         title = _entry_title(entry, video_id)
+        playback_url = _youtube_video_url(video_id)
         return PlayItem(
             title=title,
-            url="",
-            original_url=_youtube_video_url(video_id),
-            vod_id=video_id,
+            url=playback_url,
+            original_url=playback_url,
+            vod_id=_youtube_video_vod_id(video_id),
             media_title=media_title,
             video_cover_override=_entry_thumbnail(entry, video_id),
             play_source="YouTube",
             detail_fields=_video_detail_fields(entry),
+            ytdl_format=self._yt_dlp_service.playback_format_selector(),
         )
 
     def _channel_videos_url(self, channel_ref: str) -> str:
@@ -838,14 +881,16 @@ class YouTubeController:
         )
         item = self._play_item_from_entry(entry, media_title=title)
         if item is None:
+            playback_url = _youtube_video_url(video_id)
             item = PlayItem(
                 title=title,
-                url="",
-                original_url=_youtube_video_url(video_id),
-                vod_id=video_id,
+                url=playback_url,
+                original_url=playback_url,
+                vod_id=_youtube_video_vod_id(video_id),
                 media_title=title,
                 video_cover_override=thumb,
                 play_source="YouTube",
+                ytdl_format=self._yt_dlp_service.playback_format_selector(),
             )
         return self._request(vod, [item], source_vod_id)
 
@@ -881,13 +926,14 @@ class YouTubeController:
         )
         item = PlayItem(
             title=title,
-            url="",
+            url=original_url,
             original_url=original_url,
-            vod_id=video_id,
+            vod_id=_youtube_video_vod_id(video_id),
             media_title=title,
             video_cover_override=thumb,
             play_source="YouTube",
             detail_fields=detail_fields,
+            ytdl_format=self._yt_dlp_service.playback_format_selector(),
         )
         return self._request(vod, [item], source_vod_id)
 
@@ -936,7 +982,7 @@ class YouTubeController:
             if item is not None
         ]
         vod = VodItem(
-            vod_id=f"playlist@{playlist_id}",
+            vod_id=_youtube_playlist_vod_id(playlist_id),
             vod_name="YouTube播放列表",
             detail_style="youtube",
             vod_remarks="播放列表",
@@ -947,7 +993,7 @@ class YouTubeController:
     def _build_channel_request(self, channel_ref: str, source_vod_id: str) -> OpenPlayerRequest:
         channel_title, playlist = self._load_channel_playlist(channel_ref)
         vod = VodItem(
-            vod_id=f"channel@{channel_ref}",
+            vod_id=_youtube_channel_vod_id(channel_ref),
             vod_name=channel_title,
             detail_style="youtube",
             vod_remarks="频道",
@@ -959,25 +1005,31 @@ class YouTubeController:
         raw = str(vod_id or "").strip()
         if raw.startswith("yt:entry:"):
             _prefix, _entry, playlist_id, video_id = raw.split(":", 3)
-            return self._build_video_request(video_id, f"playlist@{playlist_id}" if playlist_id else video_id)
+            return self._build_video_request(
+                video_id,
+                _youtube_playlist_vod_id(playlist_id) if playlist_id else _youtube_video_vod_id(video_id),
+            )
         normalized = normalize_youtube_vod_id(raw)
+        if normalized.startswith("yt:playlist:"):
+            return self._build_playlist_request(_youtube_playlist_id_from_vod_id(normalized), normalized)
+        if normalized.startswith("yt:channel:"):
+            return self._build_channel_request(_youtube_channel_ref_from_vod_id(normalized), normalized)
+        if normalized.startswith("yt:video:"):
+            video_id = _youtube_video_id_from_vod_id(normalized)
+            return self._build_video_request(video_id, normalized)
         if normalized.startswith("UC"):
-            normalized = f"channel@{normalized}"
-        if normalized.startswith("playlist@"):
-            return self._build_playlist_request(normalized.removeprefix("playlist@"), normalized)
-        if normalized.startswith("channel@"):
-            return self._build_channel_request(normalized.removeprefix("channel@"), normalized)
+            return self._build_channel_request(normalized, _youtube_channel_vod_id(normalized))
         if normalized.startswith("@"):
-            return self._build_channel_request(normalized, f"channel@{normalized}")
+            return self._build_channel_request(normalized, _youtube_channel_vod_id(normalized))
         if normalized:
-            return self._build_video_request(normalized, normalized)
+            return self._build_video_request(normalized, _youtube_video_vod_id(normalized))
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
     def build_request_from_item(self, item) -> OpenPlayerRequest:
         raw = str(getattr(item, "vod_id", "") or "").strip()
         if raw.startswith("yt:entry:"):
             _prefix, _entry, playlist_id, video_id = raw.split(":", 3)
-            source_vod_id = f"playlist@{playlist_id}" if playlist_id else video_id
+            source_vod_id = _youtube_playlist_vod_id(playlist_id) if playlist_id else _youtube_video_vod_id(video_id)
             return self._build_fast_video_request(
                 video_id,
                 source_vod_id,
@@ -985,20 +1037,24 @@ class YouTubeController:
                 playlist_id=playlist_id,
             )
         normalized = normalize_youtube_vod_id(raw)
-        if normalized.startswith("channel@"):
+        if normalized.startswith("yt:channel:"):
             return self._build_fast_channel_request(
-                normalized.removeprefix("channel@"),
+                _youtube_channel_ref_from_vod_id(normalized),
                 normalized,
                 item,
             )
+        if normalized.startswith("yt:playlist:"):
+            return self._build_playlist_request(_youtube_playlist_id_from_vod_id(normalized), normalized)
+        if normalized.startswith("yt:video:"):
+            return self._build_fast_video_request(_youtube_video_id_from_vod_id(normalized), normalized, item)
         if normalized.startswith("@"):
             return self._build_fast_channel_request(
                 normalized,
-                f"channel@{normalized}",
+                _youtube_channel_vod_id(normalized),
                 item,
             )
-        if normalized and not normalized.startswith(("channel@", "playlist@", "@")):
-            return self._build_fast_video_request(normalized, normalized, item)
+        if normalized and not normalized.startswith("@"):
+            return self._build_fast_video_request(normalized, _youtube_video_vod_id(normalized), item)
         return self.build_request(normalized)
 
     def _request(self, vod: VodItem, playlist: list[PlayItem], source_vod_id: str) -> OpenPlayerRequest:
@@ -1036,15 +1092,67 @@ class YouTubeController:
         normalized = normalize_youtube_vod_id(raw)
         if normalized.startswith(("http://", "https://")):
             return normalized
-        if normalized.startswith(("channel@", "playlist@", "@")):
+        if normalized.startswith(("yt:channel:", "yt:playlist:", "@")):
             return normalized
-        return _youtube_video_url(normalized)
+        return _youtube_video_url(_youtube_video_id_from_vod_id(normalized))
+
+    def _should_resolve_with_full_metadata(self, session, current_item: PlayItem, current_url: str, source_url: str) -> bool:
+        if current_url and current_url != source_url and not _is_youtube_page_url(current_url):
+            return True
+        if session is None:
+            return False
+        vod_id = str(getattr(session.vod, "vod_id", "") or "").strip()
+        if vod_id.startswith(("yt:channel:", "yt:playlist:")):
+            return True
+        return len(getattr(session, "playlist", []) or []) > 1
+
+    def _resolve_playback_result(
+        self,
+        service,
+        source_url: str,
+        *,
+        selected_quality_id: str,
+        selected_audio_track_id: str,
+        current_url: str,
+        use_full_metadata: bool,
+    ):
+        can_fast_resolve = (
+            (not current_url or current_url == source_url)
+            and not selected_audio_track_id
+            and not selected_quality_id.startswith("ytdlp_")
+            and not use_full_metadata
+            and hasattr(service, "resolve_fast")
+        )
+        if can_fast_resolve:
+            return service.resolve_fast(source_url)
+        if selected_quality_id.startswith("ytdlp_"):
+            resolver = (
+                service.resolve_for_quality_full
+                if use_full_metadata and hasattr(service, "resolve_for_quality_full")
+                else service.resolve_for_quality
+            )
+            return resolver(
+                source_url,
+                selected_quality_id,
+                audio_track_id=selected_audio_track_id,
+            )
+        if use_full_metadata and hasattr(service, "resolve_full"):
+            return service.resolve_full(
+                source_url,
+                max_height=None,
+                selected_audio_track_id=selected_audio_track_id,
+            )
+        return service.resolve(
+            source_url,
+            max_height=None,
+            selected_audio_track_id=selected_audio_track_id,
+        )
 
     def _load_playback_item(self, session_or_item, item: PlayItem | None = None):
         session = session_or_item if item is not None else None
         current_item = item or session_or_item
         current_vod_id = normalize_youtube_vod_id(str(current_item.vod_id or "").strip())
-        if current_vod_id.startswith("channel@") or current_vod_id.startswith("@"):
+        if current_vod_id.startswith("yt:channel:") or current_vod_id.startswith("@"):
             return self._load_channel_playback_item(session, current_item)
         source_url = (current_item.original_url or self._playback_url(current_item.vod_id)).strip()
         service = self._yt_dlp_service
@@ -1052,18 +1160,15 @@ class YouTubeController:
             raise ValueError("yt-dlp 不可用")
         selected_quality_id = current_item.selected_playback_quality_id or ""
         selected_audio_track_id = current_item.selected_audio_track_id or ""
-        if selected_quality_id.startswith("ytdlp_"):
-            result = service.resolve_for_quality(
-                source_url,
-                selected_quality_id,
-                audio_track_id=selected_audio_track_id,
-            )
-        else:
-            result = service.resolve(
-                source_url,
-                max_height=None,
-                selected_audio_track_id=selected_audio_track_id,
-            )
+        current_url = str(current_item.url or "").strip()
+        result = self._resolve_playback_result(
+            service,
+            source_url,
+            selected_quality_id=selected_quality_id,
+            selected_audio_track_id=selected_audio_track_id,
+            current_url=current_url,
+            use_full_metadata=self._should_resolve_with_full_metadata(session, current_item, current_url, source_url),
+        )
         service.apply_result(
             result,
             vod=None if session is None else session.vod,
@@ -1078,7 +1183,7 @@ class YouTubeController:
         current_item: PlayItem,
     ) -> PlaybackLoadResult:
         channel_vod_id = normalize_youtube_vod_id(str(current_item.vod_id or "").strip())
-        channel_ref = channel_vod_id.removeprefix("channel@").strip()
+        channel_ref = _youtube_channel_ref_from_vod_id(channel_vod_id)
         channel_title, playlist = self._load_channel_playlist(channel_ref)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {current_item.title or channel_ref}")
@@ -1099,21 +1204,18 @@ class YouTubeController:
         source_url = (start_item.original_url or self._playback_url(start_item.vod_id)).strip()
         selected_quality_id = start_item.selected_playback_quality_id or ""
         selected_audio_track_id = start_item.selected_audio_track_id or ""
-        if selected_quality_id.startswith("ytdlp_"):
-            result = service.resolve_for_quality(
-                source_url,
-                selected_quality_id,
-                audio_track_id=selected_audio_track_id,
-            )
-        else:
-            result = service.resolve(
-                source_url,
-                max_height=None,
-                selected_audio_track_id=selected_audio_track_id,
-            )
+        current_url = str(current_item.url or "").strip()
+        result = self._resolve_playback_result(
+            service,
+            source_url,
+            selected_quality_id=selected_quality_id,
+            selected_audio_track_id=selected_audio_track_id,
+            current_url=current_url,
+            use_full_metadata=True,
+        )
         service.apply_result(
             result,
-            vod=None if session is None else session.vod,
+            vod=None,
             item=start_item,
             source_url=source_url,
         )
