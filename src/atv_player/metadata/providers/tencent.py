@@ -10,7 +10,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 
 class TencentMetadataProvider:
     name = "tencent"
-    _SEARCH_CACHE_VERSION = "area-box-v2"
+    _SEARCH_CACHE_VERSION = "area-box-v3"
     _SEARCH_URL = "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
     _SEARCH_PARAMS = {"vversion_platform": "2"}
     _NON_NATIVE_SITE_PENALTY = 0.35
@@ -160,6 +160,7 @@ class TencentMetadataProvider:
             "language": self._language_value(video_info.get("language")),
             "directors": self._string_list(video_info.get("directors")),
             "actors": self._string_list(video_info.get("actors")),
+            "typeName": str(video_info.get("typeName") or "").strip(),
             "genres": self._genres(video_info),
             "site_name": self._site_name(video_info),
             "episode_sites": self._episode_sites(video_info),
@@ -242,7 +243,6 @@ class TencentMetadataProvider:
             ordered.append(text)
             seen.add(text)
 
-        add(payload.get("typeName"))
         for tag in payload.get("tags") or []:
             if isinstance(tag, dict):
                 add(tag.get("text") or tag.get("value") or tag.get("name"))

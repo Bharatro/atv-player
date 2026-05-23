@@ -103,7 +103,8 @@ def test_tencent_metadata_provider_search_keeps_only_datatype_2_and_omits_rating
     assert record.language == "普通话版"
     assert record.directors == ["赵聪"]
     assert record.actors == ["郭赫轩", "陈芷琰"]
-    assert record.genres == ["少儿", "儿童剧", "情景喜剧"]
+    assert matches[0].raw["typeName"] == "少儿"
+    assert record.genres == ["儿童剧", "情景喜剧"]
     assert record.detail_fields == []
 
 
@@ -143,6 +144,55 @@ def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> No
 
     assert "episode_sites" in match.raw
     assert match.raw["episode_sites"][0]["episodeInfoList"][0]["title"] == "第01话 金银米小圈1"
+
+
+def test_tencent_metadata_provider_keeps_channel_type_out_of_record_genres() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "sdp0010051btpqt"},
+                                "videoInfo": {
+                                    "title": "唐朝诡事录",
+                                    "year": 2022,
+                                    "typeName": "电视剧",
+                                    "area": "内地",
+                                    "language": ["普通话"],
+                                    "directors": ["柏杉"],
+                                    "actors": ["杨旭文", "杨志刚"],
+                                    "richTags": [
+                                        {"text": "电视剧榜第1名", "uiType": 3},
+                                        {"text": "悬疑", "uiType": 1},
+                                        {"text": "奇幻", "uiType": 1},
+                                        {"text": "武侠", "uiType": 1},
+                                    ],
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {"url": "https://v.qq.com/x/cover/sdp0010051btpqt/ep1.html"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="唐朝诡事录", year="2022", category_name="剧集"))[0]
+    record = provider.get_detail(match)
+
+    assert match.raw["typeName"] == "电视剧"
+    assert record.genres == ["悬疑", "奇幻", "武侠"]
 
 
 def test_tencent_metadata_provider_search_reads_area_box_results() -> None:
