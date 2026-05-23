@@ -1460,6 +1460,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         spinbox.setSuffix("s")
         spinbox.setRange(0, 240)
         spinbox.setFixedHeight(28)
+        spinbox.setFixedWidth(105)
         spinbox.setSingleStep(10)
         return spinbox
 

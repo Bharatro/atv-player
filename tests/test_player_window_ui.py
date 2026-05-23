@@ -350,6 +350,8 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.bottom_layout.spacing() == 4
     assert window.opening_spin.prefix() == "片头 "
     assert window.ending_spin.prefix() == "片尾 "
+    assert window.opening_spin.width() == 105
+    assert window.ending_spin.width() == 105
     assert "border: 1px solid" in window.opening_spin.styleSheet()
     assert "border: 1px solid" in window.ending_spin.styleSheet()
 
