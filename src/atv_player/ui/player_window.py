@@ -4844,9 +4844,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         current_external_subtitle = self._current_primary_external_subtitle()
         if current_external_subtitle is None or self._primary_external_subtitle_track_id is not None:
             return False
-        if self._subtitle_preference.mode == "external":
-            return True
-        return self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
+        return self._should_reload_primary_external_subtitle_for_preference(current_external_subtitle)
 
     def _should_retry_followup_subtitle_refresh(self, current_item: PlayItem) -> bool:
         if self.session is None:
@@ -4859,10 +4857,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return False
         current_external_subtitle = self._current_primary_external_subtitle()
         if current_external_subtitle is not None:
-            if self._subtitle_preference.mode == "external":
-                return True
-            return self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
+            return self._should_reload_primary_external_subtitle_for_preference(current_external_subtitle)
         return self._should_auto_apply_spider_subtitle()
+
+    def _should_reload_primary_external_subtitle_for_preference(self, subtitle: ExternalSubtitleOption) -> bool:
+        if self._subtitle_preference.mode == "external":
+            return True
+        if self._subtitle_preference.mode != "auto":
+            return False
+        if subtitle.source == "spider":
+            return True
+        return subtitle.source == "ytdlp" and self._matches_configured_youtube_default_subtitle(subtitle)
 
     def _remove_external_subtitle_track(self, track_id: int | None) -> None:
         if track_id is None or not hasattr(self.video, "remove_subtitle_track"):
@@ -4897,11 +4902,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         current_external_subtitle = self._current_primary_external_subtitle()
         if current_external_subtitle is None or self._primary_external_subtitle_track_id is not None:
             return False
-        if self._subtitle_preference.mode == "external":
-            pass
-        elif self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider":
-            pass
-        else:
+        if not self._should_reload_primary_external_subtitle_for_preference(current_external_subtitle):
             return False
         if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle):
             return True
@@ -5267,9 +5268,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                             self.subtitle_combo.setCurrentIndex(index)
                             return
                     self._clear_primary_external_subtitle()
-                elif self._subtitle_preference.mode == "external" or (
-                    self._subtitle_preference.mode == "auto" and current_external_subtitle.source == "spider"
-                ):
+                elif self._should_reload_primary_external_subtitle_for_preference(current_external_subtitle):
                     if not self._reload_selected_primary_external_subtitle_if_needed():
                         self._sync_subtitle_combo_to_preference()
                     return

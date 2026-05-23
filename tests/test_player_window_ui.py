@@ -12405,6 +12405,109 @@ def test_player_window_auto_loads_configured_ytdlp_default_subtitle(qtbot, monke
     assert window.subtitle_combo.currentText() == "简体中文 [yt-dlp]"
 
 
+def test_player_window_play_next_reloads_auto_ytdlp_default_subtitle_for_channel_item(
+    qtbot, tmp_path
+) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.loaded_external_subtitles: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.removed_subtitle_tracks: list[int | None] = []
+            self._next_track_id = 91
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_external_subtitles.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            self.removed_subtitle_tracks.append(track_id)
+
+        def position_seconds(self) -> int:
+            return 0
+
+    first_subtitle_path = tmp_path / "video-1.zh.vtt"
+    second_subtitle_path = tmp_path / "video-2.zh.vtt"
+    first_subtitle_path.write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n第一条\n", encoding="utf-8")
+    second_subtitle_path.write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n第二条\n", encoding="utf-8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA", vod_name="YouTube 频道"),
+        playlist=[
+            PlayItem(
+                title="Video 1",
+                url="https://media.example/video-1.mp4",
+                original_url="https://www.youtube.com/watch?v=video1",
+                headers={"Referer": "https://www.youtube.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="简体中文 [yt-dlp]",
+                        lang="zh-CN",
+                        url=str(first_subtitle_path),
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            ),
+            PlayItem(
+                title="Video 2",
+                url="https://media.example/video-2.mp4",
+                original_url="https://www.youtube.com/watch?v=video2",
+                headers={"Referer": "https://www.youtube.com/"},
+                external_subtitles=[
+                    ExternalSubtitleOption(
+                        name="简体中文 [yt-dlp]",
+                        lang="zh-CN",
+                        url=str(second_subtitle_path),
+                        format="vtt",
+                        source="ytdlp",
+                    )
+                ],
+            ),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(youtube_default_subtitle_lang="zh-CN"))
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
+        first_subtitle_path.read_text(encoding="utf-8")
+    ]
+
+    window.video.loaded_external_subtitles.clear()
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
+        second_subtitle_path.read_text(encoding="utf-8")
+    ]
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
+    assert window.video.subtitle_apply_calls == [("track", 92)]
+    assert window.subtitle_combo.currentText() == "简体中文 [yt-dlp]"
+
+
 def test_player_window_auto_loads_configured_zh_cn_when_ytdlp_returns_zh_hans(qtbot, monkeypatch) -> None:
     class FakeVideo:
         def __init__(self) -> None:
