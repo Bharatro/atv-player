@@ -465,6 +465,38 @@ def test_youtube_controller_builds_fast_video_request_from_card_without_loading_
     assert request.async_playback_loader is True
 
 
+def test_youtube_controller_fast_video_request_adds_clickable_vid_from_id() -> None:
+    service = FakeYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+    card = type(
+        "Card",
+        (),
+        {
+            "vod_id": "abc123xyz89",
+            "vod_name": "卡片标题",
+            "vod_pic": "https://i.ytimg.com/vi/abc123xyz89/hqdefault.jpg",
+            "vod_remarks": "频道 | 3:21",
+            "type_name": "",
+            "category_name": "",
+            "vod_content": "",
+        },
+    )()
+
+    request = controller.build_request_from_item(card)
+
+    vid_field = next(field for field in request.vod.detail_fields if field.label == "VID")
+    assert vid_field.value == "abc123xyz89"
+    assert vid_field.value_parts[0].action == PlaybackDetailFieldAction(
+        type="link",
+        value="https://www.youtube.com/watch?v=abc123xyz89",
+    )
+    assert request.playlist[0].detail_fields == request.vod.detail_fields
+    assert service.flat_calls == []
+
+
 def test_youtube_controller_builds_fast_channel_request_from_card_without_loading_playlist() -> None:
     service = ChannelYtdlpService()
     controller = YouTubeController(

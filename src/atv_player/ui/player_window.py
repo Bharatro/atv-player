@@ -3636,9 +3636,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         if self.session is None or self.current_index != pending_loader.index:
             return
+        previous_detail_poster_source = self._preferred_detail_poster_source()
         self._apply_playback_loader_result(load_result)
         self._render_playlist_items()
-        self._render_video_poster()
+        if previous_detail_poster_source != self._preferred_detail_poster_source():
+            self._reset_metadata_poster_index()
+            self._render_poster()
+        else:
+            self._render_video_poster()
         self._render_metadata()
         self._render_detail_fields()
         self._refresh_window_title()

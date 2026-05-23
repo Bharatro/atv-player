@@ -2026,6 +2026,50 @@ def test_player_window_hides_metadata_original_toggle_when_detail_panel_is_close
     assert window._metadata_original_toggle.isHidden() is False
 
 
+def test_player_window_hides_metadata_original_toggle_for_youtube_playback(qtbot) -> None:
+    class FakeVideo:
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="abc123xyz89", vod_name="原始标题", vod_content="原始简介", detail_style="youtube"),
+        playlist=[PlayItem(title="YouTube 视频", url="https://media.example/1.mp4", vod_id="abc123xyz89")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda _session: VodItem(
+            vod_id="abc123xyz89",
+            vod_name="增强标题",
+            vod_content="增强简介",
+            detail_style="youtube",
+        ),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "增强简介" in window.metadata_view.toPlainText(), timeout=1000)
+    assert window._metadata_original_toggle.isHidden() is True
+    assert window.session.show_original_metadata is False
+
+
 def test_player_window_open_session_resets_metadata_original_toggle_to_enhanced_view(qtbot) -> None:
     class FakeVideo:
         def load(
@@ -6109,6 +6153,79 @@ def test_player_window_refreshes_youtube_channel_cover_when_switching_items(qtbo
 
     assert detail_started[-1] == "https://img.example/video-2.jpg"
     assert video_started[-1] == "https://img.example/video-2.jpg"
+
+
+def test_player_window_refreshes_youtube_channel_detail_poster_after_async_playlist_replacement(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+    video_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "detail":
+            detail_started.append(source)
+        if target == "video":
+            video_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="channel@UCdemo",
+            vod_name="频道",
+            detail_style="youtube",
+            vod_pic="https://img.example/channel.jpg",
+        ),
+        playlist=[
+            PlayItem(
+                title="频道",
+                url="",
+                vod_id="channel@UCdemo",
+                media_title="频道",
+                video_cover_override="https://img.example/channel.jpg",
+                play_source="YouTube",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+
+    def playback_loader(item: PlayItem) -> PlaybackLoadResult:
+        del item
+        return PlaybackLoadResult(
+            replacement_playlist=[
+                PlayItem(
+                    title="视频 1",
+                    url="http://m/1.m3u8",
+                    vod_id="yt:video:one",
+                    video_cover_override="https://img.example/video-1.jpg",
+                    play_source="YouTube",
+                ),
+                PlayItem(
+                    title="视频 2",
+                    url="http://m/2.m3u8",
+                    vod_id="yt:video:two",
+                    video_cover_override="https://img.example/video-2.jpg",
+                    play_source="YouTube",
+                ),
+            ],
+            replacement_start_index=0,
+        )
+
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video_started[-1:] == ["https://img.example/video-1.jpg"], timeout=1000)
+    assert detail_started == [
+        "https://img.example/channel.jpg",
+        "https://img.example/video-1.jpg",
+    ]
+    assert video_started[-1] == "https://img.example/video-1.jpg"
 
 
 def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
