@@ -7858,6 +7858,44 @@ def test_app_coordinator_metadata_factories_do_not_support_youtube_source(tmp_pa
     assert scrape_service is None
 
 
+@pytest.mark.parametrize("vod_id", ["BV1xx411c7mD", "av170001", ""])
+def test_app_coordinator_metadata_factories_skip_regular_bilibili_video_ids(tmp_path, monkeypatch, vod_id: str) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(metadata_enhancement_enabled=True)
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
+    scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
+    vod = VodItem(vod_id=vod_id, vod_name="B站普通视频")
+
+    hydrate = hydrator_factory(source_kind="bilibili", vod=vod)
+    scrape_service = scrape_factory(source_kind="bilibili", vod=vod)
+
+    assert hydrate is None
+    assert scrape_service is None
+
+
+@pytest.mark.parametrize("vod_id", ["ss45969", "ep2401902", "season$45969"])
+def test_app_coordinator_metadata_factories_support_bilibili_pgc_ids(tmp_path, monkeypatch, vod_id: str) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(metadata_enhancement_enabled=True)
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
+    scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
+    vod = VodItem(vod_id=vod_id, vod_name="B站长视频")
+
+    hydrate = hydrator_factory(source_kind="bilibili", vod=vod)
+    scrape_service = scrape_factory(source_kind="bilibili", vod=vod)
+
+    assert callable(hydrate)
+    assert scrape_service is not None
+
+
 def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch, tmp_path) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

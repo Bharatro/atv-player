@@ -297,6 +297,11 @@ def _infer_series_year_from_playlist(playlist: list[PlayItem]) -> str:
     return max(year_scores.items(), key=lambda entry: (entry[1], entry[0]))[0]
 
 
+def _is_bilibili_metadata_enhancement_id(vod_id: object) -> bool:
+    text = str(vod_id or "").strip().lower()
+    return text.startswith(("ss", "ep", "season$"))
+
+
 def build_application() -> tuple[QApplication, SettingsRepository, AppLogService]:
     app_instance_getter = getattr(QApplication, "instance", None)
     app = app_instance_getter() if callable(app_instance_getter) else None
@@ -644,6 +649,8 @@ class AppCoordinator(QObject):
             del request
             if vod is None or source_kind not in supported_sources:
                 return None
+            if source_kind == "bilibili" and not _is_bilibili_metadata_enhancement_id(vod.vod_id):
+                return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
                 return None
@@ -683,8 +690,10 @@ class AppCoordinator(QObject):
         supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
-            del request, source_key, vod
+            del request, source_key
             if source_kind not in supported_sources:
+                return None
+            if source_kind == "bilibili" and (vod is None or not _is_bilibili_metadata_enhancement_id(vod.vod_id)):
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
