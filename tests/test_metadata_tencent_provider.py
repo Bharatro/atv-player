@@ -145,6 +145,86 @@ def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> No
     assert match.raw["episode_sites"][0]["episodeInfoList"][0]["title"] == "第01话 金银米小圈1"
 
 
+def test_tencent_metadata_provider_search_reads_area_box_results() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        assert kwargs["json"]["query"] == "三体"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 1, "id": "clip"},
+                                "videoInfo": {
+                                    "title": "《三体》电视剧中有哪些彩蛋？",
+                                    "year": 0,
+                                    "typeName": "电视剧",
+                                },
+                            }
+                        ]
+                    },
+                    "areaBoxList": [
+                        {
+                            "itemList": [
+                                {
+                                    "doc": {"dataType": 2, "id": "mzc002007knmh3g"},
+                                    "videoInfo": {
+                                        "title": "三体",
+                                        "year": 2023,
+                                        "typeName": "电视剧",
+                                        "area": "内地",
+                                        "language": ["普通话版"],
+                                        "directors": ["杨磊"],
+                                        "actors": ["张鲁一", "于和伟"],
+                                        "episodeSites": [
+                                            {
+                                                "showName": "腾讯视频",
+                                                "episodeInfoList": [
+                                                    {
+                                                        "url": "https://v.qq.com/x/cover/mzc002007knmh3g/i0045u918s5.html"
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                },
+                                {
+                                    "doc": {"dataType": 2, "id": "mzc00200jj2byxq"},
+                                    "videoInfo": {
+                                        "title": "三体·周年纪念版",
+                                        "year": 2023,
+                                        "typeName": "电视剧",
+                                        "episodeSites": [
+                                            {
+                                                "showName": "腾讯视频",
+                                                "episodeInfoList": [
+                                                    {
+                                                        "url": "https://v.qq.com/x/cover/mzc00200jj2byxq/l0048o6vhab.html"
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                },
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    matches = provider.search(MetadataQuery(title="三体", year="2023", category_name="剧集"))
+
+    assert [(match.title, match.year, match.provider_id) for match in matches] == [
+        ("三体", "2023", "https://v.qq.com/x/cover/mzc002007knmh3g/i0045u918s5.html"),
+        ("三体·周年纪念版", "2023", "https://v.qq.com/x/cover/mzc00200jj2byxq/l0048o6vhab.html"),
+    ]
+    assert matches[0].raw["episode_sites"][0]["showName"] == "腾讯视频"
+
+
 def test_tencent_exact_match_bonus_is_point_two() -> None:
     query = MetadataQuery(title="剑来 第二季")
 

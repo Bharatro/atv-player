@@ -3743,7 +3743,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_pending),
         )
         if pending_loader.hydrate_only:
+            current_item = self.session.playlist[self.current_index]
             self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
+            self._refresh_subtitle_state()
+            self._schedule_followup_subtitle_refresh_if_needed(current_item)
+            self._refresh_audio_state()
+            self._refresh_video_quality_state()
             self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]

@@ -9,6 +9,7 @@ from atv_player.metadata.scrape import (
     MetadataScrapeService,
     normalize_metadata_scrape_title,
 )
+from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.models import PlayItem, PlaybackDetailField, VodItem
 
 
@@ -113,6 +114,60 @@ def test_metadata_scrape_service_cache_only_reuses_cached_results_without_provid
         )
     ]
     assert tmdb.search_calls == []
+
+
+def test_metadata_scrape_service_tencent_bypasses_stale_pre_area_box_empty_cache(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cache.save_search("tencent", "三体", "2023", [])
+    post_calls = 0
+
+    class JsonResponse:
+        def json(self):
+            return {
+                "data": {
+                    "normalList": {"itemList": []},
+                    "areaBoxList": [
+                        {
+                            "itemList": [
+                                {
+                                    "doc": {"dataType": 2, "id": "mzc002007knmh3g"},
+                                    "videoInfo": {
+                                        "title": "三体",
+                                        "year": 2023,
+                                        "typeName": "电视剧",
+                                        "episodeSites": [
+                                            {
+                                                "showName": "腾讯视频",
+                                                "episodeInfoList": [
+                                                    {
+                                                        "url": "https://v.qq.com/x/cover/mzc002007knmh3g/i0045u918s5.html"
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+
+    def fake_post(url: str, **kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        assert kwargs["json"]["query"] == "三体"
+        return JsonResponse()
+
+    service = MetadataScrapeService(cache=cache, providers=[TencentMetadataProvider(post=fake_post)])
+
+    groups = service.search(MetadataQuery(title="三体", year="2023", category_name="剧集"), provider_filter="tencent")
+
+    assert post_calls == 1
+    assert [(item.title, item.year, item.provider_id) for item in groups[0].items] == [
+        ("三体", "2023", "https://v.qq.com/x/cover/mzc002007knmh3g/i0045u918s5.html")
+    ]
 
 
 def test_metadata_scrape_service_filters_explicit_category_mismatches_for_manual_search(tmp_path: Path) -> None:
