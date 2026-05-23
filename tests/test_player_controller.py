@@ -3,6 +3,7 @@ import logging
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.models import (
     HistoryRecord,
+    PlaybackDetailField,
     PlaybackSource,
     PlaybackSourceGroup,
     PlayItem,
@@ -80,6 +81,100 @@ def test_player_controller_builds_history_payload() -> None:
     assert payload["opening"] == 15000
     assert payload["ending"] == 30000
     assert payload["speed"] == 1.25
+
+
+def test_player_controller_preserves_ytdlp_collection_title_in_history_payload() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="youtube-channel", vod_name="OpenAI", vod_pic="channel-pic")
+    playlist = [
+        PlayItem(
+            title="Upcoming video",
+            url="https://www.youtube.com/watch?v=test123",
+            original_url="https://www.youtube.com/watch?v=test123",
+            media_title="OpenAI",
+        )
+    ]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+    session.vod.vod_name = "Resolved YouTube Video"
+    session.playlist[0].title = "Resolved YouTube Video"
+    session.playlist[0].media_title = "Resolved YouTube Video"
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    payload = api.saved_payloads[0]
+    assert payload["vodName"] == "OpenAI"
+    assert payload["vodRemarks"] == "Resolved YouTube Video"
+
+
+def test_player_controller_uses_ytdlp_channel_name_when_initial_title_is_channel_id() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="UC_x5XG1OV2P6uZZ5FSM9Ttw", vod_name="UC_x5XG1OV2P6uZZ5FSM9Ttw")
+    playlist = [
+        PlayItem(
+            title="Upcoming video",
+            url="https://www.youtube.com/watch?v=test123",
+            original_url="https://www.youtube.com/watch?v=test123",
+            media_title="UC_x5XG1OV2P6uZZ5FSM9Ttw",
+        )
+    ]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+    session.vod.vod_name = "Resolved YouTube Video"
+    session.vod.detail_fields = [PlaybackDetailField("频道", "OpenAI")]
+    session.playlist[0].title = "Resolved YouTube Video"
+    session.playlist[0].media_title = "Resolved YouTube Video"
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    payload = api.saved_payloads[0]
+    assert payload["vodName"] == "OpenAI"
+    assert payload["vodRemarks"] == "Resolved YouTube Video"
+
+
+def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_url_placeholder() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    url = "https://www.youtube.com/watch?v=test123"
+    vod = VodItem(vod_id=url, vod_name=url)
+    playlist = [PlayItem(title=url, url=url, original_url=url, media_title=url)]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+    session.vod.vod_name = "Resolved YouTube Video"
+    session.playlist[0].title = "Resolved YouTube Video"
+    session.playlist[0].media_title = "Resolved YouTube Video"
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    payload = api.saved_payloads[0]
+    assert payload["vodName"] == "Resolved YouTube Video"
+    assert payload["vodRemarks"] == "Resolved YouTube Video"
 
 
 def test_player_controller_create_session_defaults_video_cover_override_to_empty() -> None:

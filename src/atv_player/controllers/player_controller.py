@@ -62,6 +62,7 @@ class PlayerSession:
     playback_stopper: Callable[[PlayItem], None] | None = None
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
     initial_log_message: str = ""
+    initial_vod_name: str = ""
     is_placeholder: bool = False
     video_cover_override: str = ""
     prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
@@ -92,6 +93,74 @@ class PlayerController:
         if has_varargs or len(positional) >= 2:
             return lambda item, playback_loader=playback_loader, session=session: playback_loader(session, item)
         return cast(Callable[[PlayItem], PlaybackLoadResult | None], playback_loader)
+
+    def _is_placeholder_history_title(self, title: str) -> bool:
+        normalized = str(title or "").strip()
+        if not normalized:
+            return True
+        if normalized in {"解析播放", "待解析"}:
+            return True
+        lowered = normalized.lower()
+        return lowered.startswith(("http://", "https://", "yt:video:"))
+
+    def _is_youtube_play_item(self, item: PlayItem) -> bool:
+        for value in (item.original_url, item.vod_id, item.url):
+            lowered = str(value or "").strip().lower()
+            if lowered.startswith("yt:video:") or "youtube.com" in lowered or "youtu.be" in lowered:
+                return True
+        return False
+
+    def _is_ytdlp_play_item(self, item: PlayItem) -> bool:
+        if str(item.selected_playback_quality_id or "").startswith("ytdlp_"):
+            return True
+        if str(item.selected_audio_track_id or "").startswith("ytdlp_audio_"):
+            return True
+        if str(item.ytdl_format or "").strip():
+            return True
+        return any(str(quality.id or "").startswith("ytdlp_") for quality in item.playback_qualities)
+
+    def _detail_field_value(self, fields: list[PlaybackDetailField], label: str) -> str:
+        for field in fields:
+            if str(field.label or "").strip() == label:
+                value = str(field.value or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _youtube_channel_detail_name(self, session: PlayerSession, current_item: PlayItem) -> str:
+        return self._detail_field_value(session.vod.detail_fields, "频道") or self._detail_field_value(
+            current_item.detail_fields,
+            "频道",
+        )
+
+    def _looks_like_youtube_channel_identifier(self, title: str, session: PlayerSession) -> bool:
+        normalized = str(title or "").strip()
+        if not normalized:
+            return False
+        if normalized == str(session.vod.vod_id or "").strip():
+            return True
+        return normalized.startswith("UC") or normalized.startswith("@")
+
+    def _history_vod_name(self, session: PlayerSession, current_item: PlayItem) -> str:
+        initial_vod_name = str(session.initial_vod_name or "").strip()
+        is_ytdlp_item = self._is_youtube_play_item(current_item) or self._is_ytdlp_play_item(current_item)
+        channel_detail_name = self._youtube_channel_detail_name(session, current_item) if is_ytdlp_item else ""
+        if (
+            initial_vod_name
+            and channel_detail_name
+            and initial_vod_name != channel_detail_name
+            and not self._is_placeholder_history_title(initial_vod_name)
+            and self._looks_like_youtube_channel_identifier(initial_vod_name, session)
+        ):
+            return channel_detail_name
+        if (
+            initial_vod_name
+            and initial_vod_name != str(session.vod.vod_name or "").strip()
+            and not self._is_placeholder_history_title(initial_vod_name)
+            and is_ytdlp_item
+        ):
+            return initial_vod_name
+        return session.vod.vod_name
 
     def _build_legacy_source_groups(
         self,
@@ -309,6 +378,7 @@ class PlayerController:
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,
             initial_log_message=initial_log_message,
+            initial_vod_name=str(vod.vod_name or ""),
             is_placeholder=is_placeholder,
         )
         session.playback_loader = self._bind_playback_loader(playback_loader, session)
@@ -361,7 +431,7 @@ class PlayerController:
         payload = {
             "cid": 0,
             "key": session.vod.vod_id,
-            "vodName": session.vod.vod_name,
+            "vodName": self._history_vod_name(session, current_item),
             "vodPic": session.vod.vod_pic,
             "vodRemarks": playlist_item_display_title(current_item, "episode"),
             "episode": current_index,
