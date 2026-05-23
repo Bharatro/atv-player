@@ -312,6 +312,8 @@ def _append_youtube_vid_field(fields: list[PlaybackDetailField], video_id: str) 
     normalized = str(video_id or "").strip()
     if not normalized:
         return
+    if any(str(field.label).strip().upper() == "VID" for field in fields):
+        return
     fields.append(
         PlaybackDetailField(
             label="VID",
@@ -352,6 +354,15 @@ def _video_detail_fields(entry: dict) -> list[PlaybackDetailField]:
     _append_detail_field(fields, "分类", _format_detail_list(entry.get("categories"), limit=3))
     _append_detail_field(fields, "标签", _format_detail_list(entry.get("tags"), limit=8))
     _append_detail_field(fields, "简介", entry.get("description"))
+    return fields
+
+
+def _detail_fields_with_video_id(
+    existing_fields: list[PlaybackDetailField],
+    video_id: str,
+) -> list[PlaybackDetailField]:
+    fields = list(existing_fields)
+    _append_youtube_vid_field(fields, video_id)
     return fields
 
 
@@ -850,7 +861,10 @@ class YouTubeController:
         thumb = _normalize_image_url(str(getattr(source_item, "vod_pic", "") or "").strip())
         remarks = str(getattr(source_item, "vod_remarks", "") or "").strip()
         content = str(getattr(source_item, "vod_content", "") or "").strip()
-        detail_fields = list(getattr(source_item, "detail_fields", []) or [])
+        detail_fields = _detail_fields_with_video_id(
+            list(getattr(source_item, "detail_fields", []) or []),
+            video_id,
+        )
         original_url = _youtube_video_url(video_id)
         if playlist_id:
             original_url = f"{original_url}&list={playlist_id}"

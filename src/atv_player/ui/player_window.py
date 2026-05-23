@@ -1714,7 +1714,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
 
     def _refresh_metadata_original_toggle(self) -> None:
-        visible = self.session is not None and not self.details.isHidden() and self._metadata_values_differ()
+        is_youtube_detail = bool(
+            self.session is not None
+            and (
+                getattr(self.session.vod, "detail_style", "") == "youtube"
+                or (
+                    self.session.original_vod is not None
+                    and getattr(self.session.original_vod, "detail_style", "") == "youtube"
+                )
+            )
+        )
+        visible = (
+            self.session is not None
+            and not is_youtube_detail
+            and not self.details.isHidden()
+            and self._metadata_values_differ()
+        )
         if self.session is not None and not visible:
             self.session.show_original_metadata = False
         self._metadata_original_toggle.blockSignals(True)

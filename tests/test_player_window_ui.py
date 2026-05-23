@@ -2065,7 +2065,7 @@ def test_player_window_hides_metadata_original_toggle_for_youtube_playback(qtbot
 
     window.open_session(session)
 
-    qtbot.waitUntil(lambda: "增强简介" in window.metadata_view.toPlainText(), timeout=1000)
+    qtbot.waitUntil(lambda: window._pending_metadata_session is None, timeout=1000)
     assert window._metadata_original_toggle.isHidden() is True
     assert window.session.show_original_metadata is False
 
