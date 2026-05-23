@@ -7148,6 +7148,55 @@ def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot
     )
 
 
+def test_player_window_renders_youtube_metadata_with_custom_rows(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="yt:video:abc123",
+            vod_name="Harness Engineering 到底是什么？概念、实战与争议，一次全部讲清楚",
+            detail_style="youtube",
+            vod_remarks="频道",
+            vod_content="不应显示为简介",
+            detail_fields=[
+                PlaybackDetailField("频道", "马克的技术工作坊"),
+                PlaybackDetailField("发布", "2026-05-05"),
+                PlaybackDetailField("时长", "37:24"),
+                PlaybackDetailField("播放", "5.2万"),
+                PlaybackDetailField("点赞", "1501"),
+                PlaybackDetailField("评论", "73"),
+            ],
+        ),
+        playlist=[PlayItem(title="视频", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.metadata_view.toPlainText() == (
+        "标题: Harness Engineering 到底是什么？概念、实战与争议，一次全部讲清楚\n"
+        "频道: 马克的技术工作坊\n"
+        "发布: 2026-05-05\n"
+        "时长: 37:24\n"
+        "播放: 5.2万\n"
+        "点赞: 1501\n"
+        "评论: 73"
+    )
+
+
 def test_player_window_renders_live_metadata_with_five_live_fields(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -20173,6 +20222,37 @@ def test_player_window_play_next_updates_window_title_to_new_item(qtbot) -> None
 
     assert window.current_index == 1
     assert window.windowTitle() == "Movie - Episode 2"
+
+
+def test_player_window_uses_youtube_channel_detail_for_active_title(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video_title = "Survive 30 Days On An Island With Your Ex, Win $250,000"
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            vod_name=video_title,
+            detail_fields=[PlaybackDetailField("频道", "MrBeast 野兽先生")],
+        ),
+        playlist=[
+            PlayItem(
+                title=video_title,
+                url="https://www.youtube.com/watch?v=test123",
+                original_url="https://www.youtube.com/watch?v=test123",
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        initial_vod_name="UCX6OQ3DkcsbYNE6H8uQQuVA",
+    )
+    window.session = session
+    window.current_index = 0
+
+    assert window._active_playback_title() == (
+        "MrBeast 野兽先生 - Survive 30 Days On An Island With Your Ex, Win $250,000"
+    )
 
 
 def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:

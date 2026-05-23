@@ -1081,6 +1081,73 @@ class YtdlpPlaybackService:
             raise ValueError("yt-dlp 未返回结果")
         return info
 
+    def _flat_playlist_command(self, url: str, *, page: int = 1, page_size: int = 30) -> list[str]:
+        if self._ytdlp_path is None:
+            self._ytdlp_path = resolve_system_ytdlp_path()
+        if not self._ytdlp_path:
+            raise ValueError("yt-dlp 未安装")
+        page_number = max(1, int(page or 1))
+        normalized_page_size = max(1, int(page_size or 30))
+        start = (page_number - 1) * normalized_page_size + 1
+        end = page_number * normalized_page_size
+        extra_args: list[str] = []
+        metadata_language = self._configured_metadata_language()
+        if metadata_language:
+            extra_args.extend(["--extractor-args", f"youtube:lang={metadata_language}"])
+        region = self._configured_region()
+        if region:
+            extra_args.extend(["--xff", region])
+        return [
+            self._ytdlp_path,
+            "--no-warnings",
+            "--dump-single-json",
+            "--flat-playlist",
+            "--playlist-start",
+            str(start),
+            "--playlist-end",
+            str(end),
+            "--socket-timeout",
+            "30",
+            *build_ytdlp_command_args(
+                build_ytdlp_proxy_args(self._proxy_decider, url),
+                cookie_browser=self._configured_cookie_browser(),
+            ),
+            *extra_args,
+            "--",
+            url,
+        ]
+
+    def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30) -> list[dict]:
+        command = self._flat_playlist_command(url, page=page, page_size=page_size)
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("yt-dlp 列表解析超时") from exc
+        stdout_text = (completed.stdout or "").strip()
+        stderr_text = (completed.stderr or "").strip()
+        if completed.returncode != 0:
+            raise ValueError(stderr_text or stdout_text or f"yt-dlp 退出码 {completed.returncode}")
+        if not stdout_text:
+            return []
+        try:
+            info = json.loads(stdout_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"yt-dlp 列表解析失败: {exc}") from exc
+        if not isinstance(info, dict):
+            return []
+        entries = info.get("entries")
+        if entries is None:
+            return [info]
+        if not isinstance(entries, list):
+            return []
+        return [entry for entry in entries if isinstance(entry, dict)]
+
     def can_resolve(self, url: str) -> bool:
         if not self.is_available():
             return False

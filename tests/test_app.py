@@ -177,6 +177,17 @@ class FakeBilibiliController(FakeDoubanController):
         return [VodItem(vod_id="BVchild-1", vod_name="第1话", vod_tag="file")], 1
 
 
+class FakeYoutubeController(FakeDoubanController):
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="YouTube视频"),
+            playlist=[PlayItem(title="正片", url="", vod_id="yt:video:abc123")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+
 class AsyncRequestController(FakeDoubanController):
     def __init__(self, request_factory) -> None:
         super().__init__()
@@ -831,6 +842,7 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
 
     coordinator = AppCoordinator(repo)
+    coordinator._yt_dlp_service = SimpleNamespace(is_available=lambda: False)
     widget = coordinator._show_main()
     qtbot.addWidget(widget)
     widget.resize(920, 520)
@@ -1151,6 +1163,34 @@ def test_main_window_inserts_bilibili_tab_immediately_after_telegram(qtbot) -> N
         "Jellyfin",
         "飞牛影视",
     ]
+
+
+def test_main_window_inserts_youtube_tab_when_enabled(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        youtube_controller=FakeYoutubeController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=FakeFeiniuController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_youtube_tab=True,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:4] == [
+        "豆瓣电影",
+        "电报影视",
+        "YouTube",
+        "网络直播",
+    ]
+    assert window.youtube_page.keyword_edit.isHidden() is False
 
 
 def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtbot) -> None:
@@ -2548,6 +2588,39 @@ def test_main_window_opens_player_from_bilibili_card_signal(qtbot, monkeypatch) 
     qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "B站视频"
     assert opened[0][0].source_vod_id == "BV1xx411c7mD"
+    assert opened[0][1] is False
+
+
+def test_main_window_opens_player_from_youtube_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeYoutubeController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        youtube_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_youtube_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+
+    window.youtube_page.item_open_requested.emit(VodItem(vod_id="yt:video:abc123", vod_name="正片", vod_tag="file"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0][0].vod.vod_name == "YouTube视频"
+    assert opened[0][0].source_vod_id == "yt:video:abc123"
     assert opened[0][1] is False
 
 
@@ -4744,12 +4817,20 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
         lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
     )
 
+    coordinator._yt_dlp_service = SimpleNamespace(is_available=lambda: False)
     window = coordinator._show_main()
 
     assert isinstance(window, FakeMainWindow)
     assert window.kwargs["show_emby_tab"] is False
     assert window.kwargs["show_jellyfin_tab"] is True
     assert window.kwargs["show_bilibili_tab"] is True
+    assert window.kwargs["show_youtube_tab"] is False
+
+    coordinator._yt_dlp_service = SimpleNamespace(is_available=lambda: True)
+    youtube_window = coordinator._show_main()
+
+    assert youtube_window.kwargs["show_youtube_tab"] is True
+    assert youtube_window.kwargs["youtube_controller"] is not None
 
 
 def test_app_coordinator_show_main_injects_pansou_controller_when_capability_enabled(monkeypatch) -> None:
@@ -7965,6 +8046,67 @@ def test_main_window_restore_last_player_routes_bilibili_detail_to_bilibili_cont
 
     assert restored is window.player_window
     assert window.player_window.opened[0][0]["vod"].vod_name == "B站视频"
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_youtube_detail_to_youtube_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingYoutubeController(FakeYoutubeController):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request(self, vod_id: str):
+            self.calls.append(vod_id)
+            request = super().build_request(vod_id)
+            request.source_kind = "youtube"
+            request.use_local_history = False
+            return request
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = RecordingYoutubeController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="youtube",
+        last_playback_mode="detail",
+        last_playback_vod_id="yt:video:abc123",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        youtube_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+        show_youtube_tab=True,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert controller.calls == ["yt:video:abc123"]
+    assert window.player_window.opened[0][0]["vod"].vod_name == "YouTube视频"
+    assert window.player_window.opened[0][0]["use_local_history"] is False
     assert window.player_window.opened[0][1] is True
 
 

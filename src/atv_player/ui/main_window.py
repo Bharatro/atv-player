@@ -100,6 +100,11 @@ class _EmptyBilibiliController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyYouTubeController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
 class _EmptyJellyfinController(_EmptyDoubanController):
     def build_request(self, vod_id: str):
         raise ValueError(f"没有可播放的项目: {vod_id}")
@@ -1189,6 +1194,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             douban_controller=None,
             telegram_controller=None,
             bilibili_controller=None,
+            youtube_controller=None,
             live_controller=None,
             live_source_manager=None,
             emby_controller=None,
@@ -1208,6 +1214,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             global_search_hotkey_loader=None,
             global_search_suggestion_loader=None,
             show_bilibili_tab: bool = False,
+            show_youtube_tab: bool = False,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
             show_feiniu_tab: bool = True,
@@ -1308,6 +1315,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("bilibili"),
             )
+        self.youtube_page = None
+        if show_youtube_tab:
+            self.youtube_page = PosterGridPage(
+                youtube_controller or _EmptyYouTubeController(),
+                click_action="open",
+                search_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab("youtube"),
+            )
         self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
@@ -1353,6 +1368,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
         self._skip_next_telegram_open_request_vod_id = ""
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
+        self.youtube_controller = youtube_controller or _EmptyYouTubeController()
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
@@ -1463,6 +1479,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._static_tab_definitions.append(
                 _TabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller)
             )
+        if self.youtube_page is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition("youtube", "YouTube", self.youtube_page, self.youtube_controller)
+            )
         self._static_tab_definitions.append(_TabDefinition("live", "网络直播", self.live_page))
         if self.emby_page is not None:
             self._static_tab_definitions.append(_TabDefinition("emby", "Emby", self.emby_page, self.emby_controller))
@@ -1554,6 +1574,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     index,
                 )
             )
+        if self.youtube_page is not None:
+            self.youtube_page.item_open_requested.connect(self._handle_youtube_item_open_requested)
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         self.live_page.folder_breadcrumb_requested.connect(
             lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
@@ -1615,6 +1637,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.bilibili_page.unauthorized.connect(self.logout_requested.emit)
             self.bilibili_page.selected_category_changed.connect(
                 lambda category_id, page=self.bilibili_page: self._handle_selected_category_changed(page, category_id)
+            )
+        if self.youtube_page is not None:
+            self.youtube_page.unauthorized.connect(self.logout_requested.emit)
+            self.youtube_page.selected_category_changed.connect(
+                lambda category_id, page=self.youtube_page: self._handle_selected_category_changed(page, category_id)
             )
         self.live_page.unauthorized.connect(self.logout_requested.emit)
         self.live_page.selected_category_changed.connect(
@@ -1695,6 +1722,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.live_page,
             self.emby_page,
             self.bilibili_page,
+            self.youtube_page,
             self.jellyfin_page,
             self.feiniu_page,
             self.pansou_page,
@@ -2270,6 +2298,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.bilibili_page and self.bilibili_page is not None:
             self.bilibili_page.ensure_loaded()
             return
+        if widget is self.youtube_page and self.youtube_page is not None:
+            self.youtube_page.ensure_loaded()
+            return
         if widget is self.live_page:
             self.live_page.ensure_loaded()
             return
@@ -2550,6 +2581,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         vod_id = item.vod_id
         self._start_open_request(lambda: self.bilibili_controller.build_request(vod_id))
+
+    def _handle_youtube_item_open_requested(self, item) -> None:
+        vod_id = item.vod_id
+        self._start_open_request(lambda: self.youtube_controller.build_request(vod_id))
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -3356,7 +3391,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             apply_theme=self._apply_application_theme,
             app_log_service=self._app_log_service,
         )
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted and self.youtube_page is not None:
+            self.youtube_page.reload_categories()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         page.invalidate_pending_item_requests()
@@ -3430,6 +3466,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "bilibili":
             self._start_open_request(
                 lambda: self._apply_request_playback_history_title(self.bilibili_controller.build_request(record.key))
+            )
+            return
+        if record.source_kind == "youtube":
+            self._start_open_request(
+                lambda: self._apply_request_playback_history_title(self.youtube_controller.build_request(record.key))
             )
             return
         if record.source_kind == "jellyfin":
@@ -3618,7 +3659,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None
-            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu", "bilibili", "youtube"}
         ):
             request.metadata_hydrator = self._metadata_hydrator_factory(
                 request=request,
@@ -3629,7 +3670,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_scrape_service is None
             and self._metadata_scrape_service_factory is not None
-            and request.source_kind in {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "youtube"}
         ):
             request.metadata_scrape_service = self._metadata_scrape_service_factory(
                 request=request,
@@ -4038,6 +4079,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return self._apply_request_playback_history_title(request)
         if source == "bilibili":
             request = self.bilibili_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
+        if source == "youtube":
+            request = self.youtube_controller.build_request(vod_id)
             return self._apply_request_playback_history_title(request)
         if source == "jellyfin":
             request = self.jellyfin_controller.build_request(vod_id)

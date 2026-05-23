@@ -355,6 +355,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             return record.source_name or "Emby"
         if record.source_kind == "bilibili":
             return record.source_name or "B站"
+        if record.source_kind == "youtube":
+            return record.source_name or "YouTube"
         if record.source_kind == "jellyfin":
             return record.source_name or "Jellyfin"
         if record.source_kind == "feiniu":

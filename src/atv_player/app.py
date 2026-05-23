@@ -33,6 +33,7 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
+from atv_player.controllers.youtube_controller import YouTubeController
 from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.diagnostics import resolve_app_version
@@ -636,7 +637,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "youtube"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request
@@ -678,7 +679,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_scrape_service_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "youtube"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, vod
@@ -1679,6 +1680,24 @@ class AppCoordinator(QObject):
                 source_name="B站",
             ),
         )
+        show_youtube_tab = bool(self._yt_dlp_service is not None and self._yt_dlp_service.is_available())
+        youtube_controller = None
+        if show_youtube_tab:
+            youtube_controller = YouTubeController(
+                config,
+                yt_dlp_service=self._yt_dlp_service,
+                playback_history_loader=None
+                if self._playback_history_repository is None
+                else lambda vod_id: self._playback_history_repository.get_history("youtube", vod_id),
+                playback_history_saver=None
+                if self._playback_history_repository is None
+                else lambda vod_id, payload: self._playback_history_repository.save_history(
+                    "youtube",
+                    vod_id,
+                    payload,
+                    source_name="YouTube",
+                ),
+            )
         emby_controller = EmbyController(
             self._api_client,
             playback_history_loader=None
@@ -1745,6 +1764,7 @@ class AppCoordinator(QObject):
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
             bilibili_controller=bilibili_controller,
+            youtube_controller=youtube_controller,
             live_controller=live_controller,
             live_source_manager=live_source_manager,
             emby_controller=emby_controller,
@@ -1775,6 +1795,7 @@ class AppCoordinator(QObject):
             ),
             default_video_cover_loader=getattr(self._api_client, "get_video_cover", None),
             show_bilibili_tab=bool(capabilities.get("bilibili")),
+            show_youtube_tab=show_youtube_tab,
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
             show_feiniu_tab=bool(capabilities.get("feiniu")),

@@ -1487,11 +1487,47 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _default_window_title(self) -> str:
         return "alist-tvbox 播放器"
 
+    def _detail_field_value(self, fields: list[PlaybackDetailField], label: str) -> str:
+        for field in fields:
+            if str(field.label or "").strip() == label:
+                value = str(field.value or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _is_placeholder_playback_title(self, title: str) -> bool:
+        normalized = str(title or "").strip()
+        if not normalized:
+            return True
+        lowered = normalized.lower()
+        return lowered.startswith(("http://", "https://", "yt:video:"))
+
+    def _active_media_title(self, current_item: PlayItem) -> str:
+        if self.session is None:
+            return ""
+        vod_title = str(self.session.vod.vod_name or "").strip()
+        item_title = playlist_item_display_title(current_item, "episode").strip()
+        channel_title = self._detail_field_value(self.session.vod.detail_fields, "频道") or self._detail_field_value(
+            current_item.detail_fields,
+            "频道",
+        )
+        if channel_title and vod_title == item_title:
+            return channel_title
+        initial_title = str(getattr(self.session, "initial_vod_name", "") or "").strip()
+        if (
+            initial_title
+            and initial_title != vod_title
+            and initial_title != item_title
+            and not self._is_placeholder_playback_title(initial_title)
+        ):
+            return initial_title
+        return vod_title
+
     def _active_playback_title(self) -> str:
         if self.session is None or not self.session.playlist:
             return self._default_window_title()
         current_item = self.session.playlist[self.current_index]
-        parts = [self.session.vod.vod_name.strip(), playlist_item_display_title(current_item, "episode").strip()]
+        parts = [self._active_media_title(current_item), playlist_item_display_title(current_item, "episode").strip()]
         parts = [part for part in parts if part]
         if not parts:
             return self._default_window_title()
@@ -2693,6 +2729,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
     def _format_metadata_text(self, vod) -> str:
+        if getattr(vod, "detail_style", "") == "youtube":
+            lines = [f"标题: {vod.vod_name}".rstrip()]
+            lines.extend(self._detail_field_plain_text(field) for field in self._current_detail_fields())
+            return "\n".join(lines)
         if getattr(vod, "detail_style", "") == "live":
             if getattr(vod, "epg_current", ""):
                 lines = ["当前节目:", vod.epg_current]
@@ -2735,6 +2775,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return "\n".join(lines)
 
     def _format_metadata_html(self, vod) -> str:
+        if getattr(vod, "detail_style", "") == "youtube":
+            parts = [self._metadata_row_html(vod, "标题", vod.vod_name)]
+            parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+            return "<br>".join(parts)
         if getattr(vod, "detail_style", "") == "live":
             if getattr(vod, "epg_current", ""):
                 parts = [html.escape("当前节目:"), self._render_metadata_value_html(vod.epg_current)]

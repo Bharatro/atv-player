@@ -156,6 +156,64 @@ class TestIsAvailable:
         assert "--cookies-from-browser" in command
         assert command[command.index("--cookies-from-browser") + 1] == "firefox"
 
+    def test_extract_flat_playlist_uses_browser_cookies_and_playlist_window(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "entries": [
+                        {"id": "abc123", "title": "订阅视频"},
+                    ],
+                }),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_cookie_browser="edge")
+        )
+
+        entries = service.extract_flat_playlist(":ytsubs", page=2, page_size=30)
+
+        assert entries == [{"id": "abc123", "title": "订阅视频"}]
+        command = run_calls[0]
+        assert "--flat-playlist" in command
+        assert command[command.index("--playlist-start") + 1] == "31"
+        assert command[command.index("--playlist-end") + 1] == "60"
+        assert command[command.index("--cookies-from-browser") + 1] == "edge"
+
+    def test_extract_flat_playlist_returns_single_video_info_without_entries(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        def fake_run(command, **_kwargs):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "id": "abc123",
+                    "title": "真实 YouTube 标题",
+                    "webpage_url": "https://www.youtube.com/watch?v=abc123",
+                }),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService()
+
+        entries = service.extract_flat_playlist("https://www.youtube.com/watch?v=abc123", page=1, page_size=1)
+
+        assert entries == [
+            {
+                "id": "abc123",
+                "title": "真实 YouTube 标题",
+                "webpage_url": "https://www.youtube.com/watch?v=abc123",
+            }
+        ]
+
     def test_extract_info_via_command_includes_configured_language_and_region(self, monkeypatch) -> None:
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
