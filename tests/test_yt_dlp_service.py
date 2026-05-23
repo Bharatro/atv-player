@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -213,6 +214,122 @@ class TestIsAvailable:
                 "webpage_url": "https://www.youtube.com/watch?v=abc123",
             }
         ]
+
+    def test_youtube_cookie_header_reads_netscape_cookie_file(self, monkeypatch, tmp_path) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text(
+            "\n".join([
+                "# Netscape HTTP Cookie File",
+                ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tyoutube-sid",
+                "www.youtube.com\tFALSE\t/\tTRUE\t2147483647\tPREF\tf6=40000000",
+                ".example.com\tTRUE\t/\tTRUE\t2147483647\tSID\tignored",
+            ]),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ATV_YTDLP_COOKIE_FILE", str(cookie_file))
+
+        service = YtdlpPlaybackService()
+
+        assert service.youtube_cookie_header() == "SID=youtube-sid; PREF=f6=40000000"
+
+    def test_youtube_cookie_header_exports_configured_browser_cookie_file(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            cookie_path = command[command.index("--cookies") + 1]
+            with open(cookie_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "\n".join([
+                        "# Netscape HTTP Cookie File",
+                        ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tbrowser-sid",
+                    ])
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_cookie_browser="edge"))
+
+        assert service.youtube_cookie_header() == "SID=browser-sid"
+        command = run_calls[0]
+        assert "--cookies-from-browser" in command
+        assert command[command.index("--cookies-from-browser") + 1] == "edge"
+        assert "--cookies" in command
+
+    def test_youtube_cookie_header_caches_browser_export_for_five_minutes(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        current_time = 1000.0
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            cookie_path = command[command.index("--cookies") + 1]
+            with open(cookie_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "\n".join([
+                        "# Netscape HTTP Cookie File",
+                        f".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tbrowser-sid-{len(run_calls)}",
+                    ])
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        def fake_now() -> float:
+            return current_time
+
+        monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService(
+            now=fake_now,
+            config_loader=lambda: AppConfig(youtube_cookie_browser="edge"),
+        )
+
+        assert service.youtube_cookie_header() == "SID=browser-sid-1"
+        assert service.youtube_cookie_header() == "SID=browser-sid-1"
+        assert len(run_calls) == 1
+
+        current_time = 1301.0
+
+        assert service.youtube_cookie_header() == "SID=browser-sid-2"
+        assert len(run_calls) == 2
+
+    def test_youtube_cookie_header_file_cache_invalidates_when_file_changes(self, monkeypatch, tmp_path) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        current_time = 1000.0
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text(
+            "\n".join([
+                "# Netscape HTTP Cookie File",
+                ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tfile-sid-1",
+            ]),
+            encoding="utf-8",
+        )
+
+        def fake_now() -> float:
+            return current_time
+
+        monkeypatch.setenv("ATV_YTDLP_COOKIE_FILE", str(cookie_file))
+        service = YtdlpPlaybackService(now=fake_now)
+
+        assert service.youtube_cookie_header() == "SID=file-sid-1"
+
+        cookie_file.write_text(
+            "\n".join([
+                "# Netscape HTTP Cookie File",
+                ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tfile-sid-2",
+            ]),
+            encoding="utf-8",
+        )
+        os.utime(cookie_file, (2000.0, 2000.0))
+        current_time = 1001.0
+
+        assert service.youtube_cookie_header() == "SID=file-sid-2"
 
     def test_extract_info_via_command_includes_configured_language_and_region(self, monkeypatch) -> None:
         from atv_player.yt_dlp_service import YtdlpPlaybackService

@@ -1697,6 +1697,7 @@ class AppCoordinator(QObject):
                     payload,
                     source_name="YouTube",
                 ),
+                http_get=self._proxy_http_get(),
             )
         emby_controller = EmbyController(
             self._api_client,

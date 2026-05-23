@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from urllib.parse import parse_qs, urlparse
+
+import httpx
 
 from atv_player.api import ApiError
 from atv_player.models import (
@@ -71,6 +75,10 @@ _LOGIN_FEED_URLS = {
     "cat_history": ":ythis",
     "cat_watch_later": ":ytwatchlater",
 }
+_YOUTUBE_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def _youtube_video_url(video_id: str) -> str:
@@ -141,12 +149,35 @@ def _entry_thumbnail(entry: dict, video_id: str = "") -> str:
         return value
     thumbnails = entry.get("thumbnails")
     if isinstance(thumbnails, list):
+        avatar_candidates = []
+        square_candidates = []
+        fallback_candidates = []
         for thumbnail in reversed(thumbnails):
             if not isinstance(thumbnail, dict):
                 continue
             value = str(thumbnail.get("url") or "").strip()
-            if value:
-                return value
+            if not value:
+                continue
+            thumbnail_id = str(thumbnail.get("id") or "").lower()
+            if "avatar" in thumbnail_id:
+                avatar_candidates.append(value)
+                continue
+            try:
+                width = int(thumbnail.get("width") or 0)
+                height = int(thumbnail.get("height") or 0)
+            except (TypeError, ValueError):
+                width = 0
+                height = 0
+            if width > 0 and height > 0 and abs(width - height) <= max(2, width // 20):
+                square_candidates.append(value)
+                continue
+            fallback_candidates.append(value)
+        if avatar_candidates:
+            return avatar_candidates[0]
+        if square_candidates:
+            return square_candidates[0]
+        if fallback_candidates:
+            return fallback_candidates[0]
     return _youtube_video_thumbnail(video_id)
 
 
@@ -221,6 +252,88 @@ def _append_detail_field(fields: list[PlaybackDetailField], label: str, value: o
     fields.append(PlaybackDetailField(label, normalized))
 
 
+def _extract_text(node: object) -> str:
+    if not isinstance(node, dict):
+        return ""
+    content = node.get("content")
+    if content is not None:
+        return str(content)
+    simple_text = node.get("simpleText")
+    if simple_text is not None:
+        return str(simple_text)
+    runs = node.get("runs")
+    if isinstance(runs, list):
+        return "".join(str(run.get("text") or "") for run in runs if isinstance(run, dict))
+    return ""
+
+
+def _extract_youtube_thumbnail(node: object) -> str:
+    if not isinstance(node, dict):
+        return ""
+    sources = (
+        (((node.get("contentImage") or {}).get("collectionThumbnailViewModel") or {})
+         .get("primaryThumbnail", {})
+         .get("thumbnailViewModel", {})
+         .get("image", {})
+         .get("sources"))
+        or (((node.get("contentImage") or {}).get("thumbnailViewModel") or {})
+            .get("image", {})
+            .get("sources"))
+    )
+    if isinstance(sources, list) and sources:
+        value = str((sources[-1] or {}).get("url") or "").strip()
+        return f"https:{value}" if value.startswith("//") else value
+    thumbnail = node.get("thumbnail") or node.get("thumbnails") or node.get("avatar")
+    if not thumbnail:
+        return ""
+    if isinstance(thumbnail, list):
+        thumbnails = thumbnail
+    elif isinstance(thumbnail, dict):
+        thumbnails = thumbnail.get("thumbnails")
+    else:
+        thumbnails = []
+    if not isinstance(thumbnails, list) or not thumbnails:
+        return ""
+    value = str((thumbnails[-1] or {}).get("url") or "").strip()
+    return f"https:{value}" if value.startswith("//") else value
+
+
+def _extract_yt_initial_data(html_text: str) -> dict:
+    match = re.search(r"\bytInitialData\s*=", html_text)
+    if match is None:
+        return {}
+    start = html_text.find("{", match.end())
+    if start < 0:
+        return {}
+    in_string = False
+    escape = False
+    depth = 0
+    for index in range(start, len(html_text)):
+        char = html_text[index]
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    data = json.loads(html_text[start:index + 1])
+                except json.JSONDecodeError:
+                    return {}
+                return data if isinstance(data, dict) else {}
+    return {}
+
+
 def _video_detail_fields(entry: dict) -> list[PlaybackDetailField]:
     fields: list[PlaybackDetailField] = []
     _append_detail_field(fields, "频道", entry.get("channel") or entry.get("uploader") or entry.get("creator"))
@@ -245,14 +358,160 @@ class YouTubeController:
         yt_dlp_service,
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+        http_get: Callable[..., object] = httpx.get,
     ) -> None:
         self._config = config
         self._yt_dlp_service = yt_dlp_service
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
+        self._http_get = http_get
+        self._channel_thumbnail_cache: dict[str, str] = {}
 
     def _has_cookie_browser(self) -> bool:
         return bool(str(getattr(self._config, "youtube_cookie_browser", "") or "").strip())
+
+    def _youtube_cookie_header(self) -> str:
+        service = self._yt_dlp_service
+        cookie_header = getattr(service, "youtube_cookie_header", None)
+        if not callable(cookie_header):
+            return ""
+        try:
+            return str(cookie_header() or "").strip()
+        except Exception:
+            return ""
+
+    def _clear_youtube_cookie_header_cache(self) -> None:
+        service = self._yt_dlp_service
+        clear_cache = getattr(service, "clear_youtube_cookie_header_cache", None)
+        if callable(clear_cache):
+            clear_cache()
+
+    def _youtube_http_headers(self) -> dict[str, str]:
+        headers = {
+            "User-Agent": _YOUTUBE_USER_AGENT,
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        cookie = self._youtube_cookie_header()
+        if cookie:
+            headers["Cookie"] = cookie
+        return headers
+
+    def _channel_item_from_renderer(self, renderer: dict) -> VodItem | None:
+        channel_ref = str(renderer.get("channelId") or "").strip()
+        endpoint = (renderer.get("navigationEndpoint") or {}).get("browseEndpoint") or {}
+        if not channel_ref:
+            channel_ref = str(endpoint.get("browseId") or "").strip()
+        command_metadata = (
+            (renderer.get("navigationEndpoint") or {}).get("commandMetadata") or {}
+        )
+        canonical_url = str(
+            (command_metadata.get("webCommandMetadata") or {}).get("url") or ""
+        ).strip()
+        if not channel_ref and canonical_url:
+            channel_ref = (
+                f"https://www.youtube.com{canonical_url}"
+                if canonical_url.startswith("/")
+                else canonical_url
+            )
+        if not channel_ref:
+            return None
+        return VodItem(
+            vod_id=f"yt:channel:{channel_ref}",
+            vod_name=_extract_text(renderer.get("title")) or channel_ref,
+            vod_pic=_extract_youtube_thumbnail(renderer),
+            vod_remarks="频道",
+            vod_tag="file",
+        )
+
+    def _channel_item_from_lockup(self, model: dict) -> VodItem | None:
+        content_type = str(model.get("contentType") or "")
+        if "CHANNEL" not in content_type:
+            return None
+        channel_ref = str(model.get("contentId") or "").strip()
+        if not channel_ref:
+            return None
+        metadata = (model.get("metadata") or {}).get("lockupMetadataViewModel") or {}
+        return VodItem(
+            vod_id=f"yt:channel:{channel_ref}",
+            vod_name=_extract_text(metadata.get("title")) or channel_ref,
+            vod_pic=_extract_youtube_thumbnail(model),
+            vod_remarks="频道",
+            vod_tag="file",
+        )
+
+    def _collect_channel_items(self, payload: object) -> list[VodItem]:
+        items: list[VodItem] = []
+        seen: set[str] = set()
+
+        def add(item: VodItem | None) -> None:
+            if item is None or not item.vod_id or item.vod_id in seen:
+                return
+            seen.add(item.vod_id)
+            items.append(item)
+
+        def walk(node: object) -> None:
+            if isinstance(node, list):
+                for value in node:
+                    walk(value)
+                return
+            if not isinstance(node, dict):
+                return
+            renderer = node.get("channelRenderer")
+            if isinstance(renderer, dict):
+                add(self._channel_item_from_renderer(renderer))
+            lockup = node.get("lockupViewModel")
+            if isinstance(lockup, dict):
+                add(self._channel_item_from_lockup(lockup))
+            for value in node.values():
+                walk(value)
+
+        walk(payload)
+        return items
+
+    def _fetch_subscription_channels_page(self) -> str:
+        headers = self._youtube_http_headers()
+        if not headers.get("Cookie"):
+            return ""
+        response = self._http_get(
+            "https://www.youtube.com/feed/channels",
+            headers=headers,
+            timeout=15.0,
+            follow_redirects=True,
+        )
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+        return str(getattr(response, "text", "") or "")
+
+    def _looks_like_login_required_page(self, html_text: str) -> bool:
+        return any(
+            token in html_text
+            for token in (
+                "accounts.google.com",
+                "ServiceLogin",
+                '"LOGIN_REQUIRED"',
+            )
+        )
+
+    def _load_subscription_channels_direct_once(self) -> list[VodItem]:
+        text = self._fetch_subscription_channels_page()
+        if not text or self._looks_like_login_required_page(text):
+            return []
+        payload = _extract_yt_initial_data(text)
+        return self._collect_channel_items(payload)
+
+    def _load_subscription_channels_direct(self) -> list[VodItem]:
+        try:
+            items = self._load_subscription_channels_direct_once()
+        except Exception:
+            items = []
+        if items:
+            return items
+        self._clear_youtube_cookie_header_cache()
+        try:
+            return self._load_subscription_channels_direct_once()
+        except Exception:
+            return []
 
     def _flat_entries(self, url: str, page: int, page_size: int = 30) -> list[dict]:
         service = self._yt_dlp_service
@@ -340,6 +599,75 @@ class YouTubeController:
             items.append(item)
         return items
 
+    def _channel_ref_from_vod_id(self, vod_id: str) -> str:
+        if not vod_id.startswith("yt:channel:"):
+            return ""
+        return vod_id.split(":", 2)[2].strip()
+
+    def _channel_metadata_url(self, channel_ref: str) -> str:
+        if channel_ref.startswith(("http://", "https://")):
+            return channel_ref.rstrip("/")
+        if channel_ref.startswith("UC"):
+            return f"https://www.youtube.com/channel/{channel_ref}"
+        return channel_ref
+
+    def _load_channel_thumbnail(self, channel_ref: str) -> str:
+        metadata_url = self._channel_metadata_url(channel_ref)
+        if not metadata_url:
+            return ""
+        if metadata_url in self._channel_thumbnail_cache:
+            return self._channel_thumbnail_cache[metadata_url]
+        thumbnail = ""
+        try:
+            entries = self._flat_entries(metadata_url, 1, 1)
+        except Exception:
+            entries = []
+        for entry in entries:
+            thumbnail = _entry_thumbnail(entry)
+            if thumbnail:
+                break
+        self._channel_thumbnail_cache[metadata_url] = thumbnail
+        return thumbnail
+
+    def _enrich_channel_thumbnails(self, items: list[VodItem]) -> list[VodItem]:
+        enriched = []
+        for item in items:
+            if item.vod_pic or not item.vod_id.startswith("yt:channel:"):
+                enriched.append(item)
+                continue
+            thumbnail = self._load_channel_thumbnail(self._channel_ref_from_vod_id(item.vod_id))
+            if thumbnail:
+                item = VodItem(
+                    vod_id=item.vod_id,
+                    vod_name=item.vod_name,
+                    detail_style=item.detail_style,
+                    path=item.path,
+                    share_type=item.share_type,
+                    vod_pic=thumbnail,
+                    poster_candidates=list(item.poster_candidates),
+                    vod_tag=item.vod_tag,
+                    vod_time=item.vod_time,
+                    vod_remarks=item.vod_remarks,
+                    vod_play_from=item.vod_play_from,
+                    vod_play_url=item.vod_play_url,
+                    type_name=item.type_name,
+                    category_name=item.category_name,
+                    vod_content=item.vod_content,
+                    vod_year=item.vod_year,
+                    vod_area=item.vod_area,
+                    vod_lang=item.vod_lang,
+                    vod_director=item.vod_director,
+                    vod_actor=item.vod_actor,
+                    epg_current=item.epg_current,
+                    epg_schedule=item.epg_schedule,
+                    dbid=item.dbid,
+                    type=item.type,
+                    detail_fields=list(item.detail_fields),
+                    items=list(item.items),
+                )
+            enriched.append(item)
+        return enriched
+
     def _resolve_category_query(self, category_id: str, filters: dict[str, str]) -> tuple[str, bool]:
         category = next((item for item in _DEFAULT_CATEGORIES if item["id"] == category_id), None)
         if category is None:
@@ -368,12 +696,18 @@ class YouTubeController:
         if category_id in _LOGIN_FEED_URLS:
             if not self._has_cookie_browser():
                 return [], 0
+            if category_id == "cat_sub_channels" and page_number == 1:
+                direct_items = self._load_subscription_channels_direct()
+                if direct_items:
+                    return self._enrich_channel_thumbnails(direct_items), len(direct_items)
             entries = self._flat_entries(_LOGIN_FEED_URLS[category_id], page_number)
             items = self._map_entries(
                 entries,
                 channels_only=category_id == "cat_sub_channels",
                 videos_only=category_id in {"cat_sub_feed", "cat_history", "cat_watch_later"},
             )
+            if category_id == "cat_sub_channels":
+                items = self._enrich_channel_thumbnails(items)
             return items, (page_number - 1) * 30 + len(items)
         query, playlist_only = self._resolve_category_query(category_id, filters or {})
         if not query:

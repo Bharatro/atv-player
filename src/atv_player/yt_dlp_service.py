@@ -4,8 +4,11 @@ import base64
 import html
 import json
 import logging
+import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from time import monotonic
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
@@ -23,6 +26,8 @@ from atv_player.network_proxy import ProxyDecider, build_ytdlp_proxy_args
 from atv_player.player.ytdlp_runtime import (
     build_ytdlp_command_args,
     resolve_system_ytdlp_path,
+    _resolved_cookie_browser,
+    _resolved_cookie_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +104,7 @@ _YOUTUBE_SUBTITLE_LANGUAGE_ALIASES: dict[str, set[str]] = {
     "zh-HK": {"zh-HK", "zh-Hant"},
     "en": {"en"},
 }
+_YOUTUBE_COOKIE_DOMAINS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
 
 
 def _canonicalize_ytdlp_url(url: str) -> str:
@@ -110,6 +116,42 @@ def _canonicalize_ytdlp_url(url: str) -> str:
         if video_id:
             return f"https://www.youtube.com/watch?v={video_id}"
     return candidate
+
+
+def _is_youtube_cookie_domain(domain: str) -> bool:
+    normalized = str(domain or "").strip().lstrip(".").lower()
+    return any(
+        normalized == candidate or normalized.endswith(f".{candidate}")
+        for candidate in _YOUTUBE_COOKIE_DOMAINS
+    )
+
+
+def _read_netscape_cookie_header(cookie_file: str | Path) -> str:
+    path = Path(cookie_file).expanduser()
+    if not path.is_file():
+        return ""
+    pairs: list[tuple[str, str]] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#HttpOnly_"):
+            line = line.removeprefix("#HttpOnly_")
+        elif line.startswith("#"):
+            continue
+        columns = line.split("\t")
+        if len(columns) < 7:
+            continue
+        domain, _include_subdomains, _path, _secure, _expires, name, value = columns[:7]
+        name = name.strip()
+        if not name or not _is_youtube_cookie_domain(domain):
+            continue
+        pairs.append((name, value.strip()))
+    return "; ".join(f"{name}={value}" for name, value in pairs)
 
 
 def _has_muxed_audio(fmt: dict) -> bool:
@@ -865,6 +907,13 @@ class _YtdlpCacheEntry:
     expires_at: float
 
 
+@dataclass(frozen=True, slots=True)
+class _YoutubeCookieHeaderCacheEntry:
+    key: str
+    header: str
+    expires_at: float
+
+
 class YtdlpPlaybackService:
     def __init__(
         self,
@@ -880,6 +929,7 @@ class YtdlpPlaybackService:
         self._cache: dict[str, _YtdlpCacheEntry] = {}
         self._proxy_decider = proxy_decider
         self._config_loader = config_loader
+        self._youtube_cookie_header_cache: _YoutubeCookieHeaderCacheEntry | None = None
 
     def _youtube_cache_profile(self) -> tuple[str, str, str, str, str]:
         if self._config_loader is None:
@@ -945,6 +995,102 @@ class YtdlpPlaybackService:
             return ""
         config = self._config_loader()
         return str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower()
+
+    def _youtube_cookie_export_command(self, cookie_file: str, browser: str) -> list[str]:
+        if self._ytdlp_path is None:
+            self._ytdlp_path = resolve_system_ytdlp_path()
+        if not self._ytdlp_path:
+            return []
+        return [
+            self._ytdlp_path,
+            "--no-warnings",
+            "--skip-download",
+            "--simulate",
+            "--socket-timeout",
+            "30",
+            *build_ytdlp_proxy_args(self._proxy_decider, "https://www.youtube.com"),
+            "--cookies",
+            cookie_file,
+            "--cookies-from-browser",
+            browser,
+            "--",
+            "https://www.youtube.com",
+        ]
+
+    def _youtube_cookie_file_cache_key(self, cookie_file: str) -> str:
+        try:
+            stat = Path(cookie_file).expanduser().stat()
+        except OSError:
+            return f"file:{cookie_file}:missing"
+        return f"file:{cookie_file}:{stat.st_mtime_ns}:{stat.st_size}"
+
+    def _cached_youtube_cookie_header(self, key: str) -> str | None:
+        entry = self._youtube_cookie_header_cache
+        if entry is None or entry.key != key:
+            return None
+        if entry.expires_at <= self._now():
+            self._youtube_cookie_header_cache = None
+            return None
+        return entry.header
+
+    def _store_youtube_cookie_header(self, key: str, header: str) -> str:
+        self._youtube_cookie_header_cache = _YoutubeCookieHeaderCacheEntry(
+            key=key,
+            header=header,
+            expires_at=self._now() + 300.0,
+        )
+        return header
+
+    def clear_youtube_cookie_header_cache(self) -> None:
+        self._youtube_cookie_header_cache = None
+
+    def youtube_cookie_header(self) -> str:
+        cookie_file = _resolved_cookie_file()
+        if cookie_file:
+            key = self._youtube_cookie_file_cache_key(cookie_file)
+            cached = self._cached_youtube_cookie_header(key)
+            if cached is not None:
+                return cached
+            return self._store_youtube_cookie_header(
+                key,
+                _read_netscape_cookie_header(cookie_file),
+            )
+
+        browser = _resolved_cookie_browser(self._configured_cookie_browser())
+        if not browser:
+            return ""
+        key = f"browser:{browser}"
+        cached = self._cached_youtube_cookie_header(key)
+        if cached is not None:
+            return cached
+
+        fd, temp_path = tempfile.mkstemp(prefix="atv-youtube-cookies-", suffix=".txt")
+        os.close(fd)
+        try:
+            command = self._youtube_cookie_export_command(temp_path, browser)
+            if not command:
+                return ""
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return ""
+            if completed.returncode != 0:
+                return ""
+            return self._store_youtube_cookie_header(
+                key,
+                _read_netscape_cookie_header(temp_path),
+            )
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
     def _configured_default_audio_lang(self) -> str:
         if self._config_loader is None:
