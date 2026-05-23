@@ -3867,7 +3867,16 @@ def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
     opened: list[tuple[object, object, object, object, object]] = []
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
+        def __init__(
+            self,
+            config,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del youtube_category_text_loader
             opened.append((config, save_config, parent, apply_theme, app_log_service))
 
         def exec(self) -> int:
@@ -3900,8 +3909,16 @@ def test_main_window_passes_log_service_to_advanced_settings_dialog(qtbot, monke
     log_service = object()
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
-            del config, save_config, parent, apply_theme
+        def __init__(
+            self,
+            config,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del config, save_config, parent, apply_theme, youtube_category_text_loader
             opened.append(app_log_service)
 
         def exec(self) -> int:
@@ -3933,8 +3950,16 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
     saved: list[tuple[bool, str, str]] = []
 
     class FakeDialog:
-        def __init__(self, config_arg, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
-            del parent, apply_theme, app_log_service
+        def __init__(
+            self,
+            config_arg,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del parent, apply_theme, app_log_service, youtube_category_text_loader
             config_arg.metadata_enhancement_enabled = False
             config_arg.metadata_douban_cookie = "bid=demo;"
             config_arg.metadata_tmdb_api_key = "tmdb-key"
