@@ -127,6 +127,7 @@ from atv_player.ui.theme import (
 )
 from atv_player.ui.toggle_switch import ToggleSwitch
 from atv_player.ui.window_chrome import ThemedDialogBase, ThemedWidgetWindowBase
+from atv_player.yt_dlp_service import looks_like_youtube_video_id
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("", "全部"),
@@ -1500,7 +1501,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not normalized:
             return True
         lowered = normalized.lower()
-        return lowered.startswith(("http://", "https://", "yt:video:"))
+        return looks_like_youtube_video_id(normalized) or lowered.startswith(("http://", "https://", "yt:video:"))
 
     def _active_media_title(self, current_item: PlayItem) -> str:
         if self.session is None:

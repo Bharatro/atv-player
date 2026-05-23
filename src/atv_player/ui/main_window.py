@@ -1213,6 +1213,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             default_video_cover_loader=None,
             global_search_hotkey_loader=None,
             global_search_suggestion_loader=None,
+            youtube_category_text_loader=None,
             show_bilibili_tab: bool = False,
             show_youtube_tab: bool = False,
             show_emby_tab: bool = True,
@@ -1252,6 +1253,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._default_video_cover_loader = default_video_cover_loader
         self._global_search_hotkey_loader = global_search_hotkey_loader or load_global_search_hotkey_payload
         self._global_search_suggestion_loader = global_search_suggestion_loader or load_360_search_suggestions
+        self._youtube_category_text_loader = youtube_category_text_loader
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self._static_tab_definitions: list[_TabDefinition] = []
@@ -3413,6 +3415,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self,
             apply_theme=self._apply_application_theme,
             app_log_service=self._app_log_service,
+            youtube_category_text_loader=self._youtube_category_text_loader,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and self.youtube_page is not None:
             self.youtube_page.reload_categories()

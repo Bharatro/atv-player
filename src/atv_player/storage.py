@@ -14,6 +14,7 @@ _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
 _VALID_YOUTUBE_SUBTITLE_LANGS = {"", "zh-CN", "zh-TW", "zh-HK", "en"}
 _VALID_YOUTUBE_AUDIO_LANGS = {"", "zh", "en"}
 _VALID_YOUTUBE_REGIONS = {"", "CN", "US", "JP", "SG", "HK", "TW"}
+_VALID_YOUTUBE_CATEGORY_SOURCE_TYPES = {"builtin", "remote", "local"}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
@@ -199,6 +200,23 @@ def _normalize_youtube_region(value: object) -> str:
     return text if text in _VALID_YOUTUBE_REGIONS else ""
 
 
+def _normalize_youtube_category_source_type(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_YOUTUBE_CATEGORY_SOURCE_TYPES else "builtin"
+
+
+def _normalize_youtube_category_source_value(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_youtube_category_cache_refreshed_at(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, normalized)
+
+
 def _normalize_mpv_cache_size_mb(value: object) -> int:
     try:
         normalized = int(value)
@@ -283,6 +301,11 @@ class SettingsRepository:
                     youtube_default_audio_lang TEXT NOT NULL DEFAULT '',
                     youtube_metadata_language TEXT NOT NULL DEFAULT '',
                     youtube_region TEXT NOT NULL DEFAULT '',
+                    youtube_category_source_type TEXT NOT NULL DEFAULT 'builtin',
+                    youtube_category_source_value TEXT NOT NULL DEFAULT '',
+                    youtube_category_cache_json TEXT NOT NULL DEFAULT '',
+                    youtube_category_cache_refreshed_at INTEGER NOT NULL DEFAULT 0,
+                    youtube_category_cache_error TEXT NOT NULL DEFAULT '',
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
@@ -397,6 +420,26 @@ class SettingsRepository:
             if "youtube_region" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN youtube_region TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_category_source_type" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_category_source_type TEXT NOT NULL DEFAULT 'builtin'"
+                )
+            if "youtube_category_source_value" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_category_source_value TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_category_cache_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_category_cache_json TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_category_cache_refreshed_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_category_cache_refreshed_at INTEGER NOT NULL DEFAULT 0"
+                )
+            if "youtube_category_cache_error" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_category_cache_error TEXT NOT NULL DEFAULT ''"
                 )
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(
@@ -582,6 +625,11 @@ class SettingsRepository:
                     youtube_default_audio_lang,
                     youtube_metadata_language,
                     youtube_region,
+                    youtube_category_source_type,
+                    youtube_category_source_value,
+                    youtube_category_cache_json,
+                    youtube_category_cache_refreshed_at,
+                    youtube_category_cache_error,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -624,7 +672,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, '', '', '', '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -658,6 +706,11 @@ class SettingsRepository:
                     youtube_default_audio_lang,
                     youtube_metadata_language,
                     youtube_region,
+                    youtube_category_source_type,
+                    youtube_category_source_value,
+                    youtube_category_cache_json,
+                    youtube_category_cache_refreshed_at,
+                    youtube_category_cache_error,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -725,6 +778,11 @@ class SettingsRepository:
             youtube_default_audio_lang,
             youtube_metadata_language,
             youtube_region,
+            youtube_category_source_type,
+            youtube_category_source_value,
+            youtube_category_cache_json,
+            youtube_category_cache_refreshed_at,
+            youtube_category_cache_error,
             mpv_cache_size_mb,
             mpv_hwdec_mode,
             mpv_network_timeout_seconds,
@@ -788,6 +846,13 @@ class SettingsRepository:
             youtube_default_audio_lang=_normalize_youtube_audio_lang(youtube_default_audio_lang),
             youtube_metadata_language=_normalize_youtube_metadata_language(youtube_metadata_language),
             youtube_region=_normalize_youtube_region(youtube_region),
+            youtube_category_source_type=_normalize_youtube_category_source_type(youtube_category_source_type),
+            youtube_category_source_value=_normalize_youtube_category_source_value(youtube_category_source_value),
+            youtube_category_cache_json=str(youtube_category_cache_json or ""),
+            youtube_category_cache_refreshed_at=_normalize_youtube_category_cache_refreshed_at(
+                youtube_category_cache_refreshed_at
+            ),
+            youtube_category_cache_error=str(youtube_category_cache_error or "").strip(),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
@@ -861,6 +926,11 @@ class SettingsRepository:
                     youtube_default_audio_lang = ?,
                     youtube_metadata_language = ?,
                     youtube_region = ?,
+                    youtube_category_source_type = ?,
+                    youtube_category_source_value = ?,
+                    youtube_category_cache_json = ?,
+                    youtube_category_cache_refreshed_at = ?,
+                    youtube_category_cache_error = ?,
                     mpv_cache_size_mb = ?,
                     mpv_hwdec_mode = ?,
                     mpv_network_timeout_seconds = ?,
@@ -925,6 +995,11 @@ class SettingsRepository:
                     _normalize_youtube_audio_lang(config.youtube_default_audio_lang),
                     _normalize_youtube_metadata_language(config.youtube_metadata_language),
                     _normalize_youtube_region(config.youtube_region),
+                    _normalize_youtube_category_source_type(config.youtube_category_source_type),
+                    _normalize_youtube_category_source_value(config.youtube_category_source_value),
+                    str(config.youtube_category_cache_json or ""),
+                    _normalize_youtube_category_cache_refreshed_at(config.youtube_category_cache_refreshed_at),
+                    str(config.youtube_category_cache_error or "").strip(),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),

@@ -2,6 +2,9 @@ from atv_player.controllers.player_controller import PlayerSession
 from atv_player.controllers.youtube_controller import YouTubeController
 from atv_player.models import (
     AppConfig,
+    CategoryFilter,
+    CategoryFilterOption,
+    DoubanCategory,
     PlaybackDetailFieldAction,
     PlaybackLoadResult,
     PlayItem,
@@ -153,7 +156,7 @@ def test_youtube_controller_loads_login_feed_through_ytdlp_shortcut() -> None:
 
     assert service.flat_calls == [(":ytsubs", 1, 30)]
     assert total == 1
-    assert items[0].vod_id == "yt:video:abc123"
+    assert items[0].vod_id == "abc123"
     assert items[0].vod_name == "订阅视频"
     assert items[0].vod_remarks == "频道 | 3:21"
 
@@ -170,7 +173,7 @@ def test_youtube_controller_build_request_accepts_bare_channel_id_from_history()
     assert service.flat_calls == [
         ("https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos", 1, 200)
     ]
-    assert request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
     assert request.vod.vod_name == "MrBeast 野兽先生"
     assert request.source_groups == []
     assert request.playlists == [request.playlist]
@@ -179,7 +182,7 @@ def test_youtube_controller_build_request_accepts_bare_channel_id_from_history()
         "I Built a Train To Cross America",
     ]
     assert request.playlist[1].url == ""
-    assert request.playlist[1].vod_id == "yt:video:train123456"
+    assert request.playlist[1].vod_id == "train123456"
 
 
 def test_youtube_controller_synthesizes_video_thumbnails_when_flat_items_omit_them() -> None:
@@ -191,7 +194,7 @@ def test_youtube_controller_synthesizes_video_thumbnails_when_flat_items_omit_th
 
     items, _total = controller.load_items("cat_sub_feed", 1)
 
-    assert items[1].vod_id == "yt:video:train123456"
+    assert items[1].vod_id == "train123456"
     assert items[1].vod_pic == "https://i.ytimg.com/vi/train123456/hqdefault.jpg"
 
 
@@ -217,6 +220,81 @@ def test_youtube_controller_loads_category_through_ytdlp_search_all_scheme() -> 
     controller.load_items("cat_recommend", 1)
 
     assert service.flat_calls == [("ytsearchall:推荐", 1, 30)]
+
+
+def test_youtube_controller_uses_configured_categories_and_tid_replaces_query() -> None:
+    service = FakeYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+        category_config_loader=lambda: [
+            DoubanCategory(
+                type_id="電影",
+                type_name="電影",
+                filters=[
+                    CategoryFilter(
+                        key="tid",
+                        name="类型",
+                        options=[CategoryFilterOption(name="Netflix", value="netflix Full movie 电影")],
+                    )
+                ],
+            )
+        ],
+    )
+
+    categories = controller.load_categories()
+    controller.load_items("電影", 1, filters={"tid": "netflix Full movie 电影"})
+
+    assert [category.type_name for category in categories] == ["電影"]
+    assert service.flat_calls == [("ytsearchall:netflix Full movie 电影", 1, 30)]
+
+
+def test_youtube_controller_list_keyword_and_time_build_query() -> None:
+    service = FakeYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+        category_config_loader=lambda: [
+            DoubanCategory(
+                type_id="LIST:HDR,Girls HDR",
+                type_name="HDR",
+                filters=[
+                    CategoryFilter(
+                        key="list_keyword",
+                        name="关键词",
+                        options=[
+                            CategoryFilterOption(name="HDR", value="HDR"),
+                            CategoryFilterOption(name="Girls HDR", value="Girls HDR"),
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    controller.load_items("LIST:HDR,Girls HDR", 1, filters={"list_keyword": "Girls HDR", "time": "2024"})
+
+    assert service.flat_calls == [("ytsearchall:Girls HDR 2024", 1, 30)]
+
+
+def test_youtube_controller_emits_new_id_formats() -> None:
+    service = FakeYtdlpService()
+    controller = YouTubeController(AppConfig(), yt_dlp_service=service)
+
+    items, _total = controller.load_items("cat_recommend", 1)
+
+    assert items[0].vod_id == "abc123"
+
+
+def test_youtube_controller_accepts_new_and_legacy_request_ids() -> None:
+    service = ChannelYtdlpService()
+    controller = YouTubeController(AppConfig(), yt_dlp_service=service)
+
+    video_request = controller.build_request("yt:video:island12345")
+    channel_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+
+    assert video_request.vod.vod_id == "island12345"
+    assert channel_request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
 
 
 def test_youtube_controller_uses_last_ytdlp_thumbnail_candidate() -> None:
@@ -292,7 +370,7 @@ def test_youtube_controller_uses_ytdlp_metadata_for_video_detail_title() -> None
         yt_dlp_service=service,
     )
 
-    request = controller.build_request("yt:video:abc123")
+    request = controller.build_request("abc123")
 
     assert service.flat_calls == [("https://www.youtube.com/watch?v=abc123", 1, 1)]
     assert request.vod.vod_name == "真实 YouTube 标题"
@@ -309,7 +387,7 @@ def test_youtube_controller_builds_fast_video_request_from_card_without_loading_
         "Card",
         (),
         {
-            "vod_id": "yt:video:abc123",
+            "vod_id": "abc123",
             "vod_name": "卡片标题",
             "vod_pic": "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
             "vod_remarks": "频道 | 3:21",
@@ -353,14 +431,14 @@ def test_youtube_controller_builds_fast_channel_request_from_card_without_loadin
     request = controller.build_request_from_item(card)
 
     assert service.flat_calls == []
-    assert request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert request.vod.vod_id == "channel@UCX6OQ3DkcsbYNE6H8uQQuVA"
     assert request.vod.vod_name == "MrBeast 野兽先生"
     assert request.vod.vod_pic == "https://yt3.googleusercontent.com/channel.jpg"
     assert request.playlist == [
         PlayItem(
             title="MrBeast 野兽先生",
             url="",
-            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            vod_id="channel@UCX6OQ3DkcsbYNE6H8uQQuVA",
             media_title="MrBeast 野兽先生",
             video_cover_override="https://yt3.googleusercontent.com/channel.jpg",
             play_source="YouTube",
@@ -450,7 +528,7 @@ def test_youtube_controller_builds_youtube_detail_fields_from_ytdlp_metadata() -
         yt_dlp_service=VideoDetailService(),
     )
 
-    request = controller.build_request("yt:video:abc123")
+    request = controller.build_request("abc123")
 
     assert request.vod.detail_style == "youtube"
     assert [(field.label, field.value) for field in request.vod.detail_fields] == [
@@ -493,7 +571,7 @@ def test_youtube_controller_adds_clickable_vid_to_youtube_detail_fields() -> Non
         yt_dlp_service=VideoDetailService(),
     )
 
-    request = controller.build_request("yt:video:abc123xyz89")
+    request = controller.build_request("abc123xyz89")
 
     vid_field = next(
         field for field in request.vod.detail_fields if field.label == "VID"
@@ -530,7 +608,7 @@ def test_youtube_controller_maps_subscription_channel_urls() -> None:
         ("https://www.youtube.com/feed/channels", 1, 30),
         ("https://www.youtube.com/@channel-a", 1, 1),
     ]
-    assert items[0].vod_id == "yt:channel:https://www.youtube.com/@channel-a"
+    assert items[0].vod_id == "channel@https://www.youtube.com/@channel-a"
     assert items[0].vod_remarks == "频道"
 
 

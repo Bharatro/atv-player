@@ -20,6 +20,7 @@ from atv_player.models import (
 )
 from atv_player.episode_titles import playlist_item_display_title
 from atv_player.player.resume import resolve_resume_index
+from atv_player.yt_dlp_service import looks_like_youtube_video_id
 
 
 logger = logging.getLogger(__name__)
@@ -102,11 +103,14 @@ class PlayerController:
         if normalized in {"解析播放", "待解析"}:
             return True
         lowered = normalized.lower()
-        return lowered.startswith(("http://", "https://", "yt:video:"))
+        return looks_like_youtube_video_id(normalized) or lowered.startswith(("http://", "https://", "yt:video:"))
 
     def _is_youtube_play_item(self, item: PlayItem) -> bool:
         for value in (item.original_url, item.vod_id, item.url):
-            lowered = str(value or "").strip().lower()
+            normalized = str(value or "").strip()
+            lowered = normalized.lower()
+            if looks_like_youtube_video_id(normalized):
+                return True
             if lowered.startswith("yt:video:") or "youtube.com" in lowered or "youtu.be" in lowered:
                 return True
         return False

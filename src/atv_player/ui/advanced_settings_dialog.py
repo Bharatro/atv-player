@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.controllers.youtube_category_config import load_youtube_category_config, parse_youtube_category_config
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
 from atv_player.ui.log_console import LogConsoleWidget
@@ -41,12 +44,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         parent: QWidget | None = None,
         apply_theme: Callable[[], None] | None = None,
         app_log_service=None,
+        youtube_category_text_loader: Callable[[str], str] | None = None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
         self._save_config = save_config
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
+        self._youtube_category_text_loader = youtube_category_text_loader
         self.resize(920, 560)
 
         self.settings_tabs = QTabWidget()
@@ -93,6 +98,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.playback_group = QGroupBox("播放设置")
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
         self.youtube_group = QGroupBox("YouTube")
+        self.youtube_category_group = QGroupBox("分类配置")
         self.youtube_cookie_browser_combo = FlatComboBox()
         self.youtube_cookie_browser_combo.addItem("不使用", "")
         self.youtube_cookie_browser_combo.addItem("Chrome", "chrome")
@@ -128,6 +134,21 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_region_combo.addItem("新加坡", "SG")
         self.youtube_region_combo.addItem("美国", "US")
         self.youtube_region_combo.addItem("日本", "JP")
+        self.youtube_category_source_combo = FlatComboBox()
+        self.youtube_category_source_combo.addItem("内置", "builtin")
+        self.youtube_category_source_combo.addItem("远程 URL", "remote")
+        self.youtube_category_source_combo.addItem("本地 JSON", "local")
+        self.youtube_category_source_edit = QLineEdit()
+        self.youtube_category_source_edit.setPlaceholderText(
+            "例如 http://192.168.50.60:4567/zx/json/youtube.json"
+        )
+        self.youtube_category_local_path_edit = QLineEdit()
+        self.youtube_category_local_path_edit.setPlaceholderText("选择本地 youtube.json 或 JSONC 文件")
+        self.youtube_category_browse_button = QPushButton("选择")
+        self.youtube_category_test_button = QPushButton("测试加载")
+        self.youtube_category_refresh_button = QPushButton("刷新缓存")
+        self.youtube_category_status_label = QLabel("")
+        self.youtube_category_status_label.setWordWrap(True)
         self.mpv_cache_size_edit = QLineEdit()
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
         self.mpv_hwdec_mode_combo = FlatComboBox()
@@ -185,6 +206,15 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_region_combo.setCurrentIndex(
             max(0, self.youtube_region_combo.findData(config.youtube_region))
         )
+        self.youtube_category_source_combo.setCurrentIndex(
+            max(0, self.youtube_category_source_combo.findData(config.youtube_category_source_type))
+        )
+        if config.youtube_category_source_type == "local":
+            self.youtube_category_local_path_edit.setText(config.youtube_category_source_value)
+        else:
+            self.youtube_category_source_edit.setText(config.youtube_category_source_value)
+        self._sync_youtube_category_source_inputs()
+        self._refresh_youtube_category_status_label()
         self.playback_auto_switch_source_on_failure_checkbox.setChecked(
             config.playback_auto_switch_source_on_failure
         )
@@ -250,8 +280,23 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         youtube_layout.addRow("地区设置", self.youtube_region_combo)
         youtube_layout.addRow("说明", self.youtube_scope_label)
         self.youtube_group.setLayout(youtube_layout)
+        youtube_category_layout = QFormLayout()
+        youtube_category_layout.addRow("配置源", self.youtube_category_source_combo)
+        youtube_category_layout.addRow("远程地址", self.youtube_category_source_edit)
+        local_row = QHBoxLayout()
+        local_row.addWidget(self.youtube_category_local_path_edit, 1)
+        local_row.addWidget(self.youtube_category_browse_button)
+        youtube_category_layout.addRow("本地文件", local_row)
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.youtube_category_test_button)
+        action_row.addWidget(self.youtube_category_refresh_button)
+        action_row.addStretch(1)
+        youtube_category_layout.addRow("操作", action_row)
+        youtube_category_layout.addRow("状态", self.youtube_category_status_label)
+        self.youtube_category_group.setLayout(youtube_category_layout)
         youtube_tab_layout = QVBoxLayout(self.youtube_tab)
         youtube_tab_layout.addWidget(self.youtube_group)
+        youtube_tab_layout.addWidget(self.youtube_category_group)
         youtube_tab_layout.addStretch(1)
 
         logs_tab_layout = QVBoxLayout(self.logs_tab)
@@ -275,6 +320,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         self.metadata_enabled_checkbox.toggled.connect(self._sync_metadata_inputs)
         self.network_proxy_mode_combo.currentIndexChanged.connect(self._sync_network_proxy_inputs)
+        self.youtube_category_source_combo.currentIndexChanged.connect(self._sync_youtube_category_source_inputs)
+        self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
+        self.youtube_category_test_button.clicked.connect(self._test_youtube_category_source)
+        self.youtube_category_refresh_button.clicked.connect(self._refresh_youtube_category_cache)
         self.save_button.clicked.connect(self._save)
         self.cancel_button.clicked.connect(self.reject)
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
@@ -295,6 +344,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.youtube_default_audio_combo,
             self.youtube_metadata_language_combo,
             self.youtube_region_combo,
+            self.youtube_category_source_combo,
             self.mpv_hwdec_mode_combo,
         ):
             combo.setStyleSheet(combo_qss)
@@ -303,6 +353,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.tmdb_api_key_edit,
             self.bangumi_access_token_edit,
             self.network_proxy_url_edit,
+            self.youtube_category_source_edit,
+            self.youtube_category_local_path_edit,
             self.mpv_cache_size_edit,
             self.mpv_network_timeout_edit,
             self.mpv_default_readahead_edit,
@@ -323,6 +375,101 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         has_proxy = self.network_proxy_mode_combo.currentData() not in {"direct"}
         self.network_proxy_url_edit.setEnabled(manual_mode)
         self.network_proxy_rules_edit.setEnabled(has_proxy)
+
+    def _sync_youtube_category_source_inputs(self) -> None:
+        source_type = str(self.youtube_category_source_combo.currentData() or "builtin")
+        self.youtube_category_source_edit.setEnabled(source_type == "remote")
+        self.youtube_category_local_path_edit.setEnabled(source_type == "local")
+        self.youtube_category_browse_button.setEnabled(source_type == "local")
+
+    def _refresh_youtube_category_status_label(self) -> None:
+        if self._config.youtube_category_cache_error:
+            self.youtube_category_status_label.setText(f"上次错误：{self._config.youtube_category_cache_error}")
+            return
+        if self._config.youtube_category_cache_refreshed_at > 0:
+            self.youtube_category_status_label.setText(
+                f"上次刷新：{self._config.youtube_category_cache_refreshed_at}"
+            )
+            return
+        self.youtube_category_status_label.setText("使用内置分类")
+
+    def _browse_youtube_category_file(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择 YouTube 分类配置",
+            self.youtube_category_local_path_edit.text().strip(),
+            "JSON files (*.json *.jsonc);;All files (*)",
+        )
+        if path:
+            self.youtube_category_local_path_edit.setText(path)
+
+    def _validated_youtube_category_values(self) -> tuple[str, str] | None:
+        source_type = str(self.youtube_category_source_combo.currentData() or "builtin")
+        if source_type not in {"builtin", "remote", "local"}:
+            QMessageBox.warning(self, "YouTube 分类配置无效", "配置源无效")
+            return None
+        if source_type == "remote":
+            value = self.youtube_category_source_edit.text().strip()
+            if not value.startswith(("http://", "https://")):
+                QMessageBox.warning(self, "YouTube 分类配置无效", "远程地址必须以 http:// 或 https:// 开头")
+                return None
+            return source_type, value
+        if source_type == "local":
+            value = self.youtube_category_local_path_edit.text().strip()
+            if not value:
+                QMessageBox.warning(self, "YouTube 分类配置无效", "请选择本地 JSON 文件")
+                return None
+            return source_type, value
+        return source_type, ""
+
+    def _draft_youtube_category_config(self) -> AppConfig | None:
+        values = self._validated_youtube_category_values()
+        if values is None:
+            return None
+        source_type, source_value = values
+        return AppConfig(
+            youtube_category_source_type=source_type,
+            youtube_category_source_value=source_value,
+            youtube_category_cache_json=self._config.youtube_category_cache_json,
+            youtube_category_cache_refreshed_at=self._config.youtube_category_cache_refreshed_at,
+            youtube_category_cache_error=self._config.youtube_category_cache_error,
+        )
+
+    def _set_youtube_category_status(self, category_count: int, filter_count: int) -> None:
+        self.youtube_category_status_label.setText(f"加载成功：{category_count} 个分类，{filter_count} 组筛选")
+
+    def _test_youtube_category_source(self) -> None:
+        draft = self._draft_youtube_category_config()
+        if draft is None:
+            return
+        try:
+            if draft.youtube_category_source_type == "builtin":
+                self.youtube_category_status_label.setText("内置分类将在保存后使用")
+                return
+            text = (
+                self._youtube_category_text_loader(draft.youtube_category_source_value)
+                if draft.youtube_category_source_type == "remote" and self._youtube_category_text_loader is not None
+                else Path(draft.youtube_category_source_value).read_text(encoding="utf-8")
+            )
+            parsed = parse_youtube_category_config(text)
+            filter_count = sum(len(category.filters) for category in parsed.categories)
+            self._set_youtube_category_status(len(parsed.categories), filter_count)
+        except Exception as exc:
+            self.youtube_category_status_label.setText(f"加载失败：{exc}")
+
+    def _refresh_youtube_category_cache(self) -> None:
+        draft = self._draft_youtube_category_config()
+        if draft is None:
+            return
+        self._config.youtube_category_source_type = draft.youtube_category_source_type
+        self._config.youtube_category_source_value = draft.youtube_category_source_value
+        loaded = load_youtube_category_config(
+            self._config,
+            text_loader=self._youtube_category_text_loader,
+            save_config=self._save_config,
+        )
+        filter_count = sum(len(category.filters) for category in loaded.categories)
+        self._set_youtube_category_status(len(loaded.categories), filter_count)
 
     def _validated_network_proxy_values(self) -> tuple[str, str, list[str], list[str]] | None:
         mode = str(self.network_proxy_mode_combo.currentData() or "direct")
@@ -459,6 +606,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         youtube_values = self._validated_youtube_values()
         if youtube_values is None:
             return
+        youtube_category_values = self._validated_youtube_category_values()
+        if youtube_category_values is None:
+            return
         playback_values = self._validated_playback_values()
         if playback_values is None:
             return
@@ -478,6 +628,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.youtube_metadata_language,
             self._config.youtube_region,
         ) = youtube_values
+        (
+            self._config.youtube_category_source_type,
+            self._config.youtube_category_source_value,
+        ) = youtube_category_values
         (
             self._config.playback_auto_switch_source_on_failure,
             self._config.mpv_cache_size_mb,

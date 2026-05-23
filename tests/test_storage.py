@@ -2312,3 +2312,37 @@ def test_spider_plugin_repository_partial_updates_do_not_overwrite_other_fields(
     assert updated.display_name == "新名称"
     assert updated.enabled is False
     assert updated.config_text == "token=updated"
+
+
+def test_settings_repository_persists_youtube_category_source(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.youtube_category_source_type = "remote"
+    config.youtube_category_source_value = "http://example.test/youtube.json"
+    config.youtube_category_cache_json = '{"class":[]}'
+    config.youtube_category_cache_refreshed_at = 1779500000
+    config.youtube_category_cache_error = ""
+
+    repo.save_config(config)
+    loaded = SettingsRepository(tmp_path / "app.db").load_config()
+
+    assert loaded.youtube_category_source_type == "remote"
+    assert loaded.youtube_category_source_value == "http://example.test/youtube.json"
+    assert loaded.youtube_category_cache_json == '{"class":[]}'
+    assert loaded.youtube_category_cache_refreshed_at == 1779500000
+    assert loaded.youtube_category_cache_error == ""
+
+
+def test_settings_repository_normalizes_invalid_youtube_category_source(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.youtube_category_source_type = "unknown"
+    config.youtube_category_source_value = "  http://example.test/youtube.json  "
+    config.youtube_category_cache_refreshed_at = -5
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.youtube_category_source_type == "builtin"
+    assert loaded.youtube_category_source_value == "http://example.test/youtube.json"
+    assert loaded.youtube_category_cache_refreshed_at == 0

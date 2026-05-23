@@ -3867,7 +3867,16 @@ def test_main_window_opens_advanced_settings_dialog(qtbot, monkeypatch) -> None:
     opened: list[tuple[object, object, object, object, object]] = []
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
+        def __init__(
+            self,
+            config,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del youtube_category_text_loader
             opened.append((config, save_config, parent, apply_theme, app_log_service))
 
         def exec(self) -> int:
@@ -3900,8 +3909,16 @@ def test_main_window_passes_log_service_to_advanced_settings_dialog(qtbot, monke
     log_service = object()
 
     class FakeDialog:
-        def __init__(self, config, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
-            del config, save_config, parent, apply_theme
+        def __init__(
+            self,
+            config,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del config, save_config, parent, apply_theme, youtube_category_text_loader
             opened.append(app_log_service)
 
         def exec(self) -> int:
@@ -3933,8 +3950,16 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
     saved: list[tuple[bool, str, str]] = []
 
     class FakeDialog:
-        def __init__(self, config_arg, save_config, parent=None, apply_theme=None, app_log_service=None) -> None:
-            del parent, apply_theme, app_log_service
+        def __init__(
+            self,
+            config_arg,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del parent, apply_theme, app_log_service, youtube_category_text_loader
             config_arg.metadata_enhancement_enabled = False
             config_arg.metadata_douban_cookie = "bid=demo;"
             config_arg.metadata_tmdb_api_key = "tmdb-key"
@@ -4300,6 +4325,81 @@ def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtb
     assert dialog.youtube_default_audio_combo.currentData() == "en"
     assert dialog.youtube_metadata_language_combo.currentData() == "zh-CN"
     assert dialog.youtube_region_combo.currentData() == "CN"
+
+
+def test_advanced_settings_dialog_shows_youtube_category_source_controls(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.youtube_category_source_combo.currentData() == "remote"
+    assert dialog.youtube_category_source_edit.text() == "http://example.test/youtube.json"
+    assert dialog.youtube_category_source_edit.isEnabled() is True
+    assert dialog.youtube_category_local_path_edit.isEnabled() is False
+
+
+def test_advanced_settings_dialog_saves_youtube_category_source(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.youtube_category_source_combo.setCurrentIndex(
+        dialog.youtube_category_source_combo.findData("local")
+    )
+    dialog.youtube_category_local_path_edit.setText("/tmp/youtube.json")
+    dialog._save()
+
+    assert saved == [config]
+    assert config.youtube_category_source_type == "local"
+    assert config.youtube_category_source_value == "/tmp/youtube.json"
+
+
+def test_advanced_settings_dialog_test_load_reports_counts(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: None,
+        youtube_category_text_loader=lambda _url: '{"class":[{"type_id":"電影","type_name":"電影"}],"filters":{}}',
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._test_youtube_category_source()
+
+    assert "1 个分类" in dialog.youtube_category_status_label.text()
+
+
+def test_advanced_settings_dialog_refresh_cache_updates_config(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved = []
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.youtube_category_cache_json),
+        youtube_category_text_loader=lambda _url: '{"class":[{"type_id":"電影","type_name":"電影"}],"filters":{}}',
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._refresh_youtube_category_cache()
+
+    assert config.youtube_category_cache_json.startswith('{"class"')
+    assert saved == [config.youtube_category_cache_json]
 
 
 def test_advanced_settings_dialog_saves_youtube_preferences(qtbot) -> None:

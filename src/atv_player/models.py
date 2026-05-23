@@ -42,6 +42,11 @@ class AppConfig:
     youtube_default_audio_lang: str = ""
     youtube_metadata_language: str = ""
     youtube_region: str = ""
+    youtube_category_source_type: str = "builtin"
+    youtube_category_source_value: str = ""
+    youtube_category_cache_json: str = ""
+    youtube_category_cache_refreshed_at: int = 0
+    youtube_category_cache_error: str = ""
     mpv_cache_size_mb: int = 512
     mpv_hwdec_mode: str = "auto-safe"
     mpv_network_timeout_seconds: int = 15

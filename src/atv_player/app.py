@@ -33,7 +33,8 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
-from atv_player.controllers.youtube_controller import YouTubeController
+from atv_player.controllers.youtube_category_config import load_youtube_category_config
+from atv_player.controllers.youtube_controller import YouTubeController, default_youtube_categories
 from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.diagnostics import resolve_app_version
@@ -1683,9 +1684,19 @@ class AppCoordinator(QObject):
         show_youtube_tab = bool(self._yt_dlp_service is not None and self._yt_dlp_service.is_available())
         youtube_controller = None
         if show_youtube_tab:
+            def youtube_category_config_loader(config=config):
+                loaded = load_youtube_category_config(
+                    config,
+                    text_loader=self._api_client.get_text if self._api_client is not None else None,
+                    save_config=lambda: self.repo.save_config(config),
+                    builtin_categories=default_youtube_categories(),
+                )
+                return loaded.categories
+
             youtube_controller = YouTubeController(
                 config,
                 yt_dlp_service=self._yt_dlp_service,
+                category_config_loader=youtube_category_config_loader,
                 playback_history_loader=None
                 if self._playback_history_repository is None
                 else lambda vod_id: self._playback_history_repository.get_history("youtube", vod_id),
@@ -1802,6 +1813,7 @@ class AppCoordinator(QObject):
             m3u8_ad_filter=self._m3u8_ad_filter,
             playback_parser_service=self._playback_parser_service,
             yt_dlp_service=self._yt_dlp_service,
+            youtube_category_text_loader=self._api_client.get_text if self._api_client is not None else None,
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
             danmaku_controller_factory=danmaku_controller_factory,
