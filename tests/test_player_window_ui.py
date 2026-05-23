@@ -4438,6 +4438,85 @@ def test_player_window_does_not_prepare_ytdlp_page_url_after_loader_resolves_dir
     assert ad_filter.prepare_calls == []
 
 
+def test_player_window_does_not_proxy_youtube_resolved_hls_url_without_quality_marker(qtbot) -> None:
+    class RecordingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.should_prepare_calls: list[str] = []
+            self.prepare_calls: list[str] = []
+
+        def should_prepare(self, url: str) -> bool:
+            self.should_prepare_calls.append(url)
+            return ".m3u8" in url
+
+        def prepare(
+            self,
+            url: str,
+            headers: dict[str, str] | None = None,
+            dash_video_id: str | None = None,
+        ) -> str:
+            del headers, dash_video_id
+            self.prepare_calls.append(url)
+            return "http://127.0.0.1:2323/m3u?v=unexpected-youtube-proxy"
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+            poster_image_path: str | None = None,
+            audio_files: str = "",
+        ) -> None:
+            del headers, poster_image_path, audio_files
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    resolved_hls_url = "https://manifest.googlevideo.com/playlist/index.m3u8"
+
+    def playback_loader(item: PlayItem) -> None:
+        item.url = resolved_hls_url
+        item.original_url = "https://www.youtube.com/watch?v=test123"
+        item.headers = {"Referer": "https://www.youtube.com/"}
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie", detail_style="youtube"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="https://www.youtube.com/watch?v=test123",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    session.playback_loader = playback_loader
+
+    ad_filter = RecordingM3U8AdFilter()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=ad_filter)
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(video.load_calls) == 1)
+    assert video.load_calls == [(resolved_hls_url, False, 0)]
+    assert ad_filter.should_prepare_calls == []
+    assert ad_filter.prepare_calls == []
+
+
 def test_player_window_skips_dash_prepare_for_ytdlp_separate_stream_urls(qtbot) -> None:
     class RecordingM3U8AdFilter:
         def __init__(self) -> None:

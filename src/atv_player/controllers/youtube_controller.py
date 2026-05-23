@@ -79,7 +79,36 @@ _LOGIN_FEED_URLS = {
     "cat_history": ":ythis",
     "cat_watch_later": ":ytwatchlater",
 }
-_LOGIN_LIST_CACHE_TTL_SECONDS = 60.0
+_YOUTUBE_LIST_CACHE_TTL_SECONDS = 30 * 60.0
+_LOGIN_LIST_CACHE_TTL_SECONDS = _YOUTUBE_LIST_CACHE_TTL_SECONDS
+_CHANNEL_CACHE_TTL_SECONDS = _YOUTUBE_LIST_CACHE_TTL_SECONDS
+
+
+def _clone_vod_item(item: VodItem) -> VodItem:
+    return replace(
+        item,
+        poster_candidates=list(item.poster_candidates),
+        detail_fields=list(item.detail_fields),
+        metadata_field_sources=dict(item.metadata_field_sources),
+        items=list(item.items),
+    )
+
+
+def _clone_play_item(item: PlayItem) -> PlayItem:
+    return replace(
+        item,
+        detail_actions=list(item.detail_actions),
+        detail_fields=list(item.detail_fields),
+        headers=dict(item.headers),
+        audio_tracks=list(item.audio_tracks),
+        external_subtitles=list(item.external_subtitles),
+        playback_qualities=list(item.playback_qualities),
+        danmaku_candidates=list(item.danmaku_candidates),
+    )
+
+
+def _clone_play_items(items: list[PlayItem]) -> list[PlayItem]:
+    return [_clone_play_item(item) for item in items]
 
 
 def _filters_for_category_id(category_id: str) -> list[CategoryFilter]:
@@ -345,7 +374,11 @@ class YouTubeController:
         self._playback_history_saver = playback_history_saver
         self._category_config_loader = category_config_loader
         self._now = now
-        self._channel_thumbnail_cache: dict[str, str] = {}
+        self._channel_thumbnail_cache: dict[str, tuple[float, str]] = {}
+        self._channel_playlist_cache: dict[
+            str,
+            tuple[float, str, list[PlayItem]],
+        ] = {}
         self._login_list_cache: dict[str, tuple[float, list[VodItem], int]] = {}
 
     def _has_cookie_browser(self) -> bool:
@@ -362,12 +395,12 @@ class YouTubeController:
         if expires_at <= self._now():
             self._login_list_cache.pop(key, None)
             return None
-        return [replace(item) for item in items], total
+        return [_clone_vod_item(item) for item in items], total
 
     def _store_login_list_cache(self, key: str, items: list[VodItem], total: int) -> None:
         self._login_list_cache[key] = (
             self._now() + _LOGIN_LIST_CACHE_TTL_SECONDS,
-            [replace(item) for item in items],
+            [_clone_vod_item(item) for item in items],
             total,
         )
 
@@ -488,8 +521,12 @@ class YouTubeController:
         metadata_url = self._channel_metadata_url(channel_ref)
         if not metadata_url:
             return ""
-        if metadata_url in self._channel_thumbnail_cache:
-            return self._channel_thumbnail_cache[metadata_url]
+        cached = self._channel_thumbnail_cache.get(metadata_url)
+        if cached is not None:
+            expires_at, cached_thumbnail = cached
+            if expires_at > self._now():
+                return cached_thumbnail
+            self._channel_thumbnail_cache.pop(metadata_url, None)
         thumbnail = ""
         try:
             entries = self._flat_entries(metadata_url, 1, 1)
@@ -499,7 +536,10 @@ class YouTubeController:
             thumbnail = _entry_thumbnail(entry)
             if thumbnail:
                 break
-        self._channel_thumbnail_cache[metadata_url] = thumbnail
+        self._channel_thumbnail_cache[metadata_url] = (
+            self._now() + _CHANNEL_CACHE_TTL_SECONDS,
+            thumbnail,
+        )
         return thumbnail
 
     def _enrich_channel_thumbnails(self, items: list[VodItem]) -> list[VodItem]:
@@ -710,6 +750,51 @@ class YouTubeController:
             else f"https://www.youtube.com/channel/{channel_ref}/videos"
         )
 
+    def _get_cached_channel_playlist(
+        self,
+        channel_ref: str,
+    ) -> tuple[str, list[PlayItem]] | None:
+        cache_key = self._channel_videos_url(channel_ref)
+        cached = self._channel_playlist_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, channel_title, playlist = cached
+        if expires_at <= self._now():
+            self._channel_playlist_cache.pop(cache_key, None)
+            return None
+        return channel_title, _clone_play_items(playlist)
+
+    def _store_channel_playlist_cache(
+        self,
+        channel_ref: str,
+        channel_title: str,
+        playlist: list[PlayItem],
+    ) -> None:
+        cache_key = self._channel_videos_url(channel_ref)
+        self._channel_playlist_cache[cache_key] = (
+            self._now() + _CHANNEL_CACHE_TTL_SECONDS,
+            channel_title,
+            _clone_play_items(playlist),
+        )
+
+    def _load_channel_playlist(self, channel_ref: str) -> tuple[str, list[PlayItem]]:
+        cached = self._get_cached_channel_playlist(channel_ref)
+        if cached is not None:
+            channel_title, playlist = cached
+            logger.info(
+                "YouTube channel playlist cache hit channel=%s items=%s",
+                channel_ref,
+                len(playlist),
+            )
+            return channel_title, playlist
+        entries = self._flat_entries(self._channel_videos_url(channel_ref), 1, 200)
+        channel_title, playlist = self._channel_playlist_from_entries(
+            channel_ref,
+            entries,
+        )
+        self._store_channel_playlist_cache(channel_ref, channel_title, playlist)
+        return channel_title, playlist
+
     def _channel_playlist_from_entries(
         self,
         channel_ref: str,
@@ -846,11 +931,7 @@ class YouTubeController:
         return self._request(vod, playlist, source_vod_id)
 
     def _build_channel_request(self, channel_ref: str, source_vod_id: str) -> OpenPlayerRequest:
-        entries = self._flat_entries(self._channel_videos_url(channel_ref), 1, 200)
-        channel_title, playlist = self._channel_playlist_from_entries(
-            channel_ref,
-            entries,
-        )
+        channel_title, playlist = self._load_channel_playlist(channel_ref)
         vod = VodItem(
             vod_id=f"channel@{channel_ref}",
             vod_name=channel_title,
@@ -984,11 +1065,7 @@ class YouTubeController:
     ) -> PlaybackLoadResult:
         channel_vod_id = normalize_youtube_vod_id(str(current_item.vod_id or "").strip())
         channel_ref = channel_vod_id.removeprefix("channel@").strip()
-        entries = self._flat_entries(self._channel_videos_url(channel_ref), 1, 200)
-        channel_title, playlist = self._channel_playlist_from_entries(
-            channel_ref,
-            entries,
-        )
+        channel_title, playlist = self._load_channel_playlist(channel_ref)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {current_item.title or channel_ref}")
         if session is not None:

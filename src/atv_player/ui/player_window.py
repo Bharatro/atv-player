@@ -3493,12 +3493,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return False
         if self._should_skip_live_m3u8_prepare(current_item, resolved_url):
             return True
+        if self._is_ytdlp_resolved_direct_media_item(current_item, resolved_url):
+            return True
         selected_quality_id = current_item.selected_playback_quality_id or ""
         if current_item.audio_url:
             return True
         if selected_quality_id.startswith("ytdlp_"):
             return True
         return any((quality.id or "").startswith("ytdlp_") for quality in current_item.playback_qualities)
+
+    def _is_ytdlp_resolved_direct_media_item(self, current_item: PlayItem, resolved_url: str) -> bool:
+        source_url = str(current_item.original_url or "").strip()
+        if not source_url or not resolved_url:
+            return False
+        if not self._is_youtube_page_url(source_url):
+            return False
+        return not self._is_youtube_page_url(resolved_url)
 
     def _should_skip_live_m3u8_prepare(self, current_item: PlayItem, resolved_url: str) -> bool:
         if self.session is None or current_item.parse_required:

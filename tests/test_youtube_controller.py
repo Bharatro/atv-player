@@ -161,6 +161,29 @@ def test_youtube_controller_loads_login_feed_through_ytdlp_shortcut() -> None:
     assert items[0].vod_remarks == "频道 | 3:21"
 
 
+def test_youtube_controller_reuses_login_feed_cache_for_30_minutes() -> None:
+    now = [100.0]
+    service = FakeYtdlpService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        now=lambda: now[0],
+    )
+
+    controller.load_items("cat_sub_feed", 1)
+    now[0] += 29 * 60
+    cached_items, _total = controller.load_items("cat_sub_feed", 1)
+    now[0] += 61
+    refreshed_items, _total = controller.load_items("cat_sub_feed", 1)
+
+    assert [item.vod_name for item in cached_items] == ["订阅视频"]
+    assert [item.vod_name for item in refreshed_items] == ["订阅视频"]
+    assert service.flat_calls == [
+        (":ytsubs", 1, 30),
+        (":ytsubs", 1, 30),
+    ]
+
+
 def test_youtube_controller_build_request_accepts_bare_channel_id_from_history() -> None:
     service = ChannelYtdlpService()
     controller = YouTubeController(
@@ -183,6 +206,40 @@ def test_youtube_controller_build_request_accepts_bare_channel_id_from_history()
     ]
     assert request.playlist[1].url == ""
     assert request.playlist[1].vod_id == "train123456"
+
+
+def test_youtube_controller_reuses_channel_video_list_cache_for_30_minutes() -> None:
+    now = [100.0]
+    service = ChannelYtdlpService()
+    videos_url = "https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos"
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        now=lambda: now[0],
+    )
+
+    first_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    now[0] += 29 * 60
+    cached_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+    now[0] += 61
+    refreshed_request = controller.build_request("channel@UCX6OQ3DkcsbYNE6H8uQQuVA")
+
+    assert [item.title for item in first_request.playlist] == [
+        "Survive 30 Days On An Island With Your Ex, Win $250,000",
+        "I Built a Train To Cross America",
+    ]
+    assert [item.title for item in cached_request.playlist] == [
+        "Survive 30 Days On An Island With Your Ex, Win $250,000",
+        "I Built a Train To Cross America",
+    ]
+    assert [item.title for item in refreshed_request.playlist] == [
+        "Survive 30 Days On An Island With Your Ex, Win $250,000",
+        "I Built a Train To Cross America",
+    ]
+    assert service.flat_calls == [
+        (videos_url, 1, 200),
+        (videos_url, 1, 200),
+    ]
 
 
 def test_youtube_controller_synthesizes_video_thumbnails_when_flat_items_omit_them() -> None:
@@ -657,3 +714,56 @@ def test_youtube_controller_enriches_subscription_channel_thumbnails() -> None:
         ("https://www.youtube.com/@channel-a", 1, 1),
     ]
     assert items[0].vod_pic == "https://yt3.googleusercontent.com/avatar=s900"
+
+
+def test_youtube_controller_channel_thumbnail_cache_expires_after_30_minutes() -> None:
+    now = [100.0]
+
+    class ChannelService(FakeYtdlpService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.avatar_index = 0
+
+        def extract_flat_playlist(
+            self,
+            url: str,
+            *,
+            page: int = 1,
+            page_size: int = 30,
+        ):
+            self.flat_calls.append((url, page, page_size))
+            if url == "https://www.youtube.com/feed/channels":
+                return [
+                    {
+                        "title": "频道A",
+                        "url": "https://www.youtube.com/@channel-a",
+                        "ie_key": "YoutubeTab",
+                    }
+                ]
+            self.avatar_index += 1
+            return [
+                {
+                    "title": "频道A - Videos",
+                    "url": "https://www.youtube.com/@channel-a/videos",
+                    "channel": "频道A",
+                    "thumbnail": f"https://img.test/avatar-{self.avatar_index}.jpg",
+                    "ie_key": "YoutubeTab",
+                }
+            ]
+
+    service = ChannelService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        now=lambda: now[0],
+    )
+
+    first_items, _total = controller.load_items("cat_sub_channels", 1)
+    now[0] += 29 * 60
+    cached_items, _total = controller.load_items("cat_sub_channels", 1)
+    now[0] += 61
+    refreshed_items, _total = controller.load_items("cat_sub_channels", 1)
+
+    assert first_items[0].vod_pic == "https://img.test/avatar-1.jpg"
+    assert cached_items[0].vod_pic == "https://img.test/avatar-1.jpg"
+    assert refreshed_items[0].vod_pic == "https://img.test/avatar-2.jpg"
