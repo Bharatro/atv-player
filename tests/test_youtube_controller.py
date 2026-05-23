@@ -1,5 +1,11 @@
+from atv_player.controllers.player_controller import PlayerSession
 from atv_player.controllers.youtube_controller import YouTubeController
-from atv_player.models import AppConfig, PlaybackDetailFieldAction
+from atv_player.models import (
+    AppConfig,
+    PlaybackDetailFieldAction,
+    PlaybackLoadResult,
+    PlayItem,
+)
 
 
 class FakeYtdlpService:
@@ -47,6 +53,64 @@ class ChannelYtdlpService(FakeYtdlpService):
                 "ie_key": "Youtube",
             },
         ]
+
+
+class ResolvingChannelYtdlpService(ChannelYtdlpService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_calls: list[str] = []
+
+    def resolve(
+        self,
+        url: str,
+        *,
+        max_height=None,
+        selected_audio_track_id: str = "",
+    ):
+        del max_height, selected_audio_track_id
+        self.resolve_calls.append(url)
+        return type(
+            "Result",
+            (),
+            {
+                "url": "https://manifest.googlevideo.com/playlist/index.m3u8",
+                "headers": {"Referer": "https://www.youtube.com/"},
+                "audio_url": "",
+                "audio_tracks": [],
+                "selected_audio_track_id": "",
+                "ytdl_format": "",
+                "qualities": [],
+                "subtitles": [],
+                "duration_seconds": 1560,
+                "title": "Resolved Island Video",
+                "thumbnail": "https://i.ytimg.com/vi/island12345/hqdefault.jpg",
+                "description": "",
+                "selected_quality_id": "ytdlp_1080",
+                "detail_fields": [],
+            },
+        )()
+
+    def resolve_for_quality(
+        self,
+        url: str,
+        quality_id: str,
+        *,
+        audio_track_id: str = "",
+    ):
+        del quality_id, audio_track_id
+        return self.resolve(url)
+
+    def apply_result(self, result, *, vod, item, source_url: str) -> None:
+        if vod is not None:
+            vod.vod_name = result.title
+            vod.vod_pic = result.thumbnail
+        item.url = result.url
+        item.original_url = source_url
+        item.headers = dict(result.headers)
+        item.title = result.title
+        item.media_title = result.title
+        item.duration_seconds = result.duration_seconds
+        item.selected_playback_quality_id = result.selected_quality_id
 
 
 def test_youtube_controller_hides_login_categories_without_cookie_browser() -> None:
@@ -264,6 +328,99 @@ def test_youtube_controller_builds_fast_video_request_from_card_without_loading_
     assert request.playlist[0].original_url == "https://www.youtube.com/watch?v=abc123"
     assert request.playback_loader is not None
     assert request.async_playback_loader is True
+
+
+def test_youtube_controller_builds_fast_channel_request_from_card_without_loading_playlist() -> None:
+    service = ChannelYtdlpService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+    )
+    card = type(
+        "Card",
+        (),
+        {
+            "vod_id": "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            "vod_name": "MrBeast 野兽先生",
+            "vod_pic": "https://yt3.googleusercontent.com/channel.jpg",
+            "vod_remarks": "频道",
+            "type_name": "",
+            "category_name": "",
+            "vod_content": "",
+        },
+    )()
+
+    request = controller.build_request_from_item(card)
+
+    assert service.flat_calls == []
+    assert request.vod.vod_id == "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert request.vod.vod_name == "MrBeast 野兽先生"
+    assert request.vod.vod_pic == "https://yt3.googleusercontent.com/channel.jpg"
+    assert request.playlist == [
+        PlayItem(
+            title="MrBeast 野兽先生",
+            url="",
+            vod_id="yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+            media_title="MrBeast 野兽先生",
+            video_cover_override="https://yt3.googleusercontent.com/channel.jpg",
+            play_source="YouTube",
+        )
+    ]
+    assert request.playback_loader is not None
+    assert request.async_playback_loader is True
+
+
+def test_youtube_controller_channel_loader_replaces_playlist_and_resolves_start_item() -> None:
+    service = ResolvingChannelYtdlpService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+    )
+    request = controller.build_request_from_item(
+        type(
+            "Card",
+            (),
+            {
+                "vod_id": "yt:channel:UCX6OQ3DkcsbYNE6H8uQQuVA",
+                "vod_name": "MrBeast 野兽先生",
+                "vod_pic": "https://yt3.googleusercontent.com/channel.jpg",
+                "vod_remarks": "频道",
+                "type_name": "",
+                "category_name": "",
+                "vod_content": "",
+            },
+        )()
+    )
+    session = PlayerSession(
+        vod=request.vod,
+        playlist=request.playlist,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playlists=request.playlists,
+        source_groups=request.source_groups,
+        playback_loader=request.playback_loader,
+        async_playback_loader=True,
+    )
+
+    assert request.playback_loader is not None
+    result = request.playback_loader(session, request.playlist[0])
+
+    assert isinstance(result, PlaybackLoadResult)
+    assert result.replacement_start_index == 0
+    assert [item.title for item in result.replacement_playlist] == [
+        "Resolved Island Video",
+        "I Built a Train To Cross America",
+    ]
+    assert (
+        result.replacement_playlist[0].url
+        == "https://manifest.googlevideo.com/playlist/index.m3u8"
+    )
+    assert result.replacement_playlist[1].url == ""
+    assert service.flat_calls == [
+        ("https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos", 1, 200)
+    ]
+    assert service.resolve_calls == ["https://www.youtube.com/watch?v=island12345"]
 
 
 def test_youtube_controller_builds_youtube_detail_fields_from_ytdlp_metadata() -> None:

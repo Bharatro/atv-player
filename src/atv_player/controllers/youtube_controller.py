@@ -16,6 +16,7 @@ from atv_player.models import (
     PlaybackDetailField,
     PlaybackDetailFieldAction,
     PlaybackDetailValuePart,
+    PlaybackLoadResult,
     PlayItem,
     VodItem,
 )
@@ -650,6 +651,31 @@ class YouTubeController:
             detail_fields=_video_detail_fields(entry),
         )
 
+    def _channel_videos_url(self, channel_ref: str) -> str:
+        return (
+            f"{channel_ref.rstrip('/')}/videos"
+            if channel_ref.startswith(("http://", "https://"))
+            else f"https://www.youtube.com/channel/{channel_ref}/videos"
+        )
+
+    def _channel_playlist_from_entries(
+        self,
+        channel_ref: str,
+        entries: list[dict],
+    ) -> tuple[str, list[PlayItem]]:
+        channel_title = channel_ref
+        for entry in entries:
+            title = str(entry.get("channel") or entry.get("uploader") or "").strip()
+            if title:
+                channel_title = title
+                break
+        playlist = []
+        for entry in entries:
+            item = self._play_item_from_entry(entry, media_title=channel_title)
+            if item is not None:
+                playlist.append(item)
+        return channel_title, playlist
+
     def _build_video_request(self, video_id: str, source_vod_id: str) -> OpenPlayerRequest:
         entry = self._entry_for_video(video_id)
         title = _entry_title(entry, "YouTube视频")
@@ -715,6 +741,44 @@ class YouTubeController:
         )
         return self._request(vod, [item], source_vod_id)
 
+    def _build_fast_channel_request(
+        self,
+        channel_ref: str,
+        source_vod_id: str,
+        source_item,
+    ) -> OpenPlayerRequest:
+        title = (
+            str(getattr(source_item, "vod_name", "") or channel_ref).strip()
+            or channel_ref
+        )
+        thumb = _normalize_image_url(
+            str(getattr(source_item, "vod_pic", "") or "").strip()
+        )
+        detail_fields = list(getattr(source_item, "detail_fields", []) or [])
+        vod = VodItem(
+            vod_id=source_vod_id,
+            vod_name=title,
+            detail_style="youtube",
+            vod_pic=thumb,
+            vod_remarks=str(
+                getattr(source_item, "vod_remarks", "") or "频道"
+            ).strip(),
+            vod_content=str(getattr(source_item, "vod_content", "") or "").strip(),
+            type_name=str(getattr(source_item, "type_name", "") or ""),
+            category_name=str(getattr(source_item, "category_name", "") or ""),
+            detail_fields=detail_fields,
+        )
+        item = PlayItem(
+            title=title,
+            url="",
+            vod_id=source_vod_id,
+            media_title=title,
+            video_cover_override=thumb,
+            play_source="YouTube",
+            detail_fields=detail_fields,
+        )
+        return self._request(vod, [item], source_vod_id)
+
     def _build_playlist_request(self, playlist_id: str, source_vod_id: str) -> OpenPlayerRequest:
         entries = self._flat_entries(f"https://www.youtube.com/playlist?list={playlist_id}", 1, 200)
         playlist = [
@@ -731,22 +795,11 @@ class YouTubeController:
         return self._request(vod, playlist, source_vod_id)
 
     def _build_channel_request(self, channel_ref: str, source_vod_id: str) -> OpenPlayerRequest:
-        channel_url = (
-            f"{channel_ref.rstrip('/')}/videos"
-            if channel_ref.startswith(("http://", "https://"))
-            else f"https://www.youtube.com/channel/{channel_ref}/videos"
+        entries = self._flat_entries(self._channel_videos_url(channel_ref), 1, 200)
+        channel_title, playlist = self._channel_playlist_from_entries(
+            channel_ref,
+            entries,
         )
-        entries = self._flat_entries(channel_url, 1, 200)
-        channel_title = channel_ref
-        for entry in entries:
-            title = str(entry.get("channel") or entry.get("uploader") or "").strip()
-            if title:
-                channel_title = title
-                break
-        playlist = [
-            item for item in (self._play_item_from_entry(entry, media_title=channel_title) for entry in entries)
-            if item is not None
-        ]
         vod = VodItem(
             vod_id=f"yt:channel:{channel_ref}",
             vod_name=channel_title,
@@ -783,6 +836,12 @@ class YouTubeController:
                 source_vod_id,
                 item,
                 playlist_id=playlist_id,
+            )
+        if normalized.startswith("yt:channel:"):
+            return self._build_fast_channel_request(
+                normalized.split(":", 2)[2],
+                normalized,
+                item,
             )
         return self.build_request(normalized)
 
@@ -824,6 +883,9 @@ class YouTubeController:
     def _load_playback_item(self, session_or_item, item: PlayItem | None = None):
         session = session_or_item if item is not None else None
         current_item = item or session_or_item
+        current_vod_id = str(current_item.vod_id or "").strip()
+        if current_vod_id.startswith("yt:channel:"):
+            return self._load_channel_playback_item(session, current_item)
         source_url = (current_item.original_url or self._playback_url(current_item.vod_id)).strip()
         service = self._yt_dlp_service
         if service is None or not service.is_available():
@@ -849,3 +911,56 @@ class YouTubeController:
             source_url=source_url,
         )
         return None
+
+    def _load_channel_playback_item(
+        self,
+        session,
+        current_item: PlayItem,
+    ) -> PlaybackLoadResult:
+        channel_ref = str(current_item.vod_id or "").split(":", 2)[2].strip()
+        entries = self._flat_entries(self._channel_videos_url(channel_ref), 1, 200)
+        channel_title, playlist = self._channel_playlist_from_entries(
+            channel_ref,
+            entries,
+        )
+        if not playlist:
+            raise ValueError(f"没有可播放的项目: {current_item.title or channel_ref}")
+        if session is not None:
+            session.vod.vod_name = channel_title
+            session.vod.vod_remarks = "频道"
+            if not session.vod.vod_pic:
+                session.vod.vod_pic = playlist[0].video_cover_override
+        start_index = 0
+        if session is not None and self._playback_history_loader is not None:
+            history = self._playback_history_loader(str(current_item.vod_id or ""))
+            if history is not None and 0 <= int(history.episode) < len(playlist):
+                start_index = int(history.episode)
+        service = self._yt_dlp_service
+        if service is None or not service.is_available():
+            raise ValueError("yt-dlp 不可用")
+        start_item = playlist[start_index]
+        source_url = (start_item.original_url or self._playback_url(start_item.vod_id)).strip()
+        selected_quality_id = start_item.selected_playback_quality_id or ""
+        selected_audio_track_id = start_item.selected_audio_track_id or ""
+        if selected_quality_id.startswith("ytdlp_"):
+            result = service.resolve_for_quality(
+                source_url,
+                selected_quality_id,
+                audio_track_id=selected_audio_track_id,
+            )
+        else:
+            result = service.resolve(
+                source_url,
+                max_height=None,
+                selected_audio_track_id=selected_audio_track_id,
+            )
+        service.apply_result(
+            result,
+            vod=None,
+            item=start_item,
+            source_url=source_url,
+        )
+        return PlaybackLoadResult(
+            replacement_playlist=playlist,
+            replacement_start_index=start_index,
+        )
