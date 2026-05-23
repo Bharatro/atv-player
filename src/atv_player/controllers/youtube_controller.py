@@ -7,6 +7,7 @@ from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
 from atv_player.api import ApiError
+from atv_player.controllers.youtube_category_config import normalize_youtube_vod_id, plan_youtube_query
 from atv_player.models import (
     AppConfig,
     CategoryFilter,
@@ -78,6 +79,26 @@ _LOGIN_FEED_URLS = {
     "cat_watch_later": ":ytwatchlater",
 }
 _LOGIN_LIST_CACHE_TTL_SECONDS = 60.0
+
+
+def _filters_for_category_id(category_id: str) -> list[CategoryFilter]:
+    options = [
+        CategoryFilterOption(name=str(item["name"]), value=str(item["id"]))
+        for item in sorted(_DEFAULT_FILTERS, key=lambda item: int(item["order"]))
+        if item["categoryId"] == category_id
+    ]
+    return [CategoryFilter(key="filter", name="筛选", options=options)] if options else []
+
+
+def default_youtube_categories() -> list[DoubanCategory]:
+    return [
+        DoubanCategory(
+            type_id=str(item["id"]),
+            type_name=str(item["name"]),
+            filters=_filters_for_category_id(str(item["id"])),
+        )
+        for item in sorted(_DEFAULT_CATEGORIES, key=lambda item: int(item["order"]))
+    ]
 
 
 def _youtube_video_url(video_id: str) -> str:
@@ -314,12 +335,14 @@ class YouTubeController:
         yt_dlp_service,
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+        category_config_loader: Callable[[], list[DoubanCategory]] | None = None,
         now: Callable[[], float] = monotonic,
     ) -> None:
         self._config = config
         self._yt_dlp_service = yt_dlp_service
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
+        self._category_config_loader = category_config_loader
         self._now = now
         self._channel_thumbnail_cache: dict[str, str] = {}
         self._login_list_cache: dict[str, tuple[float, list[VodItem], int]] = {}
@@ -382,14 +405,12 @@ class YouTubeController:
             raise ApiError(f"YouTube 列表加载失败: {exc}") from exc
 
     def load_categories(self) -> list[DoubanCategory]:
-        categories = [
-            DoubanCategory(
-                type_id=str(item["id"]),
-                type_name=str(item["name"]),
-                filters=self._filters_for_category(str(item["id"])),
-            )
-            for item in sorted(_DEFAULT_CATEGORIES, key=lambda item: int(item["order"]))
-        ]
+        if self._category_config_loader is not None:
+            categories = [replace(category) for category in self._category_config_loader()]
+            if not categories:
+                categories = default_youtube_categories()
+        else:
+            categories = default_youtube_categories()
         if self._has_cookie_browser():
             categories = [
                 DoubanCategory(type_id=str(item["id"]), type_name=str(item["name"]))
@@ -398,12 +419,7 @@ class YouTubeController:
         return categories
 
     def _filters_for_category(self, category_id: str) -> list[CategoryFilter]:
-        options = [
-            CategoryFilterOption(name=str(item["name"]), value=str(item["id"]))
-            for item in sorted(_DEFAULT_FILTERS, key=lambda item: int(item["order"]))
-            if item["categoryId"] == category_id
-        ]
-        return [CategoryFilter(key="filter", name="筛选", options=options)] if options else []
+        return _filters_for_category_id(category_id)
 
     def _map_entry(self, entry: dict) -> VodItem | None:
         url = _entry_url(entry)
@@ -412,7 +428,7 @@ class YouTubeController:
         channel_id = _channel_id(entry, url)
         if channel_id and not video_id and not playlist_id:
             return VodItem(
-                vod_id=f"yt:channel:{channel_id}",
+                vod_id=f"channel@{channel_id}",
                 vod_name=_entry_title(entry, channel_id),
                 vod_pic=_entry_thumbnail(entry),
                 vod_remarks="频道",
@@ -420,7 +436,7 @@ class YouTubeController:
             )
         if playlist_id and not video_id:
             return VodItem(
-                vod_id=f"yt:playlist:{playlist_id}",
+                vod_id=f"playlist@{playlist_id}",
                 vod_name=_entry_title(entry, playlist_id),
                 vod_pic=_entry_thumbnail(entry),
                 vod_remarks="Playlist",
@@ -428,7 +444,7 @@ class YouTubeController:
             )
         if video_id:
             return VodItem(
-                vod_id=f"yt:video:{video_id}",
+                vod_id=video_id,
                 vod_name=_entry_title(entry, video_id),
                 vod_pic=_entry_thumbnail(entry, video_id),
                 vod_remarks=_entry_remarks(entry),
@@ -443,9 +459,9 @@ class YouTubeController:
             item = self._map_entry(entry)
             if item is None:
                 continue
-            if channels_only and not item.vod_id.startswith("yt:channel:"):
+            if channels_only and not item.vod_id.startswith("channel@"):
                 continue
-            if videos_only and not item.vod_id.startswith("yt:video:"):
+            if videos_only and item.vod_id.startswith(("channel@", "playlist@")):
                 continue
             if item.vod_id in seen:
                 continue
@@ -454,13 +470,15 @@ class YouTubeController:
         return items
 
     def _channel_ref_from_vod_id(self, vod_id: str) -> str:
-        if not vod_id.startswith("yt:channel:"):
+        if not vod_id.startswith("channel@"):
             return ""
-        return vod_id.split(":", 2)[2].strip()
+        return vod_id.removeprefix("channel@").strip()
 
     def _channel_metadata_url(self, channel_ref: str) -> str:
         if channel_ref.startswith(("http://", "https://")):
             return channel_ref.rstrip("/")
+        if channel_ref.startswith("@"):
+            return f"https://www.youtube.com/{channel_ref}"
         if channel_ref.startswith("UC"):
             return f"https://www.youtube.com/channel/{channel_ref}"
         return channel_ref
@@ -486,7 +504,7 @@ class YouTubeController:
     def _enrich_channel_thumbnails(self, items: list[VodItem]) -> list[VodItem]:
         enriched = []
         for item in items:
-            if item.vod_pic or not item.vod_id.startswith("yt:channel:"):
+            if item.vod_pic or not item.vod_id.startswith("channel@"):
                 enriched.append(item)
                 continue
             thumbnail = self._load_channel_thumbnail(self._channel_ref_from_vod_id(item.vod_id))
@@ -584,11 +602,44 @@ class YouTubeController:
                 _first_pic_sample(items),
             )
             return items, total
-        query, playlist_only = self._resolve_category_query(category_id, filters or {})
-        if not query:
-            return [], 0
-        if playlist_only:
-            query = f"{query} playlist"
+        default_category_ids = {str(item["id"]) for item in _DEFAULT_CATEGORIES}
+        if category_id in default_category_ids:
+            query, playlist_only = self._resolve_category_query(category_id, filters or {})
+            if not query:
+                return [], 0
+            if playlist_only:
+                query = f"{query} playlist"
+        else:
+            plan = plan_youtube_query(category_id, filters or {})
+            if plan.unsupported_filters:
+                logger.debug("YouTube unsupported search filters ignored: %s", plan.unsupported_filters)
+            if not plan.value:
+                return [], 0
+            if plan.kind == "channel":
+                request = self._build_channel_request(plan.value, f"channel@{plan.value}")
+                items = [
+                    VodItem(
+                        vod_id=item.vod_id,
+                        vod_name=item.title,
+                        vod_pic=item.video_cover_override,
+                        vod_tag="file",
+                    )
+                    for item in request.playlist
+                ]
+                return items, len(items)
+            if plan.kind == "playlist":
+                request = self._build_playlist_request(plan.value, f"playlist@{plan.value}")
+                items = [
+                    VodItem(
+                        vod_id=item.vod_id,
+                        vod_name=item.title,
+                        vod_pic=item.video_cover_override,
+                        vod_tag="file",
+                    )
+                    for item in request.playlist
+                ]
+                return items, len(items)
+            query = plan.value
         entries = self._flat_entries(f"ytsearchall:{query}", page_number)
         items = self._map_entries(entries)
         logger.info(
@@ -638,12 +689,11 @@ class YouTubeController:
         if not video_id:
             return None
         title = _entry_title(entry, video_id)
-        vod_id = f"yt:entry:{playlist_id}:{video_id}" if playlist_id else f"yt:video:{video_id}"
         return PlayItem(
             title=title,
             url="",
             original_url=_youtube_video_url(video_id),
-            vod_id=vod_id,
+            vod_id=video_id,
             media_title=media_title,
             video_cover_override=_entry_thumbnail(entry, video_id),
             play_source="YouTube",
@@ -655,7 +705,7 @@ class YouTubeController:
         title = _entry_title(entry, "YouTube视频")
         thumb = _entry_thumbnail(entry, video_id)
         vod = VodItem(
-            vod_id=f"yt:video:{video_id}",
+            vod_id=video_id,
             vod_name=title,
             detail_style="youtube",
             vod_pic=thumb,
@@ -668,7 +718,7 @@ class YouTubeController:
                 title=title,
                 url="",
                 original_url=_youtube_video_url(video_id),
-                vod_id=f"yt:video:{video_id}",
+                vod_id=video_id,
                 media_title=title,
                 video_cover_override=thumb,
                 play_source="YouTube",
@@ -688,7 +738,6 @@ class YouTubeController:
         remarks = str(getattr(source_item, "vod_remarks", "") or "").strip()
         content = str(getattr(source_item, "vod_content", "") or "").strip()
         detail_fields = list(getattr(source_item, "detail_fields", []) or [])
-        item_vod_id = f"yt:entry:{playlist_id}:{video_id}" if playlist_id else f"yt:video:{video_id}"
         original_url = _youtube_video_url(video_id)
         if playlist_id:
             original_url = f"{original_url}&list={playlist_id}"
@@ -707,7 +756,7 @@ class YouTubeController:
             title=title,
             url="",
             original_url=original_url,
-            vod_id=item_vod_id,
+            vod_id=video_id,
             media_title=title,
             video_cover_override=thumb,
             play_source="YouTube",
@@ -722,7 +771,7 @@ class YouTubeController:
             if item is not None
         ]
         vod = VodItem(
-            vod_id=f"yt:playlist:{playlist_id}",
+            vod_id=f"playlist@{playlist_id}",
             vod_name="YouTube播放列表",
             detail_style="youtube",
             vod_remarks="播放列表",
@@ -734,6 +783,8 @@ class YouTubeController:
         channel_url = (
             f"{channel_ref.rstrip('/')}/videos"
             if channel_ref.startswith(("http://", "https://"))
+            else f"https://www.youtube.com/{channel_ref}/videos"
+            if channel_ref.startswith("@")
             else f"https://www.youtube.com/channel/{channel_ref}/videos"
         )
         entries = self._flat_entries(channel_url, 1, 200)
@@ -748,7 +799,7 @@ class YouTubeController:
             if item is not None
         ]
         vod = VodItem(
-            vod_id=f"yt:channel:{channel_ref}",
+            vod_id=f"channel@{channel_ref}",
             vod_name=channel_title,
             detail_style="youtube",
             vod_remarks="频道",
@@ -757,33 +808,37 @@ class YouTubeController:
         return self._request(vod, playlist, source_vod_id)
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
-        normalized = str(vod_id or "").strip()
+        raw = str(vod_id or "").strip()
+        if raw.startswith("yt:entry:"):
+            _prefix, _entry, playlist_id, video_id = raw.split(":", 3)
+            return self._build_video_request(video_id, f"playlist@{playlist_id}" if playlist_id else video_id)
+        normalized = normalize_youtube_vod_id(raw)
         if normalized.startswith("UC"):
-            normalized = f"yt:channel:{normalized}"
-        if normalized.startswith("yt:video:"):
-            return self._build_video_request(normalized.split(":", 2)[2], normalized)
-        if normalized.startswith("yt:entry:"):
-            _prefix, _entry, playlist_id, video_id = normalized.split(":", 3)
-            return self._build_video_request(video_id, normalized if not playlist_id else f"yt:playlist:{playlist_id}")
-        if normalized.startswith("yt:playlist:"):
-            return self._build_playlist_request(normalized.split(":", 2)[2], normalized)
-        if normalized.startswith("yt:channel:"):
-            return self._build_channel_request(normalized.split(":", 2)[2], normalized)
+            normalized = f"channel@{normalized}"
+        if normalized.startswith("playlist@"):
+            return self._build_playlist_request(normalized.removeprefix("playlist@"), normalized)
+        if normalized.startswith("channel@"):
+            return self._build_channel_request(normalized.removeprefix("channel@"), normalized)
+        if normalized.startswith("@"):
+            return self._build_channel_request(normalized, f"channel@{normalized}")
+        if normalized:
+            return self._build_video_request(normalized, normalized)
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
     def build_request_from_item(self, item) -> OpenPlayerRequest:
-        normalized = str(getattr(item, "vod_id", "") or "").strip()
-        if normalized.startswith("yt:video:"):
-            return self._build_fast_video_request(normalized.split(":", 2)[2], normalized, item)
-        if normalized.startswith("yt:entry:"):
-            _prefix, _entry, playlist_id, video_id = normalized.split(":", 3)
-            source_vod_id = f"yt:playlist:{playlist_id}" if playlist_id else normalized
+        raw = str(getattr(item, "vod_id", "") or "").strip()
+        if raw.startswith("yt:entry:"):
+            _prefix, _entry, playlist_id, video_id = raw.split(":", 3)
+            source_vod_id = f"playlist@{playlist_id}" if playlist_id else video_id
             return self._build_fast_video_request(
                 video_id,
                 source_vod_id,
                 item,
                 playlist_id=playlist_id,
             )
+        normalized = normalize_youtube_vod_id(raw)
+        if normalized and not normalized.startswith(("channel@", "playlist@", "@")):
+            return self._build_fast_video_request(normalized, normalized, item)
         return self.build_request(normalized)
 
     def _request(self, vod: VodItem, playlist: list[PlayItem], source_vod_id: str) -> OpenPlayerRequest:
@@ -814,12 +869,16 @@ class YouTubeController:
         )
 
     def _playback_url(self, value: str) -> str:
-        if value.startswith("yt:video:"):
-            return _youtube_video_url(value.split(":", 2)[2])
-        if value.startswith("yt:entry:"):
-            _prefix, _entry, playlist_id, video_id = value.split(":", 3)
+        raw = str(value or "").strip()
+        if raw.startswith("yt:entry:"):
+            _prefix, _entry, playlist_id, video_id = raw.split(":", 3)
             return f"{_youtube_video_url(video_id)}&list={playlist_id}" if playlist_id else _youtube_video_url(video_id)
-        return value
+        normalized = normalize_youtube_vod_id(raw)
+        if normalized.startswith(("http://", "https://")):
+            return normalized
+        if normalized.startswith(("channel@", "playlist@", "@")):
+            return normalized
+        return _youtube_video_url(normalized)
 
     def _load_playback_item(self, session_or_item, item: PlayItem | None = None):
         session = session_or_item if item is not None else None
