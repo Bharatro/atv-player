@@ -267,6 +267,87 @@ def test_build_provider_episode_playlist_maps_bangumi_episode_names() -> None:
     ]
 
 
+def test_build_provider_episode_playlist_sorts_bangumi_titles_by_episode_number_with_late_episode_and_duplicate() -> None:
+    vod = VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="动漫")
+    original_titles = [
+        "S01E01.mkv",
+        "S01E02.mkv",
+        "S01E03.mkv",
+        "S01E04.mkv",
+        "S01E05.mkv",
+        "S01E06.mkv",
+        "S01E07.mkv",
+        "S01E08.mkv",
+        "S01E09.mp4",
+        "S01E10.mp4",
+        "S01E11.mkv",
+        "S01E13.mp4",
+        "S01E14.mp4",
+        "S01E15.mp4",
+        "S01E16.mkv",
+        "S01E17.mp4",
+        "S01E18.mp4",
+        "S01E19.mp4",
+        "S01E20.mp4",
+        "S01E21.mp4",
+        "S01E22.mp4",
+        "S01E23.mp4",
+        "S01E11.mp4",
+        "S01E12.mkv",
+    ]
+    playlist = [
+        PlayItem(title=title, original_title=title, url=f"http://m/{index}.mp4")
+        for index, title in enumerate(original_titles, start=1)
+    ]
+    match = MetadataMatch(
+        provider="bangumi",
+        provider_id="subject:1",
+        title="仙剑奇侠传三",
+        year="2025",
+        raw={
+            "episodes": [
+                {"sort": index, "type": 0, "name_cn": f"标题{index}"}
+                for index in range(1, 24)
+            ]
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is not None
+    assert [item.original_title for item in updated] == [
+        "S01E01.mkv",
+        "S01E02.mkv",
+        "S01E03.mkv",
+        "S01E04.mkv",
+        "S01E05.mkv",
+        "S01E06.mkv",
+        "S01E07.mkv",
+        "S01E08.mkv",
+        "S01E09.mp4",
+        "S01E10.mp4",
+        "S01E11.mkv",
+        "S01E12.mkv",
+        "S01E13.mp4",
+        "S01E14.mp4",
+        "S01E15.mp4",
+        "S01E16.mkv",
+        "S01E17.mp4",
+        "S01E18.mp4",
+        "S01E19.mp4",
+        "S01E20.mp4",
+        "S01E21.mp4",
+        "S01E22.mp4",
+        "S01E23.mp4",
+        "S01E11.mp4",
+    ]
+
+
 def test_build_provider_episode_playlist_skips_movie_vod_when_only_type_name_marks_movie() -> None:
     vod = VodItem(vod_id="v1", vod_name="长安的荔枝", vod_year="2025", type_name="电影")
     playlist = [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")]

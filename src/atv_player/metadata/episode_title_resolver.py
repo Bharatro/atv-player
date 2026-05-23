@@ -14,6 +14,7 @@ from atv_player.models import PlayItem, VodItem
 METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
 _IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "iqiyi", "tmdb", "tencent"]
 _MOVIE_MARKERS = ("电影", "影片", "movie")
+_EPISODE_SORT_SENTINEL = 10**9
 
 
 def is_high_confidence_iqiyi_episode_candidate(
@@ -79,7 +80,9 @@ def build_provider_episode_playlist(
     if not titles_by_index:
         return None
     apply_episode_title_index_map(copied, titles_by_index, source=provider, source_priority=source_priority)
-    return copied if playlist_has_title_variants(copied) else None
+    if not playlist_has_title_variants(copied):
+        return None
+    return _sort_episode_title_playlist(vod, copied)
 
 
 def _candidate_supports_episode_title_rewrite(
@@ -297,6 +300,56 @@ def _map_episode_numbers_to_indices(
             include_season_prefix=include_season_prefix,
         )
     return titles_by_index
+
+
+def _season_episode_pairs(vod: VodItem, playlist: list[PlayItem]) -> list[tuple[int, int] | None]:
+    season_numbers = _resolved_season_numbers(vod, playlist)
+    pairs: list[tuple[int, int] | None] = []
+    for index, item in enumerate(playlist):
+        episode_number = infer_playlist_episode_number(item, playlist)
+        if episode_number is None or episode_number <= 0:
+            pairs.append(None)
+            continue
+        pairs.append((season_numbers[index], episode_number))
+    return pairs
+
+
+def _sort_episode_title_playlist(vod: VodItem, playlist: list[PlayItem]) -> list[PlayItem]:
+    if len(playlist) <= 1:
+        for index, item in enumerate(playlist):
+            item.index = index
+        return playlist
+    season_episode_pairs = _season_episode_pairs(vod, playlist)
+    resolved_pairs = [pair for pair in season_episode_pairs if pair is not None]
+    has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
+    indexed_playlist = list(enumerate(playlist))
+    if has_multi_version_pairs:
+        occurrence_by_pair: dict[tuple[int, int], int] = {}
+        version_slot_by_index: dict[int, int] = {}
+        for index, pair in enumerate(season_episode_pairs):
+            if pair is None:
+                version_slot_by_index[index] = _EPISODE_SORT_SENTINEL
+                continue
+            version_slot_by_index[index] = occurrence_by_pair.get(pair, 0)
+            occurrence_by_pair[pair] = version_slot_by_index[index] + 1
+        indexed_playlist.sort(
+            key=lambda entry: (
+                version_slot_by_index[entry[0]],
+                season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL),
+                entry[0],
+            )
+        )
+    else:
+        indexed_playlist.sort(
+            key=lambda entry: (
+                season_episode_pairs[entry[0]] or (_EPISODE_SORT_SENTINEL, _EPISODE_SORT_SENTINEL),
+                entry[0],
+            )
+        )
+    sorted_playlist = [item for _original_index, item in indexed_playlist]
+    for index, item in enumerate(sorted_playlist):
+        item.index = index
+    return sorted_playlist
 
 
 def _resolved_season_numbers(vod: VodItem, playlist: list[PlayItem]) -> dict[int, int]:
