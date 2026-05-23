@@ -20428,6 +20428,30 @@ def test_player_window_uses_youtube_channel_detail_for_active_title(qtbot) -> No
     )
 
 
+def test_player_window_treats_bare_youtube_id_as_placeholder_active_title(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(vod_id="abc123xyz89", vod_name="Resolved YouTube Video"),
+        playlist=[
+            PlayItem(
+                title="Resolved YouTube Video",
+                url="https://www.youtube.com/watch?v=abc123xyz89",
+                original_url="abc123xyz89",
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        initial_vod_name="abc123xyz89",
+    )
+    window.session = session
+    window.current_index = 0
+
+    assert window._active_media_title(session.playlist[0]) == "Resolved YouTube Video"
+
+
 def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")

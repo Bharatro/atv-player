@@ -4,6 +4,7 @@ import base64
 import html
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from time import monotonic
@@ -99,6 +100,11 @@ _YOUTUBE_SUBTITLE_LANGUAGE_ALIASES: dict[str, set[str]] = {
     "zh-HK": {"zh-HK", "zh-Hant"},
     "en": {"en"},
 }
+_YOUTUBE_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def looks_like_youtube_video_id(value: str) -> bool:
+    return bool(_YOUTUBE_VIDEO_ID_PATTERN.fullmatch(str(value or "").strip()))
 
 
 def _canonicalize_ytdlp_url(url: str) -> str:
@@ -109,6 +115,8 @@ def _canonicalize_ytdlp_url(url: str) -> str:
         video_id = candidate.removeprefix("yt:video:").strip()
         if video_id:
             return f"https://www.youtube.com/watch?v={video_id}"
+    if looks_like_youtube_video_id(candidate):
+        return f"https://www.youtube.com/watch?v={candidate}"
     return candidate
 
 
@@ -190,7 +198,7 @@ def _looks_like_placeholder_title(title: str, source_url: str = "") -> bool:
     if normalized == str(source_url or "").strip():
         return True
     lowered = normalized.lower()
-    return lowered.startswith(("http://", "https://", "yt:video:"))
+    return looks_like_youtube_video_id(normalized) or lowered.startswith(("http://", "https://", "yt:video:"))
 
 
 def _resolve_startup_selection_height(

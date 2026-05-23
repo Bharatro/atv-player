@@ -177,6 +177,39 @@ def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_url_p
     assert payload["vodRemarks"] == "Resolved YouTube Video"
 
 
+def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_bare_youtube_id() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    video_id = "abc123xyz89"
+    vod = VodItem(vod_id=video_id, vod_name=video_id)
+    playlist = [PlayItem(title=video_id, url=video_id, original_url=video_id, media_title=video_id)]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+    session.vod.vod_name = "Resolved YouTube Video"
+    session.playlist[0].title = "Resolved YouTube Video"
+    session.playlist[0].media_title = "Resolved YouTube Video"
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    payload = api.saved_payloads[0]
+    assert payload["vodName"] == "Resolved YouTube Video"
+    assert payload["vodRemarks"] == "Resolved YouTube Video"
+
+
+def test_player_controller_detects_bare_youtube_id_play_item() -> None:
+    controller = PlayerController(FakeApiClient())
+
+    assert controller._is_youtube_play_item(PlayItem(title="正片", url="abc123xyz89")) is True
+
+
 def test_player_controller_create_session_defaults_video_cover_override_to_empty() -> None:
     controller = PlayerController(FakeApiClient())
     vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="poster-detail")

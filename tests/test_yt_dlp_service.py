@@ -286,6 +286,7 @@ class TestCanResolve:
         assert service.can_resolve("https://x.com/user/status/123") is True
         assert service.can_resolve("https://youtu.be/test123") is True
         assert service.can_resolve("yt:video:test123") is True
+        assert service.can_resolve("abc123xyz89") is True
 
     def test_unknown_domain(self, service):
         assert service.can_resolve("https://example.com/video.mp4") is False
@@ -1286,6 +1287,19 @@ class TestResolve:
 
         assert second.url == first.url
         assert calls == [("https://www.youtube.com/watch?v=test123", None, True)]
+
+    def test_bare_youtube_video_id_and_watch_url_share_cache(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        info = _sample_info(id="abc123xyz89")
+        service = YtdlpPlaybackService(ttl_seconds=300.0)
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        first = service.resolve("abc123xyz89")
+        second = service.resolve("https://www.youtube.com/watch?v=abc123xyz89")
+
+        assert second.url == first.url
+        assert calls == [("https://www.youtube.com/watch?v=abc123xyz89", None, True)]
 
     def test_quality_specific_resolve_reuses_unbounded_cache_when_selected_quality_matches(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
