@@ -235,6 +235,37 @@ def test_youtube_controller_uses_ytdlp_metadata_for_video_detail_title() -> None
     assert request.playlist[0].title == "真实 YouTube 标题"
 
 
+def test_youtube_controller_builds_fast_video_request_from_card_without_loading_detail() -> None:
+    service = FakeYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+    card = type(
+        "Card",
+        (),
+        {
+            "vod_id": "yt:video:abc123",
+            "vod_name": "卡片标题",
+            "vod_pic": "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+            "vod_remarks": "频道 | 3:21",
+            "type_name": "",
+            "category_name": "",
+            "vod_content": "",
+        },
+    )()
+
+    request = controller.build_request_from_item(card)
+
+    assert service.flat_calls == []
+    assert request.vod.vod_name == "卡片标题"
+    assert request.vod.vod_pic == "https://i.ytimg.com/vi/abc123/hqdefault.jpg"
+    assert request.playlist[0].title == "卡片标题"
+    assert request.playlist[0].original_url == "https://www.youtube.com/watch?v=abc123"
+    assert request.playback_loader is not None
+    assert request.async_playback_loader is True
+
+
 def test_youtube_controller_builds_youtube_detail_fields_from_ytdlp_metadata() -> None:
     class VideoDetailService(FakeYtdlpService):
         def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30):

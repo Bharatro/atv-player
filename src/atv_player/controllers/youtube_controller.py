@@ -675,6 +675,46 @@ class YouTubeController:
             )
         return self._request(vod, [item], source_vod_id)
 
+    def _build_fast_video_request(
+        self,
+        video_id: str,
+        source_vod_id: str,
+        source_item,
+        *,
+        playlist_id: str = "",
+    ) -> OpenPlayerRequest:
+        title = str(getattr(source_item, "vod_name", "") or video_id).strip() or video_id
+        thumb = _normalize_image_url(str(getattr(source_item, "vod_pic", "") or "").strip())
+        remarks = str(getattr(source_item, "vod_remarks", "") or "").strip()
+        content = str(getattr(source_item, "vod_content", "") or "").strip()
+        detail_fields = list(getattr(source_item, "detail_fields", []) or [])
+        item_vod_id = f"yt:entry:{playlist_id}:{video_id}" if playlist_id else f"yt:video:{video_id}"
+        original_url = _youtube_video_url(video_id)
+        if playlist_id:
+            original_url = f"{original_url}&list={playlist_id}"
+        vod = VodItem(
+            vod_id=source_vod_id,
+            vod_name=title,
+            detail_style="youtube",
+            vod_pic=thumb,
+            vod_remarks=remarks,
+            vod_content=content,
+            type_name=str(getattr(source_item, "type_name", "") or ""),
+            category_name=str(getattr(source_item, "category_name", "") or ""),
+            detail_fields=detail_fields,
+        )
+        item = PlayItem(
+            title=title,
+            url="",
+            original_url=original_url,
+            vod_id=item_vod_id,
+            media_title=title,
+            video_cover_override=thumb,
+            play_source="YouTube",
+            detail_fields=detail_fields,
+        )
+        return self._request(vod, [item], source_vod_id)
+
     def _build_playlist_request(self, playlist_id: str, source_vod_id: str) -> OpenPlayerRequest:
         entries = self._flat_entries(f"https://www.youtube.com/playlist?list={playlist_id}", 1, 200)
         playlist = [
@@ -730,6 +770,21 @@ class YouTubeController:
         if normalized.startswith("yt:channel:"):
             return self._build_channel_request(normalized.split(":", 2)[2], normalized)
         raise ValueError(f"没有可播放的项目: {vod_id}")
+
+    def build_request_from_item(self, item) -> OpenPlayerRequest:
+        normalized = str(getattr(item, "vod_id", "") or "").strip()
+        if normalized.startswith("yt:video:"):
+            return self._build_fast_video_request(normalized.split(":", 2)[2], normalized, item)
+        if normalized.startswith("yt:entry:"):
+            _prefix, _entry, playlist_id, video_id = normalized.split(":", 3)
+            source_vod_id = f"yt:playlist:{playlist_id}" if playlist_id else normalized
+            return self._build_fast_video_request(
+                video_id,
+                source_vod_id,
+                item,
+                playlist_id=playlist_id,
+            )
+        return self.build_request(normalized)
 
     def _request(self, vod: VodItem, playlist: list[PlayItem], source_vod_id: str) -> OpenPlayerRequest:
         if not playlist:

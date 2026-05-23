@@ -451,6 +451,19 @@ class MpvWidget(QWidget):
         self._player_property_cache.clear()
         self._register_player_events()
 
+    def _warm_up_player(self) -> None:
+        if self._player is not None and not getattr(self._player, "core_shutdown", False):
+            return
+        started_at = time.monotonic()
+        logger.info("MPV warm-up start")
+        self._ensure_player()
+        logger.info("MPV warm-up done elapsed=%.3fs", time.monotonic() - started_at)
+
+    def warm_up_async(self) -> None:
+        if self._player is not None and not getattr(self._player, "core_shutdown", False):
+            return
+        QTimer.singleShot(0, self._warm_up_player)
+
     def shutdown(self) -> None:
         if not self._on_widget_thread():
             self._run_on_widget_thread(self.shutdown)
@@ -802,16 +815,20 @@ class MpvWidget(QWidget):
                 )
             )
             return
+        load_started_at = time.monotonic()
         self._set_video_picture_state("loading")
         self._audio_cover_active = False
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
         self._windows_file_loaded_timer.stop()
         self._player_property_cache.clear()
+        ensure_started_at = time.monotonic()
         self._ensure_player()
+        ensure_elapsed = time.monotonic() - ensure_started_at
         player = self._player
         if player is None:
             return
+        setup_started_at = time.monotonic()
         header_fields = self._build_http_header_fields(headers)
         loadfile_options = self._loadfile_options(url)
         if ytdl_format:
@@ -828,7 +845,7 @@ class MpvWidget(QWidget):
             )
             self._apply_extra_mpv_options(player)
             logger.info(
-                "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
+                "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s elapsed_before_command=%.3fs ensure=%.3fs setup=%.3fs",
                 self._summarize_media_url(url),
                 self._summarize_media_url(audio_files),
                 ytdl_format,
@@ -836,6 +853,9 @@ class MpvWidget(QWidget):
                 pause,
                 profile_name,
                 bool(header_fields),
+                time.monotonic() - load_started_at,
+                ensure_elapsed,
+                time.monotonic() - setup_started_at,
             )
             if poster_image_path and can_loadfile:
                 self._load_media(

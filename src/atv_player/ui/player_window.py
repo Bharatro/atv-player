@@ -2473,6 +2473,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         if not hydrate_only:
             self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
+            warm_up = getattr(self.video, "warm_up_async", None)
+            if callable(warm_up):
+                warm_up()
         playback_loader = self.session.playback_loader
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")

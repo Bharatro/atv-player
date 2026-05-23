@@ -178,7 +178,26 @@ class FakeBilibiliController(FakeDoubanController):
 
 
 class FakeYoutubeController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.detail_calls: list[str] = []
+        self.fast_calls: list[str] = []
+
+    def build_request_from_item(self, item):
+        self.fast_calls.append(item.vod_id)
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=item.vod_id, vod_name=item.vod_name),
+            playlist=[PlayItem(title=item.vod_name, url="", vod_id=item.vod_id)],
+            clicked_index=0,
+            source_kind="youtube",
+            source_mode="detail",
+            source_vod_id=item.vod_id,
+            playback_loader=lambda current_item: None,
+            async_playback_loader=True,
+        )
+
     def build_request(self, vod_id: str):
+        self.detail_calls.append(vod_id)
         return OpenPlayerRequest(
             vod=VodItem(vod_id=vod_id, vod_name="YouTube视频"),
             playlist=[PlayItem(title="正片", url="", vod_id="yt:video:abc123")],
@@ -2620,12 +2639,14 @@ def test_main_window_opens_player_from_youtube_card_signal(qtbot, monkeypatch) -
     window.youtube_page.item_open_requested.emit(VodItem(vod_id="yt:video:abc123", vod_name="正片", vod_tag="file"))
 
     qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
-    assert opened[0][0].vod.vod_name == "YouTube视频"
+    assert opened[0][0].vod.vod_name == "正片"
     assert opened[0][0].source_vod_id == "yt:video:abc123"
     assert opened[0][1] is False
+    assert controller.fast_calls == ["yt:video:abc123"]
+    assert controller.detail_calls == []
 
 
-def test_main_window_youtube_card_opens_placeholder_immediately_and_hydrates_later(qtbot, monkeypatch) -> None:
+def test_main_window_youtube_card_opens_fast_request_without_waiting_for_detail(qtbot, monkeypatch) -> None:
     class RecordingPlayerWindow:
         def __init__(self, controller, config, save_config) -> None:
             self.session = None
@@ -2651,16 +2672,7 @@ def test_main_window_youtube_card_opens_placeholder_immediately_and_hydrates_lat
         def activateWindow(self) -> None:
             return None
 
-    controller = AsyncRequestController(
-        lambda vod_id: OpenPlayerRequest(
-            vod=VodItem(vod_id=vod_id, vod_name="YouTube详情"),
-            playlist=[PlayItem(title="正片", url="", vod_id=vod_id)],
-            clicked_index=0,
-            source_kind="youtube",
-            source_mode="detail",
-            source_vod_id=vod_id,
-        )
-    )
+    controller = FakeYoutubeController()
     monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -2684,30 +2696,15 @@ def test_main_window_youtube_card_opens_placeholder_immediately_and_hydrates_lat
 
     qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
     assert window.player_window.opened[0][0]["vod"].vod_name == "卡片标题"
-    assert window.player_window.opened[0][0]["vod"].vod_pic == "card-poster"
-    assert window.player_window.logs == ["正在加载详情..."]
-
-    _wait_for_request_call(qtbot, controller, "yt:video:abc123")
-    assert len(window.player_window.opened) == 1
-
-    controller.finish_request("yt:video:abc123")
-
-    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2, timeout=1000)
-    assert window.player_window.opened[1][0]["vod"].vod_name == "YouTube详情"
-    assert window.player_window.opened[1][0]["playlist"][0].title == "正片"
+    assert window.player_window.opened[0][0]["playlist"][0].title == "卡片标题"
+    assert window.player_window.opened[0][0]["playback_loader"] is not None
+    assert window.player_window.opened[0][0]["async_playback_loader"] is True
+    assert controller.fast_calls == ["yt:video:abc123"]
+    assert controller.detail_calls == []
 
 
-def test_main_window_ignores_duplicate_youtube_click_while_detail_is_loading(qtbot, monkeypatch) -> None:
-    controller = AsyncRequestController(
-        lambda vod_id: OpenPlayerRequest(
-            vod=VodItem(vod_id=vod_id, vod_name="YouTube详情"),
-            playlist=[PlayItem(title="正片", url="", vod_id=vod_id)],
-            clicked_index=0,
-            source_kind="youtube",
-            source_mode="detail",
-            source_vod_id=vod_id,
-        )
-    )
+def test_main_window_youtube_card_does_not_start_slow_detail_request(qtbot, monkeypatch) -> None:
+    controller = FakeYoutubeController()
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
@@ -2724,25 +2721,19 @@ def test_main_window_ignores_duplicate_youtube_click_while_detail_is_loading(qtb
     qtbot.addWidget(window)
     window.show()
 
-    placeholders: list[OpenPlayerRequest] = []
     monkeypatch.setattr(
         window,
-        "_open_player_immediately",
-        lambda request, restore_paused_state=False: placeholders.append(request),
+        "open_player",
+        lambda request, restore_paused_state=False: None,
     )
-    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: None)
 
     item = VodItem(vod_id="yt:video:abc123", vod_name="卡片标题", vod_tag="file")
     window.youtube_page.item_open_requested.emit(item)
-    _wait_for_request_call(qtbot, controller, "yt:video:abc123")
-
     window.youtube_page.item_open_requested.emit(item)
     qtbot.wait(50)
 
-    assert controller.calls == ["yt:video:abc123"]
-    assert [request.source_vod_id for request in placeholders] == ["yt:video:abc123"]
-
-    controller.finish_request("yt:video:abc123")
+    assert controller.fast_calls == ["yt:video:abc123", "yt:video:abc123"]
+    assert controller.detail_calls == []
 
 
 def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
@@ -8193,6 +8184,7 @@ def test_main_window_restore_last_player_routes_youtube_detail_to_youtube_contro
 
     class RecordingYoutubeController(FakeYoutubeController):
         def __init__(self) -> None:
+            super().__init__()
             self.calls: list[str] = []
 
         def build_request(self, vod_id: str):

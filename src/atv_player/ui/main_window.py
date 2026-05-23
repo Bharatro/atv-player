@@ -2586,6 +2586,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _handle_youtube_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
+        fast_request_builder = getattr(self.youtube_controller, "build_request_from_item", None)
+        if callable(fast_request_builder):
+            try:
+                request = fast_request_builder(item)
+            except Exception as exc:
+                self.show_error(str(exc))
+                return
+            self.open_player(request)
+            return
         normalized_vod_id = str(vod_id or "").strip()
         if normalized_vod_id and normalized_vod_id == self._youtube_open_request_vod_id:
             self._append_player_status_log("详情仍在加载中...")
