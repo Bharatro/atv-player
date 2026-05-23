@@ -35,6 +35,11 @@ def metadata_binding_query_key(title: object, year: object) -> str:
     return f"{compact_title}\x1f{compact_year}"
 
 
+def bilibili_season_binding_title(season_id: object) -> str:
+    text = str(season_id or "").strip()
+    return f"bilibili:season:{text}" if text.isdigit() else ""
+
+
 @dataclass(slots=True)
 class MetadataBinding:
     normalized_title: str
@@ -82,6 +87,25 @@ class MetadataBindingRepository:
                 WHERE query_key = ?
                 """,
                 (query_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return MetadataBinding(*row)
+
+    def load_by_title(self, title: object) -> MetadataBinding | None:
+        normalized_title = normalize_metadata_binding_title(title)
+        if not normalized_title:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT normalized_title, normalized_year, provider, provider_id, matched_title, matched_year, updated_at
+                FROM metadata_bindings
+                WHERE normalized_title = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (normalized_title,),
             ).fetchone()
         if row is None:
             return None

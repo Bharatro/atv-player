@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
     MetadataScrapeDialogState,
@@ -1790,10 +1791,38 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
-                if getattr(self.session.vod, "detail_style", "") == "bilibili":
+                if self._is_bilibili_metadata_session():
                     return self._merge_bilibili_identity_detail_fields(item_fields)
                 return list(item_fields)
         return list(self.session.vod.detail_fields)
+
+    def _is_bilibili_metadata_session(self) -> bool:
+        if self.session is None:
+            return False
+        return (
+            str(getattr(self.session, "source_kind", "") or "").strip() == "bilibili"
+            or getattr(self.session.vod, "detail_style", "") == "bilibili"
+            or (
+                self.session.original_vod is not None
+                and getattr(self.session.original_vod, "detail_style", "") == "bilibili"
+            )
+        )
+
+    def _bilibili_identity_detail_fields(self) -> list[PlaybackDetailField]:
+        if self.session is None:
+            return []
+        fields: list[PlaybackDetailField] = []
+        seen_labels: set[str] = set()
+        for vod in (self.session.vod, self.session.original_vod):
+            if vod is None:
+                continue
+            for field in vod.detail_fields:
+                label = field.label.strip().lower()
+                if label not in _BILIBILI_IDENTITY_DETAIL_LABELS or label in seen_labels:
+                    continue
+                fields.append(field)
+                seen_labels.add(label)
+        return fields
 
     def _merge_bilibili_identity_detail_fields(
         self, item_fields: list[PlaybackDetailField]
@@ -1803,9 +1832,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         item_labels = {field.label.strip().lower() for field in item_fields}
         identity_fields = [
             field
-            for field in self.session.vod.detail_fields
-            if field.label.strip().lower() in _BILIBILI_IDENTITY_DETAIL_LABELS
-            and field.label.strip().lower() not in item_labels
+            for field in self._bilibili_identity_detail_fields()
+            if field.label.strip().lower() not in item_labels
         ]
         return [*identity_fields, *item_fields]
 
@@ -3871,6 +3899,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 ),
                 playlist=hydration_playlist,
             )
+        hydration_session = replace(
+            hydration_session,
+            vod=self._metadata_hydration_vod(hydration_session.vod),
+        )
         hydration_current_item = None
         if 0 <= hydration_session.start_index < len(hydration_session.playlist):
             hydration_current_item = hydration_session.playlist[hydration_session.start_index]
@@ -7084,12 +7116,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return ""
         vod_id = str(self.session.vod.vod_id or "").strip()
-        if getattr(self.session.vod, "detail_style", "") != "bilibili":
+        if not self._is_bilibili_metadata_session():
             return vod_id
         for pattern in (_BILIBILI_SS_ID_RE, _BILIBILI_SEASON_ID_RE):
             if pattern.match(vod_id):
                 return vod_id
-        for field in self.session.vod.detail_fields:
+        for field in self._bilibili_identity_detail_fields():
             if str(field.label or "").strip().lower() != "season id":
                 continue
             for part in field.value_parts:
@@ -7106,6 +7138,45 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if value.isdigit():
                 return f"season${value}"
         return vod_id
+
+    def _bilibili_season_id_for_binding(self) -> str:
+        vod_id = self._metadata_scrape_reset_vod_id()
+        for pattern in (_BILIBILI_SS_ID_RE, _BILIBILI_SEASON_ID_RE):
+            match = pattern.match(vod_id)
+            if match is not None:
+                return match.group(1)
+        return ""
+
+    def _bilibili_season_binding_key(self) -> tuple[str, str]:
+        if not self._is_bilibili_metadata_session():
+            return "", ""
+        return bilibili_season_binding_title(self._bilibili_season_id_for_binding()), ""
+
+    def _metadata_hydration_vod(self, vod: VodItem) -> VodItem:
+        if not self._is_bilibili_metadata_session():
+            return vod
+        existing_labels = {field.label.strip().lower() for field in vod.detail_fields}
+        identity_fields = [
+            field
+            for field in self._bilibili_identity_detail_fields()
+            if field.label.strip().lower() not in existing_labels
+        ]
+        if not identity_fields:
+            return vod
+        return replace(vod, detail_fields=[*identity_fields, *vod.detail_fields])
+
+    def _restore_original_metadata_for_reset(self) -> None:
+        if self.session is None or self.session.original_vod is None:
+            return
+        self.session.vod = self._metadata_hydration_vod(self._clone_metadata_snapshot(self.session.original_vod))
+        self.session.show_original_metadata = False
+        self._reset_metadata_poster_index()
+        if 0 <= self.current_index < len(self.session.playlist):
+            current_item = self.session.playlist[self.current_index]
+            key = self._playlist_identity_key(current_item)
+            cached_fields = self.session.original_item_detail_fields_by_key.get(key)
+            if cached_fields is not None:
+                current_item.detail_fields = deepcopy(cached_fields)
 
     def _restore_default_metadata_scrape_query(self) -> None:
         if self._metadata_scrape_title_edit is not None:
@@ -7124,11 +7195,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._remember_metadata_scrape_query_state()
         binding_title = self._metadata_scrape_binding_title or str(self.session.vod.vod_name or "").strip()
         binding_year = self._metadata_scrape_binding_year or str(self.session.vod.vod_year or "").strip()
+        if binding_title.startswith("bilibili:season:"):
+            binding_year = ""
         bound_provider = ""
         bound_provider_id = ""
         bindings = self.session.metadata_binding_repository
         if bindings is not None and hasattr(bindings, "load"):
-            binding = bindings.load(binding_title, binding_year)
+            season_binding_title, season_binding_year = self._bilibili_season_binding_key()
+            binding = (
+                bindings.load(season_binding_title, season_binding_year)
+                if season_binding_title
+                else None
+            )
+            if binding is None:
+                binding = bindings.load(binding_title, binding_year)
             if binding is not None:
                 bound_provider = str(getattr(binding, "provider", "") or "").strip()
                 bound_provider_id = str(getattr(binding, "provider_id", "") or "").strip()
@@ -7165,6 +7245,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             cache.delete_payload_namespace(namespace)
         if bindings is not None and hasattr(bindings, "delete"):
             bindings.delete(binding_title, binding_year)
+            season_binding_title, season_binding_year = self._bilibili_season_binding_key()
+            if season_binding_title and (season_binding_title, season_binding_year) != (binding_title, binding_year):
+                bindings.delete(season_binding_title, season_binding_year)
+        self._restore_original_metadata_for_reset()
         self._reset_metadata_scrape_search_query()
         self._metadata_hydration_override_title = reset_title
         self._metadata_hydration_override_year = reset_year
@@ -7258,10 +7342,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if bindings is not None and hasattr(bindings, "save"):
             binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
             binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
+            season_binding_title, season_binding_year = self._bilibili_season_binding_key()
+            save_title = season_binding_title or binding_title
+            save_year = season_binding_year if season_binding_title else binding_year
             logger.info(
                 "Metadata scrape apply saving binding query_title=%s query_year=%s provider=%s provider_id=%s matched_title=%s matched_year=%s",
-                binding_title,
-                binding_year,
+                save_title,
+                save_year,
                 str(candidate.provider or "").strip(),
                 str(candidate.provider_id or "").strip(),
                 str(candidate.title or "").strip(),
@@ -7269,15 +7356,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 extra={"log_category": "metadata", "log_source": "app"},
             )
             bindings.save(
-                binding_title,
-                binding_year,
+                save_title,
+                save_year,
                 provider=candidate.provider,
                 provider_id=candidate.provider_id,
                 matched_title=candidate.title,
                 matched_year=candidate.year,
             )
-            self._metadata_scrape_binding_title = binding_title
-            self._metadata_scrape_binding_year = binding_year
+            self._metadata_scrape_binding_title = save_title
+            self._metadata_scrape_binding_year = save_year
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()

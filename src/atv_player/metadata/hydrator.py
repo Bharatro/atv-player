@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
+from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.matching import is_confident_match, score_match
@@ -221,10 +222,20 @@ class MetadataHydrator:
         self._providers_by_name = {provider.name: provider for provider in providers}
         self._binding_repository = binding_repository
 
-    def _load_bound_record(self, query):
+    def _load_bound_record(self, context: MetadataContext, query):
         if self._binding_repository is None:
             return None
-        binding = self._binding_repository.load(query.title, query.year)
+        binding = None
+        if query.source_kind == "bilibili":
+            season_binding_title = bilibili_season_binding_title(_bilibili_season_id_from_vod(context.vod))
+            if season_binding_title:
+                binding = self._binding_repository.load(season_binding_title, "")
+        if binding is None:
+            binding = self._binding_repository.load(query.title, query.year)
+        if binding is None and query.source_kind == "bilibili" and not str(query.year or "").strip():
+            load_by_title = getattr(self._binding_repository, "load_by_title", None)
+            if callable(load_by_title):
+                binding = load_by_title(query.title)
         if binding is None:
             return None
         provider = self._providers_by_name.get(binding.provider)
@@ -368,7 +379,7 @@ class MetadataHydrator:
     def hydrate(self, context: MetadataContext) -> VodItem:
         vod = replace(context.vod)
         query = self._prepare_search_query(context, context.to_query())
-        bound_record = self._load_bound_record(query)
+        bound_record = self._load_bound_record(context, query)
         if bound_record is not None:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])
             if bound_record.title:

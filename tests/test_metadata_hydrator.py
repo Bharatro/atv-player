@@ -1117,6 +1117,75 @@ def test_metadata_hydrator_prefers_manual_binding_before_provider_search(tmp_pat
     assert tmdb.search_calls == 0
 
 
+def test_metadata_hydrator_uses_bilibili_binding_when_reopened_without_year(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path / "cache")
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("牧神记", "2024", provider="tmdb", provider_id="tv:999")
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:should-not-search", title="牧神记")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:999",
+            poster="https://image.tmdb.org/t/p/original/poster.jpg",
+            rating="8.6",
+        ),
+    )
+    bilibili = FakeProvider("bilibili", matches=[MetadataMatch(provider="bilibili", provider_id="bili", title="牧神记")])
+    hydrator = MetadataHydrator(cache=cache, providers=[bilibili, tmdb], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="ss45969", vod_name="牧神记"),
+            source_kind="bilibili",
+        )
+    )
+
+    assert updated.vod_pic == "https://image.tmdb.org/t/p/original/poster.jpg"
+    assert updated.vod_remarks == "8.6"
+    assert tmdb.search_calls == 0
+    assert bilibili.search_calls == 0
+
+
+def test_metadata_hydrator_prefers_bilibili_season_binding(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path / "cache")
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("bilibili:season:45969", "", provider="tmdb", provider_id="tv:999")
+    bindings.save("牧神记", "2024", provider="tmdb", provider_id="tv:old")
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:should-not-search", title="牧神记")],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:999",
+            poster="https://image.tmdb.org/t/p/original/season-bound.jpg",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb], binding_repository=bindings)
+    vod = VodItem(
+        vod_id="113410624718197-26615416714-1112253",
+        vod_name="牧神记",
+        vod_year="2024",
+        detail_fields=[
+            PlaybackDetailField(
+                label="Season ID",
+                value_parts=[
+                    PlaybackDetailValuePart(
+                        label="45969",
+                        action=PlaybackDetailFieldAction(type="link", value="season$45969", target="bilibili"),
+                    )
+                ],
+            )
+        ],
+    )
+
+    updated = hydrator.hydrate(MetadataContext(vod=vod, source_kind="bilibili"))
+
+    assert updated.vod_pic == "https://image.tmdb.org/t/p/original/season-bound.jpg"
+    assert tmdb.search_calls == 0
+    assert [call.provider_id for call in tmdb.get_detail_calls] == ["tv:999"]
+
+
 def test_metadata_hydrator_manual_binding_blocks_other_provider_overrides(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     bindings = MetadataBindingRepository(tmp_path / "app.db")

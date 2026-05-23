@@ -1191,10 +1191,15 @@ class FakeMetadataBindingRepository:
     def __init__(self) -> None:
         self.saved: list[tuple[str, str, str, str, str, str]] = []
         self.deleted: list[tuple[str, str]] = []
+        self.load_calls: list[tuple[str, str]] = []
+        self.bindings_by_key = {}
         self.binding = None
 
     def load(self, title, year):
-        del title, year
+        self.load_calls.append((title, year))
+        key = (title, year)
+        if key in self.bindings_by_key:
+            return self.bindings_by_key[key]
         return self.binding
 
     def save(self, title, year, *, provider, provider_id, matched_title="", matched_year="") -> None:
@@ -2404,6 +2409,74 @@ def test_player_window_metadata_scrape_reset_uses_bilibili_season_id_detail_fiel
     window._reset_metadata_scrape_state()
 
     assert service.reset_query_contexts == [("bilibili", "season$45969")]
+
+
+def test_player_window_metadata_scrape_reset_uses_original_bilibili_season_id_after_manual_apply(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    hydration_vods: list[tuple[str, str, list[tuple[str, str]]]] = []
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="113367389900623-26520061025-1112251",
+            vod_name="牧神记",
+            vod_content="当前简介",
+            detail_style="bilibili",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="45969",
+                            action=PlaybackDetailFieldAction(type="link", value="season$45969", target="bilibili"),
+                        )
+                    ],
+                )
+            ],
+        ),
+        playlist=[PlayItem(title="第1话", url="https://media.example/1.mp4", media_title="牧神记")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+        source_key="bilibili",
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+    qtbot.waitUntil(lambda: "TMDB ID: 1" in window.metadata_view.toPlainText(), timeout=1000)
+    assert bindings.saved == [("bilibili:season:45969", "", "tmdb", "movie:1", "深空彼岸", "2026")]
+    assert "Season ID" not in window.session.vod.detail_fields[0].label
+    bindings.bindings_by_key[("bilibili:season:45969", "")] = type(
+        "Binding",
+        (),
+        {"provider": "tmdb", "provider_id": "movie:1"},
+    )()
+    window.session.metadata_hydrator = lambda current_session: (
+        hydration_vods.append(
+            (
+                current_session.vod.vod_id,
+                current_session.vod.vod_content,
+                [(field.label, field.value) for field in current_session.vod.detail_fields],
+            )
+        )
+        or current_session.vod
+    )
+
+    window._reset_metadata_scrape_state()
+
+    qtbot.waitUntil(lambda: len(hydration_vods) == 1, timeout=1000)
+    assert bindings.deleted == [("bilibili:season:45969", "")]
+    assert service.reset_query_contexts[-1] == ("bilibili", "season$45969")
+    assert hydration_vods[0][1] == "当前简介"
+    assert ("Season ID", "45969") in hydration_vods[0][2]
+    assert ("TMDB ID", "1") not in hydration_vods[0][2]
 
 
 def test_player_window_metadata_scrape_reset_clears_episode_title_payload_caches(qtbot, monkeypatch, tmp_path) -> None:
