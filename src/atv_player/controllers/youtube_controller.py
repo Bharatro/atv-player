@@ -1022,7 +1022,7 @@ class YouTubeController:
             )
         service.apply_result(
             result,
-            vod=None,
+            vod=None if session is None else session.vod,
             item=start_item,
             source_url=source_url,
         )

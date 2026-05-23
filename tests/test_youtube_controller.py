@@ -495,6 +495,8 @@ def test_youtube_controller_channel_loader_replaces_playlist_and_resolves_start_
         == "https://manifest.googlevideo.com/playlist/index.m3u8"
     )
     assert result.replacement_playlist[1].url == ""
+    assert session.vod.vod_name == "Resolved Island Video"
+    assert session.vod.vod_pic == "https://i.ytimg.com/vi/island12345/hqdefault.jpg"
     assert service.flat_calls == [
         ("https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos", 1, 200)
     ]
