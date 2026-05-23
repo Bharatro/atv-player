@@ -7080,6 +7080,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _reset_metadata_scrape_search_query(self) -> None:
         self._rerun_metadata_scrape_search()
 
+    def _metadata_scrape_reset_vod_id(self) -> str:
+        if self.session is None:
+            return ""
+        vod_id = str(self.session.vod.vod_id or "").strip()
+        if getattr(self.session.vod, "detail_style", "") != "bilibili":
+            return vod_id
+        for pattern in (_BILIBILI_SS_ID_RE, _BILIBILI_SEASON_ID_RE):
+            if pattern.match(vod_id):
+                return vod_id
+        for field in self.session.vod.detail_fields:
+            if str(field.label or "").strip().lower() != "season id":
+                continue
+            for part in field.value_parts:
+                action = part.action
+                action_value = str(action.value if action is not None else "").strip()
+                if _BILIBILI_SS_ID_RE.match(action_value) or _BILIBILI_SEASON_ID_RE.match(action_value):
+                    return action_value
+                label = str(part.label or "").strip()
+                if label.isdigit():
+                    return f"season${label}"
+            value = str(field.value or "").strip()
+            if _BILIBILI_SS_ID_RE.match(value) or _BILIBILI_SEASON_ID_RE.match(value):
+                return value
+            if value.isdigit():
+                return f"season${value}"
+        return vod_id
+
     def _restore_default_metadata_scrape_query(self) -> None:
         if self._metadata_scrape_title_edit is not None:
             self._metadata_scrape_title_edit.setText(self._metadata_scrape_default_title)
@@ -7125,7 +7152,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 title=reset_title,
                 year=reset_year,
                 source_kind=str(getattr(self.session, "source_kind", "") or ""),
-                vod_id=str(self.session.vod.vod_id or "").strip(),
+                vod_id=self._metadata_scrape_reset_vod_id(),
                 type_name=str(self.session.vod.type_name or "").strip(),
                 category_name=self._metadata_scrape_selected_category_name(),
             ),

@@ -5,7 +5,13 @@ from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import (
+    PlayItem,
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
+    VodItem,
+)
 
 
 class FakeProvider:
@@ -135,6 +141,44 @@ def test_metadata_hydrator_directly_uses_bilibili_season_id_for_bilibili_source(
             },
         )
     ]
+
+
+def test_metadata_hydrator_uses_bilibili_season_id_detail_field_for_bilibili_source(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili_provider = FakeProvider(
+        "bilibili",
+        record=MetadataRecord(
+            provider="bilibili",
+            provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+            title="牧神记",
+            overview="B站专用接口简介",
+        ),
+        can_enrich_result=False,
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[bilibili_provider])
+    vod = VodItem(
+        vod_id="ep3537929",
+        vod_name="牧神记",
+        detail_fields=[
+            PlaybackDetailField(
+                label="Season ID",
+                value_parts=[
+                    PlaybackDetailValuePart(
+                        label="45969",
+                        action=PlaybackDetailFieldAction(type="link", value="season$45969", target="bilibili"),
+                    )
+                ],
+            )
+        ],
+    )
+
+    updated = hydrator.hydrate(MetadataContext(vod=vod, source_kind="bilibili"))
+
+    assert updated.vod_content == "B站专用接口简介"
+    assert [call.provider_id for call in bilibili_provider.get_detail_calls] == [
+        "https://www.bilibili.com/bangumi/play/ss45969"
+    ]
+    assert bilibili_provider.search_calls == 0
 
 
 def test_metadata_hydrator_supplements_bilibili_season_detail_with_other_providers(tmp_path: Path) -> None:

@@ -55,6 +55,24 @@ def test_player_controller_restores_resume_state() -> None:
     assert session.ending_seconds == 24
 
 
+def test_player_controller_create_session_preserves_source_context() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="ss45969", vod_name="牧神记")
+    playlist = [PlayItem(title="第1话", url="1.m3u8")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        source_kind="bilibili",
+        source_key="bilibili",
+    )
+
+    assert session.source_kind == "bilibili"
+    assert session.source_key == "bilibili"
+
+
 def test_player_controller_builds_history_payload() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)

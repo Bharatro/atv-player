@@ -3677,6 +3677,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             source_groups=request.source_groups,
             source_group_index=request.source_group_index,
             source_index=request.source_index,
+            source_kind=request.source_kind,
+            source_key=request.source_key,
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
             use_local_history=request.use_local_history,

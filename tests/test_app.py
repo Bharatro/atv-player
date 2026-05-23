@@ -22,7 +22,17 @@ from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
-from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import (
+    AppConfig,
+    DoubanCategory,
+    HistoryRecord,
+    OpenPlayerRequest,
+    PlayItem,
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
+    VodItem,
+)
 from atv_player.ui.main_window import MainWindow
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.theme import DARK_TOKENS
@@ -7888,6 +7898,38 @@ def test_app_coordinator_metadata_factories_support_bilibili_pgc_ids(tmp_path, m
     hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
     scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
     vod = VodItem(vod_id=vod_id, vod_name="B站长视频")
+
+    hydrate = hydrator_factory(source_kind="bilibili", vod=vod)
+    scrape_service = scrape_factory(source_kind="bilibili", vod=vod)
+
+    assert callable(hydrate)
+    assert scrape_service is not None
+
+
+def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_field(tmp_path, monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(metadata_enhancement_enabled=True)
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
+    scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
+    vod = VodItem(
+        vod_id="113367389900623-26520061025-1112251",
+        vod_name="牧神记",
+        detail_fields=[
+            PlaybackDetailField(
+                label="Season ID",
+                value_parts=[
+                    PlaybackDetailValuePart(
+                        label="45969",
+                        action=PlaybackDetailFieldAction(type="link", value="season$45969", target="bilibili"),
+                    )
+                ],
+            )
+        ],
+    )
 
     hydrate = hydrator_factory(source_kind="bilibili", vod=vod)
     scrape_service = scrape_factory(source_kind="bilibili", vod=vod)

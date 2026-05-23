@@ -66,6 +66,8 @@ class PlayerSession:
     initial_log_message: str = ""
     initial_vod_name: str = ""
     is_placeholder: bool = False
+    source_kind: str = ""
+    source_key: str = ""
     video_cover_override: str = ""
     prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
     pending_next_danmaku_prefetch_token: int = 0
@@ -373,6 +375,8 @@ class PlayerController:
         source_groups: list[PlaybackSourceGroup] | None = None,
         source_group_index: int = 0,
         source_index: int = 0,
+        source_kind: str = "",
+        source_key: str = "",
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
@@ -449,6 +453,8 @@ class PlayerController:
             start_index=start_index,
             start_position_seconds=position_seconds,
             speed=speed,
+            source_kind=source_kind,
+            source_key=source_key,
             playlists=normalized_playlists,
             playlist_index=playlist_index,
             source_groups=normalized_source_groups,

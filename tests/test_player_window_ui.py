@@ -1105,6 +1105,7 @@ class FakeMetadataScrapeService:
         self.apply_calls: list[tuple[str, str]] = []
         self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
+        self.reset_query_contexts: list[tuple[str, str]] = []
         self.cached_groups: list[MetadataScrapeGroup] = []
         self._provider_options = list(
             provider_options
@@ -1180,6 +1181,7 @@ class FakeMetadataScrapeService:
         bound_provider_id: str = "",
         detail_keys: list[tuple[str, str]] | None = None,
     ) -> None:
+        self.reset_query_contexts.append((getattr(query, "source_kind", ""), getattr(query, "vod_id", "")))
         self.reset_calls.append(
             (query.title, query.year, bound_provider, bound_provider_id, list(detail_keys or []))
         )
@@ -2342,6 +2344,66 @@ def test_player_window_metadata_scrape_reset_passes_selected_category_override_t
 
     qtbot.waitUntil(lambda: len(hydration_calls) == 1, timeout=1000)
     assert hydration_calls == [("仙剑奇侠传三", "仙剑奇侠传三", "2025", "动漫")]
+
+
+def test_player_window_metadata_scrape_reset_passes_source_context_to_cache_reset(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="ss45969", vod_name="牧神记", vod_content="当前简介"),
+        playlist=[PlayItem(title="第1话", url="https://media.example/1.mp4", media_title="牧神记")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+        source_key="bilibili",
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+
+    window._reset_metadata_scrape_state()
+
+    assert service.reset_query_contexts == [("bilibili", "ss45969")]
+
+
+def test_player_window_metadata_scrape_reset_uses_bilibili_season_id_detail_field(qtbot) -> None:
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="ep3537929",
+            vod_name="牧神记",
+            vod_content="当前简介",
+            detail_style="bilibili",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="45969",
+                            action=PlaybackDetailFieldAction(type="link", value="season$45969", target="bilibili"),
+                        )
+                    ],
+                )
+            ],
+        ),
+        playlist=[PlayItem(title="第1话", url="https://media.example/1.mp4", media_title="牧神记")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+        source_key="bilibili",
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+
+    window._reset_metadata_scrape_state()
+
+    assert service.reset_query_contexts == [("bilibili", "season$45969")]
 
 
 def test_player_window_metadata_scrape_reset_clears_episode_title_payload_caches(qtbot, monkeypatch, tmp_path) -> None:

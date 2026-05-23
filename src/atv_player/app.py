@@ -302,6 +302,29 @@ def _is_bilibili_metadata_enhancement_id(vod_id: object) -> bool:
     return text.startswith(("ss", "ep", "season$"))
 
 
+def _has_bilibili_season_id_detail_field(vod: object) -> bool:
+    for field in list(getattr(vod, "detail_fields", []) or []):
+        if str(getattr(field, "label", "") or "").strip().lower() != "season id":
+            continue
+        for part in list(getattr(field, "value_parts", []) or []):
+            action = getattr(part, "action", None)
+            action_value = str(getattr(action, "value", "") or "").strip().lower()
+            if action_value.startswith(("ss", "season$")):
+                return True
+            if str(getattr(part, "label", "") or "").strip().isdigit():
+                return True
+        value = str(getattr(field, "value", "") or "").strip().lower()
+        if value.startswith(("ss", "season$")) or value.isdigit():
+            return True
+    return False
+
+
+def _supports_bilibili_metadata_enhancement(vod: object | None) -> bool:
+    if vod is None:
+        return False
+    return _is_bilibili_metadata_enhancement_id(getattr(vod, "vod_id", "")) or _has_bilibili_season_id_detail_field(vod)
+
+
 def build_application() -> tuple[QApplication, SettingsRepository, AppLogService]:
     app_instance_getter = getattr(QApplication, "instance", None)
     app = app_instance_getter() if callable(app_instance_getter) else None
@@ -649,7 +672,7 @@ class AppCoordinator(QObject):
             del request
             if vod is None or source_kind not in supported_sources:
                 return None
-            if source_kind == "bilibili" and not _is_bilibili_metadata_enhancement_id(vod.vod_id):
+            if source_kind == "bilibili" and not _supports_bilibili_metadata_enhancement(vod):
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
@@ -693,7 +716,7 @@ class AppCoordinator(QObject):
             del request, source_key
             if source_kind not in supported_sources:
                 return None
-            if source_kind == "bilibili" and (vod is None or not _is_bilibili_metadata_enhancement_id(vod.vod_id)):
+            if source_kind == "bilibili" and not _supports_bilibili_metadata_enhancement(vod):
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:

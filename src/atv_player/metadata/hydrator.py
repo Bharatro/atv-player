@@ -181,6 +181,34 @@ def _bilibili_season_id_from_vod_id(vod_id: object) -> str:
     return ""
 
 
+def _bilibili_season_id_from_detail_fields(fields: object) -> str:
+    for field in list(fields or []):
+        label = str(getattr(field, "label", "") or "").strip().lower()
+        if label != "season id":
+            continue
+        value_parts = list(getattr(field, "value_parts", []) or [])
+        for part in value_parts:
+            action = getattr(part, "action", None)
+            action_value = str(getattr(action, "value", "") or "").strip()
+            season_id = _bilibili_season_id_from_vod_id(action_value)
+            if season_id:
+                return season_id
+            part_label = str(getattr(part, "label", "") or "").strip()
+            if part_label.isdigit():
+                return part_label
+        value = str(getattr(field, "value", "") or "").strip()
+        season_id = _bilibili_season_id_from_vod_id(value)
+        if season_id:
+            return season_id
+        if value.isdigit():
+            return value
+    return ""
+
+
+def _bilibili_season_id_from_vod(vod: VodItem) -> str:
+    return _bilibili_season_id_from_vod_id(vod.vod_id) or _bilibili_season_id_from_detail_fields(vod.detail_fields)
+
+
 class MetadataHydrator:
     def __init__(
         self,
@@ -285,7 +313,7 @@ class MetadataHydrator:
     def _load_bilibili_source_record(self, context: MetadataContext, query):
         if context.source_kind != "bilibili":
             return None
-        season_id = _bilibili_season_id_from_vod_id(query.vod_id)
+        season_id = _bilibili_season_id_from_vod(context.vod)
         if not season_id:
             return None
         provider = self._providers_by_name.get("bilibili")
