@@ -390,7 +390,6 @@ def test_build_ytdlp_command_args_defaults_to_no_browser_cookies(monkeypatch) ->
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
-    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
 
     assert ytdlp_runtime.build_ytdlp_command_args(cookie_browser="") == []
 
@@ -440,8 +439,6 @@ def _resolved_cookie_browser(cookie_browser: str = "") -> str:
         return ""
     if raw_value:
         return raw_value
-    if _resolved_cookie_file():
-        return ""
     return ""
 
 

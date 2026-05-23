@@ -1369,6 +1369,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._skip_next_telegram_open_request_vod_id = ""
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
         self.youtube_controller = youtube_controller or _EmptyYouTubeController()
+        self._youtube_open_request_id = 0
+        self._youtube_open_request_vod_id = ""
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
@@ -2584,7 +2586,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _handle_youtube_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
-        self._start_open_request(lambda: self.youtube_controller.build_request(vod_id))
+        normalized_vod_id = str(vod_id or "").strip()
+        if normalized_vod_id and normalized_vod_id == self._youtube_open_request_vod_id:
+            self._append_player_status_log("详情仍在加载中...")
+            return
+        self._youtube_open_request_vod_id = normalized_vod_id
+        placeholder_request = self._build_placeholder_player_request(item, source_kind="youtube")
+        self._open_player_immediately(placeholder_request)
+
+        def build_request() -> OpenPlayerRequest:
+            request = self.youtube_controller.build_request(vod_id)
+            return self._apply_request_fallback_metadata(request, item)
+
+        self._youtube_open_request_id = self._start_open_request(build_request)
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -3518,11 +3532,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return request_id
 
     def _handle_open_request_succeeded(self, request_id: int, request: OpenPlayerRequest) -> None:
+        if request_id == self._youtube_open_request_id:
+            self._youtube_open_request_id = 0
+            self._youtube_open_request_vod_id = ""
         if request_id != self._open_request_id:
             return
         self.open_player(request)
 
     def _handle_open_request_failed(self, request_id: int, message: str) -> None:
+        if request_id == self._youtube_open_request_id:
+            self._youtube_open_request_id = 0
+            self._youtube_open_request_vod_id = ""
         if request_id != self._open_request_id:
             return
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:

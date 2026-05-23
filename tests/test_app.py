@@ -2615,6 +2615,7 @@ def test_main_window_opens_player_from_youtube_card_signal(qtbot, monkeypatch) -
         "open_player",
         lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
     )
+    monkeypatch.setattr(window, "_open_player_immediately", lambda request, restore_paused_state=False: None)
 
     window.youtube_page.item_open_requested.emit(VodItem(vod_id="yt:video:abc123", vod_name="正片", vod_tag="file"))
 
@@ -2622,6 +2623,126 @@ def test_main_window_opens_player_from_youtube_card_signal(qtbot, monkeypatch) -
     assert opened[0][0].vod.vod_name == "YouTube视频"
     assert opened[0][0].source_vod_id == "yt:video:abc123"
     assert opened[0][1] is False
+
+
+def test_main_window_youtube_card_opens_placeholder_immediately_and_hydrates_later(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+            self.logs: list[str] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+            message = session.get("initial_log_message", "")
+            if message:
+                self.logs.append(message)
+
+        def append_status_log(self, message: str) -> None:
+            self.logs.append(message)
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncRequestController(
+        lambda vod_id: OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="YouTube详情"),
+            playlist=[PlayItem(title="正片", url="", vod_id=vod_id)],
+            clicked_index=0,
+            source_kind="youtube",
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+    )
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        youtube_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_youtube_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.youtube_page.item_open_requested.emit(
+        VodItem(vod_id="yt:video:abc123", vod_name="卡片标题", vod_pic="card-poster")
+    )
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+    assert window.player_window.opened[0][0]["vod"].vod_name == "卡片标题"
+    assert window.player_window.opened[0][0]["vod"].vod_pic == "card-poster"
+    assert window.player_window.logs == ["正在加载详情..."]
+
+    _wait_for_request_call(qtbot, controller, "yt:video:abc123")
+    assert len(window.player_window.opened) == 1
+
+    controller.finish_request("yt:video:abc123")
+
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2, timeout=1000)
+    assert window.player_window.opened[1][0]["vod"].vod_name == "YouTube详情"
+    assert window.player_window.opened[1][0]["playlist"][0].title == "正片"
+
+
+def test_main_window_ignores_duplicate_youtube_click_while_detail_is_loading(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(
+        lambda vod_id: OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="YouTube详情"),
+            playlist=[PlayItem(title="正片", url="", vod_id=vod_id)],
+            clicked_index=0,
+            source_kind="youtube",
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+    )
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        youtube_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_youtube_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    placeholders: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(
+        window,
+        "_open_player_immediately",
+        lambda request, restore_paused_state=False: placeholders.append(request),
+    )
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: None)
+
+    item = VodItem(vod_id="yt:video:abc123", vod_name="卡片标题", vod_tag="file")
+    window.youtube_page.item_open_requested.emit(item)
+    _wait_for_request_call(qtbot, controller, "yt:video:abc123")
+
+    window.youtube_page.item_open_requested.emit(item)
+    qtbot.wait(50)
+
+    assert controller.calls == ["yt:video:abc123"]
+    assert [request.source_vod_id for request in placeholders] == ["yt:video:abc123"]
+
+    controller.finish_request("yt:video:abc123")
 
 
 def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:

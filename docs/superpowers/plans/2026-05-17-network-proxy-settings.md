@@ -971,10 +971,6 @@ def build_ytdlp_command_args(proxy_args: list[str] | None = None) -> list[str]:
     browser = _resolved_cookie_browser()
     if browser:
         args.extend(["--cookies-from-browser", browser])
-    else:
-        cookie_file = _resolved_cookie_file()
-        if cookie_file:
-            args.extend(["--cookies", cookie_file])
     remote_components = _default_remote_components()
     if remote_components:
         args.extend(["--remote-components", remote_components])

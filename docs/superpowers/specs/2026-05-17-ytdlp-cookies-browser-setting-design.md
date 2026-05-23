@@ -18,11 +18,11 @@
 - 用户可以在应用内直接控制 `yt-dlp` 是否使用浏览器 cookies。
 - 默认安装后的行为不再假设系统存在 `Chrome`。
 - 已有配置链路保持一致：`AdvancedSettingsDialog -> AppConfig -> SettingsRepository -> ytdlp runtime`。
-- 为后续补充 `cookies` 文件路径或更多浏览器选项保留清晰扩展位。
+- 为后续补充更多浏览器选项保留清晰扩展位。
 
 ## Non-Goals
 
-- 本轮不实现 `cookies` 文件路径选择。
+- 不支持应用层 `cookies` 文件路径。
 - 本轮不实现“自动探测系统可用浏览器”。
 - 本轮不新增 `yt-dlp` 专用诊断面板或错误提示优化。
 - 本轮不保留“默认隐式回退到 Chrome”的旧行为。
@@ -183,7 +183,7 @@
 - 如果显式配置了浏览器值，则返回该浏览器
 - 如果显式关闭，则返回空字符串
 - 如果没有配置任何浏览器，则默认也返回空字符串
-- `ATV_YTDLP_COOKIE_FILE` 现有行为保持不变
+- 不再支持应用层 cookie 文件入口，cookie 只由 yt-dlp 的浏览器参数自行处理
 
 结果：
 
