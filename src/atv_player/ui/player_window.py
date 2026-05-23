@@ -2552,17 +2552,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return True
 
     def _is_unresolved_ytdlp_page_item(self, item: PlayItem) -> bool:
-        parsed = urlparse(str(item.url or "").strip())
-        hostname = (parsed.hostname or "").lower()
-        if hostname.startswith("www."):
-            hostname = hostname[4:]
-        if hostname not in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}:
+        if not self._is_youtube_page_url(str(item.url or "").strip()):
             return False
         if str(item.ytdl_format or "").strip():
             return False
         if str(item.selected_playback_quality_id or "").startswith("ytdlp_"):
             return False
         return True
+
+    def _is_youtube_page_url(self, url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        return hostname in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
 
     def _start_current_item_playback(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
@@ -3507,6 +3510,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         preferred_url = (current_item.original_url or current_item.url).strip()
         resolved_url = current_item.url.strip()
         if resolved_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return resolved_url
+        if self._is_youtube_page_url(preferred_url) and resolved_url and not self._is_youtube_page_url(resolved_url):
             return resolved_url
         if not current_item.parse_required or not preferred_url or not resolved_url or preferred_url == resolved_url:
             return preferred_url

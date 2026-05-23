@@ -17544,6 +17544,19 @@ def test_player_window_async_loader_does_not_play_plain_youtube_page_url_before_
     )
 
 
+def test_player_window_playback_prepare_prefers_youtube_resolved_media_over_original_page(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    item = PlayItem(
+        title="YouTube",
+        url="https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8",
+        original_url="https://www.youtube.com/watch?v=test123",
+        vod_id="yt:video:test123",
+    )
+
+    assert window._playback_prepare_source_url(item) == item.url
+
+
 def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_hydration(qtbot, monkeypatch) -> None:
     poster_sources: list[tuple[str, str]] = []
 
