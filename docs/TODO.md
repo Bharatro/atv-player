@@ -1,6 +1,6 @@
 # atv-player TODO
 
-> 更新时间：2026-05-21  
+> 更新时间：2026-05-23
 > 状态说明：
 >
 > - `TODO`：待实现
@@ -24,6 +24,8 @@
 - [x] 修复 YouTube 播放卡顿
 - [x] 全局解析 YouTube 无法恢复播放进度
 - [x] Windows 未安装 Chrome 时 YouTube Cookie 提取失败处理
+- [x] YouTube 自定义分类与筛选条件，支持内置 / 远程 JSONC / 本地 JSONC 来源
+- [x] YouTube 视频、频道、播放列表统一新 id 格式，兼容旧 `yt:*` 格式
 
 ---
 
