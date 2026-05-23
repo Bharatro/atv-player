@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import logging
+from dataclasses import replace
 
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
@@ -25,9 +25,11 @@ _DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _LOCAL_DOUBAN_PRIME_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
 _REMOTE_AUTO_SEARCH_IGNORE_DBID_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
 _LOCAL_DOUBAN_PROVIDER_NAMES = {"local_douban", "remote_douban"}
+_DOUBAN_ID_PROVIDER_NAMES = {"official_douban", "local_douban", "douban"}
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
 _MOVIE_MARKERS = ("电影", "影片", "movie")
+_AUTHORITATIVE_ID_MATCH_SCORE = 2.0
 
 
 def _iter_category_values(value: object) -> list[str]:
@@ -158,6 +160,15 @@ def _should_promote_sohu_record(match: MetadataMatch) -> bool:
     return bool(dict(match.raw or {}).get("sohu_preferred_over_tmdb"))
 
 
+def _is_authoritative_douban_id_match(query, match: MetadataMatch) -> bool:
+    vod_dbid = int(getattr(query, "vod_dbid", 0) or 0)
+    if vod_dbid <= 0:
+        return False
+    if match.provider not in _DOUBAN_ID_PROVIDER_NAMES:
+        return False
+    return str(match.provider_id or "").strip() == str(vod_dbid)
+
+
 class MetadataHydrator:
     def __init__(
         self,
@@ -208,7 +219,17 @@ class MetadataHydrator:
 
     @staticmethod
     def _score_matches(query, matches: list[MetadataMatch]) -> list[MetadataMatch]:
-        return [replace(match, score=max(float(match.score or 0.0), score_match(query, match))) for match in matches]
+        scored_matches: list[MetadataMatch] = []
+        for match in matches:
+            score = (
+                _AUTHORITATIVE_ID_MATCH_SCORE
+                if _is_authoritative_douban_id_match(query, match)
+                else score_match(query, match)
+            )
+            scored_matches.append(
+                replace(match, score=max(float(match.score or 0.0), score))
+            )
+        return scored_matches
 
     def _load_provider_matches(self, provider: MetadataProvider, query) -> list[MetadataMatch]:
         cache_title, cache_year = self._provider_search_cache_key(provider, query)
@@ -349,9 +370,36 @@ class MetadataHydrator:
             ranked_candidates.append((order, provider, best_match))
 
         primary_applied = False
+        authoritative_primary_applied = False
         primary_kind = ""
-        for order, provider, match in sorted(ranked_candidates, key=lambda item: (-item[2].score, item[0])):
+        for order, provider, match in sorted(
+            ranked_candidates,
+            key=lambda item: (-item[2].score, item[0]),
+        ):
             del order
+            if (
+                authoritative_primary_applied
+                and not _is_authoritative_douban_id_match(query, match)
+            ):
+                corrected_query = replace(
+                    query,
+                    title=str(vod.vod_name or "").strip() or query.title,
+                    year=str(vod.vod_year or "").strip() or query.year,
+                    vod_dbid=0,
+                )
+                corrected_score = score_match(
+                    corrected_query,
+                    replace(match, score=0.0),
+                )
+                if not is_confident_match(corrected_score):
+                    logger.info(
+                        "Skip metadata candidate after authoritative Douban ID correction "
+                        "provider=%s title=%s corrected_title=%s",
+                        provider.name,
+                        match.title,
+                        corrected_query.title,
+                    )
+                    continue
             current_kind = primary_kind or _vod_media_kind(vod)
             if primary_applied and not _media_kinds_compatible(current_kind, _match_media_kind(match)):
                 logger.info(
@@ -367,6 +415,9 @@ class MetadataHydrator:
                 continue
             if not primary_applied:
                 merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])
+                if _is_authoritative_douban_id_match(query, match) and record.title:
+                    vod.vod_name = record.title
+                    authoritative_primary_applied = True
                 primary_applied = True
                 primary_kind = _record_media_kind(record) or _match_media_kind(match) or _vod_media_kind(vod)
                 continue

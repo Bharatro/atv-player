@@ -4,6 +4,7 @@ from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
+from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
 from atv_player.models import PlayItem, VodItem
 
 
@@ -1150,6 +1151,73 @@ def test_metadata_hydrator_uses_highest_scored_primary_match_and_only_fills_miss
     assert updated.vod_actor == "演员甲"
     assert updated.vod_pic == "https://img.example/right-poster.jpg"
     assert updated.vod_remarks == "8.8"
+
+
+def test_metadata_hydrator_prefers_dbid_douban_match_over_generic_season_title_tmdb(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+
+    class FakeApiClient:
+        def get_douban_metadata_detail(self, provider_id: str) -> dict[str, object]:
+            assert provider_id == "35564470"
+            return {
+                "id": 35564470,
+                "name": "与凤行",
+                "year": "2024",
+                "genre": "剧情,爱情,奇幻",
+                "country": "中国大陆",
+                "language": "汉语普通话",
+                "directors": "邓科",
+                "actors": "赵丽颖,林更新,辛云来",
+                "description": "豆瓣简介",
+            }
+
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:286342:season:1",
+                title="Season 1",
+                year="2024",
+            )
+        ],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:286342:season:1",
+            title="Season 1",
+            year="2024",
+            genres=["剧情"],
+            country="美国",
+            language="英语",
+            directors=["凯特·凯罗"],
+            actors=["凯西·贝茨"],
+            overview="错误简介",
+        ),
+    )
+    douban = LocalDoubanProvider(FakeApiClient())
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, douban])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(
+                vod_id="v1",
+                vod_name="Season 1",
+                vod_year="2024",
+                dbid=35564470,
+            ),
+            source_kind="plugin",
+        )
+    )
+
+    assert updated.vod_name == "与凤行"
+    assert updated.type_name == "剧情 / 爱情 / 奇幻"
+    assert updated.vod_area == "中国大陆"
+    assert updated.vod_director == "邓科"
+    assert updated.vod_actor == "赵丽颖,林更新,辛云来"
+    assert updated.dbid == 35564470
+    assert tmdb.get_detail_calls == []
 
 
 def test_metadata_hydrator_bound_iqiyi_record_overrides_garbage_title(tmp_path: Path) -> None:
