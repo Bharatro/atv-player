@@ -58,7 +58,6 @@ def test_build_ytdlp_command_args_prefers_browser_cookies(monkeypatch) -> None:
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.setenv("ATV_YTDLP_COOKIES_FROM_BROWSER", "chrome")
-    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
 
     assert ytdlp_runtime.build_ytdlp_command_args() == [
         "--cookies-from-browser",
@@ -72,7 +71,6 @@ def test_build_ytdlp_command_args_defaults_to_no_browser_cookies(monkeypatch) ->
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
-    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
 
     assert ytdlp_runtime.build_ytdlp_command_args(cookie_browser="") == []
 
@@ -89,7 +87,6 @@ def test_build_ytdlp_command_args_uses_explicit_browser_value(monkeypatch) -> No
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
-    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
 
     assert ytdlp_runtime.build_ytdlp_command_args(cookie_browser="firefox") == [
         "--cookies-from-browser",
@@ -99,24 +96,17 @@ def test_build_ytdlp_command_args_uses_explicit_browser_value(monkeypatch) -> No
     ]
 
 
-def test_build_mpv_ytdl_raw_options_from_cookie_file(monkeypatch, tmp_path) -> None:
+def test_build_mpv_ytdl_raw_options_defaults_to_empty_without_browser(monkeypatch) -> None:
     from atv_player.player import ytdlp_runtime
 
-    cookie_file = tmp_path / "yt.txt"
-    cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
-
     monkeypatch.delenv("ATV_YTDLP_COOKIES_FROM_BROWSER", raising=False)
-    monkeypatch.setenv("ATV_YTDLP_COOKIE_FILE", str(cookie_file))
 
-    assert ytdlp_runtime.resolve_mpv_ytdl_raw_options() == (
-        f"cookies={cookie_file},remote-components=ejs:github"
-    )
+    assert ytdlp_runtime.resolve_mpv_ytdl_raw_options() == ""
 
 
 def test_build_ytdlp_command_args_allows_disabling_default_browser_cookies(monkeypatch) -> None:
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.setenv("ATV_YTDLP_COOKIES_FROM_BROWSER", "off")
-    monkeypatch.delenv("ATV_YTDLP_COOKIE_FILE", raising=False)
 
     assert ytdlp_runtime.build_ytdlp_command_args() == []
