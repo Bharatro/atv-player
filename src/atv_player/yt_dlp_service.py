@@ -140,6 +140,11 @@ def _build_format_selector(max_height: int | None) -> str:
     return "bestvideo+bestaudio/best"
 
 
+def _is_requested_format_unavailable_error(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return "requested format is not available" in lowered
+
+
 def _normalize_youtube_metadata_language(value: object) -> str:
     normalized = str(value or "").strip()
     return normalized if normalized in _YOUTUBE_METADATA_LANGUAGE_VALUES else ""
@@ -1010,6 +1015,7 @@ class YtdlpPlaybackService:
         max_height: int | None,
         *,
         include_subtitles: bool,
+        use_format_selector: bool = True,
     ) -> list[str]:
         if self._ytdlp_path is None:
             self._ytdlp_path = resolve_system_ytdlp_path()
@@ -1022,6 +1028,7 @@ class YtdlpPlaybackService:
         region = self._configured_region()
         if region:
             extra_args.extend(["--xff", region])
+        format_args = ["--format", _build_format_selector(max_height)] if use_format_selector else []
         command = [
             self._ytdlp_path,
             "--no-warnings",
@@ -1029,8 +1036,7 @@ class YtdlpPlaybackService:
             "--no-playlist",
             "--socket-timeout",
             "30",
-            "--format",
-            _build_format_selector(max_height),
+            *format_args,
             *build_ytdlp_command_args(
                 build_ytdlp_proxy_args(self._proxy_decider, url),
                 cookie_browser=self._configured_cookie_browser(),
@@ -1053,8 +1059,14 @@ class YtdlpPlaybackService:
         max_height: int | None,
         *,
         include_subtitles: bool = True,
+        use_format_selector: bool = True,
     ) -> dict:
-        command = self._extract_info_command(url, max_height, include_subtitles=include_subtitles)
+        command = self._extract_info_command(
+            url,
+            max_height,
+            include_subtitles=include_subtitles,
+            use_format_selector=use_format_selector,
+        )
         try:
             completed = subprocess.run(
                 command,
@@ -1202,8 +1214,34 @@ class YtdlpPlaybackService:
         started_at = monotonic()
         if not self.is_available():
             raise ValueError("yt-dlp 未安装")
+
+        def extract_with_format_fallback(include_subtitles: bool) -> dict:
+            try:
+                return self._extract_info_via_command(
+                    canonical_url,
+                    extraction_max_height,
+                    include_subtitles=include_subtitles,
+                    use_format_selector=True,
+                )
+            except ValueError as exc:
+                if not _is_requested_format_unavailable_error(str(exc)):
+                    raise
+                logger.warning(
+                    "yt-dlp resolve requested format unavailable url=%s max_height=%s retry_without_format_selector=True",
+                    canonical_url,
+                    cache_height,
+                )
+                if callable(log):
+                    log("yt-dlp 指定清晰度不可用，正在使用可用格式重试...")
+                return self._extract_info_via_command(
+                    canonical_url,
+                    extraction_max_height,
+                    include_subtitles=include_subtitles,
+                    use_format_selector=False,
+                )
+
         try:
-            info = self._extract_info_via_command(canonical_url, extraction_max_height, include_subtitles=True)
+            info = extract_with_format_fallback(include_subtitles=True)
         except ValueError as exc:
             if str(exc) != "yt-dlp 解析超时":
                 raise
@@ -1214,7 +1252,7 @@ class YtdlpPlaybackService:
             )
             if callable(log):
                 log("yt-dlp 字幕信息提取超时，正在重试播放地址...")
-            info = self._extract_info_via_command(canonical_url, extraction_max_height, include_subtitles=False)
+            info = extract_with_format_fallback(include_subtitles=False)
 
         if info is None:
             raise ValueError("yt-dlp 未返回结果")

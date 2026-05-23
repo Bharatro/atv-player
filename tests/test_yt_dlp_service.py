@@ -91,7 +91,14 @@ def _sample_info(**overrides):
 def _stub_extract_info(monkeypatch, service, payload):
     calls: list[tuple[str, int | None, bool]] = []
 
-    def fake_extract_info(url: str, max_height: int | None, *, include_subtitles: bool = True):
+    def fake_extract_info(
+        url: str,
+        max_height: int | None,
+        *,
+        include_subtitles: bool = True,
+        use_format_selector: bool = True,
+    ):
+        del use_format_selector
         calls.append((url, max_height, include_subtitles))
         if isinstance(payload, Exception):
             raise payload
@@ -672,6 +679,53 @@ class TestResolve:
         assert result.audio_url == ""
         assert result.video_format_id == "95-11"
         assert result.audio_format_id == ""
+
+    def test_resolve_for_quality_retries_without_format_selector_when_requested_format_is_unavailable(
+        self,
+        monkeypatch,
+        service,
+    ) -> None:
+        calls: list[tuple[int | None, bool, bool]] = []
+
+        def fake_extract_info(
+            url: str,
+            max_height: int | None,
+            *,
+            include_subtitles: bool = True,
+            use_format_selector: bool = True,
+        ):
+            del url
+            calls.append((max_height, include_subtitles, use_format_selector))
+            if use_format_selector:
+                raise ValueError(
+                    "下载错误: ERROR: [youtube] test123: Requested format is not available. "
+                    "Use --list-formats for a list of available formats"
+                )
+            return _sample_info(
+                url="https://stream.test/master.m3u8",
+                formats=[
+                    {
+                        "format_id": "96",
+                        "url": "https://stream.test/hls-1080.m3u8",
+                        "height": 1080,
+                        "width": 1920,
+                        "tbr": 4717,
+                        "vcodec": "avc1.640028",
+                        "acodec": "mp4a.40.2",
+                        "ext": "mp4",
+                        "protocol": "m3u8_native",
+                        "language": "en",
+                    },
+                ],
+            )
+
+        monkeypatch.setattr(service, "_extract_info_via_command", fake_extract_info)
+
+        result = service.resolve_for_quality("https://www.youtube.com/watch?v=test123", "ytdlp_1080")
+
+        assert calls == [(1080, True, True), (1080, True, False)]
+        assert result.url == "https://stream.test/hls-1080.m3u8"
+        assert result.video_format_id == "96"
 
     def test_resolve_for_quality_preserves_requested_audio_track(self, monkeypatch, service):
         info = _sample_info(

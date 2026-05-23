@@ -372,6 +372,48 @@ def test_player_controller_can_restore_history_without_saving_local_history() ->
     assert session.speed == 1.25
 
 
+def test_player_controller_prefills_unexpired_youtube_history_url_for_async_loader() -> None:
+    controller = PlayerController(FakeApiClient())
+    history_url = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8"
+    vod = VodItem(vod_id="yt:video:abc123", vod_name="YouTube")
+    playlist = [
+        PlayItem(
+            title="YouTube",
+            url="",
+            original_url="https://www.youtube.com/watch?v=abc123",
+            vod_id="yt:video:abc123",
+        )
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_loader=lambda item: None,
+        async_playback_loader=True,
+        playback_history_loader=lambda: HistoryRecord(
+            id=1,
+            key="yt:video:abc123",
+            vod_name="YouTube",
+            vod_pic="",
+            vod_remarks="YouTube",
+            episode=0,
+            episode_url=history_url,
+            position=22000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        ),
+    )
+
+    assert session.start_index == 0
+    assert session.start_position_seconds == 22
+    assert session.playlist[0].url == history_url
+    assert session.playlist[0].original_url == "https://www.youtube.com/watch?v=abc123"
+
+
 def test_player_controller_prefers_plugin_local_history_loader() -> None:
     api = FakeApiClient()
     api.history = HistoryRecord(

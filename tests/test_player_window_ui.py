@@ -4065,7 +4065,7 @@ def test_player_window_switches_ytdlp_quality_via_loader_when_audio_track_is_sel
     ]
 
 
-def test_player_window_warms_up_mpv_while_async_playback_loader_resolves(qtbot) -> None:
+def test_player_window_does_not_warm_up_mpv_while_async_playback_loader_resolves(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self.warm_up_calls = 0
@@ -4116,10 +4116,11 @@ def test_player_window_warms_up_mpv_while_async_playback_loader_resolves(qtbot) 
 
     window.open_session(session)
 
-    qtbot.waitUntil(lambda: video.warm_up_calls == 1, timeout=1200)
+    qtbot.wait(800)
+    assert video.warm_up_calls == 0
     release_loader.set()
     qtbot.waitUntil(lambda: len(video.load_calls) == 1)
-    assert video.warm_up_calls == 1
+    assert video.warm_up_calls == 0
     assert video.load_calls == ["https://media.example/1.mp4"]
 
 
@@ -17484,6 +17485,63 @@ def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_do
 
     qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
     assert len(window.video.load_calls) == 1
+
+
+def test_player_window_async_loader_does_not_play_plain_youtube_page_url_before_resolution(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            del pause, start_seconds
+            self.load_calls.append(url)
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8"
+        item.headers = {"Referer": "https://www.youtube.com/"}
+
+    class PassThroughM3U8AdFilter:
+        def should_prepare(self, url: str) -> bool:
+            return False
+
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=PassThroughM3U8AdFilter())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(
+            title="YouTube",
+            url="https://www.youtube.com/watch?v=test123",
+            original_url="https://www.youtube.com/watch?v=test123",
+            vod_id="yt:video:test123",
+        )
+    ]
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+
+    qtbot.wait(100)
+    assert video.load_calls == []
+    ready.set()
+    qtbot.waitUntil(
+        lambda: video.load_calls
+        == ["https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/4102444800/playlist/index.m3u8"],
+        timeout=1000,
+    )
 
 
 def test_player_window_async_loader_refreshes_title_metadata_and_playlist_after_hydration(qtbot, monkeypatch) -> None:

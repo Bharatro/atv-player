@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
 from typing import cast
+from urllib.parse import parse_qs, urlparse
 
 from atv_player.models import (
     HistoryRecord,
@@ -118,6 +119,61 @@ class PlayerController:
         if str(item.ytdl_format or "").strip():
             return True
         return any(str(quality.id or "").startswith("ytdlp_") for quality in item.playback_qualities)
+
+    def _googlevideo_expire_seconds(self, url: str) -> int:
+        parsed = urlparse(str(url or "").strip())
+        values = parse_qs(parsed.query).get("expire") or []
+        for value in values:
+            if str(value).isdigit():
+                return int(value)
+        parts = [part for part in parsed.path.split("/") if part]
+        for index, part in enumerate(parts[:-1]):
+            if part == "expire" and parts[index + 1].isdigit():
+                return int(parts[index + 1])
+        return 0
+
+    def _is_reusable_youtube_history_url(self, url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        if hostname != "googlevideo.com" and not hostname.endswith(".googlevideo.com"):
+            return False
+        expire_seconds = self._googlevideo_expire_seconds(url)
+        return expire_seconds > int(time()) + 120
+
+    def _prefill_reusable_history_url(
+        self,
+        playlist: list[PlayItem],
+        start_index: int,
+        history_episode_url: str,
+    ) -> None:
+        if not (0 <= start_index < len(playlist)):
+            return
+        current_item = playlist[start_index]
+        if not self._is_youtube_play_item(current_item):
+            logger.info(
+                "Skip reusable YouTube history url prefill reason=not_youtube start_index=%s history_url_host=%s",
+                start_index,
+                urlparse(history_episode_url).hostname or "",
+            )
+            return
+        if not self._is_reusable_youtube_history_url(history_episode_url):
+            logger.info(
+                "Skip reusable YouTube history url prefill reason=not_reusable start_index=%s history_url_host=%s expire=%s",
+                start_index,
+                urlparse(history_episode_url).hostname or "",
+                self._googlevideo_expire_seconds(history_episode_url),
+            )
+            return
+        if not current_item.original_url:
+            current_item.original_url = current_item.url or current_item.vod_id
+        current_item.url = history_episode_url
+        logger.info(
+            "Prefilled reusable YouTube history url start_index=%s original_url=%s history_url_host=%s expire=%s",
+            start_index,
+            current_item.original_url,
+            urlparse(history_episode_url).hostname or "",
+            self._googlevideo_expire_seconds(history_episode_url),
+        )
 
     def _detail_field_value(self, fields: list[PlaybackDetailField], label: str) -> str:
         for field in fields:
@@ -333,6 +389,8 @@ class PlayerController:
         else:
             position_seconds = 0
             speed = 1.0
+        if matched_history and history_episode_url:
+            self._prefill_reusable_history_url(active_playlist, start_index, history_episode_url)
         logger.info(
             (
                 "Create player session vod_id=%s playlist_size=%s clicked_index=%s "
