@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from collections.abc import Callable
+from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -75,6 +77,13 @@ _LOGIN_FEED_URLS = {
     "cat_history": ":ythis",
     "cat_watch_later": ":ytwatchlater",
 }
+_LOGIN_DIRECT_URLS = {
+    "cat_sub_feed": "https://www.youtube.com/feed/subscriptions",
+    "cat_sub_channels": "https://www.youtube.com/feed/channels",
+    "cat_history": "https://www.youtube.com/feed/history",
+    "cat_watch_later": "https://www.youtube.com/playlist?list=WL",
+}
+_LOGIN_LIST_CACHE_TTL_SECONDS = 60.0
 _YOUTUBE_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -298,6 +307,45 @@ def _extract_youtube_thumbnail(node: object) -> str:
     return f"https:{value}" if value.startswith("//") else value
 
 
+def _extract_video_duration(node: dict) -> str:
+    duration = _extract_text(node.get("lengthText"))
+    if duration:
+        return duration
+    for overlay in node.get("thumbnailOverlays") or []:
+        renderer = overlay.get("thumbnailOverlayTimeStatusRenderer")
+        if isinstance(renderer, dict):
+            duration = _extract_text(renderer.get("text"))
+            if duration:
+                return duration
+    return ""
+
+
+def _extract_video_channel(node: dict) -> str:
+    for key in ("ownerText", "longBylineText", "shortBylineText"):
+        channel = _extract_text(node.get(key))
+        if channel:
+            return channel
+    owner = node.get("videoOwnerRenderer")
+    if isinstance(owner, dict):
+        return _extract_text(owner.get("title"))
+    return ""
+
+
+def _video_renderer_entry(node: dict) -> dict | None:
+    video_id = str(node.get("videoId") or "").strip()
+    if not video_id:
+        return None
+    return {
+        "id": video_id,
+        "title": _extract_text(node.get("title")) or video_id,
+        "url": _youtube_video_url(video_id),
+        "thumbnail": _extract_youtube_thumbnail(node),
+        "channel": _extract_video_channel(node),
+        "duration_string": _extract_video_duration(node),
+        "ie_key": "Youtube",
+    }
+
+
 def _extract_yt_initial_data(html_text: str) -> dict:
     match = re.search(r"\bytInitialData\s*=", html_text)
     if match is None:
@@ -359,13 +407,16 @@ class YouTubeController:
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
         http_get: Callable[..., object] = httpx.get,
+        now: Callable[[], float] = monotonic,
     ) -> None:
         self._config = config
         self._yt_dlp_service = yt_dlp_service
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
         self._http_get = http_get
+        self._now = now
         self._channel_thumbnail_cache: dict[str, str] = {}
+        self._login_list_cache: dict[str, tuple[float, list[VodItem], int]] = {}
 
     def _has_cookie_browser(self) -> bool:
         return bool(str(getattr(self._config, "youtube_cookie_browser", "") or "").strip())
@@ -395,6 +446,27 @@ class YouTubeController:
         if cookie:
             headers["Cookie"] = cookie
         return headers
+
+    def _login_list_cache_key(self, category_id: str, page_number: int) -> str:
+        cookie_marker = "cookie" if self._youtube_cookie_header() else "none"
+        return f"{category_id}:{page_number}:{cookie_marker}"
+
+    def _get_cached_login_list(self, key: str) -> tuple[list[VodItem], int] | None:
+        cached = self._login_list_cache.get(key)
+        if cached is None:
+            return None
+        expires_at, items, total = cached
+        if expires_at <= self._now():
+            self._login_list_cache.pop(key, None)
+            return None
+        return [replace(item) for item in items], total
+
+    def _store_login_list_cache(self, key: str, items: list[VodItem], total: int) -> None:
+        self._login_list_cache[key] = (
+            self._now() + _LOGIN_LIST_CACHE_TTL_SECONDS,
+            [replace(item) for item in items],
+            total,
+        )
 
     def _channel_item_from_renderer(self, renderer: dict) -> VodItem | None:
         channel_ref = str(renderer.get("channelId") or "").strip()
@@ -468,12 +540,67 @@ class YouTubeController:
         walk(payload)
         return items
 
-    def _fetch_subscription_channels_page(self) -> str:
+    def _collect_video_items(self, payload: object) -> list[VodItem]:
+        entries: list[dict] = []
+        seen: set[str] = set()
+
+        def add(entry: dict | None) -> None:
+            if entry is None:
+                return
+            video_id = str(entry.get("id") or "").strip()
+            if not video_id or video_id in seen:
+                return
+            seen.add(video_id)
+            entries.append(entry)
+
+        def walk(node: object) -> None:
+            if isinstance(node, list):
+                for value in node:
+                    walk(value)
+                return
+            if not isinstance(node, dict):
+                return
+            for key in (
+                "videoRenderer",
+                "compactVideoRenderer",
+                "gridVideoRenderer",
+                "playlistVideoRenderer",
+            ):
+                renderer = node.get(key)
+                if isinstance(renderer, dict):
+                    add(_video_renderer_entry(renderer))
+            reel = node.get("reelItemRenderer")
+            if isinstance(reel, dict):
+                add(_video_renderer_entry(reel))
+            lockup = node.get("lockupViewModel")
+            if isinstance(lockup, dict) and "VIDEO" in str(lockup.get("contentType") or ""):
+                video_id = str(lockup.get("contentId") or "").strip()
+                metadata = (lockup.get("metadata") or {}).get("lockupMetadataViewModel") or {}
+                if video_id:
+                    add({
+                        "id": video_id,
+                        "title": _extract_text(metadata.get("title")) or video_id,
+                        "url": _youtube_video_url(video_id),
+                        "thumbnail": _extract_youtube_thumbnail(lockup),
+                        "channel": _extract_video_channel(lockup),
+                        "duration_string": _extract_video_duration(lockup),
+                        "ie_key": "Youtube",
+                    })
+            for value in node.values():
+                walk(value)
+
+        walk(payload)
+        return self._map_entries(entries, videos_only=True)
+
+    def _fetch_login_page(self, category_id: str) -> str:
+        url = _LOGIN_DIRECT_URLS.get(category_id, "")
+        if not url:
+            return ""
         headers = self._youtube_http_headers()
         if not headers.get("Cookie"):
             return ""
         response = self._http_get(
-            "https://www.youtube.com/feed/channels",
+            url,
             headers=headers,
             timeout=15.0,
             follow_redirects=True,
@@ -493,23 +620,25 @@ class YouTubeController:
             )
         )
 
-    def _load_subscription_channels_direct_once(self) -> list[VodItem]:
-        text = self._fetch_subscription_channels_page()
+    def _load_login_list_direct_once(self, category_id: str) -> list[VodItem]:
+        text = self._fetch_login_page(category_id)
         if not text or self._looks_like_login_required_page(text):
             return []
         payload = _extract_yt_initial_data(text)
-        return self._collect_channel_items(payload)
+        if category_id == "cat_sub_channels":
+            return self._collect_channel_items(payload)
+        return self._collect_video_items(payload)
 
-    def _load_subscription_channels_direct(self) -> list[VodItem]:
+    def _load_login_list_direct(self, category_id: str) -> list[VodItem]:
         try:
-            items = self._load_subscription_channels_direct_once()
+            items = self._load_login_list_direct_once(category_id)
         except Exception:
             items = []
         if items:
             return items
         self._clear_youtube_cookie_header_cache()
         try:
-            return self._load_subscription_channels_direct_once()
+            return self._load_login_list_direct_once(category_id)
         except Exception:
             return []
 
@@ -696,10 +825,18 @@ class YouTubeController:
         if category_id in _LOGIN_FEED_URLS:
             if not self._has_cookie_browser():
                 return [], 0
-            if category_id == "cat_sub_channels" and page_number == 1:
-                direct_items = self._load_subscription_channels_direct()
+            cache_key = self._login_list_cache_key(category_id, page_number)
+            cached = self._get_cached_login_list(cache_key)
+            if cached is not None:
+                return cached
+            if page_number == 1:
+                direct_items = self._load_login_list_direct(category_id)
                 if direct_items:
-                    return self._enrich_channel_thumbnails(direct_items), len(direct_items)
+                    if category_id == "cat_sub_channels":
+                        direct_items = self._enrich_channel_thumbnails(direct_items)
+                    total = len(direct_items)
+                    self._store_login_list_cache(cache_key, direct_items, total)
+                    return direct_items, total
             entries = self._flat_entries(_LOGIN_FEED_URLS[category_id], page_number)
             items = self._map_entries(
                 entries,
@@ -708,7 +845,10 @@ class YouTubeController:
             )
             if category_id == "cat_sub_channels":
                 items = self._enrich_channel_thumbnails(items)
-            return items, (page_number - 1) * 30 + len(items)
+            total = (page_number - 1) * 30 + len(items)
+            if items:
+                self._store_login_list_cache(cache_key, items, total)
+            return items, total
         query, playlist_only = self._resolve_category_query(category_id, filters or {})
         if not query:
             return [], 0

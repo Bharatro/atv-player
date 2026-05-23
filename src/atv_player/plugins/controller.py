@@ -2273,6 +2273,10 @@ class SpiderPluginController:
                 vipFlags=[],
             )
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
+            self._log_spider_method_call(
+                "playerContent",
+                response=payload,
+            )
         except Exception as exc:
             logger.exception(
                 "Spider plugin playback resolve failed plugin=%s source=%s",
