@@ -10,6 +10,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 
 class TencentMetadataProvider:
     name = "tencent"
+    _SEARCH_CACHE_VERSION = "area-box-v2"
     _SEARCH_URL = "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
     _SEARCH_PARAMS = {"vversion_platform": "2"}
     _NON_NATIVE_SITE_PENALTY = 0.35
@@ -33,6 +34,9 @@ class TencentMetadataProvider:
 
     def can_enrich(self, _context) -> bool:
         return True
+
+    def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str]:
+        return str(candidate.title or "").strip(), f"{str(candidate.year or '').strip()}#{self._SEARCH_CACHE_VERSION}"
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         title = str(candidate.title or "").strip()
@@ -120,20 +124,30 @@ class TencentMetadataProvider:
         data = payload.get("data")
         if not isinstance(data, dict):
             return []
+        items: list[dict] = []
         normal_list = data.get("normalList")
-        if not isinstance(normal_list, dict):
-            return []
-        item_list = normal_list.get("itemList")
-        if not isinstance(item_list, list):
-            return []
-        return [
-            item
-            for item in item_list
-            if isinstance(item, dict)
-            if isinstance(item.get("doc"), dict)
-            if int((item.get("doc") or {}).get("dataType") or 0) == 2
-            if isinstance(item.get("videoInfo"), dict)
-        ]
+        if isinstance(normal_list, dict):
+            item_list = normal_list.get("itemList")
+            if isinstance(item_list, list):
+                items.extend(item for item in item_list if isinstance(item, dict))
+        area_box_list = data.get("areaBoxList")
+        if isinstance(area_box_list, list):
+            for box in area_box_list:
+                if not isinstance(box, dict):
+                    continue
+                item_list = box.get("itemList")
+                if not isinstance(item_list, list):
+                    continue
+                items.extend(item for item in item_list if isinstance(item, dict))
+        return [item for item in items if self._is_video_item(item)]
+
+    def _is_video_item(self, item: dict) -> bool:
+        doc = item.get("doc")
+        if not isinstance(doc, dict):
+            return False
+        if int(doc.get("dataType") or 0) != 2:
+            return False
+        return isinstance(item.get("videoInfo"), dict)
 
     def _normalize_item(self, item: dict) -> dict[str, object]:
         doc = item.get("doc") if isinstance(item.get("doc"), dict) else {}
