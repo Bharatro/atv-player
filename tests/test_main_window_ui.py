@@ -4302,6 +4302,81 @@ def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtb
     assert dialog.youtube_region_combo.currentData() == "CN"
 
 
+def test_advanced_settings_dialog_shows_youtube_category_source_controls(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.youtube_category_source_combo.currentData() == "remote"
+    assert dialog.youtube_category_source_edit.text() == "http://example.test/youtube.json"
+    assert dialog.youtube_category_source_edit.isEnabled() is True
+    assert dialog.youtube_category_local_path_edit.isEnabled() is False
+
+
+def test_advanced_settings_dialog_saves_youtube_category_source(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.youtube_category_source_combo.setCurrentIndex(
+        dialog.youtube_category_source_combo.findData("local")
+    )
+    dialog.youtube_category_local_path_edit.setText("/tmp/youtube.json")
+    dialog._save()
+
+    assert saved == [config]
+    assert config.youtube_category_source_type == "local"
+    assert config.youtube_category_source_value == "/tmp/youtube.json"
+
+
+def test_advanced_settings_dialog_test_load_reports_counts(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: None,
+        youtube_category_text_loader=lambda _url: '{"class":[{"type_id":"電影","type_name":"電影"}],"filters":{}}',
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._test_youtube_category_source()
+
+    assert "1 个分类" in dialog.youtube_category_status_label.text()
+
+
+def test_advanced_settings_dialog_refresh_cache_updates_config(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved = []
+    config = AppConfig(
+        youtube_category_source_type="remote",
+        youtube_category_source_value="http://example.test/youtube.json",
+    )
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.youtube_category_cache_json),
+        youtube_category_text_loader=lambda _url: '{"class":[{"type_id":"電影","type_name":"電影"}],"filters":{}}',
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._refresh_youtube_category_cache()
+
+    assert config.youtube_category_cache_json.startswith('{"class"')
+    assert saved == [config.youtube_category_cache_json]
+
+
 def test_advanced_settings_dialog_saves_youtube_preferences(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
