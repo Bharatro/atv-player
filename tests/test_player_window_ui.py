@@ -19602,13 +19602,14 @@ def test_player_window_skips_detailed_log_accumulation_when_logging_disabled(qtb
     assert service.events == []
 
 
-def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot, monkeypatch) -> None:
+def test_player_window_return_to_main_hides_window_and_keeps_video_backend_warm(qtbot, monkeypatch) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
     qtbot.addWidget(window)
     pauses = {"count": 0}
     shutdowns = {"count": 0}
+    stop_media_calls = {"count": 0}
 
     class FakeVideo:
         def pause(self) -> None:
@@ -19617,6 +19618,11 @@ def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot
     window.session = make_player_session(start_index=0)
     window.video = FakeVideo()
     monkeypatch.setattr(window.video_widget, "shutdown", lambda: shutdowns.__setitem__("count", shutdowns["count"] + 1))
+    monkeypatch.setattr(
+        window.video_widget,
+        "stop_media",
+        lambda: stop_media_calls.__setitem__("count", stop_media_calls["count"] + 1),
+    )
     window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
     window.show()
     window._return_to_main()
@@ -19626,7 +19632,8 @@ def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot
     assert window.session is not None
     assert config.last_active_window == "main"
     assert pauses["count"] == 1
-    assert shutdowns["count"] == 1
+    assert stop_media_calls["count"] == 1
+    assert shutdowns["count"] == 0
 
 
 def test_player_window_return_to_main_uses_video_shutdown_on_windows(qtbot, monkeypatch) -> None:
@@ -19664,6 +19671,7 @@ def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeyp
     quit_calls = {"count": 0}
     emitted = {"count": 0}
     shutdowns = {"count": 0}
+    stop_media_calls = {"count": 0}
     controller = RecordingPlayerController()
     config = AppConfig(last_active_window="player")
     window = PlayerWindow(controller, config=config, save_config=lambda: None)
@@ -19678,6 +19686,11 @@ def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeyp
         window.video_widget,
         "shutdown",
         lambda: shutdowns.__setitem__("count", shutdowns["count"] + 1),
+    )
+    monkeypatch.setattr(
+        window.video_widget,
+        "stop_media",
+        lambda: stop_media_calls.__setitem__("count", stop_media_calls["count"] + 1),
     )
     monkeypatch.setattr(
         QApplication,
@@ -19695,7 +19708,8 @@ def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeyp
     assert emitted["count"] == 1
     assert window.isHidden() is True
     assert config.last_active_window == "main"
-    assert shutdowns["count"] == 1
+    assert stop_media_calls["count"] == 1
+    assert shutdowns["count"] == 0
     assert window.video.pause_calls == 1
     qtbot.waitUntil(
         lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)] and controller.stop_calls == [1]

@@ -1082,6 +1082,33 @@ def test_mpv_widget_close_terminates_active_player(qtbot) -> None:
     assert widget._player is None
 
 
+def test_mpv_widget_stop_media_stops_current_file_without_terminating_player(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        core_shutdown = False
+
+        def __init__(self) -> None:
+            self.commands: list[str] = []
+            self.terminated = False
+
+        def command(self, name: str) -> None:
+            self.commands.append(name)
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+    player = FakePlayer()
+    widget._player = player
+
+    widget.stop_media()
+
+    assert player.commands == ["stop"]
+    assert player.terminated is False
+    assert widget._player is player
+
+
 def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, monkeypatch) -> None:
     captured: dict[str, object] = {}
 

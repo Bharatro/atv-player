@@ -8884,6 +8884,30 @@ def test_main_window_show_or_restore_player_resumes_existing_hidden_session(qtbo
     assert window.player_window.resume_calls == 1
 
 
+def test_main_window_return_from_player_close_keeps_existing_player_window(qtbot) -> None:
+    class ExistingPlayerWindow:
+        def __init__(self) -> None:
+            self.session = object()
+            self._close_event_returns_to_main = True
+
+    config = AppConfig(last_active_window="player")
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    player_window = ExistingPlayerWindow()
+    window.player_window = player_window
+
+    window._show_main_again()
+
+    assert window.player_window is player_window
+    assert config.last_active_window == "main"
+
+
 def test_main_window_ctrl_p_restores_last_player_when_missing(qtbot, monkeypatch) -> None:
     class AsyncRecordingPlayerWindow:
         def __init__(self, controller, config, save_config) -> None:

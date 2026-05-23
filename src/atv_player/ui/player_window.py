@@ -8330,7 +8330,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
-        self.video_widget.shutdown()
+        if sys.platform.startswith("win"):
+            self.video_widget.shutdown()
+        else:
+            stop_media = getattr(self.video_widget, "stop_media", None)
+            if callable(stop_media):
+                stop_media()
         self.hide()
         self.closed_to_main.emit()
 

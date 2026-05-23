@@ -484,6 +484,24 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def stop_media(self) -> None:
+        if not self._on_widget_thread():
+            self._run_on_widget_thread(self.stop_media)
+            return
+        self._windows_file_loaded_timer.stop()
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return
+        try:
+            command = getattr(player, "command", None)
+            if callable(command):
+                command("stop")
+                self._set_video_picture_state("idle")
+        except Exception:
+            if getattr(player, "core_shutdown", False):
+                return
+            raise
+
     def suspend(self) -> None:
         self.shutdown()
 
