@@ -758,6 +758,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
+        self._playback_loader_warmup_request_id = 0
+        self._playback_loader_warmup_timer = QTimer(self)
+        self._playback_loader_warmup_timer.setSingleShot(True)
+        self._playback_loader_warmup_timer.timeout.connect(self._warm_up_video_for_pending_playback_loader)
         self._pending_post_load_item: PlayItem | None = None
         self._pending_post_load_pause = False
         self._danmaku_render_request_id = 0
@@ -2460,6 +2464,25 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
 
+    def _schedule_playback_loader_warmup(self, request_id: int) -> None:
+        self._playback_loader_warmup_timer.stop()
+        self._playback_loader_warmup_request_id = request_id
+        self._playback_loader_warmup_timer.start(700)
+
+    def _cancel_playback_loader_warmup(self) -> None:
+        self._playback_loader_warmup_timer.stop()
+        self._playback_loader_warmup_request_id = 0
+
+    def _warm_up_video_for_pending_playback_loader(self) -> None:
+        if self._playback_loader_warmup_request_id != self._playback_loader_request_id:
+            return
+        pending_loader = self._pending_playback_loader
+        if pending_loader is None or pending_loader.hydrate_only:
+            return
+        warm_up = getattr(self.video, "warm_up_async", None)
+        if callable(warm_up):
+            warm_up()
+
     def _start_playback_loader(
         self,
         *,
@@ -2473,9 +2496,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         if not hydrate_only:
             self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
-            warm_up = getattr(self.video, "warm_up_async", None)
-            if callable(warm_up):
-                warm_up()
         playback_loader = self.session.playback_loader
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")
@@ -2488,6 +2508,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause=pause,
             hydrate_only=hydrate_only,
         )
+        if not hydrate_only:
+            self._schedule_playback_loader_warmup(request_id)
 
         def run() -> None:
             try:
@@ -3603,6 +3625,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _handle_playback_loader_succeeded(self, request_id: int, load_result: PlaybackLoadResult | None) -> None:
         if request_id != self._playback_loader_request_id:
             return
+        self._cancel_playback_loader_warmup()
         pending_loader = self._pending_playback_loader
         self._pending_playback_loader = None
         if pending_loader is None:
@@ -3660,6 +3683,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _handle_playback_loader_failed(self, request_id: int, message: str) -> None:
         if request_id != self._playback_loader_request_id:
             return
+        self._cancel_playback_loader_warmup()
         pending_loader = self._pending_playback_loader
         self._pending_playback_loader = None
         if pending_loader is None:

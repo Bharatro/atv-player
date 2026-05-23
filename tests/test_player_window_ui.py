@@ -4093,6 +4093,64 @@ def test_player_window_warms_up_mpv_while_async_playback_loader_resolves(qtbot) 
         def position_seconds(self) -> int:
             return 0
 
+    release_loader = threading.Event()
+
+    def playback_loader(item: PlayItem) -> None:
+        assert release_loader.wait(timeout=2)
+        item.url = "https://media.example/1.mp4"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt:video:abc123", vod_name="YouTube"),
+        playlist=[PlayItem(title="正片", url="", vod_id="yt:video:abc123")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = playback_loader
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: video.warm_up_calls == 1, timeout=1200)
+    release_loader.set()
+    qtbot.waitUntil(lambda: len(video.load_calls) == 1)
+    assert video.warm_up_calls == 1
+    assert video.load_calls == ["https://media.example/1.mp4"]
+
+
+def test_player_window_skips_mpv_warmup_when_async_playback_loader_returns_quickly(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.warm_up_calls = 0
+            self.load_calls: list[str] = []
+
+        def warm_up_async(self) -> None:
+            self.warm_up_calls += 1
+
+        def load(
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            del pause, start_seconds, headers
+            self.load_calls.append(url)
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
     def playback_loader(item: PlayItem) -> None:
         item.url = "https://media.example/1.mp4"
 
@@ -4114,8 +4172,8 @@ def test_player_window_warms_up_mpv_while_async_playback_loader_resolves(qtbot) 
     window.open_session(session)
 
     qtbot.waitUntil(lambda: len(video.load_calls) == 1)
-    assert video.warm_up_calls == 1
-    assert video.load_calls == ["https://media.example/1.mp4"]
+    qtbot.wait(800)
+    assert video.warm_up_calls == 0
 
 
 def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
