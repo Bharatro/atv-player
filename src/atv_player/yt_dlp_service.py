@@ -1042,6 +1042,8 @@ class YtdlpPlaybackService:
         return header
 
     def clear_youtube_cookie_header_cache(self) -> None:
+        if self._youtube_cookie_header_cache is not None:
+            logger.info("YouTube cookie header cache cleared")
         self._youtube_cookie_header_cache = None
 
     def youtube_cookie_header(self) -> str:
@@ -1050,18 +1052,32 @@ class YtdlpPlaybackService:
             key = self._youtube_cookie_file_cache_key(cookie_file)
             cached = self._cached_youtube_cookie_header(key)
             if cached is not None:
+                logger.info(
+                    "YouTube cookie header cache hit source=file has_cookie=%s",
+                    bool(cached),
+                )
                 return cached
-            return self._store_youtube_cookie_header(
-                key,
-                _read_netscape_cookie_header(cookie_file),
+            started_at = monotonic()
+            header = _read_netscape_cookie_header(cookie_file)
+            logger.info(
+                "YouTube cookie header loaded source=file has_cookie=%s elapsed=%.3fs",
+                bool(header),
+                monotonic() - started_at,
             )
+            return self._store_youtube_cookie_header(key, header)
 
         browser = _resolved_cookie_browser(self._configured_cookie_browser())
         if not browser:
+            logger.info("YouTube cookie header skipped reason=no_browser")
             return ""
         key = f"browser:{browser}"
         cached = self._cached_youtube_cookie_header(key)
         if cached is not None:
+            logger.info(
+                "YouTube cookie header cache hit source=browser browser=%s has_cookie=%s",
+                browser,
+                bool(cached),
+            )
             return cached
 
         fd, temp_path = tempfile.mkstemp(prefix="atv-youtube-cookies-", suffix=".txt")
@@ -1069,7 +1085,13 @@ class YtdlpPlaybackService:
         try:
             command = self._youtube_cookie_export_command(temp_path, browser)
             if not command:
+                logger.warning(
+                    "YouTube cookie header export skipped browser=%s reason=no_ytdlp",
+                    browser,
+                )
                 return ""
+            started_at = monotonic()
+            logger.info("YouTube cookie header export start browser=%s", browser)
             try:
                 completed = subprocess.run(
                     command,
@@ -1078,13 +1100,34 @@ class YtdlpPlaybackService:
                     text=True,
                     timeout=60,
                 )
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                logger.warning(
+                    "YouTube cookie header export failed browser=%s elapsed=%.3fs error=%s",
+                    browser,
+                    monotonic() - started_at,
+                    exc,
+                )
                 return ""
             if completed.returncode != 0:
+                stderr_text = (completed.stderr or completed.stdout or "").strip()
+                logger.warning(
+                    "YouTube cookie header export failed browser=%s exit=%s elapsed=%.3fs message=%s",
+                    browser,
+                    completed.returncode,
+                    monotonic() - started_at,
+                    stderr_text[:500],
+                )
                 return ""
+            header = _read_netscape_cookie_header(temp_path)
+            logger.info(
+                "YouTube cookie header export done browser=%s has_cookie=%s elapsed=%.3fs",
+                browser,
+                bool(header),
+                monotonic() - started_at,
+            )
             return self._store_youtube_cookie_header(
                 key,
-                _read_netscape_cookie_header(temp_path),
+                header,
             )
         finally:
             try:

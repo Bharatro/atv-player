@@ -199,7 +199,7 @@ sudo apt install libxpresent-dev
 
 **系统信息区域：**
 
-- 显示关键组件的版本：atv-player、Python、PySide6、mpv、ffmpeg、yt-dlp、Platform
+- 显示关键组件的版本：atv-player、Python、PySide6、Node.js、mpv、ffmpeg、yt-dlp、Platform
 - "一键复制"：将系统信息复制到剪贴板，方便反馈问题时粘贴
 - "导出诊断信息"：将诊断信息保存为文本文件
 

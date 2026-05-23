@@ -390,6 +390,96 @@ def test_youtube_controller_loads_subscription_channels_with_cookie_header() -> 
     assert items[0].vod_pic == "https://yt3.googleusercontent.com/avatar=s900"
 
 
+def test_youtube_controller_extracts_nested_subscription_channel_avatar() -> None:
+    class CookieService(FakeYtdlpService):
+        def youtube_cookie_header(self) -> str:
+            return "SID=direct-cookie"
+
+    html = """
+    <script>
+    var ytInitialData = {
+      "contents": {
+        "channelRenderer": {
+          "channelId": "UCnested",
+          "title": {"simpleText": "嵌套头像频道"},
+          "avatar": {
+            "decoratedAvatarViewModel": {
+              "avatar": {
+                "avatarViewModel": {
+                  "image": {
+                    "sources": [
+                      {"url": "https://yt3.googleusercontent.com/nested=s88"},
+                      {"url": "https://yt3.googleusercontent.com/nested=s900"}
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    </script>
+    """
+
+    class Response:
+        text = html
+
+        def raise_for_status(self) -> None:
+            return None
+
+    service = CookieService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        http_get=lambda *_args, **_kwargs: Response(),
+    )
+
+    items, _total = controller.load_items("cat_sub_channels", 1)
+
+    assert service.flat_calls == []
+    assert items[0].vod_id == "yt:channel:UCnested"
+    assert items[0].vod_pic == "https://yt3.googleusercontent.com/nested=s900"
+
+
+def test_youtube_controller_does_not_enrich_direct_subscription_channels_with_ytdlp() -> None:
+    class CookieService(FakeYtdlpService):
+        def youtube_cookie_header(self) -> str:
+            return "SID=direct-cookie"
+
+    html = """
+    <script>
+    var ytInitialData = {
+      "contents": {
+        "channelRenderer": {
+          "channelId": "UCnocover",
+          "title": {"simpleText": "无头像频道"}
+        }
+      }
+    };
+    </script>
+    """
+
+    class Response:
+        text = html
+
+        def raise_for_status(self) -> None:
+            return None
+
+    service = CookieService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        http_get=lambda *_args, **_kwargs: Response(),
+    )
+
+    items, _total = controller.load_items("cat_sub_channels", 1)
+
+    assert service.flat_calls == []
+    assert items[0].vod_id == "yt:channel:UCnocover"
+    assert items[0].vod_pic == ""
+
+
 def test_youtube_controller_retries_subscription_channels_after_cookie_refresh() -> None:
     class RefreshableCookieService(FakeYtdlpService):
         def __init__(self) -> None:
@@ -447,6 +537,57 @@ def test_youtube_controller_retries_subscription_channels_after_cookie_refresh()
     assert service.flat_calls == []
     assert requests == ["SID=stale-cookie", "SID=fresh-cookie"]
     assert items[0].vod_id == "yt:channel:UCfresh"
+
+
+def test_youtube_controller_does_not_retry_direct_login_list_without_cookie() -> None:
+    class EmptyCookieService(FakeYtdlpService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cookie_calls = 0
+            self.clear_calls = 0
+
+        def youtube_cookie_header(self) -> str:
+            self.cookie_calls += 1
+            return ""
+
+        def clear_youtube_cookie_header_cache(self) -> None:
+            self.clear_calls += 1
+
+        def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30):
+            self.flat_calls.append((url, page, page_size))
+            return [
+                {
+                    "id": "UCabc123",
+                    "title": "频道A",
+                    "url": "https://www.youtube.com/channel/UCabc123",
+                    "thumbnail": "https://yt3.googleusercontent.com/channel=s900",
+                    "ie_key": "YoutubeTab",
+                }
+            ]
+
+    http_calls = 0
+
+    def fake_get(*_args, **_kwargs):
+        nonlocal http_calls
+        http_calls += 1
+        raise AssertionError("direct HTTP should not run without a cookie")
+
+    service = EmptyCookieService()
+    controller = YouTubeController(
+        AppConfig(youtube_cookie_browser="chrome"),
+        yt_dlp_service=service,
+        http_get=fake_get,
+    )
+
+    items, total = controller.load_items("cat_sub_channels", 1)
+
+    assert http_calls == 0
+    assert service.clear_calls == 0
+    assert service.flat_calls == [
+        ("https://www.youtube.com/feed/channels", 1, 30),
+    ]
+    assert total == 1
+    assert items[0].vod_id == "yt:channel:UCabc123"
 
 
 def test_youtube_controller_directly_loads_login_video_lists_with_cookie() -> None:

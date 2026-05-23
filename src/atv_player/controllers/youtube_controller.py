@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from dataclasses import replace
 from collections.abc import Callable
+from dataclasses import replace
 from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
@@ -21,6 +22,7 @@ from atv_player.models import (
     VodItem,
 )
 
+logger = logging.getLogger(__name__)
 
 _DEFAULT_CATEGORIES = [
     {"id": "cat_recommend", "name": "首页推荐", "query": "推荐", "order": 1},
@@ -293,18 +295,32 @@ def _extract_youtube_thumbnail(node: object) -> str:
         value = str((sources[-1] or {}).get("url") or "").strip()
         return f"https:{value}" if value.startswith("//") else value
     thumbnail = node.get("thumbnail") or node.get("thumbnails") or node.get("avatar")
-    if not thumbnail:
-        return ""
-    if isinstance(thumbnail, list):
-        thumbnails = thumbnail
-    elif isinstance(thumbnail, dict):
-        thumbnails = thumbnail.get("thumbnails")
-    else:
-        thumbnails = []
-    if not isinstance(thumbnails, list) or not thumbnails:
-        return ""
-    value = str((thumbnails[-1] or {}).get("url") or "").strip()
-    return f"https:{value}" if value.startswith("//") else value
+    value = _extract_youtube_thumbnail_url(thumbnail)
+    return value or _extract_youtube_thumbnail_url(node)
+
+
+def _extract_youtube_thumbnail_url(node: object) -> str:
+    candidates: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+            return
+        if not isinstance(value, dict):
+            return
+        url = str(value.get("url") or "").strip()
+        if url and (
+            "yt3.googleusercontent.com" in url
+            or "googleusercontent.com" in url
+            or "ggpht.com" in url
+        ):
+            candidates.append(f"https:{url}" if url.startswith("//") else url)
+        for child in value.values():
+            walk(child)
+
+    walk(node)
+    return candidates[-1] if candidates else ""
 
 
 def _extract_video_duration(node: dict) -> str:
@@ -344,6 +360,17 @@ def _video_renderer_entry(node: dict) -> dict | None:
         "duration_string": _extract_video_duration(node),
         "ie_key": "Youtube",
     }
+
+
+def _missing_pic_count(items: list[VodItem]) -> int:
+    return sum(1 for item in items if not item.vod_pic)
+
+
+def _first_pic_sample(items: list[VodItem]) -> str:
+    for item in items:
+        if item.vod_pic:
+            return item.vod_pic[:160]
+    return ""
 
 
 def _extract_yt_initial_data(html_text: str) -> dict:
@@ -598,7 +625,10 @@ class YouTubeController:
             return ""
         headers = self._youtube_http_headers()
         if not headers.get("Cookie"):
+            logger.info("YouTube direct list skipped category=%s reason=no_cookie", category_id)
             return ""
+        started_at = monotonic()
+        logger.info("YouTube direct list fetch start category=%s url=%s", category_id, url)
         response = self._http_get(
             url,
             headers=headers,
@@ -608,7 +638,16 @@ class YouTubeController:
         raise_for_status = getattr(response, "raise_for_status", None)
         if callable(raise_for_status):
             raise_for_status()
-        return str(getattr(response, "text", "") or "")
+        text = str(getattr(response, "text", "") or "")
+        status_code = getattr(response, "status_code", "")
+        logger.info(
+            "YouTube direct list fetch done category=%s status=%s bytes=%s elapsed=%.3fs",
+            category_id,
+            status_code,
+            len(text),
+            monotonic() - started_at,
+        )
+        return text
 
     def _looks_like_login_required_page(self, html_text: str) -> bool:
         return any(
@@ -630,30 +669,84 @@ class YouTubeController:
         return self._collect_video_items(payload)
 
     def _load_login_list_direct(self, category_id: str) -> list[VodItem]:
+        started_at = monotonic()
+        if not self._youtube_cookie_header():
+            logger.info(
+                "YouTube direct list skipped category=%s reason=no_cookie elapsed=%.3fs",
+                category_id,
+                monotonic() - started_at,
+            )
+            return []
         try:
             items = self._load_login_list_direct_once(category_id)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "YouTube direct list failed category=%s retry=True error=%s",
+                category_id,
+                exc,
+            )
             items = []
         if items:
+            logger.info(
+                "YouTube direct list parsed category=%s items=%s missing_pic=%s elapsed=%.3fs",
+                category_id,
+                len(items),
+                _missing_pic_count(items),
+                monotonic() - started_at,
+            )
             return items
         self._clear_youtube_cookie_header_cache()
+        logger.info("YouTube direct list retry category=%s reason=empty_or_login_required", category_id)
         try:
-            return self._load_login_list_direct_once(category_id)
-        except Exception:
+            items = self._load_login_list_direct_once(category_id)
+        except Exception as exc:
+            logger.warning(
+                "YouTube direct list retry failed category=%s error=%s",
+                category_id,
+                exc,
+            )
             return []
+        logger.info(
+            "YouTube direct list retry parsed category=%s items=%s missing_pic=%s elapsed=%.3fs",
+            category_id,
+            len(items),
+            _missing_pic_count(items),
+            monotonic() - started_at,
+        )
+        return items
 
     def _flat_entries(self, url: str, page: int, page_size: int = 30) -> list[dict]:
         service = self._yt_dlp_service
         if service is None or not service.is_available():
+            logger.info("YouTube yt-dlp list skipped url=%s reason=unavailable", url)
             return []
         extract = getattr(service, "extract_flat_playlist", None)
         if not callable(extract):
+            logger.info("YouTube yt-dlp list skipped url=%s reason=no_extract_flat_playlist", url)
             return []
+        started_at = monotonic()
         try:
-            return list(extract(url, page=page, page_size=page_size) or [])
+            entries = list(extract(url, page=page, page_size=page_size) or [])
+            logger.info(
+                "YouTube yt-dlp list loaded url=%s page=%s page_size=%s entries=%s elapsed=%.3fs",
+                url,
+                page,
+                page_size,
+                len(entries),
+                monotonic() - started_at,
+            )
+            return entries
         except ApiError:
             raise
         except Exception as exc:
+            logger.warning(
+                "YouTube yt-dlp list failed url=%s page=%s page_size=%s elapsed=%.3fs error=%s",
+                url,
+                page,
+                page_size,
+                monotonic() - started_at,
+                exc,
+            )
             raise ApiError(f"YouTube 列表加载失败: {exc}") from exc
 
     def load_categories(self) -> list[DoubanCategory]:
@@ -828,15 +921,27 @@ class YouTubeController:
             cache_key = self._login_list_cache_key(category_id, page_number)
             cached = self._get_cached_login_list(cache_key)
             if cached is not None:
+                items, total = cached
+                logger.info(
+                    "YouTube login list cache hit category=%s page=%s items=%s missing_pic=%s sample_pic=%s",
+                    category_id,
+                    page_number,
+                    len(items),
+                    _missing_pic_count(items),
+                    _first_pic_sample(items),
+                )
                 return cached
             if page_number == 1:
                 direct_items = self._load_login_list_direct(category_id)
                 if direct_items:
-                    if category_id == "cat_sub_channels":
-                        direct_items = self._enrich_channel_thumbnails(direct_items)
                     total = len(direct_items)
                     self._store_login_list_cache(cache_key, direct_items, total)
                     return direct_items, total
+                logger.info(
+                    "YouTube login list fallback to yt-dlp category=%s page=%s reason=direct_empty",
+                    category_id,
+                    page_number,
+                )
             entries = self._flat_entries(_LOGIN_FEED_URLS[category_id], page_number)
             items = self._map_entries(
                 entries,
@@ -848,6 +953,15 @@ class YouTubeController:
             total = (page_number - 1) * 30 + len(items)
             if items:
                 self._store_login_list_cache(cache_key, items, total)
+            logger.info(
+                "YouTube login list loaded via yt-dlp category=%s page=%s items=%s missing_pic=%s total=%s sample_pic=%s",
+                category_id,
+                page_number,
+                len(items),
+                _missing_pic_count(items),
+                total,
+                _first_pic_sample(items),
+            )
             return items, total
         query, playlist_only = self._resolve_category_query(category_id, filters or {})
         if not query:
@@ -856,6 +970,15 @@ class YouTubeController:
             query = f"{query} playlist"
         entries = self._flat_entries(f"ytsearchall:{query}", page_number)
         items = self._map_entries(entries)
+        logger.info(
+            "YouTube category list loaded category=%s page=%s query=%s items=%s missing_pic=%s sample_pic=%s",
+            category_id,
+            page_number,
+            query,
+            len(items),
+            _missing_pic_count(items),
+            _first_pic_sample(items),
+        )
         return items, (page_number - 1) * 30 + len(items)
 
     def search_items(
@@ -871,6 +994,14 @@ class YouTubeController:
             return [], 0
         entries = self._flat_entries(f"ytsearchall:{query}", page_number)
         items = self._map_entries(entries)
+        logger.info(
+            "YouTube search loaded keyword=%s page=%s items=%s missing_pic=%s sample_pic=%s",
+            query,
+            page_number,
+            len(items),
+            _missing_pic_count(items),
+            _first_pic_sample(items),
+        )
         return items, (page_number - 1) * 30 + len(items)
 
     def _entry_for_video(self, video_id: str) -> dict:

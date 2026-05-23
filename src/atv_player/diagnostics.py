@@ -32,6 +32,7 @@ class SystemInfoEntry:
 _ATV_PLAYER_DOWNLOAD_URL = "https://github.com/power721/atv-player/releases/latest"
 _PYTHON_DOWNLOAD_URL = "https://www.python.org/downloads/"
 _PYSIDE6_HOME_URL = "https://doc.qt.io/qtforpython-6/"
+_NODEJS_DOWNLOAD_URL = "https://nodejs.org/en/download"
 _MPV_HOME_URL = "https://mpv.io/installation/"
 _FFMPEG_HOME_URL = "https://www.ffmpeg.org/download.html"
 _YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest"
@@ -43,9 +44,26 @@ def collect_system_info_entries() -> tuple[SystemInfoEntry, ...]:
         SystemInfoEntry("atv-player", resolve_app_version(), _ATV_PLAYER_DOWNLOAD_URL),
         SystemInfoEntry("Python", platform.python_version(), _PYTHON_DOWNLOAD_URL),
         SystemInfoEntry("PySide6", pyside_version, _PYSIDE6_HOME_URL),
-        SystemInfoEntry("mpv", _read_command_version(["mpv", "--version"], _parse_mpv_version), _MPV_HOME_URL),
-        SystemInfoEntry("ffmpeg", _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version), _FFMPEG_HOME_URL),
-        SystemInfoEntry("yt-dlp", _read_command_version([ytdlp_path, "--version"], _parse_ytdlp_version), _YTDLP_DOWNLOAD_URL),
+        SystemInfoEntry(
+            "Node.js",
+            _read_command_version(["node", "--version"], _parse_nodejs_version),
+            _NODEJS_DOWNLOAD_URL,
+        ),
+        SystemInfoEntry(
+            "mpv",
+            _read_command_version(["mpv", "--version"], _parse_mpv_version),
+            _MPV_HOME_URL,
+        ),
+        SystemInfoEntry(
+            "ffmpeg",
+            _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version),
+            _FFMPEG_HOME_URL,
+        ),
+        SystemInfoEntry(
+            "yt-dlp",
+            _read_command_version([ytdlp_path, "--version"], _parse_ytdlp_version),
+            _YTDLP_DOWNLOAD_URL,
+        ),
         SystemInfoEntry("Platform", _resolve_platform_display_value()),
     )
 
@@ -142,7 +160,9 @@ def _read_command_version(command: list[str], parser) -> str:
     except subprocess.TimeoutExpired:
         return _TIMEOUT_VALUE
 
-    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    output = "\n".join(
+        part for part in (completed.stdout, completed.stderr) if part
+    ).strip()
     if not output:
         return _UNAVAILABLE_VALUE
     parsed = parser(output)
@@ -159,6 +179,15 @@ def _parse_ffmpeg_version(output: str) -> str:
     return match.group(1) if match is not None else ""
 
 
+def _parse_nodejs_version(output: str) -> str:
+    first_line = next(
+        (line.strip() for line in output.splitlines() if line.strip()), ""
+    )
+    return first_line.removeprefix("v").split()[0] if first_line else ""
+
+
 def _parse_ytdlp_version(output: str) -> str:
-    first_line = next((line.strip() for line in output.splitlines() if line.strip()), "")
+    first_line = next(
+        (line.strip() for line in output.splitlines() if line.strip()), ""
+    )
     return first_line.split()[0] if first_line else ""
