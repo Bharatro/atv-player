@@ -4242,7 +4242,7 @@ def test_advanced_settings_dialog_saves_youtube_max_height(qtbot) -> None:
 
     assert config.youtube_max_height == 1080
     assert save_calls == [1080]
-    assert "1080P 及以下时通常启播更快" in dialog.playback_scope_label.text()
+    assert "1080P 及以下时通常启播更快" in dialog.youtube_scope_label.text()
 
 
 def test_advanced_settings_dialog_defaults_youtube_quality_to_1080p(qtbot) -> None:

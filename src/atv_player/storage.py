@@ -11,6 +11,9 @@ _VALID_DANMAKU_OUTLINE_STRENGTHS = {"off", "soft", "strong"}
 _VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
+_VALID_YOUTUBE_SUBTITLE_LANGS = {"", "zh-CN", "zh-TW", "zh-HK", "en"}
+_VALID_YOUTUBE_AUDIO_LANGS = {"", "zh", "en"}
+_VALID_YOUTUBE_REGIONS = {"", "CN", "US", "JP", "SG", "HK", "TW"}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
@@ -176,6 +179,26 @@ def _normalize_youtube_max_height(value: object) -> int:
     return normalized if normalized in {480, 720, 1080, 1440, 2160} else 1080
 
 
+def _normalize_youtube_subtitle_lang(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_YOUTUBE_SUBTITLE_LANGS else ""
+
+
+def _normalize_youtube_audio_lang(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_YOUTUBE_AUDIO_LANGS else ""
+
+
+def _normalize_youtube_metadata_language(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text in _VALID_YOUTUBE_SUBTITLE_LANGS else ""
+
+
+def _normalize_youtube_region(value: object) -> str:
+    text = str(value or "").strip().upper()
+    return text if text in _VALID_YOUTUBE_REGIONS else ""
+
+
 def _normalize_mpv_cache_size_mb(value: object) -> int:
     try:
         normalized = int(value)
@@ -256,6 +279,10 @@ class SettingsRepository:
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
                     youtube_cookie_browser TEXT NOT NULL DEFAULT '',
                     youtube_max_height INTEGER NOT NULL DEFAULT 1080,
+                    youtube_default_subtitle_lang TEXT NOT NULL DEFAULT '',
+                    youtube_default_audio_lang TEXT NOT NULL DEFAULT '',
+                    youtube_metadata_language TEXT NOT NULL DEFAULT '',
+                    youtube_region TEXT NOT NULL DEFAULT '',
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
@@ -354,6 +381,22 @@ class SettingsRepository:
             if "youtube_max_height" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN youtube_max_height INTEGER NOT NULL DEFAULT 1080"
+                )
+            if "youtube_default_subtitle_lang" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_default_subtitle_lang TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_default_audio_lang" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_default_audio_lang TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_metadata_language" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_metadata_language TEXT NOT NULL DEFAULT ''"
+                )
+            if "youtube_region" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_region TEXT NOT NULL DEFAULT ''"
                 )
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(
@@ -535,6 +578,10 @@ class SettingsRepository:
                     network_proxy_bypass_rules,
                     youtube_cookie_browser,
                     youtube_max_height,
+                    youtube_default_subtitle_lang,
+                    youtube_default_audio_lang,
+                    youtube_metadata_language,
+                    youtube_region,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -577,7 +624,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 0, 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, '', '', '', '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -607,6 +654,10 @@ class SettingsRepository:
                     network_proxy_rules,
                     youtube_cookie_browser,
                     youtube_max_height,
+                    youtube_default_subtitle_lang,
+                    youtube_default_audio_lang,
+                    youtube_metadata_language,
+                    youtube_region,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -670,6 +721,10 @@ class SettingsRepository:
             network_proxy_rules,
             youtube_cookie_browser,
             youtube_max_height,
+            youtube_default_subtitle_lang,
+            youtube_default_audio_lang,
+            youtube_metadata_language,
+            youtube_region,
             mpv_cache_size_mb,
             mpv_hwdec_mode,
             mpv_network_timeout_seconds,
@@ -729,6 +784,10 @@ class SettingsRepository:
             network_proxy_rules=_normalize_network_proxy_rules(network_proxy_rules),
             youtube_cookie_browser=_normalize_youtube_cookie_browser(youtube_cookie_browser),
             youtube_max_height=_normalize_youtube_max_height(youtube_max_height),
+            youtube_default_subtitle_lang=_normalize_youtube_subtitle_lang(youtube_default_subtitle_lang),
+            youtube_default_audio_lang=_normalize_youtube_audio_lang(youtube_default_audio_lang),
+            youtube_metadata_language=_normalize_youtube_metadata_language(youtube_metadata_language),
+            youtube_region=_normalize_youtube_region(youtube_region),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
@@ -798,6 +857,10 @@ class SettingsRepository:
                     network_proxy_rules = ?,
                     youtube_cookie_browser = ?,
                     youtube_max_height = ?,
+                    youtube_default_subtitle_lang = ?,
+                    youtube_default_audio_lang = ?,
+                    youtube_metadata_language = ?,
+                    youtube_region = ?,
                     mpv_cache_size_mb = ?,
                     mpv_hwdec_mode = ?,
                     mpv_network_timeout_seconds = ?,
@@ -858,6 +921,10 @@ class SettingsRepository:
                     json.dumps(_normalize_network_proxy_rules(config.network_proxy_rules), ensure_ascii=False),
                     _normalize_youtube_cookie_browser(config.youtube_cookie_browser),
                     _normalize_youtube_max_height(config.youtube_max_height),
+                    _normalize_youtube_subtitle_lang(config.youtube_default_subtitle_lang),
+                    _normalize_youtube_audio_lang(config.youtube_default_audio_lang),
+                    _normalize_youtube_metadata_language(config.youtube_metadata_language),
+                    _normalize_youtube_region(config.youtube_region),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),

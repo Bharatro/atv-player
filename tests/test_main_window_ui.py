@@ -4176,8 +4176,9 @@ def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
 
     assert dialog.settings_tabs.tabText(0) == "外观"
     assert dialog.settings_tabs.tabText(1) == "播放设置"
-    assert dialog.settings_tabs.tabText(2) == "元数据"
-    assert dialog.settings_tabs.tabText(3) == "网络代理"
+    assert dialog.settings_tabs.tabText(2) == "YouTube"
+    assert dialog.settings_tabs.tabText(3) == "元数据"
+    assert dialog.settings_tabs.tabText(4) == "网络代理"
     assert dialog.network_proxy_mode_combo.currentData() == "socks5"
     assert dialog.network_proxy_url_edit.text() == "socks5://user:pass@127.0.0.1:1080"
     assert dialog.network_proxy_bypass_rules_edit.toPlainText() == "localhost\n127.0.0.1"
@@ -4275,6 +4276,55 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
     assert dialog.mpv_network_timeout_edit.text() == "20"
     assert dialog.mpv_default_readahead_edit.text() == "35"
     assert dialog.mpv_extra_options_edit.toPlainText() == "cache-pause-wait=9\nstream-buffer-size=8M"
+
+
+def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        youtube_cookie_browser="firefox",
+        youtube_max_height=1440,
+        youtube_default_subtitle_lang="zh-TW",
+        youtube_default_audio_lang="en",
+        youtube_metadata_language="zh-CN",
+        youtube_region="CN",
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    tab_labels = [dialog.settings_tabs.tabText(index) for index in range(dialog.settings_tabs.count())]
+    assert tab_labels[:3] == ["外观", "播放设置", "YouTube"]
+    assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
+    assert dialog.youtube_max_height_combo.currentData() == 1440
+    assert dialog.youtube_default_subtitle_combo.currentData() == "zh-TW"
+    assert dialog.youtube_default_audio_combo.currentData() == "en"
+    assert dialog.youtube_metadata_language_combo.currentData() == "zh-CN"
+    assert dialog.youtube_region_combo.currentData() == "CN"
+
+
+def test_advanced_settings_dialog_saves_youtube_preferences(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.youtube_cookie_browser_combo.setCurrentIndex(dialog.youtube_cookie_browser_combo.findData("chrome"))
+    dialog.youtube_max_height_combo.setCurrentIndex(dialog.youtube_max_height_combo.findData(2160))
+    dialog.youtube_default_subtitle_combo.setCurrentIndex(dialog.youtube_default_subtitle_combo.findData("en"))
+    dialog.youtube_default_audio_combo.setCurrentIndex(dialog.youtube_default_audio_combo.findData("zh"))
+    dialog.youtube_metadata_language_combo.setCurrentIndex(dialog.youtube_metadata_language_combo.findData("zh-HK"))
+    dialog.youtube_region_combo.setCurrentIndex(dialog.youtube_region_combo.findData("JP"))
+    dialog._save()
+
+    assert config.youtube_cookie_browser == "chrome"
+    assert config.youtube_max_height == 2160
+    assert config.youtube_default_subtitle_lang == "en"
+    assert config.youtube_default_audio_lang == "zh"
+    assert config.youtube_metadata_language == "zh-HK"
+    assert config.youtube_region == "JP"
+    assert len(saved) == 1
 
 
 def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None:

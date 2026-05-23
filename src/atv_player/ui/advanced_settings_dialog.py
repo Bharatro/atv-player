@@ -55,6 +55,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
+        self.youtube_tab = QWidget()
         self.logs_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
         self.theme_mode_combo = FlatComboBox()
@@ -91,6 +92,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.network_proxy_scope_label.setWordWrap(True)
         self.playback_group = QGroupBox("播放设置")
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
+        self.youtube_group = QGroupBox("YouTube")
         self.youtube_cookie_browser_combo = FlatComboBox()
         self.youtube_cookie_browser_combo.addItem("不使用", "")
         self.youtube_cookie_browser_combo.addItem("Chrome", "chrome")
@@ -102,6 +104,30 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_max_height_combo.addItem("1080p", 1080)
         self.youtube_max_height_combo.addItem("1440p", 1440)
         self.youtube_max_height_combo.addItem("2160p", 2160)
+        self.youtube_default_subtitle_combo = FlatComboBox()
+        self.youtube_default_subtitle_combo.addItem("默认（无）", "")
+        self.youtube_default_subtitle_combo.addItem("简体中文", "zh-CN")
+        self.youtube_default_subtitle_combo.addItem("繁体中文（台湾）", "zh-TW")
+        self.youtube_default_subtitle_combo.addItem("繁体中文（香港）", "zh-HK")
+        self.youtube_default_subtitle_combo.addItem("英文", "en")
+        self.youtube_default_audio_combo = FlatComboBox()
+        self.youtube_default_audio_combo.addItem("默认", "")
+        self.youtube_default_audio_combo.addItem("汉语", "zh")
+        self.youtube_default_audio_combo.addItem("英语", "en")
+        self.youtube_metadata_language_combo = FlatComboBox()
+        self.youtube_metadata_language_combo.addItem("默认", "")
+        self.youtube_metadata_language_combo.addItem("简体中文", "zh-CN")
+        self.youtube_metadata_language_combo.addItem("繁体中文（台湾）", "zh-TW")
+        self.youtube_metadata_language_combo.addItem("繁体中文（香港）", "zh-HK")
+        self.youtube_metadata_language_combo.addItem("英文", "en")
+        self.youtube_region_combo = FlatComboBox()
+        self.youtube_region_combo.addItem("默认", "")
+        self.youtube_region_combo.addItem("中国", "CN")
+        self.youtube_region_combo.addItem("中国香港", "HK")
+        self.youtube_region_combo.addItem("中国台湾", "TW")
+        self.youtube_region_combo.addItem("新加坡", "SG")
+        self.youtube_region_combo.addItem("美国", "US")
+        self.youtube_region_combo.addItem("日本", "JP")
         self.mpv_cache_size_edit = QLineEdit()
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
         self.mpv_hwdec_mode_combo = FlatComboBox()
@@ -116,9 +142,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_extra_options_edit = QPlainTextEdit()
         self.mpv_extra_options_edit.setPlaceholderText("一行一个 key=value，例如 cache-pause-wait=8")
         self.playback_scope_label = QLabel(
-            "说明：YouTube 默认画质设为 1080P 及以下时通常启播更快；如果当前视频没有该画质，会自动回退到最高可用画质。普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
+            "说明：普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
         )
         self.playback_scope_label.setWordWrap(True)
+        self.youtube_scope_label = QLabel(
+            "说明：默认画质设为 1080P 及以下时通常启播更快；如果当前视频没有该画质，会自动回退到最高可用画质。语言和地区设置只影响 yt-dlp 的 YouTube 信息提取。"
+        )
+        self.youtube_scope_label.setWordWrap(True)
         self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
         self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
         self.save_button = QPushButton("保存")
@@ -142,6 +172,18 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         youtube_max_height = config.youtube_max_height if config.youtube_max_height in {480, 720, 1080, 1440, 2160} else 1080
         self.youtube_max_height_combo.setCurrentIndex(
             max(0, self.youtube_max_height_combo.findData(youtube_max_height))
+        )
+        self.youtube_default_subtitle_combo.setCurrentIndex(
+            max(0, self.youtube_default_subtitle_combo.findData(config.youtube_default_subtitle_lang))
+        )
+        self.youtube_default_audio_combo.setCurrentIndex(
+            max(0, self.youtube_default_audio_combo.findData(config.youtube_default_audio_lang))
+        )
+        self.youtube_metadata_language_combo.setCurrentIndex(
+            max(0, self.youtube_metadata_language_combo.findData(config.youtube_metadata_language))
+        )
+        self.youtube_region_combo.setCurrentIndex(
+            max(0, self.youtube_region_combo.findData(config.youtube_region))
         )
         self.playback_auto_switch_source_on_failure_checkbox.setChecked(
             config.playback_auto_switch_source_on_failure
@@ -187,8 +229,6 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         playback_layout = QFormLayout()
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
-        playback_layout.addRow("YouTube Cookie", self.youtube_cookie_browser_combo)
-        playback_layout.addRow("YouTube 默认画质", self.youtube_max_height_combo)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("解码模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
@@ -201,11 +241,25 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_tab_layout.addWidget(self.playback_group)
         playback_tab_layout.addStretch(1)
 
+        youtube_layout = QFormLayout()
+        youtube_layout.addRow("Cookie", self.youtube_cookie_browser_combo)
+        youtube_layout.addRow("默认画质", self.youtube_max_height_combo)
+        youtube_layout.addRow("默认字幕", self.youtube_default_subtitle_combo)
+        youtube_layout.addRow("默认音轨", self.youtube_default_audio_combo)
+        youtube_layout.addRow("语言设置（元数据提取用）", self.youtube_metadata_language_combo)
+        youtube_layout.addRow("地区设置", self.youtube_region_combo)
+        youtube_layout.addRow("说明", self.youtube_scope_label)
+        self.youtube_group.setLayout(youtube_layout)
+        youtube_tab_layout = QVBoxLayout(self.youtube_tab)
+        youtube_tab_layout.addWidget(self.youtube_group)
+        youtube_tab_layout.addStretch(1)
+
         logs_tab_layout = QVBoxLayout(self.logs_tab)
         logs_tab_layout.addWidget(self.log_console)
 
         self.settings_tabs.addTab(self.appearance_tab, "外观")
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
+        self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
         self.settings_tabs.addTab(self.logs_tab, "日志")
@@ -237,6 +291,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
             self.youtube_max_height_combo,
+            self.youtube_default_subtitle_combo,
+            self.youtube_default_audio_combo,
+            self.youtube_metadata_language_combo,
+            self.youtube_region_combo,
             self.mpv_hwdec_mode_combo,
         ):
             combo.setStyleSheet(combo_qss)
@@ -298,7 +356,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return mode, proxy_url, bypass_rules, proxy_rules
 
-    def _validated_playback_values(self) -> tuple[bool, str, int, int, str, int, int, int, str] | None:
+    def _validated_youtube_values(self) -> tuple[str, int, str, str, str, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
         if browser not in {"", "chrome", "edge", "firefox"}:
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
@@ -307,7 +365,25 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if max_height not in {480, 720, 1080, 1440, 2160}:
             QMessageBox.warning(self, "YouTube 默认画质无效", "YouTube 默认画质选项无效")
             return None
+        subtitle_lang = str(self.youtube_default_subtitle_combo.currentData() or "")
+        if subtitle_lang not in {"", "zh-CN", "zh-TW", "zh-HK", "en"}:
+            QMessageBox.warning(self, "YouTube 默认字幕无效", "默认字幕选项无效")
+            return None
+        audio_lang = str(self.youtube_default_audio_combo.currentData() or "")
+        if audio_lang not in {"", "zh", "en"}:
+            QMessageBox.warning(self, "YouTube 默认音轨无效", "默认音轨选项无效")
+            return None
+        metadata_language = str(self.youtube_metadata_language_combo.currentData() or "")
+        if metadata_language not in {"", "zh-CN", "zh-TW", "zh-HK", "en"}:
+            QMessageBox.warning(self, "YouTube 语言设置无效", "语言设置选项无效")
+            return None
+        region = str(self.youtube_region_combo.currentData() or "")
+        if region not in {"", "CN", "US", "JP", "SG", "HK", "TW"}:
+            QMessageBox.warning(self, "YouTube 地区设置无效", "地区设置选项无效")
+            return None
+        return browser, int(max_height), subtitle_lang, audio_lang, metadata_language, region
 
+    def _validated_playback_values(self) -> tuple[bool, int, str, int, int, int, str] | None:
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
             try:
                 value = int(text.strip())
@@ -368,8 +444,6 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         return (
             self.playback_auto_switch_source_on_failure_checkbox.isChecked(),
-            browser,
-            int(max_height),
             cache_size,
             str(self.mpv_hwdec_mode_combo.currentData() or "auto-safe"),
             timeout,
@@ -381,6 +455,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
     def _save(self) -> None:
         proxy_values = self._validated_network_proxy_values()
         if proxy_values is None:
+            return
+        youtube_values = self._validated_youtube_values()
+        if youtube_values is None:
             return
         playback_values = self._validated_playback_values()
         if playback_values is None:
@@ -394,9 +471,15 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
         self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules, self._config.network_proxy_rules = proxy_values
         (
-            self._config.playback_auto_switch_source_on_failure,
             self._config.youtube_cookie_browser,
             self._config.youtube_max_height,
+            self._config.youtube_default_subtitle_lang,
+            self._config.youtube_default_audio_lang,
+            self._config.youtube_metadata_language,
+            self._config.youtube_region,
+        ) = youtube_values
+        (
+            self._config.playback_auto_switch_source_on_failure,
             self._config.mpv_cache_size_mb,
             self._config.mpv_hwdec_mode,
             self._config.mpv_network_timeout_seconds,

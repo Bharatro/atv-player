@@ -4594,6 +4594,31 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _current_item_auto_spider_external_subtitles(self) -> list[ExternalSubtitleOption]:
         return [subtitle for subtitle in self._current_item_external_subtitles() if subtitle.source == "spider"]
 
+    def _configured_youtube_default_subtitle_lang(self) -> str:
+        value = str(getattr(self.config, "youtube_default_subtitle_lang", "") or "").strip()
+        return value if value in {"zh-CN", "zh-TW", "zh-HK", "en"} else ""
+
+    def _matches_configured_youtube_default_subtitle(self, subtitle: ExternalSubtitleOption) -> bool:
+        preferred_lang = self._configured_youtube_default_subtitle_lang()
+        lang = str(subtitle.lang or "").strip()
+        aliases = {
+            "zh-CN": {"zh-CN", "zh-Hans", "zh"},
+            "zh-TW": {"zh-TW", "zh-Hant"},
+            "zh-HK": {"zh-HK", "zh-Hant"},
+            "en": {"en"},
+        }
+        return bool(preferred_lang and lang in aliases.get(preferred_lang, {preferred_lang}))
+
+    def _current_item_default_ytdlp_external_subtitle(self) -> ExternalSubtitleOption | None:
+        return next(
+            (
+                subtitle
+                for subtitle in self._current_item_external_subtitles()
+                if subtitle.source == "ytdlp" and self._matches_configured_youtube_default_subtitle(subtitle)
+            ),
+            None,
+        )
+
     def _find_current_item_external_subtitle(self, url: str) -> ExternalSubtitleOption | None:
         return next((subtitle for subtitle in self._current_item_external_subtitles() if subtitle.url == url), None)
 
@@ -4867,6 +4892,28 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._auto_spider_subtitle_attempted_key == attempt_key:
             return False
         self._auto_spider_subtitle_attempted_key = attempt_key
+        self._primary_external_subtitle_selection = ExternalSubtitleSelection(
+            source=subtitle.source,
+            option_url=subtitle.url,
+            option_name=subtitle.name,
+            option_lang=subtitle.lang,
+            option_format=subtitle.format,
+        )
+        if not self._ensure_primary_external_subtitle_loaded(subtitle):
+            return True
+        if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
+            return True
+        self._sync_subtitle_combo_without_tracks()
+        return True
+
+    def _auto_apply_ytdlp_default_subtitle_if_needed(self) -> bool:
+        if self._subtitle_preference.mode != "auto":
+            return False
+        if self._current_primary_external_subtitle() is not None:
+            return False
+        subtitle = self._current_item_default_ytdlp_external_subtitle()
+        if subtitle is None:
+            return False
         self._primary_external_subtitle_selection = ExternalSubtitleSelection(
             source=subtitle.source,
             option_url=subtitle.url,
@@ -5723,6 +5770,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     if not self._apply_primary_external_subtitle_track(self._primary_external_subtitle_track_id):
                         return
                     self._sync_subtitle_combo_without_tracks()
+                    return
+                if self._auto_apply_ytdlp_default_subtitle_if_needed():
                     return
                 if self._auto_apply_spider_subtitle_if_needed():
                     return

@@ -89,6 +89,16 @@ _DIRECT_SUBTITLE_FORMAT_RANK: dict[str, int] = {
 
 _ENGLISH_AUDIO_PREFIXES = ("en", "eng", "en-")
 _CHINESE_AUDIO_PREFIXES = ("zh", "chi", "zho", "cmn", "zh-", "zh_")
+_YOUTUBE_METADATA_LANGUAGE_VALUES = {"zh-CN", "zh-TW", "zh-HK", "en"}
+_YOUTUBE_REGION_VALUES = {"CN", "US", "JP", "SG", "HK", "TW"}
+_YOUTUBE_AUDIO_LANGUAGE_VALUES = {"zh", "en"}
+_YOUTUBE_SUBTITLE_LANGUAGE_VALUES = {"zh-CN", "zh-TW", "zh-HK", "en"}
+_YOUTUBE_SUBTITLE_LANGUAGE_ALIASES: dict[str, set[str]] = {
+    "zh-CN": {"zh-CN", "zh-Hans", "zh"},
+    "zh-TW": {"zh-TW", "zh-Hant"},
+    "zh-HK": {"zh-HK", "zh-Hant"},
+    "en": {"en"},
+}
 
 
 def _canonicalize_ytdlp_url(url: str) -> str:
@@ -128,6 +138,59 @@ def _build_format_selector(max_height: int | None) -> str:
             f"best[height<={max_height}]/bestvideo+bestaudio/best"
         )
     return "bestvideo+bestaudio/best"
+
+
+def _normalize_youtube_metadata_language(value: object) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in _YOUTUBE_METADATA_LANGUAGE_VALUES else ""
+
+
+def _normalize_youtube_region(value: object) -> str:
+    normalized = str(value or "").strip().upper()
+    return normalized if normalized in _YOUTUBE_REGION_VALUES else ""
+
+
+def _normalize_youtube_audio_preference(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in _YOUTUBE_AUDIO_LANGUAGE_VALUES else ""
+
+
+def _youtube_audio_lang_matches(preferred_lang: str, actual_lang: str) -> bool:
+    preferred = _normalize_youtube_audio_preference(preferred_lang)
+    actual = str(actual_lang or "").strip()
+    if preferred == "zh":
+        return actual == "zh" or actual.lower().startswith("zh-")
+    if preferred == "en":
+        return actual == "en"
+    return False
+
+
+def _normalize_youtube_subtitle_preference(value: object) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in _YOUTUBE_SUBTITLE_LANGUAGE_VALUES else ""
+
+
+def _youtube_subtitle_lang_matches(preferred_lang: str, actual_lang: str) -> bool:
+    preferred = _normalize_youtube_subtitle_preference(preferred_lang)
+    if not preferred:
+        return False
+    return str(actual_lang or "").strip() in _YOUTUBE_SUBTITLE_LANGUAGE_ALIASES.get(preferred, {preferred})
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _looks_like_placeholder_title(title: str, source_url: str = "") -> bool:
+    normalized = str(title or "").strip()
+    if not normalized:
+        return True
+    if normalized in {"解析播放", "待解析"}:
+        return True
+    if normalized == str(source_url or "").strip():
+        return True
+    lowered = normalized.lower()
+    return lowered.startswith(("http://", "https://", "yt:video:"))
 
 
 def _resolve_startup_selection_height(
@@ -472,10 +535,16 @@ def _resolve_selected_audio_track_id(
     requested_audio_track_id: str,
     *,
     fallback_format_id: str = "",
+    default_audio_lang: str = "",
 ) -> str:
     requested = str(requested_audio_track_id or "").strip()
     if requested and any(track.id == requested for track in audio_tracks):
         return requested
+    preferred_lang = _normalize_youtube_audio_preference(default_audio_lang)
+    if preferred_lang:
+        for track in audio_tracks:
+            if _youtube_audio_lang_matches(preferred_lang, track.lang):
+                return track.id
     for track in audio_tracks:
         if track.lang == "en" and track.is_original:
             return track.id
@@ -811,12 +880,32 @@ class YtdlpPlaybackService:
         self._proxy_decider = proxy_decider
         self._config_loader = config_loader
 
+    def _youtube_cache_profile(self) -> tuple[str, str, str, str, str]:
+        if self._config_loader is None:
+            return ("", "", "", "", "")
+        config = self._config_loader()
+        return (
+            str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower(),
+            _normalize_youtube_audio_preference(getattr(config, "youtube_default_audio_lang", "")),
+            _normalize_youtube_subtitle_preference(getattr(config, "youtube_default_subtitle_lang", "")),
+            _normalize_youtube_metadata_language(getattr(config, "youtube_metadata_language", "")),
+            _normalize_youtube_region(getattr(config, "youtube_region", "")),
+        )
+
     def _cache_key(self, url: str, max_height: int | None, audio_track_id: str = "") -> str:
         key = _canonicalize_ytdlp_url(url)
         audio_key = str(audio_track_id or "").strip() or "auto"
+        cookie_browser, default_audio, default_subtitle, metadata_language, region = self._youtube_cache_profile()
+        profile_key = (
+            f"#cookie={cookie_browser or 'none'}"
+            f"#da={default_audio or 'auto'}"
+            f"#ds={default_subtitle or 'none'}"
+            f"#hl={metadata_language or 'auto'}"
+            f"#gl={region or 'auto'}"
+        )
         if max_height and max_height > 0:
-            return f"{key}#h={max_height}#a={audio_key}"
-        return f"{key}#h=any#a={audio_key}"
+            return f"{key}#h={max_height}#a={audio_key}{profile_key}"
+        return f"{key}#h=any#a={audio_key}{profile_key}"
 
     def _get_cached_result(self, url: str, max_height: int | None, audio_track_id: str = "") -> YtdlpResolveResult | None:
         key = self._cache_key(url, max_height, audio_track_id)
@@ -856,6 +945,54 @@ class YtdlpPlaybackService:
         config = self._config_loader()
         return str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower()
 
+    def _configured_default_audio_lang(self) -> str:
+        if self._config_loader is None:
+            return ""
+        config = self._config_loader()
+        return _normalize_youtube_audio_preference(getattr(config, "youtube_default_audio_lang", ""))
+
+    def _configured_default_subtitle_lang(self) -> str:
+        if self._config_loader is None:
+            return ""
+        config = self._config_loader()
+        return _normalize_youtube_subtitle_preference(getattr(config, "youtube_default_subtitle_lang", ""))
+
+    def _configured_metadata_language(self) -> str:
+        if self._config_loader is None:
+            return ""
+        config = self._config_loader()
+        return _normalize_youtube_metadata_language(getattr(config, "youtube_metadata_language", ""))
+
+    def _configured_region(self) -> str:
+        if self._config_loader is None:
+            return ""
+        config = self._config_loader()
+        return _normalize_youtube_region(getattr(config, "youtube_region", ""))
+
+    def _resolved_title(
+        self,
+        result_title: object,
+        *,
+        vod: VodItem | None,
+        item: PlayItem | None,
+        source_url: str,
+    ) -> str:
+        title = str(result_title or "").strip()
+        metadata_language = self._configured_metadata_language()
+        if metadata_language.startswith("zh") and title and not _contains_cjk(title):
+            existing_titles = [
+                str(getattr(item, "title", "") or "").strip() if item is not None else "",
+                str(getattr(item, "media_title", "") or "").strip() if item is not None else "",
+                str(getattr(vod, "vod_name", "") or "").strip() if vod is not None else "",
+            ]
+            for existing_title in existing_titles:
+                if (
+                    _contains_cjk(existing_title)
+                    and not _looks_like_placeholder_title(existing_title, source_url)
+                ):
+                    return existing_title
+        return title or source_url
+
     def _configured_max_height(self) -> int | None:
         if self._config_loader is None:
             return None
@@ -877,6 +1014,13 @@ class YtdlpPlaybackService:
             self._ytdlp_path = resolve_system_ytdlp_path()
         if not self._ytdlp_path:
             raise ValueError("yt-dlp 未安装")
+        extra_args: list[str] = []
+        metadata_language = self._configured_metadata_language()
+        if metadata_language:
+            extra_args.extend(["--extractor-args", f"youtube:lang={metadata_language}"])
+        region = self._configured_region()
+        if region:
+            extra_args.extend(["--xff", region])
         command = [
             self._ytdlp_path,
             "--no-warnings",
@@ -890,6 +1034,7 @@ class YtdlpPlaybackService:
                 build_ytdlp_proxy_args(self._proxy_decider, url),
                 cookie_browser=self._configured_cookie_browser(),
             ),
+            *extra_args,
             "--",
             url,
         ]
@@ -1021,6 +1166,7 @@ class YtdlpPlaybackService:
             audio_tracks,
             selected_audio_track_id,
             fallback_format_id=str((selected_audio or {}).get("format_id") or ""),
+            default_audio_lang=self._configured_default_audio_lang(),
         )
         preferred_audio_candidate = _select_audio_candidate(audio_candidates, resolved_audio_track_id)
         should_override_audio_selection = bool(str(selected_audio_track_id or "").strip()) or (
@@ -1078,7 +1224,7 @@ class YtdlpPlaybackService:
 
         headers = _merge_http_headers(info, selected_video, selected_audio)
 
-        subtitles = _build_subtitle_options(info)
+        subtitles = _build_subtitle_options(info, preferred_lang=self._configured_default_subtitle_lang())
         detail_fields = _build_detail_fields(info)
         selected_quality_id = _resolve_selected_quality_id(
             info,
@@ -1159,7 +1305,12 @@ class YtdlpPlaybackService:
             or (item.vod_id if item is not None else "")
             or result.url
         )
-        resolved_title = str(result.title or "").strip() or resolved_source_url
+        resolved_title = self._resolved_title(
+            result.title,
+            vod=vod,
+            item=item,
+            source_url=resolved_source_url,
+        )
 
         if vod is not None:
             vod.vod_name = resolved_title
@@ -1302,7 +1453,7 @@ def _is_chinese_or_english(lang_code: str) -> bool:
     return lang_code in ("en", "zh") or lang_code.startswith(_ZH_EN_LANG_PREFIXES)
 
 
-def _build_subtitle_options(info: dict) -> list[ExternalSubtitleOption]:
+def _build_subtitle_options(info: dict, *, preferred_lang: str = "") -> list[ExternalSubtitleOption]:
     result: list[ExternalSubtitleOption] = []
     seen_urls: set[str] = set()
 
@@ -1345,6 +1496,13 @@ def _build_subtitle_options(info: dict) -> list[ExternalSubtitleOption]:
                 source="ytdlp",
             ))
 
+    normalized_preference = _normalize_youtube_subtitle_preference(preferred_lang)
+    if normalized_preference:
+        result.sort(
+            key=lambda subtitle: 0
+            if _youtube_subtitle_lang_matches(normalized_preference, subtitle.lang)
+            else 1
+        )
     return result
 
 

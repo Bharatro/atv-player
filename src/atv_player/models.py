@@ -38,6 +38,10 @@ class AppConfig:
     network_proxy_rules: list[str] = field(default_factory=list)
     youtube_cookie_browser: str = ""
     youtube_max_height: int = 1080
+    youtube_default_subtitle_lang: str = ""
+    youtube_default_audio_lang: str = ""
+    youtube_metadata_language: str = ""
+    youtube_region: str = ""
     mpv_cache_size_mb: int = 512
     mpv_hwdec_mode: str = "auto-safe"
     mpv_network_timeout_seconds: int = 15

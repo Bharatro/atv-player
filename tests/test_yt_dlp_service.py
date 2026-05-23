@@ -156,6 +156,32 @@ class TestIsAvailable:
         assert "--cookies-from-browser" in command
         assert command[command.index("--cookies-from-browser") + 1] == "firefox"
 
+    def test_extract_info_via_command_includes_configured_language_and_region(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            run_calls.append(command)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_sample_info()),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService(
+            config_loader=lambda: AppConfig(youtube_metadata_language="zh-CN", youtube_region="CN")
+        )
+
+        service._extract_info_via_command("https://www.youtube.com/watch?v=test123", 1080)
+
+        command = run_calls[0]
+        assert "--extractor-args" in command
+        assert command[command.index("--extractor-args") + 1] == "youtube:lang=zh-CN"
+        assert "--xff" in command
+        assert command[command.index("--xff") + 1] == "CN"
+
     def test_extract_info_via_command_includes_proxy_when_manual_proxy_is_selected(self, monkeypatch, service):
         run_calls: list[list[str]] = []
 
@@ -261,6 +287,96 @@ class TestResolve:
         assert [track.id for track in result.audio_tracks] == ["ytdlp_audio_en_140-en", "ytdlp_audio_zh_140-zh"]
         assert result.selected_audio_track_id == "ytdlp_audio_en_140-en"
         assert result.audio_format_id == "140-en"
+
+    def test_prefers_configured_chinese_audio_track(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_default_audio_lang="zh"))
+        info = _sample_info(
+            formats=[
+                {
+                    "format_id": "137",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "140-zh",
+                    "url": "https://stream.test/audio-zh.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "zh",
+                    "format_note": "dubbed",
+                },
+                {
+                    "format_id": "140-en",
+                    "url": "https://stream.test/audio-en.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "en",
+                    "format_note": "original",
+                    "language_preference": 10,
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.selected_audio_track_id == "ytdlp_audio_zh_140-zh"
+        assert result.audio_format_id == "140-zh"
+
+    def test_prefers_configured_chinese_audio_track_when_youtube_returns_zh_hans(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_default_audio_lang="zh"))
+        info = _sample_info(
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "96-22",
+                    "url": "https://stream.test/hls-1080-en.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original (default)",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "96-11",
+                    "url": "https://stream.test/hls-1080-zh.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "zh-Hans",
+                    "format_note": "Chinese (Simplified)",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert result.selected_audio_track_id == "ytdlp_audio_zh-Hans_muxed"
+        assert result.url == "https://stream.test/hls-1080-zh.m3u8"
+        assert result.video_format_id == "96-11"
 
     def test_prefers_multilingual_youtube_muxed_tracks_over_split_audio_only_tracks(self, monkeypatch, service):
         info = _sample_info(
@@ -1042,6 +1158,63 @@ class TestResolve:
 
         assert len(calls) == 2
 
+    def test_cache_key_includes_youtube_preferences(self, monkeypatch):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        config = AppConfig()
+        info = _sample_info(
+            formats=[
+                {
+                    "format_id": "137",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5000,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "140-en",
+                    "url": "https://stream.test/audio-en.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "en",
+                    "format_note": "original",
+                },
+                {
+                    "format_id": "140-zh",
+                    "url": "https://stream.test/audio-zh.m4a",
+                    "tbr": 128,
+                    "vcodec": "none",
+                    "acodec": "mp4a",
+                    "ext": "m4a",
+                    "language": "zh",
+                    "format_note": "dubbed",
+                },
+            ],
+        )
+        clock = {"now": 100.0}
+        service = YtdlpPlaybackService(
+            ttl_seconds=300.0,
+            now=lambda: clock["now"],
+            config_loader=lambda: config,
+        )
+        calls = _stub_extract_info(monkeypatch, service, info)
+
+        first = service.resolve("https://www.youtube.com/watch?v=test123")
+        config.youtube_default_audio_lang = "zh"
+        config.youtube_default_subtitle_lang = "zh-CN"
+        config.youtube_metadata_language = "zh-CN"
+        config.youtube_region = "CN"
+        second = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        assert first.selected_audio_track_id == "ytdlp_audio_en_140-en"
+        assert second.selected_audio_track_id == "ytdlp_audio_zh_140-zh"
+        assert len(calls) == 2
+
     def test_canonical_youtube_id_and_watch_url_share_cache(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
@@ -1458,6 +1631,43 @@ class TestResolveToPlayItem:
         assert [track.id for track in item.audio_tracks] == ["ytdlp_audio_en_140", "ytdlp_audio_zh_140-dub"]
         assert item.selected_audio_track_id == "ytdlp_audio_en_140"
 
+    def test_apply_result_preserves_existing_chinese_title_when_configured_metadata_title_is_english(self):
+        from atv_player.yt_dlp_service import YtdlpPlaybackService, YtdlpResolveResult
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_metadata_language="zh-CN"))
+        result = YtdlpResolveResult(
+            url="https://stream.test/video.mp4",
+            audio_url="",
+            ytdl_format="",
+            video_format_id="",
+            audio_format_id="",
+            audio_tracks=[],
+            selected_audio_track_id="",
+            title="Last To Leave Grocery Store, Wins $250,000",
+            thumbnail="",
+            description="",
+            duration_seconds=0,
+            headers={},
+            subtitles=[],
+            qualities=[],
+            selected_quality_id="",
+            extractor="youtube",
+            detail_fields=[],
+        )
+        vod = VodItem(vod_id="yt:video:zRtGL0-5rg4", vod_name="最后离开杂货店的人，赢得 25 万美元")
+        item = PlayItem(
+            title="最后离开杂货店的人，赢得 25 万美元",
+            url="",
+            original_url="yt:video:zRtGL0-5rg4",
+            vod_id="yt:video:zRtGL0-5rg4",
+        )
+
+        service.apply_result(result, vod=vod, item=item, source_url="yt:video:zRtGL0-5rg4")
+
+        assert vod.vod_name == "最后离开杂货店的人，赢得 25 万美元"
+        assert item.title == "最后离开杂货店的人，赢得 25 万美元"
+        assert item.media_title == "最后离开杂货店的人，赢得 25 万美元"
+
     def test_resolve_builds_ytdlp_detail_fields(self, monkeypatch, service):
         info = _sample_info()
         _stub_extract_info(monkeypatch, service, info)
@@ -1622,6 +1832,19 @@ class TestBuildSubtitleOptions:
         info: dict = {}
         result = _build_subtitle_options(info)
         assert len(result) == 0
+
+    def test_prefers_configured_zh_cn_when_youtube_returns_zh_hans(self):
+        from atv_player.yt_dlp_service import _build_subtitle_options
+        info = {
+            "subtitles": {
+                "en": [{"url": "https://sub/en.srt", "ext": "srt"}],
+                "zh-Hans": [{"url": "https://sub/zh.srt", "ext": "srt"}],
+            },
+        }
+
+        result = _build_subtitle_options(info, preferred_lang="zh-CN")
+
+        assert [subtitle.lang for subtitle in result] == ["zh-Hans", "en"]
 
     def test_prefers_supported_direct_subtitle_format_per_language(self):
         from atv_player.yt_dlp_service import _build_subtitle_options

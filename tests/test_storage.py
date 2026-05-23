@@ -302,6 +302,31 @@ def test_settings_repository_round_trip_persists_preferred_parse_key(tmp_path: P
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_youtube_preferences(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        youtube_cookie_browser="edge",
+        youtube_max_height=1440,
+        youtube_default_subtitle_lang="zh-CN",
+        youtube_default_audio_lang="zh",
+        youtube_metadata_language="zh-HK",
+        youtube_region="CN",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.youtube_cookie_browser == "edge"
+    assert saved.youtube_max_height == 1440
+    assert saved.youtube_default_subtitle_lang == "zh-CN"
+    assert saved.youtube_default_audio_lang == "zh"
+    assert saved.youtube_metadata_language == "zh-HK"
+    assert saved.youtube_region == "CN"
+    assert saved == config
+
+
 def test_settings_repository_round_trip_persists_global_search_history(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)
