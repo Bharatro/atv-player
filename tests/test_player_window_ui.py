@@ -5830,6 +5830,84 @@ def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) 
     assert rendered.size().height() <= window.poster_label.maximumHeight()
 
 
+def test_player_window_clicking_detail_poster_opens_large_preview(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "poster.png"
+    pixmap = QPixmap(240, 360)
+    pixmap.fill(QColor("blue"))
+    assert pixmap.save(str(poster_path)) is True
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", vod_pic=str(poster_path)),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.mouseClick(window.poster_label, Qt.MouseButton.LeftButton)
+
+    assert window._poster_preview_dialog is not None
+    assert window._poster_preview_dialog.windowTitle() == "封面预览"
+    assert window._poster_preview_dialog.isVisible() is True
+    margins = window._poster_preview_dialog.content_layout().contentsMargins()
+    assert margins.left() <= 4
+    assert margins.top() <= 4
+    assert margins.right() <= 4
+    assert margins.bottom() <= 4
+    assert window._poster_preview_label is not None
+    preview = window._poster_preview_label.pixmap()
+    assert preview is not None
+    assert preview.isNull() is False
+    assert preview.size().width() >= window.poster_label.pixmap().size().width() * 4
+    assert preview.size().height() >= window.poster_label.pixmap().size().height() * 4
+
+
+def test_player_window_large_preview_can_switch_between_poster_candidates(qtbot, tmp_path) -> None:
+    main_poster = tmp_path / "main.png"
+    alt_poster = tmp_path / "alt.png"
+    main_pixmap = QPixmap(240, 360)
+    main_pixmap.fill(QColor("blue"))
+    alt_pixmap = QPixmap(240, 360)
+    alt_pixmap.fill(QColor("green"))
+    assert main_pixmap.save(str(main_poster)) is True
+    assert alt_pixmap.save(str(alt_poster)) is True
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="Movie",
+            vod_pic=str(main_poster),
+            poster_candidates=[str(main_poster), str(alt_poster)],
+        ),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.mouseClick(window.poster_label, Qt.MouseButton.LeftButton)
+    assert window._poster_preview_next_button is not None
+    first_preview = window._poster_preview_label.pixmap()
+    assert first_preview is not None
+
+    qtbot.mouseClick(window._poster_preview_next_button, Qt.MouseButton.LeftButton)
+
+    assert session.current_metadata_poster_index == 1
+    assert window._preferred_detail_poster_source() == str(alt_poster)
+    switched_preview = window._poster_preview_label.pixmap()
+    assert switched_preview is not None
+    assert switched_preview.cacheKey() != first_preview.cacheKey()
+    assert window.poster_label.pixmap().cacheKey() != first_preview.cacheKey()
+
+
 def test_player_window_prefers_session_poster_before_default_video_cover(qtbot, tmp_path) -> None:
     session_poster = tmp_path / "session.png"
     pixmap = QPixmap(24, 36)

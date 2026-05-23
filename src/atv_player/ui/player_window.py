@@ -370,6 +370,74 @@ class ClickableSlider(QSlider):
             QToolTip.hideText()
 
 
+class ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class PosterPreviewDialog(ThemedDialogBase):
+    def __init__(self, pixmap: QPixmap, *, parent: QWidget | None = None) -> None:
+        super().__init__(title="封面预览", parent=parent, allow_maximize=True, resizable=True)
+        self._source_pixmap = pixmap
+        self.content_layout().setContentsMargins(4, 4, 4, 4)
+        self.content_layout().setSpacing(0)
+        self.previous_button = QToolButton(self)
+        self.previous_button.setToolTip("上一张海报")
+        self.previous_button.setArrowType(Qt.ArrowType.LeftArrow)
+        self.previous_button.setAutoRaise(True)
+        self.previous_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.previous_button.setFixedSize(32, 32)
+        self.next_button = QToolButton(self)
+        self.next_button.setToolTip("下一张海报")
+        self.next_button.setArrowType(Qt.ArrowType.RightArrow)
+        self.next_button.setAutoRaise(True)
+        self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_button.setFixedSize(32, 32)
+        self.preview_label = QLabel(self)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setMinimumSize(900, 1040)
+        self.preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        preview_row = QWidget(self)
+        preview_layout = QHBoxLayout(preview_row)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(4)
+        preview_layout.addWidget(self.previous_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        preview_layout.addWidget(self.preview_label, 1)
+        preview_layout.addWidget(self.next_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.content_layout().addWidget(preview_row, 1)
+        self.resize(980, 1120)
+        self._render_preview()
+
+    def set_source_pixmap(self, pixmap: QPixmap) -> None:
+        self._source_pixmap = pixmap
+        self._render_preview()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_preview()
+
+    def _render_preview(self) -> None:
+        if self._source_pixmap.isNull():
+            self.preview_label.setPixmap(QPixmap())
+            return
+        target_size = self.preview_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            target_size = QSize(600, 700)
+        self.preview_label.setPixmap(
+            self._source_pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+
 class _PosterLoadSignals(QObject):
     loaded = Signal(int, object)
 
@@ -611,6 +679,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._pending_episode_title_session = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
+        self._poster_preview_dialog: QDialog | None = None
+        self._poster_preview_label: QLabel | None = None
+        self._poster_preview_previous_button: QToolButton | None = None
+        self._poster_preview_next_button: QToolButton | None = None
         self._danmaku_source_dialog: QDialog | None = None
         self._danmaku_settings_dialog: QDialog | None = None
         self._metadata_scrape_dialog: QDialog | None = None
@@ -892,11 +964,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.volume_value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.volume_value_label.setMinimumWidth(40)
         self._update_volume_value_label(initial_volume)
-        self.poster_label = QLabel()
+        self.poster_label = ClickableLabel()
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
         self.poster_label.setMaximumSize(self._POSTER_SIZE)
         self.poster_label.setText("")
+        self.poster_label.setToolTip("点击查看大图")
+        self.poster_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.poster_label.clicked.connect(self._open_detail_poster_preview)
         self._poster_previous_button = QToolButton()
         self._poster_previous_button.setToolTip("上一张海报")
         self._poster_previous_button.setArrowType(Qt.ArrowType.LeftArrow)
@@ -3172,6 +3247,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if video_source == self._preferred_detail_poster_source():
             self._show_video_poster_overlay(pixmap)
             self._attach_audio_cover_if_available()
+        self._refresh_poster_preview()
 
     def _handle_video_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
         if request_id != self._video_poster_request_id:
@@ -3240,10 +3316,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if len(sources) <= 1:
             self.session.current_metadata_poster_index = 0
             self._refresh_poster_navigation()
+            self._refresh_poster_preview_navigation()
             return
         self.session.current_metadata_poster_index = (self.session.current_metadata_poster_index + offset) % len(sources)
         self._refresh_poster_navigation()
         self._render_detail_poster()
+        self._refresh_poster_preview()
 
     def _preferred_video_poster_source(self) -> str:
         if self.session is None:
@@ -3311,6 +3389,68 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.video.attach_audio_cover(poster_image_path)
         except Exception as exc:
             self._append_log(f"封面挂载失败: {exc}")
+
+    def _poster_preview_pixmap(self, source: str) -> QPixmap:
+        source_path = self._local_poster_source_path(source)
+        if source_path is None:
+            normalized = normalize_poster_url(source)
+            if normalized.startswith(("http://", "https://")):
+                cached_path = poster_cache_path(normalized)
+                if cached_path.is_file():
+                    source_path = cached_path
+        if source_path is not None:
+            pixmap = QPixmap(str(source_path))
+            if not pixmap.isNull():
+                return pixmap
+        current_pixmap = self.poster_label.pixmap()
+        if current_pixmap is not None and not current_pixmap.isNull():
+            return current_pixmap
+        return QPixmap()
+
+    def _open_detail_poster_preview(self) -> None:
+        source = self._preferred_detail_poster_source()
+        if not source:
+            return
+        pixmap = self._poster_preview_pixmap(source)
+        if pixmap.isNull():
+            return
+        dialog = PosterPreviewDialog(pixmap, parent=self)
+        dialog.setModal(True)
+        self._poster_preview_dialog = dialog
+        self._poster_preview_label = dialog.preview_label
+        self._poster_preview_previous_button = dialog.previous_button
+        self._poster_preview_next_button = dialog.next_button
+        dialog.previous_button.clicked.connect(lambda: self._step_metadata_poster(-1))
+        dialog.next_button.clicked.connect(lambda: self._step_metadata_poster(1))
+        self._refresh_poster_preview_navigation()
+        dialog.finished.connect(lambda _result, preview_dialog=dialog: self._clear_poster_preview(preview_dialog))
+        dialog.show()
+
+    def _clear_poster_preview(self, dialog: QDialog) -> None:
+        if self._poster_preview_dialog is not dialog:
+            return
+        self._poster_preview_dialog = None
+        self._poster_preview_label = None
+        self._poster_preview_previous_button = None
+        self._poster_preview_next_button = None
+
+    def _refresh_poster_preview_navigation(self) -> None:
+        visible = len(self._current_metadata_poster_sources()) > 1
+        if self._poster_preview_previous_button is not None:
+            self._poster_preview_previous_button.setHidden(not visible)
+        if self._poster_preview_next_button is not None:
+            self._poster_preview_next_button.setHidden(not visible)
+
+    def _refresh_poster_preview(self) -> None:
+        dialog = self._poster_preview_dialog
+        if not isinstance(dialog, PosterPreviewDialog):
+            return
+        self._refresh_poster_preview_navigation()
+        pixmap = self._poster_preview_pixmap(self._preferred_detail_poster_source())
+        if pixmap.isNull():
+            dialog.preview_label.setPixmap(QPixmap())
+            return
+        dialog.set_source_pixmap(pixmap)
 
     def _render_detail_poster(self) -> None:
         self._poster_request_id += 1
