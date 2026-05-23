@@ -5872,6 +5872,57 @@ def test_player_window_prefers_current_item_cover_when_session_override_is_stale
     assert video_started == ["https://img.example/song-1.jpg"]
 
 
+def test_player_window_refreshes_youtube_channel_cover_when_switching_items(qtbot, monkeypatch) -> None:
+    detail_started: list[str] = []
+    video_started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int, *, target: str, on_loaded=None) -> None:
+        if target == "detail":
+            detail_started.append(source)
+        if target == "video":
+            video_started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    window = PlayerWindow(FakePlayerController(), default_video_cover_loader=lambda: "")
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="yt:channel:UCdemo",
+            vod_name="频道",
+            detail_style="youtube",
+            vod_pic="https://img.example/video-1.jpg",
+        ),
+        playlist=[
+            PlayItem(
+                title="视频 1",
+                url="http://m/1.m3u8",
+                vod_id="yt:video:one",
+                video_cover_override="https://img.example/video-1.jpg",
+            ),
+            PlayItem(
+                title="视频 2",
+                url="http://m/2.m3u8",
+                vod_id="yt:video:two",
+                video_cover_override="https://img.example/video-2.jpg",
+            ),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+    assert detail_started == ["https://img.example/video-1.jpg"]
+    assert video_started == ["https://img.example/video-1.jpg"]
+
+    window.play_next()
+
+    assert detail_started[-1] == "https://img.example/video-2.jpg"
+    assert video_started[-1] == "https://img.example/video-2.jpg"
+
+
 def test_player_window_passes_local_audio_cover_for_audio_only_media(qtbot, tmp_path) -> None:
     poster_path = tmp_path / "cover.png"
     pixmap = QPixmap(20, 30)

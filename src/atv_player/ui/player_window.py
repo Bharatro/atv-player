@@ -2859,6 +2859,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         previous_index = self.current_index
+        previous_detail_poster_source = self._preferred_detail_poster_source()
+        previous_video_poster_source = self._preferred_video_poster_source()
         if previous_index != index:
             reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
             if callable(reset_prefetch):
@@ -2871,6 +2873,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._render_metadata()
             self._render_detail_fields()
             self._render_detail_actions()
+            if (
+                previous_detail_poster_source != self._preferred_detail_poster_source()
+                or previous_video_poster_source != self._preferred_video_poster_source()
+            ):
+                self._reset_metadata_poster_index()
+                self._render_poster()
             self._load_current_item(
                 start_position_seconds=start_position_seconds,
                 pause=pause,
@@ -3024,6 +3032,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         vod = self._current_metadata_vod()
         if vod is None:
             return []
+        if getattr(vod, "detail_style", "") == "youtube":
+            current_item = self._current_play_item()
+            item_cover = str(getattr(current_item, "video_cover_override", "") or "").strip()
+            if item_cover:
+                return [item_cover]
         candidates = [str(source or "").strip() for source in vod.poster_candidates if str(source or "").strip()]
         if candidates:
             return candidates

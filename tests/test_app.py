@@ -7730,6 +7730,22 @@ def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_pat
     assert hydrate is None
 
 
+def test_app_coordinator_metadata_factories_do_not_support_youtube_source(tmp_path) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(metadata_enhancement_enabled=True)
+
+    coordinator = AppCoordinator(FakeRepo())
+    hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
+    scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
+
+    hydrate = hydrator_factory(source_kind="youtube", vod=VodItem(vod_id="yt:video:abc123", vod_name="YouTube"))
+    scrape_service = scrape_factory(source_kind="youtube", vod=VodItem(vod_id="yt:video:abc123", vod_name="YouTube"))
+
+    assert hydrate is None
+    assert scrape_service is None
+
+
 def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch, tmp_path) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

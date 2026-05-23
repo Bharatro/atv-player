@@ -269,6 +269,7 @@ def _build_detail_fields(info: dict) -> list[PlaybackDetailField]:
     _append_detail_field(fields, "播放", _format_detail_stat_value(info.get("view_count")))
     _append_detail_field(fields, "点赞", _format_detail_stat_value(info.get("like_count")))
     _append_detail_field(fields, "评论", _format_detail_stat_value(info.get("comment_count")))
+    _append_detail_field(fields, "简介", info.get("description"))
     return fields
 
 

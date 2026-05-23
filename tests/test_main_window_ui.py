@@ -7437,3 +7437,31 @@ def test_main_window_does_not_backfill_plugin_metadata_hydrator_but_keeps_scrape
 
     assert prepared.metadata_hydrator is None
     assert prepared.metadata_scrape_service is scrape_service
+
+
+def test_main_window_does_not_backfill_youtube_metadata_enhancement(qtbot) -> None:
+    hydrator = object()
+    scrape_service = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **_: hydrator,
+        metadata_scrape_service_factory=lambda **_: scrape_service,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="yt:video:abc123", vod_name="YouTube Video"),
+        playlist=[PlayItem(title="正片", url="")],
+        clicked_index=0,
+        source_kind="youtube",
+        source_mode="detail",
+        source_vod_id="yt:video:abc123",
+    )
+
+    prepared = window._prepare_request_for_open(request)
+
+    assert prepared.metadata_hydrator is None
+    assert prepared.metadata_scrape_service is None

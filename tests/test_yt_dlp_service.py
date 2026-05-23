@@ -1739,6 +1739,7 @@ class TestResolveToPlayItem:
             ("播放", "123.5万"),
             ("点赞", "5.4万"),
             ("评论", "987"),
+            ("简介", "A test video description"),
         ]
 
 
