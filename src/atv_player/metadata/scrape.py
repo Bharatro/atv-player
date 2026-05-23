@@ -39,6 +39,8 @@ _EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
 _MOVIE_MARKERS = ("电影", "影片", "movie")
+_BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
+_BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
 
 
 def normalize_metadata_scrape_title(value: object) -> str:
@@ -171,6 +173,15 @@ def _match_type_subtitle(match: MetadataMatch) -> str:
 def _source_rank(candidate: object, source_priority: list[str]) -> int:
     provider = str(getattr(candidate, "provider", "") or "").strip()
     return source_priority.index(provider) if provider in source_priority else len(source_priority) + 100
+
+
+def _bilibili_season_provider_id(vod_id: object) -> str:
+    text = str(vod_id or "").strip()
+    for pattern in (_BILIBILI_SS_ID_RE, _BILIBILI_SEASON_ID_RE):
+        match = pattern.match(text)
+        if match is not None:
+            return f"https://www.bilibili.com/bangumi/play/ss{match.group(1)}"
+    return ""
 
 
 class MetadataScrapeService:
@@ -467,6 +478,10 @@ class MetadataScrapeService:
             self._cache.delete_search(provider.name, cache_title, cache_year)
         if bound_provider and bound_provider_id:
             self._cache.delete_detail(bound_provider, bound_provider_id)
+        if query.source_kind == "bilibili":
+            provider_id = _bilibili_season_provider_id(query.vod_id)
+            if provider_id:
+                self._cache.delete_detail("bilibili", provider_id)
         for provider_name, provider_id in detail_keys or []:
             if provider_name and provider_id:
                 self._cache.delete_detail(provider_name, provider_id)

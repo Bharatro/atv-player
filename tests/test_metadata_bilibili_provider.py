@@ -229,6 +229,106 @@ def test_bilibili_metadata_provider_get_detail_fetches_season_detail_and_normali
     ]
 
 
+def test_bilibili_metadata_provider_filters_verbose_staff_to_creative_credits() -> None:
+    provider = BilibiliMetadataProvider(get=lambda url, **kwargs: JsonResponse({"code": 0, "data": {}}))
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        raw={
+            "title": "牧神记",
+            "staff": (
+                "原作：宅猪 / 出品人：李旎 沈乐平 / 总制片人：张圣晏 / 总监制：朱贝宁 / "
+                "监制：魏本娜 龚磊 曹继炜 / 制片人：陈卿 姚琼 / 制片：陈晓璐 / "
+                "版权支持：刘綦 易小丽 / IP管理与合作总负责：茶仙 / 内容宣发总策划：王蓉 乔理文 / "
+                "市场中心总策划：杨亮 / 执行制片人：王媛 薛小明 魏江涛 / 品牌运营：尹蓉 / "
+                "联合导演：姚青 / 总编剧、总导演：沈乐平"
+            ),
+            "cv": "少年秦牧：张若瑜/姚铭舜 / 灵毓秀：李欣",
+            "season_type_name": "国创",
+            "index_show": "连载中, 每周日 11:00更新",
+        },
+    )
+
+    record = provider.get_detail(match)
+
+    assert {"label": "制作信息", "value": "原作：宅猪 / 联合导演：姚青 / 总编剧、总导演：沈乐平"} in record.detail_fields
+    assert all("出品人" not in field["value"] for field in record.detail_fields)
+    assert all("制片" not in field["value"] for field in record.detail_fields)
+    assert {"label": "声优", "value": "少年秦牧：张若瑜/姚铭舜 / 灵毓秀：李欣"} in record.detail_fields
+
+
+def test_bilibili_metadata_provider_maps_rich_season_metadata_without_rating() -> None:
+    def fake_get(url: str, **kwargs):
+        if "pgc/view/web/season" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "season_id": 45969,
+                        "media_id": 21082961,
+                        "title": "牧神记",
+                        "evaluate": "主角秦牧逐渐成长，为芸芸众生而战。",
+                        "cover": "https://i0.hdslb.com/bfs/bangumi/image/cover.png",
+                        "areas": [{"name": "中国大陆"}],
+                        "styles": ["小说改", "玄幻", "热血", "战斗"],
+                        "new_ep": {"desc": "连载中, 每周日 11:00更新"},
+                        "publish": {"pub_time": "2024-10-27 11:00:00", "pub_time_show": "2024年10月27日11:00"},
+                        "rating": {"count": 19560, "score": 9.6},
+                        "stat": {
+                            "views": 1795347758,
+                            "favorites": 6534663,
+                            "follow_text": "653.5万追番",
+                            "likes": 11747404,
+                            "coins": 6451277,
+                            "favorite": 1449838,
+                            "reply": 333402,
+                            "danmakus": 3480419,
+                            "share": 145093,
+                        },
+                        "actors": "少年秦牧：张若瑜/姚铭舜\n灵毓秀：李欣",
+                        "staff": "原作：宅猪\n联合导演：姚青\n总编剧、总导演：沈乐平",
+                    },
+                }
+            )
+        if "pgc/web/season/section" in url:
+            return JsonResponse({"code": 0, "result": {"main_section": {"episodes": []}}})
+        raise AssertionError(url)
+
+    provider = BilibiliMetadataProvider(get=fake_get)
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        raw={"season_id": 45969},
+    )
+
+    record = provider.get_detail(match)
+
+    assert record.title == "牧神记"
+    assert record.year == "2024"
+    assert record.rating == ""
+    assert record.poster == "https://i0.hdslb.com/bfs/bangumi/image/cover.png"
+    assert record.overview == "主角秦牧逐渐成长，为芸芸众生而战。"
+    assert record.country == "中国大陆"
+    assert record.genres == ["小说改", "玄幻", "热血", "战斗"]
+    assert record.detail_fields == [
+        {"label": "更新状态", "value": "连载中, 每周日 11:00更新"},
+        {"label": "开播", "value": "2024年10月27日11:00"},
+        {"label": "播放", "value": "18.0亿"},
+        {"label": "追番", "value": "653.5万追番"},
+        {"label": "点赞", "value": "1174.7万"},
+        {"label": "投币", "value": "645.1万"},
+        {"label": "收藏", "value": "145.0万"},
+        {"label": "回复", "value": "33.3万"},
+        {"label": "弹幕", "value": "348.0万"},
+        {"label": "分享", "value": "14.5万"},
+        {"label": "声优", "value": "少年秦牧：张若瑜/姚铭舜 / 灵毓秀：李欣"},
+        {"label": "制作信息", "value": "原作：宅猪 / 联合导演：姚青 / 总编剧、总导演：沈乐平"},
+    ]
+    assert all(field["label"] != "Season ID" for field in record.detail_fields)
+
+
 def test_bilibili_metadata_provider_get_detail_tolerates_integer_type_field_in_season_detail() -> None:
     def fake_get(url: str, **kwargs):
         if "pgc/view/web/season" in url:

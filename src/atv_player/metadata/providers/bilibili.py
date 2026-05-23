@@ -105,6 +105,101 @@ def _collapse_text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).strip()
 
 
+def _format_bilibili_count(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value or "").strip()
+    if numeric >= 100000000:
+        return f"{numeric / 100000000:.1f}亿"
+    if numeric >= 10000:
+        return f"{numeric / 10000:.1f}万"
+    if numeric.is_integer():
+        return str(int(numeric))
+    return str(value).strip()
+
+
+def _publish_year(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in ("pub_time", "pub_time_show"):
+        match = re.search(r"((?:19|20)\d{2})", str(value.get(key) or ""))
+        if match is not None:
+            return match.group(1)
+    return ""
+
+
+def _publish_time_text(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("pub_time_show") or value.get("pub_time") or "").strip()
+
+
+def _bilibili_stat_fields(payload: dict[str, object]) -> list[tuple[str, str]]:
+    stat = payload.get("stat")
+    if not isinstance(stat, dict):
+        return []
+    fields: list[tuple[str, str]] = []
+
+    def add_count(label: str, key: str) -> None:
+        value = _format_bilibili_count(stat.get(key))
+        if value:
+            fields.append((label, value))
+
+    add_count("播放", "views")
+    follow_text = str(stat.get("follow_text") or "").strip()
+    if follow_text:
+        fields.append(("追番", follow_text))
+    else:
+        favorites = _format_bilibili_count(stat.get("favorites"))
+        if favorites:
+            fields.append(("追番", f"{favorites}追番"))
+    for label, key in (
+        ("点赞", "likes"),
+        ("投币", "coins"),
+        ("收藏", "favorite"),
+        ("回复", "reply"),
+        ("弹幕", "danmakus"),
+        ("分享", "share"),
+    ):
+        add_count(label, key)
+    return fields
+
+
+_STAFF_KEEP_MARKERS = ("原作", "导演", "编剧", "脚本", "系列构成", "音乐", "角色设计", "动画制作")
+_STAFF_DROP_MARKERS = (
+    "出品",
+    "制片",
+    "监制",
+    "版权",
+    "IP",
+    "管理",
+    "合作",
+    "宣发",
+    "市场",
+    "运营",
+    "支持",
+    "负责",
+)
+
+
+def _compact_bilibili_staff(value: object) -> str:
+    text = _collapse_text(str(value or "").replace("\n", " / "))
+    if not text:
+        return ""
+    parts = [part.strip() for part in re.split(r"\s*/\s*", text) if part.strip()]
+    kept: list[str] = []
+    for part in parts:
+        label = re.split(r"[:：]", part, maxsplit=1)[0].strip()
+        if any(marker in label for marker in _STAFF_DROP_MARKERS):
+            continue
+        if any(marker in label for marker in _STAFF_KEEP_MARKERS):
+            kept.append(part)
+    return " / ".join(kept)
+
+
 class BilibiliMetadataProvider:
     name = "bilibili"
     _SEARCH_URL = "https://api.bilibili.com/x/web-interface/wbi/search/type"
@@ -156,6 +251,7 @@ class BilibiliMetadataProvider:
         if season_id:
             detail = self._season_detail_payload(season_id)
             sections = self._season_section_payload(season_id)
+            payload["season_id"] = season_id
             payload.update(self._merge_season_payload(payload, detail))
             normalized_episodes = self._normalize_bilibili_episodes(detail, sections)
             if normalized_episodes:
@@ -166,8 +262,10 @@ class BilibiliMetadataProvider:
         for label, value in (
             ("分区", str(payload.get("season_type_name") or "").strip()),
             ("更新状态", str(payload.get("index_show") or "").strip()),
+            ("开播", _publish_time_text(payload.get("publish"))),
+            *_bilibili_stat_fields(payload),
             ("声优", _collapse_text(payload.get("cv"))),
-            ("制作信息", _collapse_text(payload.get("staff"))),
+            ("制作信息", _compact_bilibili_staff(payload.get("staff"))),
         ):
             if value:
                 detail_fields.append({"label": label, "value": value})
@@ -309,6 +407,15 @@ class BilibiliMetadataProvider:
         staff = _collapse_text(str(detail.get("staff") or "").replace("\n", " / "))
         if staff:
             merged["staff"] = staff
+        publish = detail.get("publish")
+        if isinstance(publish, dict):
+            merged["publish"] = publish
+            year = _publish_year(publish)
+            if year:
+                merged["year"] = year
+        stat = detail.get("stat")
+        if isinstance(stat, dict):
+            merged["stat"] = stat
         index_show = str((detail.get("new_ep") or {}).get("desc") or "").strip()
         if index_show:
             merged["index_show"] = index_show
@@ -328,7 +435,15 @@ class BilibiliMetadataProvider:
         styles = detail.get("styles")
         if not isinstance(styles, list):
             return []
-        return [str(item.get("name") or "").strip() for item in styles if isinstance(item, dict) and str(item.get("name") or "").strip()]
+        values: list[str] = []
+        for item in styles:
+            if isinstance(item, dict):
+                value = str(item.get("name") or "").strip()
+            else:
+                value = str(item or "").strip()
+            if value:
+                values.append(value)
+        return values
 
     def _detail_season_type_name(self, detail: dict[str, object]) -> str:
         raw_type = detail.get("type")

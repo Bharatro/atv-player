@@ -1037,6 +1037,38 @@ def test_metadata_scrape_service_reset_clears_search_cache_and_selected_detail_c
     assert cache.load_detail("local_douban", "357", ttl_seconds=7 * 24 * 3600) is None
 
 
+def test_metadata_scrape_service_reset_clears_bilibili_direct_season_detail_cache(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili = FakeProvider("bilibili")
+    cache.save_detail(
+        "bilibili",
+        "https://www.bilibili.com/bangumi/play/ss45969",
+        MetadataRecord(
+            provider="bilibili",
+            provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+            country="中国大陆",
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[bilibili])
+
+    service.reset(
+        MetadataQuery(
+            title="牧神记",
+            source_kind="bilibili",
+            vod_id="ss45969",
+        )
+    )
+
+    assert (
+        cache.load_detail(
+            "bilibili",
+            "https://www.bilibili.com/bangumi/play/ss45969",
+            ttl_seconds=7 * 24 * 3600,
+        )
+        is None
+    )
+
+
 def test_metadata_scrape_service_apply_raises_when_provider_returns_none(tmp_path: Path) -> None:
     import pytest
 

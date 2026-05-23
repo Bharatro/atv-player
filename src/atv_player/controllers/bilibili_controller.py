@@ -18,11 +18,16 @@ from atv_player.models import (
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
     VodItem,
 )
 
 _JAVA_MAP_HEADER_ENTRY_RE = re.compile(r"(?:^|,\s*)([A-Za-z0-9-]+)=(.*?)(?=,\s*[A-Za-z0-9-]+=|$)")
 _BILIBILI_DANMAKU_URL_RE = re.compile(r"^https?://comment\.bilibili\.com/\d+\.xml(?:\?.*)?$", re.IGNORECASE)
+_BILIBILI_BVID_RE = re.compile(r"^BV[0-9A-Za-z]+$")
+_BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
+_BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
 _BILIBILI_DETAIL_FIELD_SPECS = (
     ("coin", "投币"),
     ("like", "点赞"),
@@ -97,6 +102,41 @@ def _map_bilibili_detail_fields(payload: object) -> list[PlaybackDetailField]:
         if not value:
             continue
         fields.append(PlaybackDetailField(label=label, value=value))
+    return fields
+
+
+def _bilibili_link_field(label: str, display_value: str, action_value: str) -> PlaybackDetailField:
+    return PlaybackDetailField(
+        label=label,
+        value_parts=[
+            PlaybackDetailValuePart(
+                label=display_value,
+                action=PlaybackDetailFieldAction(type="link", value=action_value, target="bilibili"),
+            )
+        ],
+    )
+
+
+def _map_bilibili_web_id_fields(vod_id: object, ext_payload: object) -> list[PlaybackDetailField]:
+    fields: list[PlaybackDetailField] = []
+    normalized_vod_id = str(vod_id or "").strip()
+    if _BILIBILI_BVID_RE.match(normalized_vod_id):
+        fields.append(_bilibili_link_field("BVID", normalized_vod_id, normalized_vod_id))
+
+    season_id = ""
+    season_action_value = ""
+    ss_match = _BILIBILI_SS_ID_RE.match(normalized_vod_id)
+    if ss_match is not None:
+        season_id = ss_match.group(1)
+        season_action_value = normalized_vod_id
+    if isinstance(ext_payload, dict):
+        ids = str(ext_payload.get("ids") or "").strip()
+        season_match = _BILIBILI_SEASON_ID_RE.match(ids)
+        if season_match is not None and not season_id:
+            season_id = season_match.group(1)
+            season_action_value = f"season${season_id}"
+    if season_id:
+        fields.append(_bilibili_link_field("Season ID", season_id, season_action_value))
     return fields
 
 
@@ -217,7 +257,9 @@ class BilibiliController:
 
     def _map_bilibili_detail(self, payload: dict[str, object]) -> VodItem:
         detail = _map_vod_item(payload)
-        detail.detail_fields = _map_bilibili_detail_fields(payload.get("ext"))
+        ext_payload = payload.get("ext")
+        detail.detail_fields = _map_bilibili_web_id_fields(payload.get("vod_id"), ext_payload)
+        detail.detail_fields.extend(_map_bilibili_detail_fields(ext_payload))
         detail.detail_style = "bilibili"
         return detail
 

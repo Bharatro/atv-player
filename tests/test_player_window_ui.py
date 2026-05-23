@@ -7542,7 +7542,7 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
     )
 
 
-def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot) -> None:
+def test_player_window_omits_empty_bilibili_metadata_rows(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
             return None
@@ -7581,10 +7581,8 @@ def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot
 
     assert window.metadata_view.toPlainText() == (
         "名称: 和AI玩猜历史人物游戏，又被它给耍了\n"
-        "类型:  /\n"
         "评分: 339万播放 04:20\n"
         "导演: 混饭达人\n"
-        "演员:\n"
         "\n"
         "简介:\n"
         "发布于2026-05-02 17:26:35"
@@ -8165,6 +8163,117 @@ def test_player_window_renders_link_action_id_as_external_url(qtbot, target: str
     assert "font-weight:600" in html
     assert f"color:{accent}" in html
     assert "text-decoration: underline" not in html
+
+
+def test_player_window_renders_bilibili_link_actions_as_external_urls(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="BV14rd3BJEDV",
+            vod_name="B站视频",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="BVID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="BV14rd3BJEDV",
+                            action=PlaybackDetailFieldAction(type="link", value="BV14rd3BJEDV", target="bilibili"),
+                        )
+                    ],
+                ),
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="142986",
+                            action=PlaybackDetailFieldAction(type="link", value="season$142986", target="bilibili"),
+                        )
+                    ],
+                ),
+            ],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    assert "https://www.bilibili.com/video/BV14rd3BJEDV" in html
+    assert "https://www.bilibili.com/bangumi/play/ss142986" in html
+
+
+def test_player_window_renders_bilibili_ss_link_action_as_external_url(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="ss142986",
+            vod_name="B站番剧",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="142986",
+                            action=PlaybackDetailFieldAction(type="link", value="ss142986", target="bilibili"),
+                        )
+                    ],
+                )
+            ],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert "https://www.bilibili.com/bangumi/play/ss142986" in window.metadata_view.toHtml()
+
+
+def test_player_window_keeps_bilibili_identity_links_when_item_detail_fields_exist(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="ss142986",
+            vod_name="B站番剧",
+            detail_style="bilibili",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="142986",
+                            action=PlaybackDetailFieldAction(type="link", value="ss142986", target="bilibili"),
+                        )
+                    ],
+                )
+            ],
+        ),
+        playlist=[
+            PlayItem(
+                title="第1话",
+                url="http://m/1.m3u8",
+                detail_fields=[PlaybackDetailField(label="更新状态", value="连载中")],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    html = window.metadata_view.toHtml()
+    plain_text = window.metadata_view.toPlainText()
+    assert "https://www.bilibili.com/bangumi/play/ss142986" in html
+    assert "更新状态: 连载中" in plain_text
 
 
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:

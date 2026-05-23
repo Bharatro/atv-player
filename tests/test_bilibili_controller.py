@@ -1,5 +1,14 @@
 from atv_player.controllers.bilibili_controller import BilibiliController
-from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem, PlaybackDetailAction, PlaybackDetailField
+from atv_player.models import (
+    CategoryFilter,
+    CategoryFilterOption,
+    DoubanCategory,
+    PlayItem,
+    PlaybackDetailAction,
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
+)
 
 
 class TextResponse:
@@ -431,11 +440,86 @@ def test_build_request_maps_bilibili_stat_ext_into_vod_detail_fields() -> None:
     request = controller.build_request("BV14rd3BJEDV")
 
     assert request.vod.detail_fields == [
+        PlaybackDetailField(
+            label="BVID",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="BV14rd3BJEDV",
+                    action=PlaybackDetailFieldAction(type="link", value="BV14rd3BJEDV", target="bilibili"),
+                )
+            ],
+        ),
         PlaybackDetailField(label="投币", value="1.1万"),
         PlaybackDetailField(label="点赞", value="4.1万"),
         PlaybackDetailField(label="收藏", value="2.3万"),
         PlaybackDetailField(label="回复", value="962"),
         PlaybackDetailField(label="弹幕", value="774"),
+    ]
+
+
+def test_build_request_maps_bilibili_web_ids_into_clickable_detail_fields() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV14rd3BJEDV",
+                "vod_name": "你是我的哆啦A梦-AI",
+                "vod_play_url": "正片$BV14rd3BJEDV",
+                "ext": {"ids": "season$142986"},
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("BV14rd3BJEDV")
+
+    assert request.vod.detail_fields == [
+        PlaybackDetailField(
+            label="BVID",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="BV14rd3BJEDV",
+                    action=PlaybackDetailFieldAction(type="link", value="BV14rd3BJEDV", target="bilibili"),
+                )
+            ],
+        ),
+        PlaybackDetailField(
+            label="Season ID",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="142986",
+                    action=PlaybackDetailFieldAction(type="link", value="season$142986", target="bilibili"),
+                )
+            ],
+        ),
+    ]
+
+
+def test_build_request_maps_ss_vod_id_into_clickable_bilibili_season_field() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "ss142986",
+                "vod_name": "番剧详情",
+                "vod_play_url": "正片$ss142986",
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("ss142986")
+
+    assert request.vod.detail_fields == [
+        PlaybackDetailField(
+            label="Season ID",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="142986",
+                    action=PlaybackDetailFieldAction(type="link", value="ss142986", target="bilibili"),
+                )
+            ],
+        )
     ]
 
 

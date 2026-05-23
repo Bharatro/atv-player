@@ -17,19 +17,21 @@ class FakeProvider:
         record: MetadataRecord | None = None,
         search_error: Exception | None = None,
         detail_error: Exception | None = None,
+        can_enrich_result: bool = True,
     ) -> None:
         self.name = name
         self.matches = matches or []
         self.record = record
         self.search_error = search_error
         self.detail_error = detail_error
+        self.can_enrich_result = can_enrich_result
         self.search_calls = 0
         self.search_queries: list[object] = []
         self.get_detail_calls: list[MetadataMatch] = []
         self.cache_key = None
 
     def can_enrich(self, _context: MetadataContext) -> bool:
-        return True
+        return self.can_enrich_result
 
     def search(self, candidate) -> list[MetadataMatch]:
         self.search_calls += 1
@@ -90,6 +92,127 @@ def test_metadata_hydrator_uses_cached_detail_without_recrawling(tmp_path: Path)
 
     assert updated.vod_content == "缓存简介"
     assert douban_provider.get_detail_calls == []
+
+
+def test_metadata_hydrator_directly_uses_bilibili_season_id_for_bilibili_source(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili_provider = FakeProvider(
+        "bilibili",
+        record=MetadataRecord(
+            provider="bilibili",
+            provider_id="https://www.bilibili.com/bangumi/play/ss142986",
+            title="B站番剧标题",
+            poster="https://i0.hdslb.com/bfs/bangumi/image/season.png",
+            overview="B站专用接口简介",
+            genres=["国创"],
+            detail_fields=[{"label": "更新状态", "value": "更新至第12话"}],
+        ),
+        can_enrich_result=False,
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[bilibili_provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="ss142986", vod_name="占位标题"),
+            source_kind="bilibili",
+        )
+    )
+
+    assert updated.vod_name == "B站番剧标题"
+    assert updated.vod_pic == "https://i0.hdslb.com/bfs/bangumi/image/season.png"
+    assert updated.vod_content == "B站专用接口简介"
+    assert updated.type_name == "国创"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("更新状态", "更新至第12话")]
+    assert bilibili_provider.search_calls == 0
+    assert bilibili_provider.get_detail_calls == [
+        MetadataMatch(
+            provider="bilibili",
+            provider_id="https://www.bilibili.com/bangumi/play/ss142986",
+            title="占位标题",
+            raw={
+                "provider_id": "https://www.bilibili.com/bangumi/play/ss142986",
+                "season_id": "142986",
+            },
+        )
+    ]
+
+
+def test_metadata_hydrator_supplements_bilibili_season_detail_with_other_providers(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    bilibili_provider = FakeProvider(
+        "bilibili",
+        matches=[MetadataMatch(provider="bilibili", provider_id="search-should-not-run", title="B站番剧标题")],
+        record=MetadataRecord(
+            provider="bilibili",
+            provider_id="https://www.bilibili.com/bangumi/play/ss142986",
+            title="B站番剧标题",
+            poster="https://i0.hdslb.com/bfs/bangumi/image/bilibili.png",
+            overview="B站专用接口简介",
+            genres=["国创"],
+            detail_fields=[{"label": "更新状态", "value": "更新至第12话"}],
+        ),
+    )
+    bangumi_provider = FakeProvider(
+        "bangumi",
+        matches=[MetadataMatch(provider="bangumi", provider_id="bgm-1", title="B站番剧标题", score=1.0)],
+        record=MetadataRecord(
+            provider="bangumi",
+            provider_id="bgm-1",
+            title="B站番剧标题",
+            rating="8.4",
+            detail_fields=[{"label": "Bangumi ID", "value": "12345"}],
+        ),
+    )
+    tmdb_provider = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:999", title="B站番剧标题", score=1.0)],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:999",
+            title="B站番剧标题",
+            poster="https://image.tmdb.org/t/p/original/poster.jpg",
+            tmdb_id="999",
+        ),
+    )
+    douban_provider = FakeProvider(
+        "douban",
+        matches=[MetadataMatch(provider="douban", provider_id="35746415", title="B站番剧标题", score=1.0)],
+        record=MetadataRecord(
+            provider="douban",
+            provider_id="35746415",
+            title="B站番剧标题",
+            douban_id=35746415,
+        ),
+    )
+    hydrator = MetadataHydrator(
+        cache=cache,
+        providers=[bangumi_provider, bilibili_provider, tmdb_provider, douban_provider],
+    )
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="ss142986", vod_name="占位标题"),
+            source_kind="bilibili",
+        )
+    )
+
+    assert updated.vod_name == "B站番剧标题"
+    assert updated.vod_content == "B站专用接口简介"
+    assert updated.vod_pic == "https://image.tmdb.org/t/p/original/poster.jpg"
+    assert updated.vod_remarks == "8.4"
+    assert updated.dbid == 35746415
+    assert [(field.label, field.value) for field in updated.detail_fields] == [
+        ("更新状态", "更新至第12话"),
+        ("Bangumi ID", "12345"),
+        ("TMDB ID", "999"),
+    ]
+    assert bilibili_provider.search_calls == 0
+    assert [call.provider_id for call in bilibili_provider.get_detail_calls] == [
+        "https://www.bilibili.com/bangumi/play/ss142986"
+    ]
+    assert bangumi_provider.search_calls == 1
+    assert tmdb_provider.search_calls == 1
+    assert douban_provider.search_calls == 1
 
 
 def test_metadata_hydrator_refetches_stale_iqiyi_empty_detail_cache(tmp_path: Path) -> None:

@@ -181,6 +181,10 @@ _METADATA_CHANGE_FIELDS: list[tuple[str, str, str]] = [
 ]
 
 _INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*?)\[/a\]", re.DOTALL)
+_BILIBILI_BVID_RE = re.compile(r"^BV[0-9A-Za-z]+$")
+_BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
+_BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
+_BILIBILI_IDENTITY_DETAIL_LABELS = {"bvid", "season id"}
 logger = logging.getLogger(__name__)
 
 
@@ -1786,8 +1790,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
+                if getattr(self.session.vod, "detail_style", "") == "bilibili":
+                    return self._merge_bilibili_identity_detail_fields(item_fields)
                 return list(item_fields)
         return list(self.session.vod.detail_fields)
+
+    def _merge_bilibili_identity_detail_fields(
+        self, item_fields: list[PlaybackDetailField]
+    ) -> list[PlaybackDetailField]:
+        if self.session is None:
+            return list(item_fields)
+        item_labels = {field.label.strip().lower() for field in item_fields}
+        identity_fields = [
+            field
+            for field in self.session.vod.detail_fields
+            if field.label.strip().lower() in _BILIBILI_IDENTITY_DETAIL_LABELS
+            and field.label.strip().lower() not in item_labels
+        ]
+        return [*identity_fields, *item_fields]
 
     def _reset_metadata_poster_index(self) -> None:
         if self.session is None:
@@ -1968,6 +1988,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         normalized_label = str(label or "").strip().lower()
         normalized_target = str(target or "").strip().lower()
+        if normalized_target == "bilibili":
+            if _BILIBILI_BVID_RE.match(text):
+                return f"https://www.bilibili.com/video/{text}"
+            ss_match = _BILIBILI_SS_ID_RE.match(text)
+            if ss_match is not None:
+                return f"https://www.bilibili.com/bangumi/play/ss{ss_match.group(1)}"
+            season_match = _BILIBILI_SEASON_ID_RE.match(text)
+            if season_match is not None:
+                return f"https://www.bilibili.com/bangumi/play/ss{season_match.group(1)}"
+            if normalized_label == "season id" and text.isdigit():
+                return f"https://www.bilibili.com/bangumi/play/ss{text}"
         if normalized_target == "douban" or normalized_label in {"豆瓣id", "dbid"}:
             return f"https://movie.douban.com/subject/{text}/"
         if normalized_target == "bangumi" or normalized_label == "bangumi id":
@@ -2866,6 +2897,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 for label, value in rows
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
+            rows = [(label, value) for label, value in rows if self._bilibili_metadata_row_has_value(value)]
         lines = [f"{label}: {value}".rstrip() for label, value in rows]
         lines.extend(self._detail_field_plain_text(field) for field in self._current_detail_fields())
         lines.append("")
@@ -2912,12 +2944,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 for label, value in rows
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
+            rows = [(label, value) for label, value in rows if self._bilibili_metadata_row_has_value(value)]
         parts = [self._metadata_row_html(vod, label, value) for label, value in rows]
         parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
         parts.append("")
         parts.append(html.escape("简介:"))
         parts.append(self._render_metadata_value_html(vod.vod_content))
         return "<br>".join(parts)
+
+    def _bilibili_metadata_row_has_value(self, value: object) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        return bool(text.strip(" /|、,，"))
 
     def _render_metadata(self) -> None:
         vod = self._current_metadata_vod()
@@ -7085,6 +7124,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             MetadataQuery(
                 title=reset_title,
                 year=reset_year,
+                source_kind=str(getattr(self.session, "source_kind", "") or ""),
+                vod_id=str(self.session.vod.vod_id or "").strip(),
                 type_name=str(self.session.vod.type_name or "").strip(),
                 category_name=self._metadata_scrape_selected_category_name(),
             ),

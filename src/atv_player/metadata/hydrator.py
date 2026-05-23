@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
@@ -30,6 +31,8 @@ _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声�
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
 _MOVIE_MARKERS = ("电影", "影片", "movie")
 _AUTHORITATIVE_ID_MATCH_SCORE = 2.0
+_BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
+_BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
 
 
 def _iter_category_values(value: object) -> list[str]:
@@ -169,6 +172,15 @@ def _is_authoritative_douban_id_match(query, match: MetadataMatch) -> bool:
     return str(match.provider_id or "").strip() == str(vod_dbid)
 
 
+def _bilibili_season_id_from_vod_id(vod_id: object) -> str:
+    text = str(vod_id or "").strip()
+    for pattern in (_BILIBILI_SS_ID_RE, _BILIBILI_SEASON_ID_RE):
+        match = pattern.match(text)
+        if match is not None:
+            return match.group(1)
+    return ""
+
+
 class MetadataHydrator:
     def __init__(
         self,
@@ -270,6 +282,25 @@ class MetadataHydrator:
         self._cache.save_detail(provider.name, str(match.provider_id), record)
         return record
 
+    def _load_bilibili_source_record(self, context: MetadataContext, query):
+        if context.source_kind != "bilibili":
+            return None
+        season_id = _bilibili_season_id_from_vod_id(query.vod_id)
+        if not season_id:
+            return None
+        provider = self._providers_by_name.get("bilibili")
+        if provider is None:
+            return None
+        provider_id = f"https://www.bilibili.com/bangumi/play/ss{season_id}"
+        match = MetadataMatch(
+            provider="bilibili",
+            provider_id=provider_id,
+            title=str(query.title or "").strip(),
+            year=str(query.year or "").strip(),
+            raw={"provider_id": provider_id, "season_id": season_id},
+        )
+        return self._load_detail_record(provider, match)
+
     def _prepare_search_query(self, context: MetadataContext, query):
         if context.source_kind not in _REMOTE_AUTO_SEARCH_IGNORE_DBID_SOURCE_KINDS:
             return query
@@ -315,7 +346,24 @@ class MetadataHydrator:
             if bound_record.title:
                 vod.vod_name = bound_record.title
             return vod
-        eligible_providers = [provider for provider in self._providers if provider.can_enrich(context)]
+        primary_applied = False
+        authoritative_primary_applied = False
+        primary_kind = ""
+        bilibili_source_record = self._load_bilibili_source_record(context, query)
+        if bilibili_source_record is not None:
+            merge_metadata_record(vod, bilibili_source_record, provider_priority=[item.name for item in self._providers])
+            if bilibili_source_record.title:
+                vod.vod_name = bilibili_source_record.title
+            primary_applied = True
+            primary_kind = _record_media_kind(bilibili_source_record) or _vod_media_kind(vod)
+            context = replace(context, vod=vod)
+            query = self._prepare_search_query(context, context.to_query())
+        eligible_providers = [
+            provider
+            for provider in self._providers
+            if not (bilibili_source_record is not None and provider.name == "bilibili")
+            and provider.can_enrich(context)
+        ]
         if not eligible_providers:
             return vod
         query = self._prime_local_douban_query(context, vod, query, eligible_providers)
@@ -369,9 +417,6 @@ class MetadataHydrator:
                 continue
             ranked_candidates.append((order, provider, best_match))
 
-        primary_applied = False
-        authoritative_primary_applied = False
-        primary_kind = ""
         for order, provider, match in sorted(
             ranked_candidates,
             key=lambda item: (-item[2].score, item[0]),
