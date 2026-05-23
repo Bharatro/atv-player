@@ -1788,11 +1788,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return []
         if self.session.show_original_metadata and self.session.original_vod is not None:
             return list(self.session.original_vod.detail_fields)
+        if self._is_bilibili_metadata_session():
+            item_fields = []
+            if 0 <= self.current_index < len(self.session.playlist):
+                item_fields = self.session.playlist[self.current_index].detail_fields
+            return self._merge_bilibili_collection_detail_fields(item_fields)
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
-                if self._is_bilibili_metadata_session():
-                    return self._merge_bilibili_identity_detail_fields(item_fields)
                 return list(item_fields)
         return list(self.session.vod.detail_fields)
 
@@ -1836,6 +1839,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if field.label.strip().lower() not in item_labels
         ]
         return [*identity_fields, *item_fields]
+
+    def _merge_bilibili_collection_detail_fields(
+        self, item_fields: list[PlaybackDetailField]
+    ) -> list[PlaybackDetailField]:
+        if self.session is None:
+            return list(item_fields)
+        fields: list[PlaybackDetailField] = []
+        seen_labels: set[str] = set()
+        for group in (self._bilibili_identity_detail_fields(), self.session.vod.detail_fields, item_fields):
+            for field in group:
+                label = field.label.strip().lower()
+                if not label or label in seen_labels:
+                    continue
+                fields.append(field)
+                seen_labels.add(label)
+        return fields
 
     def _reset_metadata_poster_index(self) -> None:
         if self.session is None:

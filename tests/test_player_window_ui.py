@@ -8411,6 +8411,52 @@ def test_player_window_keeps_bilibili_identity_links_when_item_detail_fields_exi
     assert "更新状态: 连载中" in plain_text
 
 
+def test_player_window_prefers_bilibili_collection_detail_fields_over_item_fields(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="ss45969",
+            vod_name="牧神记",
+            detail_style="bilibili",
+            detail_fields=[
+                PlaybackDetailField(
+                    label="Season ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="45969",
+                            action=PlaybackDetailFieldAction(type="link", value="ss45969", target="bilibili"),
+                        )
+                    ],
+                ),
+                PlaybackDetailField(label="更新状态", value="连载中, 每周日 11:00更新"),
+                PlaybackDetailField(label="声优", value="少年秦牧：张若瑜/姚铭舜"),
+            ],
+        ),
+        playlist=[
+            PlayItem(
+                title="第3话",
+                url="http://m/3.m3u8",
+                detail_fields=[
+                    PlaybackDetailField(label="TMDB ID", value="236534"),
+                    PlaybackDetailField(label="别名", value="Tales of Herding Gods"),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    plain_text = window.metadata_view.toPlainText()
+    assert "更新状态: 连载中, 每周日 11:00更新" in plain_text
+    assert "声优: 少年秦牧：张若瑜/姚铭舜" in plain_text
+    assert "TMDB ID: 236534" in plain_text
+
+
 def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(
