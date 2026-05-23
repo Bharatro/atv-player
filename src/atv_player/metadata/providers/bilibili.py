@@ -14,6 +14,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 
 _RISK_CONTROL_CODES = {-352, -412}
 _ANIME_CATEGORY_TOKENS = ("动漫", "动画", "番剧", "国创", "anime")
+_NON_ANIME_CATEGORY_TOKENS = ("电影", "影片", "movie", "电视剧", "剧集", "连续剧", "真人", "短剧")
 _BROWSER_HEADERS = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "referer": "https://www.bilibili.com/",
@@ -215,7 +216,12 @@ class BilibiliMetadataProvider:
             for value in (str(query.category_name or ""), str(query.type_name or ""))
             if value and value.strip()
         )
-        return any(token in values for token in _ANIME_CATEGORY_TOKENS)
+        if any(token in values for token in _ANIME_CATEGORY_TOKENS):
+            return True
+        source_kind = str(getattr(context, "source_kind", "") or getattr(query, "source_kind", "") or "").strip()
+        if source_kind == "plugin" and not any(token in values for token in _NON_ANIME_CATEGORY_TOKENS):
+            return True
+        return False
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         title = str(candidate.title or "").strip()

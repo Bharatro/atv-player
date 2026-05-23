@@ -1,5 +1,6 @@
-from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
+from atv_player.models import VodItem
 
 
 class JsonResponse:
@@ -149,6 +150,18 @@ def test_bilibili_metadata_provider_can_enrich_only_anime_context() -> None:
 
     assert provider.can_enrich(Ctx(anime)) is True
     assert provider.can_enrich(Ctx(movie)) is False
+
+
+def test_bilibili_metadata_provider_can_enrich_plugin_context_without_category() -> None:
+    provider = BilibiliMetadataProvider(get=lambda url, **kwargs: JsonResponse({"code": 0, "result": {}}))
+
+    context = MetadataContext(
+        vod=VodItem(vod_id="plugin:msj", vod_name="牧神记"),
+        source_kind="plugin",
+        source_key="百度",
+    )
+
+    assert provider.can_enrich(context) is True
 
 
 def test_bilibili_metadata_provider_get_detail_fetches_season_detail_and_normalizes_main_episodes() -> None:
