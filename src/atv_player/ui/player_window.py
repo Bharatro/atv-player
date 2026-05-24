@@ -2690,7 +2690,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _should_delay_ytdlp_metadata_hydration(self, item: PlayItem) -> bool:
         if not self._is_youtube_resolved_direct_item(item):
             return False
-        return not (item.playback_qualities and item.audio_tracks and item.external_subtitles)
+        return not item.playback_qualities
 
     def _schedule_ytdlp_metadata_hydration(self, *, expected_item: PlayItem, previous_index: int) -> None:
         self._pending_ytdlp_metadata_hydration = (expected_item, previous_index)

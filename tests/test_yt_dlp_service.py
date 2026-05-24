@@ -604,6 +604,92 @@ class TestResolve:
         assert result.video_format_id == "96-22"
         assert result.audio_format_id == ""
 
+    def test_configured_muxed_audio_language_does_not_exceed_max_height(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_default_audio_lang="hi"))
+        info = _sample_info(
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+                {
+                    "format_id": "301-en",
+                    "url": "https://stream.test/hls-1080-en.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 4717,
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "en",
+                    "format_note": "English original",
+                    "language_preference": 10,
+                },
+                {
+                    "format_id": "301-hi",
+                    "url": "https://stream.test/hls-4320-hi.m3u8",
+                    "height": 4320,
+                    "width": 7680,
+                    "tbr": 49000,
+                    "vcodec": "av01.0.17M.10",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "language": "hi",
+                    "format_note": "Hindi",
+                },
+            ],
+            requested_formats=[
+                {
+                    "format_id": "399",
+                    "url": "https://stream.test/video-1080.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 1760,
+                    "vcodec": "av01.0.08M.08",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 127,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve(
+            "https://www.youtube.com/watch?v=test123",
+            max_height=1080,
+            selected_audio_track_id="ytdlp_audio_hi_muxed",
+        )
+
+        assert result.video_format_id == "301-en"
+        assert result.url == "https://stream.test/hls-1080-en.m3u8"
+        assert result.selected_quality_id == "ytdlp_1080"
+
     def test_resolve_for_quality_preserves_selected_muxed_audio_language(self, monkeypatch, service):
         info = _sample_info(
             url="https://stream.test/master.m3u8",

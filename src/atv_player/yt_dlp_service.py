@@ -471,8 +471,9 @@ def _best_muxed_audio_variant(variants: list[dict], max_height: int | None) -> d
         return None
     if max_height and max_height > 0:
         bounded = [fmt for fmt in variants if int(fmt.get("height") or 0) <= max_height]
-        if bounded:
-            variants = bounded
+        if not bounded:
+            return None
+        variants = bounded
     return max(
         variants,
         key=lambda fmt: (

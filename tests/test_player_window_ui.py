@@ -4939,6 +4939,21 @@ def test_player_window_prepares_ytdlp_dash_data_uri_after_loader_resolves_separa
     assert ad_filter.prepare_calls == ["data:application/dash+xml;base64,PE1QRD48L01QRD4="]
 
 
+def test_player_window_does_not_rehydrate_ytdlp_item_just_because_it_has_no_subtitles(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    item = PlayItem(
+        title="YouTube",
+        url="https://manifest.googlevideo.com/api/manifest/hls_playlist/test.m3u8",
+        original_url="https://www.youtube.com/watch?v=test123",
+        playback_qualities=[VideoQualityOption(id="ytdlp_1080", label="1080P")],
+        audio_tracks=[YtdlpAudioTrackOption(id="ytdlp_audio_en_251", label="English", lang="en")],
+        external_subtitles=[],
+    )
+
+    assert window._should_delay_ytdlp_metadata_hydration(item) is False
+
+
 def test_player_window_switches_ytdlp_dash_quality_using_original_page_url(qtbot) -> None:
     class RecordingM3U8AdFilter:
         def __init__(self) -> None:
