@@ -20330,6 +20330,13 @@ def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbo
     assert window.fullscreen_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
 
+def test_player_window_playlist_title_tabs_use_pointing_hand_cursor(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.playlist_title_tabs.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
 def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

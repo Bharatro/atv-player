@@ -875,6 +875,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_title_tabs = QTabBar()
         self.playlist_title_tabs.addTab("剧集标题")
         self.playlist_title_tabs.addTab("原始文件名")
+        self.playlist_title_tabs.setCursor(Qt.CursorShape.PointingHandCursor)
         self.playlist_title_tabs.setHidden(True)
         self.playlist = QListWidget()
         self.playlist.setSpacing(1)
