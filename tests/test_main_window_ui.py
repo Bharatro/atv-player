@@ -1798,6 +1798,186 @@ def test_main_window_plugin_context_menu_includes_category_management(qtbot, mon
     assert captured_actions == ["重新加载", "编辑名称", "编辑配置", "分类管理", "禁用"]
 
 
+def _capture_context_menu_actions(monkeypatch) -> list[str]:
+    captured_actions: list[str] = []
+
+    class FakeMenu:
+        def __init__(self, parent=None) -> None:
+            del parent
+            self.actions: list[object] = []
+
+        def addAction(self, text: str):
+            captured_actions.append(text)
+            action = object()
+            self.actions.append(action)
+            return action
+
+        def exec(self, global_pos):
+            del global_pos
+            return None
+
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+    return captured_actions
+
+
+def test_main_window_video_context_menu_shows_all_actions_for_normal_source(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    captured_actions = _capture_context_menu_actions(monkeypatch)
+
+    window._open_video_item_context_menu(
+        window.telegram_page,
+        VodItem(vod_id="vod-1", vod_name="测试影片"),
+        window.mapToGlobal(window.rect().center()),
+    )
+
+    assert captured_actions == ["打开播放", "全局搜索", "加入收藏"]
+
+
+def test_main_window_video_context_menu_shows_only_global_search_for_douban(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    captured_actions = _capture_context_menu_actions(monkeypatch)
+
+    window._open_video_item_context_menu(
+        window.douban_page,
+        VodItem(vod_id="db-1", vod_name="豆瓣条目"),
+        window.mapToGlobal(window.rect().center()),
+    )
+
+    assert captured_actions == ["全局搜索"]
+
+
+def test_main_window_video_context_menu_hides_global_search_for_live(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    captured_actions = _capture_context_menu_actions(monkeypatch)
+
+    window._open_video_item_context_menu(
+        window.live_page,
+        VodItem(vod_id="live-1", vod_name="直播间"),
+        window.mapToGlobal(window.rect().center()),
+    )
+
+    assert captured_actions == ["打开播放", "加入收藏"]
+
+
+def test_main_window_video_context_menu_hides_global_search_in_external_results_mode(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    captured_actions = _capture_context_menu_actions(monkeypatch)
+    result_item = VodItem(vod_id="vod-1", vod_name="搜索结果")
+    window.telegram_page.show_external_results([result_item], total=1, page=1)
+
+    window._open_video_item_context_menu(
+        window.telegram_page,
+        result_item,
+        window.mapToGlobal(window.rect().center()),
+    )
+
+    assert captured_actions == ["打开播放", "加入收藏"]
+
+
+def test_main_window_video_context_menu_open_uses_page_click_handler(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    clicked_items: list[str] = []
+    monkeypatch.setattr(
+        window.telegram_page,
+        "_handle_card_clicked",
+        lambda item: clicked_items.append(item.vod_id),
+    )
+
+    window._handle_video_item_context_open(
+        window.telegram_page,
+        VodItem(vod_id="vod-1", vod_name="测试影片"),
+    )
+
+    assert clicked_items == ["vod-1"]
+
+
+def test_main_window_video_context_menu_global_search_uses_item_title(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    started_keywords: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
+
+    window._handle_video_item_context_global_search(VodItem(vod_id="vod-1", vod_name="成何体统"))
+
+    assert window.global_search_edit.text() == "成何体统"
+    assert started_keywords == ["成何体统"]
+
+
+def test_main_window_video_context_menu_favorite_placeholder_keeps_state_unchanged(qtbot) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.global_search_edit.setText("原值")
+
+    window._handle_video_item_context_favorite(
+        window.telegram_page,
+        VodItem(vod_id="vod-1", vod_name="测试影片"),
+    )
+
+    assert window.global_search_edit.text() == "原值"
+
+
 def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:
     manager = WidthAwarePluginManager()
     window = MainWindow(

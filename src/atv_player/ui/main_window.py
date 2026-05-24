@@ -1616,10 +1616,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
+        self._connect_video_item_context_menu(self.douban_page)
+        self._connect_video_item_context_menu(self.telegram_page)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
         if self.bilibili_page is not None:
             bilibili_page = self.bilibili_page
+            self._connect_video_item_context_menu(bilibili_page)
             bilibili_page.item_open_requested.connect(self._handle_bilibili_item_open_requested)
             bilibili_page.folder_breadcrumb_requested.connect(
                 lambda node_id, kind, index, page=bilibili_page: self._handle_media_breadcrumb_requested(
@@ -1631,7 +1634,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 )
             )
         if self.youtube_page is not None:
+            self._connect_video_item_context_menu(self.youtube_page)
             self.youtube_page.item_open_requested.connect(self._handle_youtube_item_open_requested)
+        self._connect_video_item_context_menu(self.live_page)
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         self.live_page.folder_breadcrumb_requested.connect(
             lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
@@ -1641,9 +1646,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 kind,
                 index,
             )
-        )
+            )
         if self.emby_page is not None:
             emby_page = self.emby_page
+            self._connect_video_item_context_menu(emby_page)
             emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
             emby_page.folder_breadcrumb_requested.connect(
                 lambda node_id, kind, index, page=emby_page: self._handle_media_breadcrumb_requested(
@@ -1656,6 +1662,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         if self.jellyfin_page is not None:
             jellyfin_page = self.jellyfin_page
+            self._connect_video_item_context_menu(jellyfin_page)
             jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
             jellyfin_page.folder_breadcrumb_requested.connect(
                 lambda node_id, kind, index, page=jellyfin_page: self._handle_media_breadcrumb_requested(
@@ -1668,6 +1675,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         if self.feiniu_page is not None:
             feiniu_page = self.feiniu_page
+            self._connect_video_item_context_menu(feiniu_page)
             feiniu_page.item_open_requested.connect(self._handle_feiniu_item_open_requested)
             feiniu_page.folder_breadcrumb_requested.connect(
                 lambda node_id, kind, index, page=feiniu_page: self._handle_media_breadcrumb_requested(
@@ -1679,6 +1687,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 )
             )
         if self.pansou_page is not None:
+            self._connect_video_item_context_menu(self.pansou_page)
             self.pansou_page.item_open_requested.connect(self._handle_pansou_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
@@ -2548,6 +2557,60 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         elif chosen is toggle_action:
             self._run_plugin_context_action("toggle_enabled", plugin_id)
 
+    def _connect_video_item_context_menu(self, page: PosterGridPage) -> None:
+        page.card_context_menu_requested.connect(
+            lambda item, global_pos, current_page=page: self._open_video_item_context_menu(
+                current_page,
+                item,
+                global_pos,
+            )
+        )
+
+    def _open_video_item_context_menu(self, page: PosterGridPage, item, global_pos: QPoint) -> None:
+        if item is None:
+            return
+        self._dismiss_visible_global_search_popup()
+        action_ids = self._video_item_context_menu_actions(page)
+        if not action_ids:
+            return
+        menu = QMenu(self)
+        open_action = menu.addAction("打开播放") if "open" in action_ids else None
+        search_action = menu.addAction("全局搜索") if "search" in action_ids else None
+        favorite_action = menu.addAction("加入收藏") if "favorite" in action_ids else None
+        chosen = menu.exec(global_pos)
+        if chosen is open_action:
+            self._handle_video_item_context_open(page, item)
+        elif chosen is search_action:
+            self._handle_video_item_context_global_search(item)
+        elif chosen is favorite_action:
+            self._handle_video_item_context_favorite(page, item)
+
+    def _video_item_context_menu_actions(self, page: PosterGridPage) -> list[str]:
+        is_douban_page = page is self.douban_page
+        is_live_page = page is self.live_page
+        is_external_results = bool(getattr(page, "_external_results_active", False))
+        action_ids: list[str] = []
+        if not is_douban_page:
+            action_ids.append("open")
+        if not is_live_page and not is_external_results:
+            action_ids.append("search")
+        if not is_douban_page:
+            action_ids.append("favorite")
+        return action_ids
+
+    def _handle_video_item_context_open(self, page: PosterGridPage, item) -> None:
+        page._handle_card_clicked(item)
+
+    def _handle_video_item_context_global_search(self, item) -> None:
+        keyword = str(getattr(item, "vod_name", "") or "").strip()
+        if not keyword:
+            return
+        self.global_search_edit.setText(keyword)
+        self._start_global_search()
+
+    def _handle_video_item_context_favorite(self, page: PosterGridPage, item) -> None:
+        del page, item
+
     def _open_plugin_category_manager(self, plugin_id: int) -> bool:
         if self._plugin_manager is None:
             return False
@@ -3249,6 +3312,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 item,
             )
         )
+        self._connect_video_item_context_menu(page)
         page.unauthorized.connect(self.logout_requested.emit)
         page.selected_category_changed.connect(
             lambda category_id, page=page: self._handle_selected_category_changed(page, category_id)
@@ -3994,6 +4058,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:
             self.player_window = self._create_player_window()
+            setattr(
+                self.player_window,
+                "_on_window_closed",
+                lambda current_window=self.player_window: self._handle_player_window_closed(current_window),
+            )
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
         self._close_help_dialog()
@@ -4015,6 +4084,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.player_window.raise_()
         self.player_window.activateWindow()
         QTimer.singleShot(0, self.hide)
+
+    def _handle_player_window_closed(self, player_window: object) -> None:
+        if self.player_window is player_window:
+            self.player_window = None
 
     def open_player(self, request, restore_paused_state: bool = False) -> None:
         request = self._prepare_request_for_open(request)

@@ -303,6 +303,17 @@ def test_poster_grid_page_clicking_category_card_emits_current_category_name(qtb
     assert signal.args[0].category_name == "电影"
 
 
+def test_poster_grid_page_card_context_menu_emits_item(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), click_action="open"))
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    with qtbot.waitSignal(page.card_context_menu_requested, timeout=1000) as signal:
+        page.card_buttons[0].customContextMenuRequested.emit(page.card_buttons[0].rect().center())
+
+    assert signal.args[0].vod_id == "m1"
+
+
 def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(SearchableDoubanController(), click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)

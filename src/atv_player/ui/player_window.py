@@ -9109,6 +9109,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.hide()
         self.closed_to_main.emit()
 
+    def close(self) -> bool:
+        if not self._quit_requested and not self._app_quit_requested:
+            on_window_closed = getattr(self, "_on_window_closed", None)
+            if callable(on_window_closed):
+                on_window_closed()
+        return super().close()
+
     def resume_from_main(self) -> None:
         if self.session is None:
             return
@@ -9232,7 +9239,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             not self._quit_requested
             and not self._app_quit_requested
             and self.config is not None
-            and self._has_other_visible_top_level_windows()
         ):
             self.config.last_active_window = "main"
             self._save_config()

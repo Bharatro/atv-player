@@ -116,6 +116,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     search_requested = Signal(str)
     open_requested = Signal(str)
     item_open_requested = Signal(object)
+    card_context_menu_requested = Signal(object, object)
     folder_breadcrumb_requested = Signal(str, str, int)
     selected_category_changed = Signal(str)
     unauthorized = Signal()
@@ -848,6 +849,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._set_button_cursor(button)
         button.setStyleSheet("padding: 10px;")
         button.clicked.connect(lambda _checked=False, current_item=item: self._handle_card_clicked(current_item))
+        button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        button.customContextMenuRequested.connect(
+            lambda pos, current_item=item, current_button=button: self._handle_card_context_menu_requested(
+                current_item,
+                current_button,
+                pos,
+            )
+        )
         return button
 
     def _handle_card_clicked(self, item) -> None:
@@ -860,6 +869,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.open_requested.emit(item.vod_id)
             return
         self.search_requested.emit(item.vod_name)
+
+    def _handle_card_context_menu_requested(self, item, button: QToolButton, pos) -> None:
+        self.card_context_menu_requested.emit(item, button.mapToGlobal(pos))
 
     def _start_card_poster_load(self, button: QToolButton, item) -> None:
         poster_source = item.vod_pic or ""
