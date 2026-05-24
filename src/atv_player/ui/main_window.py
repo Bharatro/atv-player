@@ -115,6 +115,16 @@ class _EmptyFeiniuController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _HistoryGlobalSearchAdapter:
+    page_size = 100
+
+    def __init__(self, history_controller) -> None:
+        self._history_controller = history_controller
+
+    def search_items(self, keyword: str, page: int):
+        return self._history_controller.load_page(page=page, size=self.page_size, keyword=keyword)
+
+
 _SUPPORTED_DRIVE_DOMAINS = (
     "alipan.com",
     "aliyundrive.com",
@@ -1058,7 +1068,7 @@ class _TabDefinition:
 class _GlobalSearchResult:
     key: str
     title: str
-    page: PosterGridPage
+    page: QWidget
     items: list[Any]
     total: int
     page_number: int
@@ -1368,6 +1378,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 initial_category_id=self._initial_category_id_for_tab("feiniu"),
             )
         self.history_page = HistoryPage(history_controller)
+        self.global_history_page = HistoryPage(history_controller)
+        self._global_history_search_adapter = (
+            _HistoryGlobalSearchAdapter(history_controller)
+            if hasattr(history_controller, "load_page")
+            else None
+        )
         self.pansou_page = None
         if pansou_controller is not None:
             self.pansou_page = PosterGridPage(
@@ -1524,6 +1540,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     global_search_only=True,
                 )
             )
+        if self._global_history_search_adapter is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition(
+                    "history:global",
+                    "播放记录",
+                    self.global_history_page,
+                    self._global_history_search_adapter,
+                    global_search_only=True,
+                )
+            )
         self._trailing_tab_definitions = [
             _TabDefinition("browse", "文件浏览", self.browse_page),
             _TabDefinition("history", "播放记录", self.history_page),
@@ -1583,6 +1609,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
+        self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
@@ -1765,6 +1792,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         for page in (
             self.browse_page,
             self.history_page,
+            self.global_history_page,
             self.douban_page,
             self.telegram_page,
             self.live_page,
@@ -3072,7 +3100,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 _GlobalSearchResult(
                     key=definition.key,
                     title=definition.title,
-                    page=cast(PosterGridPage, definition.page),
+                    page=definition.page,
                     items=list(items),
                     total=total,
                     page_number=page_number,
@@ -3130,19 +3158,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         for definition in self._all_tab_definitions():
             if isinstance(definition.page, PosterGridPage):
                 definition.page.clear_external_results()
+            elif isinstance(definition.page, HistoryPage):
+                definition.page.clear_external_results()
         self._refresh_visible_tabs()
         self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
 
     def _show_global_search_result(self, result: _GlobalSearchResult) -> None:
-        result.page.show_external_results(
-            result.items,
-            result.total,
-            page=result.page_number,
-            empty_message="无搜索结果",
-            page_loader=self._build_global_search_page_loader(result.key),
-        )
+        if isinstance(result.page, HistoryPage):
+            result.page.show_external_results(
+                result.items,
+                result.total,
+                page=result.page_number,
+                page_loader=self._build_global_search_page_loader(result.key),
+            )
+        else:
+            cast(PosterGridPage, result.page).show_external_results(
+                result.items,
+                result.total,
+                page=result.page_number,
+                empty_message="无搜索结果",
+                page_loader=self._build_global_search_page_loader(result.key),
+            )
         self._global_search_results[result.key] = result
 
     def _build_global_search_page_loader(self, key: str):

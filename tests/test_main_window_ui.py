@@ -417,6 +417,29 @@ class SearchableController(FakeStaticController):
         return list(self.items), self.total
 
 
+class GlobalSearchHistoryController:
+    def __init__(self, records: list[HistoryRecord]) -> None:
+        self.records = list(records)
+        self.load_calls: list[tuple[int, int, str]] = []
+
+    def load_page(self, page: int, size: int, *, keyword: str = "", **_kwargs):
+        self.load_calls.append((page, size, keyword))
+        filtered = [
+            record
+            for record in self.records
+            if not keyword or keyword.casefold() in record.vod_name.casefold()
+        ]
+        start = max(page - 1, 0) * size
+        end = start + size
+        return filtered[start:end], len(filtered)
+
+    def delete_many(self, records: list[HistoryRecord]) -> None:
+        del records
+
+    def clear_page(self, records: list[HistoryRecord]) -> None:
+        del records
+
+
 class PagedSearchableController(FakeStaticController):
     def __init__(self, results_by_page: dict[int, tuple[list[VodItem], int]]) -> None:
         self.results_by_page = {
@@ -500,6 +523,25 @@ class SearchableResolveController(SearchableController):
 
 def _vod(name: str, vod_id: str | None = None, remarks: str = "") -> VodItem:
     return VodItem(vod_id=vod_id or name, vod_name=name, vod_pic="", vod_remarks=remarks)
+
+
+def _history_record(name: str, key: str = "history-1", source_kind: str = "telegram") -> HistoryRecord:
+    return HistoryRecord(
+        id=0,
+        key=key,
+        vod_name=name,
+        vod_pic="",
+        vod_remarks="第2集",
+        episode=1,
+        episode_url="2.m3u8",
+        position=90000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1234567890000,
+        source_kind=source_kind,
+        source_name="电报影视" if source_kind == "telegram" else "",
+    )
 
 
 def _popup_history_texts(window: MainWindow) -> list[str]:
@@ -2009,6 +2051,68 @@ def test_main_window_global_search_prefers_inferred_page_size(qtbot) -> None:
 
     qtbot.waitUntil(lambda: [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 2-last"])
     assert window.telegram_page.page_label.text() == "第 2 / 3 页"
+
+
+def test_main_window_global_search_includes_playback_history_results(qtbot) -> None:
+    history = GlobalSearchHistoryController([_history_record("庆余年")])
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=history,
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["播放记录(1)"])
+    assert history.load_calls == [(1, 100, "庆余年")]
+    assert window.global_history_page.table.item(0, 0).text() == "庆余年"
+    assert window.global_history_page.table.item(0, 5).text() == "电报影视"
+
+
+def test_main_window_global_search_history_result_opens_existing_history_route(qtbot, monkeypatch) -> None:
+    history = GlobalSearchHistoryController([_history_record("庆余年", key="telegram-detail-1")])
+    telegram = FakeSpiderController("电报影视")
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=history,
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or len(opened))
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: window.global_history_page.table.rowCount() == 1)
+    window.global_history_page._open_selected(0, 0)
+
+    assert telegram.open_calls == ["telegram-detail-1"]
+    assert opened[0].source_vod_id == "telegram-detail-1"
 
 
 def test_main_window_global_search_popup_does_not_open_on_focus(qtbot) -> None:

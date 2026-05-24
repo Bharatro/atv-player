@@ -70,6 +70,9 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self._source_kind = ""
         self._time_range = ""
         self._continue_watching = False
+        self._external_results_active = False
+        self._external_page_loader = None
+        self._external_loading = False
         self._load_signals = _HistoryLoadSignals()
         self._connect_async_signal(self._load_signals.succeeded, self._handle_load_succeeded)
         self._connect_async_signal(self._load_signals.failed, self._handle_load_failed)
@@ -191,6 +194,9 @@ class HistoryPage(QWidget, AsyncGuardMixin):
 
     def load_history(self) -> None:
         self._initial_load_started = True
+        self._external_results_active = False
+        self._external_page_loader = None
+        self._external_loading = False
         self._load_request_id += 1
         request_id = self._load_request_id
         page = self.current_page
@@ -380,12 +386,26 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         return datetime.fromtimestamp(milliseconds / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
     def previous_page(self) -> None:
+        if self._external_results_active:
+            if self._external_page_loader is None or self._external_loading or self.current_page <= 1:
+                return
+            self._external_loading = True
+            self._update_pagination_controls()
+            self._external_page_loader(self.current_page - 1)
+            return
         if self.current_page <= 1:
             return
         self.current_page -= 1
         self.load_history()
 
     def next_page(self) -> None:
+        if self._external_results_active:
+            if self._external_page_loader is None or self._external_loading or self.current_page >= self._total_pages():
+                return
+            self._external_loading = True
+            self._update_pagination_controls()
+            self._external_page_loader(self.current_page + 1)
+            return
         if self.current_page >= self._total_pages():
             return
         self.current_page += 1
@@ -408,6 +428,11 @@ class HistoryPage(QWidget, AsyncGuardMixin):
     def _update_pagination_controls(self) -> None:
         total_pages = self._total_pages()
         self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
+        if self._external_results_active:
+            pagination_enabled = self._external_page_loader is not None and not self._external_loading
+            self.prev_page_button.setEnabled(pagination_enabled and self.current_page > 1)
+            self.next_page_button.setEnabled(pagination_enabled and self.current_page < total_pages)
+            return
         self.prev_page_button.setEnabled(self.current_page > 1)
         self.next_page_button.setEnabled(self.current_page < total_pages)
 
@@ -431,6 +456,29 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             return
         if page != self.current_page or size != self.page_size:
             return
+        self._render_records(records, total, page=page)
+
+    def show_external_results(self, records: list[HistoryRecord], total: int, page: int = 1, page_loader=None) -> None:
+        self._external_results_active = True
+        self._external_page_loader = page_loader
+        self._external_loading = False
+        self._render_records(records, total, page=page)
+
+    def clear_external_results(self) -> None:
+        if not self._external_results_active:
+            return
+        self._external_results_active = False
+        self._external_page_loader = None
+        self._external_loading = False
+        self.records = []
+        self.total_items = 0
+        self.current_page = 1
+        self.table.setRowCount(0)
+        self._sync_action_state()
+        self._update_pagination_controls()
+
+    def _render_records(self, records: list[HistoryRecord], total: int, *, page: int) -> None:
+        self.current_page = page
         self.total_items = total
         self.records = list(records)
         self.table.setRowCount(len(records))
