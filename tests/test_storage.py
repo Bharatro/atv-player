@@ -309,6 +309,7 @@ def test_settings_repository_round_trip_persists_youtube_preferences(tmp_path: P
     config = AppConfig(
         youtube_cookie_browser="edge",
         youtube_max_height=1440,
+        youtube_video_codec="av1",
         youtube_default_subtitle_lang="zh-CN",
         youtube_default_audio_lang="zh",
         youtube_metadata_language="zh-HK",
@@ -320,6 +321,7 @@ def test_settings_repository_round_trip_persists_youtube_preferences(tmp_path: P
 
     assert saved.youtube_cookie_browser == "edge"
     assert saved.youtube_max_height == 1440
+    assert saved.youtube_video_codec == "av1"
     assert saved.youtube_default_subtitle_lang == "zh-CN"
     assert saved.youtube_default_audio_lang == "zh"
     assert saved.youtube_metadata_language == "zh-HK"
@@ -521,6 +523,17 @@ def test_settings_repository_normalizes_legacy_zero_youtube_max_height_to_1080(t
     repo.save_config(AppConfig(youtube_max_height=0))
 
     assert repo.load_config().youtube_max_height == 1080
+
+
+def test_settings_repository_defaults_and_normalizes_youtube_video_codec(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    assert repo.load_config().youtube_video_codec == "vp9"
+
+    repo.save_config(AppConfig(youtube_video_codec="invalid"))
+
+    assert repo.load_config().youtube_video_codec == "vp9"
 
 
 def test_settings_repository_migrates_missing_m3u_proxy_segment_prefetch_size_column(tmp_path: Path) -> None:

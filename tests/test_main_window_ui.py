@@ -4497,6 +4497,7 @@ def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtb
     config = AppConfig(
         youtube_cookie_browser="firefox",
         youtube_max_height=1440,
+        youtube_video_codec="av1",
         youtube_default_subtitle_lang="zh-TW",
         youtube_default_audio_lang="en",
         youtube_metadata_language="zh-CN",
@@ -4509,6 +4510,7 @@ def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtb
     assert tab_labels[:3] == ["外观", "播放设置", "YouTube"]
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
     assert dialog.youtube_max_height_combo.currentData() == 1440
+    assert dialog.youtube_video_codec_combo.currentData() == "av1"
     assert dialog.youtube_default_subtitle_combo.currentData() == "zh-TW"
     assert dialog.youtube_default_audio_combo.currentData() == "en"
     assert dialog.youtube_metadata_language_combo.currentData() == "zh-CN"
@@ -4600,6 +4602,7 @@ def test_advanced_settings_dialog_saves_youtube_preferences(qtbot) -> None:
 
     dialog.youtube_cookie_browser_combo.setCurrentIndex(dialog.youtube_cookie_browser_combo.findData("chrome"))
     dialog.youtube_max_height_combo.setCurrentIndex(dialog.youtube_max_height_combo.findData(2160))
+    dialog.youtube_video_codec_combo.setCurrentIndex(dialog.youtube_video_codec_combo.findData("av1"))
     dialog.youtube_default_subtitle_combo.setCurrentIndex(dialog.youtube_default_subtitle_combo.findData("en"))
     dialog.youtube_default_audio_combo.setCurrentIndex(dialog.youtube_default_audio_combo.findData("zh"))
     dialog.youtube_metadata_language_combo.setCurrentIndex(dialog.youtube_metadata_language_combo.findData("zh-HK"))
@@ -4608,6 +4611,7 @@ def test_advanced_settings_dialog_saves_youtube_preferences(qtbot) -> None:
 
     assert config.youtube_cookie_browser == "chrome"
     assert config.youtube_max_height == 2160
+    assert config.youtube_video_codec == "av1"
     assert config.youtube_default_subtitle_lang == "en"
     assert config.youtube_default_audio_lang == "zh"
     assert config.youtube_metadata_language == "zh-HK"

@@ -352,6 +352,29 @@ class TestResolve:
         assert any("--get-url" in command for command in run_calls)
         assert any("--dump-single-json" in command for command in run_calls)
 
+    def test_fast_format_selector_prefers_m3u_for_1080_and_vp9_for_2k(self) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService()
+
+        command_1080 = service._extract_fast_urls_command("https://www.youtube.com/watch?v=test123", 1080)
+        selector_1080 = command_1080[command_1080.index("--format") + 1]
+        assert selector_1080.startswith("best[height<=1080]/bestvideo[height<=1080]+bestaudio")
+
+        command_2160 = service._extract_fast_urls_command("https://www.youtube.com/watch?v=test123", 2160)
+        selector_2160 = command_2160[command_2160.index("--format") + 1]
+        assert selector_2160.startswith("bestvideo[height<=2160][vcodec^=vp9]+bestaudio")
+
+    def test_fast_format_selector_can_prefer_av1_for_2k(self) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_video_codec="av1"))
+
+        command = service._extract_fast_urls_command("https://www.youtube.com/watch?v=test123", 2160)
+        selector = command[command.index("--format") + 1]
+
+        assert selector.startswith("bestvideo[height<=2160][vcodec^=av01]+bestaudio")
+
     def test_prefers_original_english_audio_track(self, monkeypatch, service):
         info = _sample_info(
             formats=[
@@ -689,6 +712,156 @@ class TestResolve:
         assert result.video_format_id == "301-en"
         assert result.url == "https://stream.test/hls-1080-en.m3u8"
         assert result.selected_quality_id == "ytdlp_1080"
+
+    def test_youtube_1080_prefers_m3u_even_when_codec_preference_is_av1(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_video_codec="av1"))
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "301",
+                    "url": "https://stream.test/hls-1080.m3u8",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 8559,
+                    "vcodec": "avc1.64002A",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                },
+                {
+                    "format_id": "335",
+                    "url": "https://stream.test/video-1080-vp9.webm",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 6803,
+                    "vcodec": "vp9.2",
+                    "acodec": "none",
+                    "ext": "webm",
+                },
+                {
+                    "format_id": "699",
+                    "url": "https://stream.test/video-1080-av1.mp4",
+                    "height": 1080,
+                    "width": 1920,
+                    "tbr": 5062,
+                    "vcodec": "av01.0.09M.10",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 146,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123", max_height=1080)
+
+        assert result.video_format_id == "301"
+        assert result.url == "https://stream.test/hls-1080.m3u8"
+
+    def test_youtube_2k_and_above_default_prefers_vp9_codec(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService()
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "337",
+                    "url": "https://stream.test/video-2160-vp9.webm",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 26709,
+                    "vcodec": "vp9.2",
+                    "acodec": "none",
+                    "ext": "webm",
+                },
+                {
+                    "format_id": "701",
+                    "url": "https://stream.test/video-2160-av1.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 24569,
+                    "vcodec": "av01.0.13M.10",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 146,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123", max_height=2160)
+
+        assert result.video_format_id == "337"
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert "https://stream.test/video-2160-vp9.webm" in manifest
+        assert "https://stream.test/video-2160-av1.mp4" not in manifest
+
+    def test_youtube_2k_and_above_can_prefer_av1_codec(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        service = YtdlpPlaybackService(config_loader=lambda: AppConfig(youtube_video_codec="av1"))
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            formats=[
+                {
+                    "format_id": "337",
+                    "url": "https://stream.test/video-2160-vp9.webm",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 26709,
+                    "vcodec": "vp9.2",
+                    "acodec": "none",
+                    "ext": "webm",
+                },
+                {
+                    "format_id": "701",
+                    "url": "https://stream.test/video-2160-av1.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 24569,
+                    "vcodec": "av01.0.13M.10",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 146,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+            ],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123", max_height=2160)
+
+        assert result.video_format_id == "701"
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert "https://stream.test/video-2160-av1.mp4" in manifest
+        assert "https://stream.test/video-2160-vp9.webm" not in manifest
 
     def test_resolve_for_quality_preserves_selected_muxed_audio_language(self, monkeypatch, service):
         info = _sample_info(
@@ -1796,9 +1969,11 @@ class TestResolveToPlayItem:
             "ytdlp_720",
         ]
         assert [quality.ytdl_format for quality in item.playback_qualities] == [
+            "bestvideo[height<=2160][vcodec^=vp9]+bestaudio/"
+            "bestvideo[height<=2160][vcodec^=vp09]+bestaudio/"
             "bestvideo[height<=2160]+bestaudio/best[height<=2160]/bestvideo+bestaudio/best",
-            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
-            "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
+            "best[height<=1080]/bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best",
+            "best[height<=720]/bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best",
         ]
         assert item.selected_playback_quality_id == "ytdlp_1080"
 
@@ -2098,7 +2273,7 @@ class TestBuildQualityOptions:
 
         assert [option.id for option in result] == ["ytdlp_480"]
         assert result[0].url == "https://stream.test/480-master.m3u8"
-        assert result[0].ytdl_format == "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best"
+        assert result[0].ytdl_format == "best[height<=480]/bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best"
 
 
 class TestBuildSubtitleOptions:

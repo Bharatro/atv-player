@@ -38,6 +38,7 @@ class AppConfig:
     network_proxy_rules: list[str] = field(default_factory=list)
     youtube_cookie_browser: str = ""
     youtube_max_height: int = 1080
+    youtube_video_codec: str = "vp9"
     youtube_default_subtitle_lang: str = ""
     youtube_default_audio_lang: str = ""
     youtube_metadata_language: str = ""

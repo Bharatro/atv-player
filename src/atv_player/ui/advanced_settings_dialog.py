@@ -120,6 +120,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_max_height_combo.addItem("1080p", 1080)
         self.youtube_max_height_combo.addItem("1440p", 1440)
         self.youtube_max_height_combo.addItem("2160p", 2160)
+        self.youtube_video_codec_combo = FlatComboBox()
+        self.youtube_video_codec_combo.addItem("VP9", "vp9")
+        self.youtube_video_codec_combo.addItem("AV1", "av1")
+        self.youtube_video_codec_combo.addItem("自动", "auto")
         self.youtube_default_subtitle_combo = FlatComboBox()
         self.youtube_default_subtitle_combo.addItem("默认（无）", "")
         self.youtube_default_subtitle_combo.addItem("简体中文", "zh-CN")
@@ -177,7 +181,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.playback_scope_label.setWordWrap(True)
         self.youtube_scope_label = QLabel(
-            "说明：默认画质设为 1080P 及以下时通常启播更快；如果当前视频没有该画质，会自动回退到最高可用画质。语言和地区设置只影响 yt-dlp 的 YouTube 信息提取。"
+            "说明：默认画质设为 1080P 及以下时通常启播更快；2K 及以上会按编码偏好选择视频流。语言和地区设置只影响 yt-dlp 的 YouTube 信息提取。"
         )
         self.youtube_scope_label.setWordWrap(True)
         self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
@@ -233,6 +237,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         youtube_max_height = config.youtube_max_height if config.youtube_max_height in {480, 720, 1080, 1440, 2160} else 1080
         self.youtube_max_height_combo.setCurrentIndex(
             max(0, self.youtube_max_height_combo.findData(youtube_max_height))
+        )
+        self.youtube_video_codec_combo.setCurrentIndex(
+            max(0, self.youtube_video_codec_combo.findData(config.youtube_video_codec))
         )
         self.youtube_default_subtitle_combo.setCurrentIndex(
             max(0, self.youtube_default_subtitle_combo.findData(config.youtube_default_subtitle_lang))
@@ -314,6 +321,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         youtube_layout = QFormLayout()
         youtube_layout.addRow("Cookie", self.youtube_cookie_browser_combo)
         youtube_layout.addRow("默认画质", self.youtube_max_height_combo)
+        youtube_layout.addRow("2K+ 编码", self.youtube_video_codec_combo)
         youtube_layout.addRow("默认字幕", self.youtube_default_subtitle_combo)
         youtube_layout.addRow("默认音轨", self.youtube_default_audio_combo)
         youtube_layout.addRow("语言设置（元数据提取用）", self.youtube_metadata_language_combo)
@@ -403,6 +411,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
             self.youtube_max_height_combo,
+            self.youtube_video_codec_combo,
             self.youtube_default_subtitle_combo,
             self.youtube_default_audio_combo,
             self.youtube_metadata_language_combo,
@@ -701,7 +710,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return mode, proxy_url, bypass_rules, proxy_rules
 
-    def _validated_youtube_values(self) -> tuple[str, int, str, str, str, str] | None:
+    def _validated_youtube_values(self) -> tuple[str, int, str, str, str, str, str] | None:
         browser = str(self.youtube_cookie_browser_combo.currentData() or "")
         if browser not in {"", "chrome", "edge", "firefox"}:
             QMessageBox.warning(self, "YouTube Cookie 无效", "浏览器来源无效")
@@ -709,6 +718,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         max_height = self.youtube_max_height_combo.currentData()
         if max_height not in {480, 720, 1080, 1440, 2160}:
             QMessageBox.warning(self, "YouTube 默认画质无效", "YouTube 默认画质选项无效")
+            return None
+        video_codec = str(self.youtube_video_codec_combo.currentData() or "vp9")
+        if video_codec not in {"vp9", "av1", "auto"}:
+            QMessageBox.warning(self, "YouTube 编码无效", "编码选项无效")
             return None
         subtitle_lang = str(self.youtube_default_subtitle_combo.currentData() or "")
         if subtitle_lang not in {"", "zh-CN", "zh-TW", "zh-HK", "en"}:
@@ -726,7 +739,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if region not in {"", "CN", "US", "JP", "SG", "HK", "TW"}:
             QMessageBox.warning(self, "YouTube 地区设置无效", "地区设置选项无效")
             return None
-        return browser, int(max_height), subtitle_lang, audio_lang, metadata_language, region
+        return browser, int(max_height), video_codec, subtitle_lang, audio_lang, metadata_language, region
 
     def _validated_playback_values(self) -> tuple[bool, int, str, int, int, int, str] | None:
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
@@ -821,6 +834,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         (
             self._config.youtube_cookie_browser,
             self._config.youtube_max_height,
+            self._config.youtube_video_codec,
             self._config.youtube_default_subtitle_lang,
             self._config.youtube_default_audio_lang,
             self._config.youtube_metadata_language,

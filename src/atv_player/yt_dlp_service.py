@@ -81,6 +81,8 @@ _LANG_CODE_NAMES: dict[str, str] = {
 _DEFAULT_STARTUP_MAX_HEIGHT = 1080
 _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
 _DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
+_DEFAULT_YOUTUBE_VIDEO_CODEC = "vp9"
+_YOUTUBE_VIDEO_CODEC_VALUES = {"vp9", "av1", "auto"}
 _DIRECT_SUBTITLE_FORMAT_RANK: dict[str, int] = {
     "vtt": 0,
     "srt": 1,
@@ -140,9 +142,37 @@ def _quality_height_from_id(quality_id: str) -> int | None:
     return height if height > 0 else None
 
 
-def _build_format_selector(max_height: int | None) -> str:
+def _normalize_youtube_video_codec(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in _YOUTUBE_VIDEO_CODEC_VALUES else _DEFAULT_YOUTUBE_VIDEO_CODEC
+
+
+def _codec_format_filters(video_codec: str) -> list[str]:
+    normalized = _normalize_youtube_video_codec(video_codec)
+    if normalized == "vp9":
+        return ["vcodec^=vp9", "vcodec^=vp09"]
+    if normalized == "av1":
+        return ["vcodec^=av01", "vcodec^=av1"]
+    return []
+
+
+def _build_format_selector(max_height: int | None, video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC) -> str:
     if max_height and max_height > 0:
+        if max_height <= 1080:
+            return (
+                f"best[height<={max_height}]/"
+                f"bestvideo[height<={max_height}]+bestaudio/"
+                "bestvideo+bestaudio/best"
+            )
+        codec_selectors = [
+            f"bestvideo[height<={max_height}][{codec_filter}]+bestaudio"
+            for codec_filter in _codec_format_filters(video_codec)
+        ]
+        codec_prefix = "/".join(codec_selectors)
+        if codec_prefix:
+            codec_prefix += "/"
         return (
+            f"{codec_prefix}"
             f"bestvideo[height<={max_height}]+bestaudio/"
             f"best[height<={max_height}]/bestvideo+bestaudio/best"
         )
@@ -339,6 +369,22 @@ def _video_codec_rank(vcodec: object) -> int:
     if normalized.startswith(("hev1", "hvc1", "hevc")):
         return 3
     return 4
+
+
+def _video_codec_preference_rank(vcodec: object, preferred_codec: str) -> int:
+    normalized = str(vcodec or "").lower()
+    preference = _normalize_youtube_video_codec(preferred_codec)
+    if preference == "vp9":
+        if normalized.startswith(("vp9", "vp09")):
+            return 0
+        if normalized.startswith(("av01", "av1")):
+            return 1
+    elif preference == "av1":
+        if normalized.startswith(("av01", "av1")):
+            return 0
+        if normalized.startswith(("vp9", "vp09")):
+            return 1
+    return _video_codec_rank(vcodec) + 2
 
 
 def _audio_codec_rank(acodec: object, *, preferred_ext: str = "") -> int:
@@ -603,7 +649,12 @@ def _audio_track_id_for_format(
     return ""
 
 
-def _preferred_video_formats(info: dict, max_height: int | None) -> list[dict]:
+def _preferred_video_formats(
+    info: dict,
+    max_height: int | None,
+    *,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
+) -> list[dict]:
     formats = info.get("formats") or []
     candidates = [
         fmt for fmt in formats
@@ -617,6 +668,16 @@ def _preferred_video_formats(info: dict, max_height: int | None) -> list[dict]:
         return []
     best_height = max(int(fmt.get("height") or 0) for fmt in candidates)
     filtered = [fmt for fmt in candidates if int(fmt.get("height") or 0) == best_height]
+    if max_height and max_height > 1080:
+        return sorted(
+            filtered,
+            key=lambda fmt: (
+                _video_codec_preference_rank(fmt.get("vcodec"), video_codec),
+                0 if _has_muxed_audio(fmt) else 1,
+                -int(fmt.get("fps") or 0),
+                -int(fmt.get("tbr") or 0),
+            ),
+        )
     return sorted(
         filtered,
         key=lambda fmt: (
@@ -646,7 +707,12 @@ def _preferred_audio_formats(info: dict, *, preferred_ext: str = "") -> list[dic
     )
 
 
-def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None, dict | None]:
+def _select_stream_pair(
+    info: dict,
+    max_height: int | None,
+    *,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
+) -> tuple[dict | None, dict | None]:
     if max_height is None:
         requested_video_url, requested_audio_url = _pick_requested_stream_pair(info)
         if requested_video_url:
@@ -666,7 +732,7 @@ def _select_stream_pair(info: dict, max_height: int | None) -> tuple[dict | None
                 None,
             )
             return selected_video, selected_audio
-    preferred_video_formats = _preferred_video_formats(info, max_height)
+    preferred_video_formats = _preferred_video_formats(info, max_height, video_codec=video_codec)
     if preferred_video_formats:
         selected_video = preferred_video_formats[0]
         if _has_muxed_audio(selected_video):
@@ -689,9 +755,10 @@ def _selected_ytdl_format(
     selected_audio: dict | None,
     *,
     max_height: int | None,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
 ) -> str:
     del info, selected_video, selected_audio
-    return _build_format_selector(max_height)
+    return _build_format_selector(max_height, video_codec)
 
 
 def _quality_option_ytdl_format(
@@ -699,17 +766,23 @@ def _quality_option_ytdl_format(
     video_format: dict,
     *,
     height: int,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
 ) -> str:
     del info, video_format
-    return _build_format_selector(height)
+    return _build_format_selector(height, video_codec)
 
 
-def _pick_direct_url(info: dict, max_height: int | None) -> str:
+def _pick_direct_url(
+    info: dict,
+    max_height: int | None,
+    *,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
+) -> str:
     direct_url = info.get("url", "")
     requested_formats = info.get("requested_formats") or []
     if direct_url and not requested_formats:
         return direct_url
-    selected_video, _selected_audio = _select_stream_pair(info, max_height)
+    selected_video, _selected_audio = _select_stream_pair(info, max_height, video_codec=video_codec)
     if selected_video is not None and selected_video.get("url"):
         return str(selected_video["url"])
     if direct_url:
@@ -975,9 +1048,9 @@ class YtdlpPlaybackService:
         self._proxy_decider = proxy_decider
         self._config_loader = config_loader
 
-    def _youtube_cache_profile(self) -> tuple[str, str, str, str, str]:
+    def _youtube_cache_profile(self) -> tuple[str, str, str, str, str, str]:
         if self._config_loader is None:
-            return ("", "", "", "", "")
+            return ("", "", "", "", "", _DEFAULT_YOUTUBE_VIDEO_CODEC)
         config = self._config_loader()
         return (
             str(getattr(config, "youtube_cookie_browser", "") or "").strip().lower(),
@@ -985,6 +1058,7 @@ class YtdlpPlaybackService:
             _normalize_youtube_subtitle_preference(getattr(config, "youtube_default_subtitle_lang", "")),
             _normalize_youtube_metadata_language(getattr(config, "youtube_metadata_language", "")),
             _normalize_youtube_region(getattr(config, "youtube_region", "")),
+            _normalize_youtube_video_codec(getattr(config, "youtube_video_codec", _DEFAULT_YOUTUBE_VIDEO_CODEC)),
         )
 
     def _cache_key(
@@ -997,13 +1071,14 @@ class YtdlpPlaybackService:
     ) -> str:
         key = _canonicalize_ytdlp_url(url)
         audio_key = str(audio_track_id or "").strip() or "auto"
-        cookie_browser, default_audio, default_subtitle, metadata_language, region = self._youtube_cache_profile()
+        cookie_browser, default_audio, default_subtitle, metadata_language, region, video_codec = self._youtube_cache_profile()
         profile_key = (
             f"#cookie={cookie_browser or 'none'}"
             f"#da={default_audio or 'auto'}"
             f"#ds={default_subtitle or 'none'}"
             f"#hl={metadata_language or 'auto'}"
             f"#gl={region or 'auto'}"
+            f"#vc={video_codec}"
             f"#subs={'all' if include_subtitles else 'none'}"
         )
         if max_height and max_height > 0:
@@ -1083,6 +1158,14 @@ class YtdlpPlaybackService:
         config = self._config_loader()
         return _normalize_youtube_region(getattr(config, "youtube_region", ""))
 
+    def _configured_video_codec(self) -> str:
+        if self._config_loader is None:
+            return _DEFAULT_YOUTUBE_VIDEO_CODEC
+        config = self._config_loader()
+        return _normalize_youtube_video_codec(
+            getattr(config, "youtube_video_codec", _DEFAULT_YOUTUBE_VIDEO_CODEC)
+        )
+
     def _resolved_title(
         self,
         result_title: object,
@@ -1136,7 +1219,10 @@ class YtdlpPlaybackService:
         region = self._configured_region()
         if region:
             extra_args.extend(["--xff", region])
-        format_args = ["--format", _build_format_selector(max_height)] if use_format_selector else []
+        format_args = [
+            "--format",
+            _build_format_selector(max_height, self._configured_video_codec()),
+        ] if use_format_selector else []
         command = [
             self._ytdlp_path,
             "--no-warnings",
@@ -1228,7 +1314,7 @@ class YtdlpPlaybackService:
             "--socket-timeout",
             "30",
             "--format",
-            _build_format_selector(max_height),
+            _build_format_selector(max_height, self._configured_video_codec()),
             "--get-url",
             *command_args,
             *extra_args,
@@ -1349,10 +1435,10 @@ class YtdlpPlaybackService:
         return hostname in _KNOWN_YTDLP_DOMAINS
 
     def playback_format_selector(self, max_height: int | None = _DEFAULT_STARTUP_MAX_HEIGHT) -> str:
-        return _build_format_selector(max_height)
+        return _build_format_selector(max_height, self._configured_video_codec())
 
     def playback_format_for_quality_id(self, quality_id: str) -> str:
-        return _build_format_selector(_quality_height_from_id(quality_id))
+        return _build_format_selector(_quality_height_from_id(quality_id), self._configured_video_codec())
 
     def resolve_fast(
         self,
@@ -1493,14 +1579,19 @@ class YtdlpPlaybackService:
         if info is None:
             raise ValueError("yt-dlp 未返回结果")
 
-        qualities = _build_quality_options(info)
+        configured_video_codec = self._configured_video_codec()
+        qualities = _build_quality_options(info, video_codec=configured_video_codec)
         selection_max_height = (
             max_height
             if max_height is not None
             else _resolve_startup_selection_height(qualities, configured_default_height)
         )
 
-        selected_video, selected_audio = _select_stream_pair(info, selection_max_height)
+        selected_video, selected_audio = _select_stream_pair(
+            info,
+            selection_max_height,
+            video_codec=configured_video_codec,
+        )
         audio_candidates = _build_audio_track_candidates(info, selection_max_height)
         audio_tracks = [candidate.option for candidate in audio_candidates]
         fallback_audio_track_id = _audio_track_id_for_format(audio_candidates, selected_audio or selected_video)
@@ -1521,7 +1612,11 @@ class YtdlpPlaybackService:
             elif selected_video is None or _has_muxed_audio(selected_video):
                 video_only_candidates = [
                     fmt
-                    for fmt in _preferred_video_formats(info, selection_max_height)
+                    for fmt in _preferred_video_formats(
+                        info,
+                        selection_max_height,
+                        video_codec=configured_video_codec,
+                    )
                     if not _has_muxed_audio(fmt)
                 ]
                 if video_only_candidates:
@@ -1529,7 +1624,7 @@ class YtdlpPlaybackService:
                     selected_audio = preferred_audio_candidate.format_entry
             else:
                 selected_audio = preferred_audio_candidate.format_entry
-        direct_url = _pick_direct_url(info, selection_max_height)
+        direct_url = _pick_direct_url(info, selection_max_height, video_codec=configured_video_codec)
         if selected_video is not None and selected_video.get("url") and _has_muxed_audio(selected_video):
             direct_url = str(selected_video["url"])
         if not direct_url:
@@ -1542,7 +1637,11 @@ class YtdlpPlaybackService:
                 raise ValueError("未获取到视频流")
             preferred_youtube_video = None
             if _is_youtube_extractor(info):
-                preferred_videos = _preferred_video_formats(info, selection_max_height)
+                preferred_videos = _preferred_video_formats(
+                    info,
+                    selection_max_height,
+                    video_codec=configured_video_codec,
+                )
                 candidate = preferred_videos[0] if preferred_videos else None
                 if candidate is not None and _has_muxed_audio(candidate):
                     preferred_youtube_video = candidate
@@ -1752,7 +1851,11 @@ class YtdlpPlaybackService:
         return vod, item
 
 
-def _build_quality_options(info: dict) -> list[VideoQualityOption]:
+def _build_quality_options(
+    info: dict,
+    *,
+    video_codec: str = _DEFAULT_YOUTUBE_VIDEO_CODEC,
+) -> list[VideoQualityOption]:
     formats = info.get("formats") or []
     best_by_height: dict[int, dict] = {}
     is_youtube = _is_youtube_extractor(info)
@@ -1765,9 +1868,17 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
             continue
         previous = best_by_height.get(height)
 
-        def sort_key(candidate: dict) -> tuple[int, int]:
+        def sort_key(candidate: dict) -> tuple[int, int, int]:
+            height_value = int(candidate.get("height") or 0)
+            if is_youtube and height_value > 1080:
+                return (
+                    _video_codec_preference_rank(candidate.get("vcodec"), video_codec),
+                    0 if _has_muxed_audio(candidate) else 1,
+                    -int(candidate.get("tbr") or 0),
+                )
             return (
                 0 if is_youtube and _has_muxed_audio(candidate) else 1,
+                _video_codec_rank(candidate.get("vcodec")),
                 -int(candidate.get("tbr") or 0),
             )
 
@@ -1784,7 +1895,7 @@ def _build_quality_options(info: dict) -> list[VideoQualityOption]:
         ytdl_format = ""
         option_url = ""
         if is_youtube:
-            ytdl_format = _quality_option_ytdl_format(info, fmt, height=height)
+            ytdl_format = _quality_option_ytdl_format(info, fmt, height=height, video_codec=video_codec)
             if fmt.get("url") and _has_muxed_audio(fmt):
                 option_url = str(fmt.get("url") or "")
         options.append(VideoQualityOption(

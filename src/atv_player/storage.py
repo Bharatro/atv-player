@@ -11,6 +11,7 @@ _VALID_DANMAKU_OUTLINE_STRENGTHS = {"off", "soft", "strong"}
 _VALID_THEME_MODES = {"light", "dark", "system"}
 _VALID_NETWORK_PROXY_MODES = {"direct", "system", "http", "https", "socks5"}
 _VALID_YOUTUBE_COOKIE_BROWSERS = {"", "chrome", "edge", "firefox"}
+_VALID_YOUTUBE_VIDEO_CODECS = {"vp9", "av1", "auto"}
 _VALID_YOUTUBE_SUBTITLE_LANGS = {"", "zh-CN", "zh-TW", "zh-HK", "en"}
 _VALID_YOUTUBE_AUDIO_LANGS = {"", "zh", "en"}
 _VALID_YOUTUBE_REGIONS = {"", "CN", "US", "JP", "SG", "HK", "TW"}
@@ -180,6 +181,11 @@ def _normalize_youtube_max_height(value: object) -> int:
     return normalized if normalized in {480, 720, 1080, 1440, 2160} else 1080
 
 
+def _normalize_youtube_video_codec(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_YOUTUBE_VIDEO_CODECS else "vp9"
+
+
 def _normalize_youtube_subtitle_lang(value: object) -> str:
     text = str(value or "").strip()
     return text if text in _VALID_YOUTUBE_SUBTITLE_LANGS else ""
@@ -297,6 +303,7 @@ class SettingsRepository:
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
                     youtube_cookie_browser TEXT NOT NULL DEFAULT '',
                     youtube_max_height INTEGER NOT NULL DEFAULT 1080,
+                    youtube_video_codec TEXT NOT NULL DEFAULT 'vp9',
                     youtube_default_subtitle_lang TEXT NOT NULL DEFAULT '',
                     youtube_default_audio_lang TEXT NOT NULL DEFAULT '',
                     youtube_metadata_language TEXT NOT NULL DEFAULT '',
@@ -404,6 +411,10 @@ class SettingsRepository:
             if "youtube_max_height" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN youtube_max_height INTEGER NOT NULL DEFAULT 1080"
+                )
+            if "youtube_video_codec" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN youtube_video_codec TEXT NOT NULL DEFAULT 'vp9'"
                 )
             if "youtube_default_subtitle_lang" not in columns:
                 conn.execute(
@@ -621,6 +632,7 @@ class SettingsRepository:
                     network_proxy_bypass_rules,
                     youtube_cookie_browser,
                     youtube_max_height,
+                    youtube_video_codec,
                     youtube_default_subtitle_lang,
                     youtube_default_audio_lang,
                     youtube_metadata_language,
@@ -672,7 +684,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -702,6 +714,7 @@ class SettingsRepository:
                     network_proxy_rules,
                     youtube_cookie_browser,
                     youtube_max_height,
+                    youtube_video_codec,
                     youtube_default_subtitle_lang,
                     youtube_default_audio_lang,
                     youtube_metadata_language,
@@ -774,6 +787,7 @@ class SettingsRepository:
             network_proxy_rules,
             youtube_cookie_browser,
             youtube_max_height,
+            youtube_video_codec,
             youtube_default_subtitle_lang,
             youtube_default_audio_lang,
             youtube_metadata_language,
@@ -842,6 +856,7 @@ class SettingsRepository:
             network_proxy_rules=_normalize_network_proxy_rules(network_proxy_rules),
             youtube_cookie_browser=_normalize_youtube_cookie_browser(youtube_cookie_browser),
             youtube_max_height=_normalize_youtube_max_height(youtube_max_height),
+            youtube_video_codec=_normalize_youtube_video_codec(youtube_video_codec),
             youtube_default_subtitle_lang=_normalize_youtube_subtitle_lang(youtube_default_subtitle_lang),
             youtube_default_audio_lang=_normalize_youtube_audio_lang(youtube_default_audio_lang),
             youtube_metadata_language=_normalize_youtube_metadata_language(youtube_metadata_language),
@@ -922,6 +937,7 @@ class SettingsRepository:
                     network_proxy_rules = ?,
                     youtube_cookie_browser = ?,
                     youtube_max_height = ?,
+                    youtube_video_codec = ?,
                     youtube_default_subtitle_lang = ?,
                     youtube_default_audio_lang = ?,
                     youtube_metadata_language = ?,
@@ -991,6 +1007,7 @@ class SettingsRepository:
                     json.dumps(_normalize_network_proxy_rules(config.network_proxy_rules), ensure_ascii=False),
                     _normalize_youtube_cookie_browser(config.youtube_cookie_browser),
                     _normalize_youtube_max_height(config.youtube_max_height),
+                    _normalize_youtube_video_codec(config.youtube_video_codec),
                     _normalize_youtube_subtitle_lang(config.youtube_default_subtitle_lang),
                     _normalize_youtube_audio_lang(config.youtube_default_audio_lang),
                     _normalize_youtube_metadata_language(config.youtube_metadata_language),
