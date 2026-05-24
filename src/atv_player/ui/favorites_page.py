@@ -42,7 +42,6 @@ class FavoriteCardButton(QPushButton):
         self.poster_label = QLabel("封面", self)
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_label.setFixedSize(196, 220)
-        self.poster_label.setStyleSheet("border-radius: 12px; background: rgba(255,255,255,0.08);")
         layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
         title_row = QHBoxLayout()
@@ -66,6 +65,7 @@ class FavoriteCardButton(QPushButton):
             label.setWordWrap(True)
             layout.addWidget(label)
         layout.addStretch(1)
+        self._apply_label_styles()
         self._apply_state_style()
         self.toggled.connect(lambda _checked: self._apply_state_style())
 
@@ -75,18 +75,42 @@ class FavoriteCardButton(QPushButton):
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
 
     def _apply_state_style(self) -> None:
-        border_color = "#d8cabc"
+        tokens = current_tokens()
+        border_color = tokens.border_subtle
         if self.property("title_changed"):
-            border_color = "#f2a67f"
+            border_color = tokens.accent_hover
         if self.isChecked():
-            border_color = "#ff6a3d"
+            border_color = tokens.accent
         self.setStyleSheet(
             "QPushButton {"
             f"border: 1px solid {border_color};"
             "border-radius: 16px;"
-            "background: rgba(255, 253, 250, 0.95);"
+            f"background: {tokens.panel_bg};"
             "text-align: left;"
             "}"
+        )
+
+    def _apply_label_styles(self) -> None:
+        tokens = current_tokens()
+        self.poster_label.setStyleSheet(
+            "border: none;"
+            "border-radius: 12px;"
+            f"background: {tokens.panel_alt_bg};"
+            f"color: {tokens.text_secondary};"
+        )
+        self.title_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.text_primary};"
+            "font-weight: 700;"
+        )
+        for label in (self.source_label, self.secondary_label, self.time_label):
+            label.setStyleSheet(
+                "background: transparent;"
+                f"color: {tokens.text_secondary};"
+            )
+        self.updated_icon.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.accent_hover};"
         )
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
