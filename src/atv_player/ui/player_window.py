@@ -111,6 +111,7 @@ from atv_player.ui.theme import (
     FlatComboBox,
     build_combobox_qss,
     build_combobox_popup_qss,
+    build_compact_player_tabbar_qss,
     build_form_combobox_qss,
     build_form_line_edit_qss,
     build_form_spinbox_qss,
@@ -1303,7 +1304,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
         self.playlist.setStyleSheet(build_player_list_qss(tokens))
         self.bilibili_playlist_tree.setStyleSheet(build_player_list_qss(tokens))
-        self.playlist_title_tabs.setStyleSheet(build_player_tabbar_qss(tokens))
+        self.playlist_title_tabs.setStyleSheet(build_compact_player_tabbar_qss(tokens))
         self.metadata_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="12px 14px"))
         self.log_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="10px 12px"))
         heading_qss = build_player_section_heading_qss(tokens)
