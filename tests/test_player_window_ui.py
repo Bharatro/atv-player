@@ -19992,6 +19992,98 @@ def test_player_window_ignores_bilibili_tree_mode_for_non_bilibili_sessions(qtbo
     assert window.bilibili_playlist_tree.isHidden() is True
 
 
+def test_player_window_bilibili_tree_click_plays_leaf_item(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(
+        controller,
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(make_bilibili_grouped_session())
+    related_leaf = window.bilibili_playlist_tree.topLevelItem(1).child(1)
+
+    window._handle_bilibili_tree_item_clicked(related_leaf, 0)
+
+    assert window.session is not None
+    assert window.session.playlist[window.current_index].title == "相关2"
+
+
+def test_player_window_bilibili_tree_play_next_crosses_group_boundaries(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    session = make_bilibili_grouped_session()
+    session.playlist = session.playlists[1]
+    session.playlist_index = 1
+    session.start_index = 1
+    window.open_session(session)
+
+    window.play_next()
+
+    assert window.session is not None
+    assert window.session.playlist[window.current_index].title == "UP主1"
+
+
+def test_player_window_bilibili_tree_auto_advance_crosses_group_boundaries(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    session = make_bilibili_grouped_session()
+    session.playlist = session.playlists[0]
+    session.playlist_index = 0
+    session.start_index = 0
+    window.open_session(session)
+
+    window._handle_playback_finished()
+
+    assert window.session is not None
+    assert window.session.playlist[window.current_index].title == "相关1"
+
+
+def test_player_window_bilibili_tree_rebuilds_flat_mapping_after_replacement(qtbot) -> None:
+    main_group = [PlayItem(title="正片", url="", vod_id="BV-main", play_source="BiliBili")]
+    related_group = [PlayItem(title="查看", url="", vod_id="BV-folder", play_source="相关视频")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV-main", vod_name="B站视频"),
+        playlist=related_group,
+        playlists=[main_group, related_group],
+        playlist_index=1,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+        playback_loader=lambda item: PlaybackLoadResult(
+            replacement_playlist=[
+                PlayItem(title="相关A", url="http://m/a.mp4", vod_id="BV-a", play_source="相关视频"),
+                PlayItem(title="相关B", url="http://m/b.mp4", vod_id="BV-b", play_source="相关视频"),
+            ],
+            replacement_start_index=1,
+        ),
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert [item.title for item in window.session.playlists[1]] == ["相关A", "相关B"]
+    assert window.session.playlist[window.current_index].title == "相关B"
+
+
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(controller)
