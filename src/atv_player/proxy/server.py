@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_STREAM_CHUNK_SIZE = 256 * 1024
+_DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
 
 
 def _is_client_disconnect_error(exc: BaseException) -> bool:
@@ -124,6 +125,19 @@ def _video_representation_sort_key(representation: DashRepresentation) -> tuple[
     return (representation.height, representation.width, representation.bandwidth)
 
 
+def _dash_representation_http_chunk_size(representation: ET.Element, prefix: str) -> int:
+    for supplemental_property in _dash_child_elements(representation, prefix, "SupplementalProperty"):
+        scheme_id_uri = str(supplemental_property.attrib.get("schemeIdUri") or "").strip()
+        if scheme_id_uri != _DASH_HTTP_CHUNK_SIZE_SCHEME:
+            continue
+        try:
+            chunk_size = int(str(supplemental_property.attrib.get("value") or "0").strip() or "0")
+        except ValueError:
+            return 0
+        return chunk_size if chunk_size > 0 else 0
+    return 0
+
+
 def _parse_dash_session_metadata(
     payload: bytes,
     session: ProxySession,
@@ -172,6 +186,7 @@ def _parse_dash_session_metadata(
 def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url: str) -> bytes:
     root = ET.fromstring(payload)
     session.dash_assets = []
+    session.dash_asset_chunk_sizes = []
     prefix = _dash_namespace_prefix(root)
     namespace = prefix[1:-1] if prefix else ""
 
@@ -201,11 +216,25 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
                 if extra_representation is not selected_representation:
                     adaptation_set.remove(extra_representation)
 
-    for base_url in [element for element in root.iter() if element.tag == f"{prefix}BaseURL"]:
+    processed_base_urls: set[int] = set()
+
+    def rewrite_base_url(base_url: ET.Element, *, chunk_size: int = 0) -> None:
         raw_url = unescape((base_url.text or "").strip())
         asset_index = len(session.dash_assets)
         session.dash_assets.append(raw_url)
+        session.dash_asset_chunk_sizes.append(chunk_size if chunk_size > 0 else 0)
         base_url.text = f"{proxy_base_url}/dash/asset/{quote(session.token)}/{asset_index}.m4s"
+        processed_base_urls.add(id(base_url))
+
+    for representation in [element for element in root.iter() if element.tag == f"{prefix}Representation"]:
+        chunk_size = _dash_representation_http_chunk_size(representation, prefix)
+        for base_url in _dash_child_elements(representation, prefix, "BaseURL"):
+            rewrite_base_url(base_url, chunk_size=chunk_size)
+
+    for base_url in [element for element in root.iter() if element.tag == f"{prefix}BaseURL"]:
+        if id(base_url) in processed_base_urls:
+            continue
+        rewrite_base_url(base_url)
 
     if namespace:
         ET.register_namespace("", namespace)
@@ -220,6 +249,26 @@ def _parse_byte_range_header(range_header: str) -> tuple[int, int | None] | None
     end_text = match.group(2)
     end = int(end_text) if end_text else None
     return start, end
+
+
+def _dash_asset_chunk_size(session: ProxySession, asset_index: int) -> int:
+    try:
+        chunk_size = int(session.dash_asset_chunk_sizes[asset_index])
+    except (IndexError, TypeError, ValueError):
+        return 0
+    return chunk_size if chunk_size > 0 else 0
+
+
+def _bounded_dash_range_header(range_header: str, *, chunk_size: int) -> str:
+    if chunk_size <= 0:
+        return range_header
+    parsed = _parse_byte_range_header(range_header)
+    if parsed is None:
+        return range_header
+    start, end = parsed
+    if end is not None:
+        return range_header
+    return f"bytes={start}-{start + chunk_size - 1}"
 
 
 def _iter_response_bytes(response: Any):
@@ -508,8 +557,13 @@ class LocalHlsProxyServer:
             return 404, [], b"missing dash asset"
         upstream_headers = dict(session.headers)
         range_header = (request_headers or {}).get("Range") or (request_headers or {}).get("range")
+        effective_range_header = range_header
         if range_header:
-            upstream_headers["Range"] = range_header
+            effective_range_header = _bounded_dash_range_header(
+                range_header,
+                chunk_size=_dash_asset_chunk_size(session, asset_index),
+            )
+            upstream_headers["Range"] = effective_range_header
         response = self._get(
             session.dash_assets[asset_index],
             headers=upstream_headers,
@@ -520,8 +574,8 @@ class LocalHlsProxyServer:
         status_code = int(getattr(response, "status_code", 200) or 200)
         body = bytes(response.content)
         content_range = response.headers.get("Content-Range")
-        if range_header and status_code == 200 and not content_range:
-            sliced = _slice_payload_for_byte_range(body, range_header)
+        if effective_range_header and status_code == 200 and not content_range:
+            sliced = _slice_payload_for_byte_range(body, effective_range_header)
             if sliced is not None:
                 body, content_range = sliced
                 status_code = 206
@@ -564,8 +618,13 @@ class LocalHlsProxyServer:
             return True
         upstream_headers = dict(session.headers)
         range_header = request_headers.get("Range") or request_headers.get("range")
+        effective_range_header = range_header
         if range_header:
-            upstream_headers["Range"] = range_header
+            effective_range_header = _bounded_dash_range_header(
+                range_header,
+                chunk_size=_dash_asset_chunk_size(session, asset_index),
+            )
+            upstream_headers["Range"] = effective_range_header
         with self._stream(
             "GET",
             session.dash_assets[asset_index],
@@ -576,8 +635,8 @@ class LocalHlsProxyServer:
             response.raise_for_status()
             status_code = int(getattr(response, "status_code", 200) or 200)
             content_range = response.headers.get("Content-Range")
-            if range_header and status_code == 200 and not content_range:
-                parsed_range = _parse_byte_range_header(range_header)
+            if effective_range_header and status_code == 200 and not content_range:
+                parsed_range = _parse_byte_range_header(effective_range_header)
                 total_size_text = response.headers.get("Content-Length") or ""
                 try:
                     total_size = int(total_size_text)
@@ -646,8 +705,13 @@ class LocalHlsProxyServer:
             return True
         upstream_headers = dict(session.headers)
         range_header = request_headers.get("Range") or request_headers.get("range")
+        effective_range_header = range_header
         if range_header:
-            upstream_headers["Range"] = range_header
+            effective_range_header = _bounded_dash_range_header(
+                range_header,
+                chunk_size=_dash_asset_chunk_size(session, asset_index),
+            )
+            upstream_headers["Range"] = effective_range_header
         with self._stream(
             "HEAD",
             session.dash_assets[asset_index],

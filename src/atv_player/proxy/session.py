@@ -34,6 +34,7 @@ class ProxySession:
     iso_stream_source: object | None = None
     iso_stream_range_cache: object | None = None
     dash_assets: list[str] = field(default_factory=list)
+    dash_asset_chunk_sizes: list[int] = field(default_factory=list)
     dash_manifest_payload: bytes | None = None
     dash_video_representations: list[DashRepresentation] = field(default_factory=list)
     dash_audio_representations: list[DashRepresentation] = field(default_factory=list)

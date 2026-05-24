@@ -1090,6 +1090,95 @@ def test_local_hls_proxy_server_streams_dash_asset_response_without_buffering_fu
     ]
 
 
+def test_local_hls_proxy_server_caps_open_ended_dash_range_with_manifest_chunk_size() -> None:
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class FakeStreamResponse:
+        status_code = 206
+        headers = {
+            "Content-Type": "video/mp4",
+            "Content-Length": "4",
+            "Content-Range": "bytes 10-13/100",
+            "Accept-Ranges": "bytes",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self) -> bytes:
+            yield b"abcd"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append((method, url, headers))
+        return FakeStreamResponse()
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet contentType="video">
+      <Representation id="699" mimeType="video/mp4">
+        <BaseURL>https://media.example/video.mp4</BaseURL>
+        <SupplementalProperty schemeIdUri="urn:atv-player:http-chunk-size" value="4"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    server = LocalHlsProxyServer(stream=fake_stream)
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    handler = FakeHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=10-"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert handler.headers == [
+        ("Content-Type", "video/mp4"),
+        ("Content-Length", "4"),
+        ("Content-Range", "bytes 10-13/100"),
+        ("Accept-Ranges", "bytes"),
+    ]
+    assert handler.wfile.getvalue() == b"abcd"
+    assert calls == [
+        (
+            "GET",
+            "https://media.example/video.mp4",
+            {
+                "Range": "bytes=10-13",
+            },
+        )
+    ]
+
+
 def test_local_hls_proxy_server_streams_dash_asset_response_synthesizes_partial_content_when_origin_ignores_range() -> None:
     calls: list[tuple[str, str, dict[str, str]]] = []
 

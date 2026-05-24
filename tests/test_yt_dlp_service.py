@@ -1033,6 +1033,44 @@ class TestResolve:
         assert "https://stream.test/video.mp4?expire=1&amp;sig=abc" in manifest
         assert "https://stream.test/audio.m4a?expire=1&amp;sig=def" in manifest
 
+    def test_preserves_ytdlp_dash_http_chunk_size_in_generated_manifest(self, monkeypatch, service):
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            requested_formats=[
+                {
+                    "format_id": "699",
+                    "url": "https://stream.test/video-4k.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 5000,
+                    "vcodec": "av01.0.12M.10",
+                    "acodec": "none",
+                    "ext": "mp4",
+                    "downloader_options": {"http_chunk_size": 10485760},
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio.webm",
+                    "tbr": 145,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "downloader_options": {"http_chunk_size": 10485760},
+                },
+            ],
+            formats=[],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert (
+            '<SupplementalProperty schemeIdUri="urn:atv-player:http-chunk-size" value="10485760"/>'
+            in manifest
+        )
+
     def test_uses_configured_default_startup_quality_when_resolve_does_not_specify_limit(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 

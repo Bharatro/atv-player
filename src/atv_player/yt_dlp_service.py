@@ -80,6 +80,7 @@ _LANG_CODE_NAMES: dict[str, str] = {
 
 _DEFAULT_STARTUP_MAX_HEIGHT = 1080
 _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
+_DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
 _DIRECT_SUBTITLE_FORMAT_RANK: dict[str, int] = {
     "vtt": 0,
     "srt": 1,
@@ -759,6 +760,17 @@ def _format_dash_byte_range(value: object) -> str:
     return f"{start}-{end}"
 
 
+def _dash_http_chunk_size(fmt: dict) -> int:
+    downloader_options = fmt.get("downloader_options")
+    if not isinstance(downloader_options, dict):
+        return 0
+    try:
+        chunk_size = int(downloader_options.get("http_chunk_size") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return chunk_size if chunk_size > 0 else 0
+
+
 def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
     attrs: list[tuple[str, str]] = [
         ("id", str(fmt.get("format_id") or "").strip() or content_type),
@@ -785,9 +797,17 @@ def _dash_representation_xml(fmt: dict, *, content_type: str) -> str:
         segment_base_attrs = f' indexRange="{index_range}"' if index_range else ""
         initialization_xml = f'<Initialization range="{init_range}"/>' if init_range else ""
         segment_base_xml = f"<SegmentBase{segment_base_attrs}>{initialization_xml}</SegmentBase>"
+    chunk_size = _dash_http_chunk_size(fmt)
+    chunk_size_xml = ""
+    if chunk_size > 0:
+        chunk_size_xml = (
+            f'<SupplementalProperty schemeIdUri="{_DASH_HTTP_CHUNK_SIZE_SCHEME}" '
+            f'value="{chunk_size}"/>'
+        )
     return (
         f"<Representation {attributes}>"
         f"<BaseURL>{html.escape(str(fmt.get('url') or ''), quote=False)}</BaseURL>"
+        f"{chunk_size_xml}"
         f"{segment_base_xml}"
         "</Representation>"
     )
