@@ -6,10 +6,10 @@ import pytest
 import threading
 import time
 from types import SimpleNamespace
-from PySide6.QtCore import QPoint, QRect, Qt, QUrl
+from PySide6.QtCore import QRect, Qt, QUrl
 from PySide6.QtGui import QIcon, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QTableWidget, QTextBrowser, QToolButton
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QTableWidget, QToolButton
 
 import atv_player.app as app_module
 import atv_player.ui.help_dialog as help_dialog_module
@@ -6272,6 +6272,94 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_final_titles_acros
         "iqiyi_search": 2,
     }
     assert "Episode title enhancer restored cached titles mapped_count=2" in caplog.text
+
+
+def test_app_coordinator_episode_title_enhancer_ignores_legacy_final_title_cache(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    calls = {"tmdb_search": 0, "tmdb_season": 0}
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            del title, year
+            calls["tmdb_search"] += 1
+            return [{"id": 42, "name": "低智商犯罪", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            del tmdb_id, season_number
+            calls["tmdb_season"] += 1
+            return {"episodes": [{"episode_number": 1, "name": "新标题"}]}
+
+    class EmptyProvider:
+        name = ""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def search(self, _query) -> list[MetadataMatch]:
+            return []
+
+    cache_root = tmp_path / "app-cache"
+    old_cache_key = repr(
+        (
+            "plugin",
+            "低智商犯罪",
+            "2026",
+            "电视剧",
+            (("S01E01.mkv", "/show/S01E01.mkv", "S01E01.mkv", ""),),
+        )
+    )
+    app_module.MetadataCache(cache_root / "metadata").save_payload(
+        "episode_title_playlist",
+        old_cache_key,
+        {"order": [0], "titles": [{"display": "第1集 旧缓存", "source": "tmdb"}]},
+    )
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "BangumiClient", lambda *args, **kwargs: object())
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", EmptyProvider)
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", EmptyProvider)
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", EmptyProvider)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", EmptyProvider)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: cache_root)
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(
+        source_kind="plugin",
+        vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
+    )
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=VodItem(vod_id="v1", vod_name="低智商犯罪", vod_year="2026", category_name="电视剧"),
+            playlist=[
+                PlayItem(
+                    title="S01E01.mkv",
+                    original_title="S01E01.mkv",
+                    path="/show/S01E01.mkv",
+                    url="http://m/1.mp4",
+                )
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert updated[0].episode_display_title == "第1集 新标题"
+    assert calls == {"tmdb_search": 1, "tmdb_season": 1}
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_to_vod_name_season_when_filename_has_no_season(

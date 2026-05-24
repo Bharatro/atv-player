@@ -27,10 +27,97 @@ _SEASON_PATTERNS = (
     r"第\s*0*(\d{1,2})\s*季",
     r"(?:^|[\\/])S0*(\d{1,2})(?:[\\/]|$)",
 )
+_EPISODE_RELEASE_VERSION_RE = re.compile(
+    r"(?:^|[\s._\-\[(（])v\s*(\d+(?:\.\d+)*)"
+    r"(?=$|[\s._\-\])）]|版(?:本)?)",
+    re.IGNORECASE,
+)
+_DEFAULT_EPISODE_RELEASE_VERSION = (1, 0, 0, 0)
 
 
 def normalize_episode_title_text(value: str) -> str:
     return re.sub(r"\s+", "", str(value or "").strip()).lower()
+
+
+def _path_basename(value: str) -> str:
+    text = str(value or "").strip().rstrip("/\\")
+    if not text:
+        return ""
+    return re.split(r"[\\/]", text)[-1]
+
+
+def _parse_episode_release_version(value: str) -> tuple[int, int, int, int] | None:
+    match = _EPISODE_RELEASE_VERSION_RE.search(str(value or ""))
+    if match is None:
+        return None
+    parts: list[int] = []
+    for part in match.group(1).split("."):
+        try:
+            number = int(part)
+        except ValueError:
+            return None
+        if number < 0:
+            return None
+        parts.append(number)
+    padded = (parts + [0, 0, 0, 0])[:4]
+    return (padded[0], padded[1], padded[2], padded[3])
+
+
+def episode_release_version(item: PlayItem) -> tuple[int, int, int, int]:
+    versions: list[tuple[int, int, int, int]] = []
+    seen: set[str] = set()
+    for value in (item.original_title, item.title, item.path):
+        candidate = _path_basename(str(value or ""))
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        version = _parse_episode_release_version(candidate)
+        if version is not None:
+            versions.append(version)
+    return max(versions) if versions else _DEFAULT_EPISODE_RELEASE_VERSION
+
+
+def episode_version_slots_by_index(
+    playlist: list[PlayItem],
+    season_episode_pairs: list[tuple[int, int] | None],
+    *,
+    sentinel: int,
+) -> dict[int, int]:
+    versions_by_index = [episode_release_version(item) for item in playlist]
+    versions_by_pair: dict[tuple[int, int], set[tuple[int, int, int, int]]] = {}
+    for index, pair in enumerate(season_episode_pairs):
+        if pair is None:
+            continue
+        versions_by_pair.setdefault(pair, set()).add(versions_by_index[index])
+
+    version_slot_by_pair: dict[
+        tuple[int, int],
+        dict[tuple[int, int, int, int], int],
+    ] = {}
+    for pair, versions in versions_by_pair.items():
+        if len(versions) <= 1:
+            continue
+        version_slot_by_pair[pair] = {
+            version: slot
+            for slot, version in enumerate(sorted(versions, reverse=True))
+        }
+
+    occurrence_by_pair: dict[tuple[int, int], int] = {}
+    version_slot_by_index: dict[int, int] = {}
+    for index, pair in enumerate(season_episode_pairs):
+        if pair is None:
+            version_slot_by_index[index] = sentinel
+            continue
+        slots_by_version = version_slot_by_pair.get(pair)
+        if slots_by_version is not None:
+            version_slot_by_index[index] = slots_by_version.get(
+                versions_by_index[index],
+                sentinel,
+            )
+            continue
+        version_slot_by_index[index] = occurrence_by_pair.get(pair, 0)
+        occurrence_by_pair[pair] = version_slot_by_index[index] + 1
+    return version_slot_by_index
 
 
 def _parse_chinese_number(value: str) -> int | None:

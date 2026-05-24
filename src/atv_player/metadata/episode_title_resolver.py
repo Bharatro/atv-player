@@ -4,8 +4,13 @@ from dataclasses import replace
 import re
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
-from atv_player.episode_titles import extract_season_number, playlist_has_title_variants, seed_original_titles
-from atv_player.episode_titles import apply_episode_title_index_map
+from atv_player.episode_titles import (
+    apply_episode_title_index_map,
+    episode_version_slots_by_index,
+    extract_season_number,
+    playlist_has_title_variants,
+    seed_original_titles,
+)
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.query import normalize_metadata_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
@@ -324,14 +329,11 @@ def _sort_episode_title_playlist(vod: VodItem, playlist: list[PlayItem]) -> list
     has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
     indexed_playlist = list(enumerate(playlist))
     if has_multi_version_pairs:
-        occurrence_by_pair: dict[tuple[int, int], int] = {}
-        version_slot_by_index: dict[int, int] = {}
-        for index, pair in enumerate(season_episode_pairs):
-            if pair is None:
-                version_slot_by_index[index] = _EPISODE_SORT_SENTINEL
-                continue
-            version_slot_by_index[index] = occurrence_by_pair.get(pair, 0)
-            occurrence_by_pair[pair] = version_slot_by_index[index] + 1
+        version_slot_by_index = episode_version_slots_by_index(
+            playlist,
+            season_episode_pairs,
+            sentinel=_EPISODE_SORT_SENTINEL,
+        )
         indexed_playlist.sort(
             key=lambda entry: (
                 version_slot_by_index[entry[0]],

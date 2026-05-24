@@ -213,6 +213,59 @@ def test_build_provider_episode_playlist_prefers_normalized_bilibili_episodes_ov
     assert updated[0].episode_display_title == "第28集 答案"
 
 
+def test_build_provider_episode_playlist_prioritizes_explicit_bilibili_file_versions() -> None:
+    vod = VodItem(vod_id="v1", vod_name="牧神记", vod_year="2025", category_name="动漫")
+    original_titles = [
+        "S01E60.2025.2160p.WEB-DL.H264.AAC(2.94 GB)",
+        "S01E61.2025.2160p.WEB-DL.H264.AAC(2.62 GB)",
+        "S01E60.2025.2160p.WEB-DL.H264.AAC(v1.5)(2.90 GB)",
+        "S01E60.2025.2160p.WEB-DL.H264.AAC(v2)(2.86 GB)",
+        "S01E61.2025.2160p.WEB-DL.H264.AAC(v2)(2.60 GB)",
+        "S03E76.2025.2160p.WEB-DL.H264.AAC(2.56 GB)",
+    ]
+    playlist = [
+        PlayItem(title=title, original_title=title, url=f"http://m/{index}.mp4")
+        for index, title in enumerate(original_titles, start=1)
+    ]
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        year="2025",
+        raw={
+            "season_id": 45969,
+            "episodes": [
+                {"episode_number": 60, "long_title": "阴间突袭", "episode_type": "main", "sort": 60},
+                {"episode_number": 61, "long_title": "调鬼遣神", "episode_type": "main", "sort": 61},
+                {"episode_number": 76, "long_title": "一剑开皇血汪洋", "episode_type": "main", "sort": 76},
+            ],
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is not None
+    sorted_titles = [item.original_title for item in updated]
+    e60_v2 = "S01E60.2025.2160p.WEB-DL.H264.AAC(v2)(2.86 GB)"
+    e60_v15 = "S01E60.2025.2160p.WEB-DL.H264.AAC(v1.5)(2.90 GB)"
+    e60_v1 = "S01E60.2025.2160p.WEB-DL.H264.AAC(2.94 GB)"
+    e61_v2 = "S01E61.2025.2160p.WEB-DL.H264.AAC(v2)(2.60 GB)"
+    e61_v1 = "S01E61.2025.2160p.WEB-DL.H264.AAC(2.62 GB)"
+    assert sorted_titles.index(e60_v2) < sorted_titles.index(e60_v15)
+    assert sorted_titles.index(e60_v15) < sorted_titles.index(e60_v1)
+    assert sorted_titles.index(e61_v2) < sorted_titles.index(e61_v1)
+    assert [item.episode_display_title for item in updated[:3]] == [
+        "第1季 第60集 阴间突袭",
+        "第1季 第61集 调鬼遣神",
+        "第3季 第76集 一剑开皇血汪洋",
+    ]
+
+
 def test_build_provider_episode_playlist_skips_bilibili_candidate_without_confirmed_anime_season() -> None:
     vod = VodItem(vod_id="v1", vod_name="示例动画", vod_year="2025", category_name="动漫")
     playlist = [PlayItem(title="01.mp4", original_title="01.mp4", url="http://m/1.mp4")]

@@ -39,7 +39,7 @@ from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
-    apply_episode_title_index_map,
+    episode_version_slots_by_index,
     extract_season_number,
     normalize_episode_title_text,
     playlist_has_title_variants,
@@ -99,6 +99,7 @@ _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EPISODE_SORT_SENTINEL = 10**9
+_EPISODE_TITLE_PLAYLIST_CACHE_VERSION = "v2"
 _QUALITY_VARIANT_EPISODE_RE = re.compile(
     r"(?:^|[\s\-_.])0*(\d{1,3})\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
     re.IGNORECASE,
@@ -961,14 +962,11 @@ class AppCoordinator(QObject):
             if len(playlist) > 1:
                 indexed_playlist = list(enumerate(playlist))
                 if has_multi_version_pairs:
-                    occurrence_by_pair: dict[tuple[int, int], int] = {}
-                    version_slot_by_index: dict[int, int] = {}
-                    for index, pair in enumerate(season_episode_pairs):
-                        if pair is None:
-                            version_slot_by_index[index] = _EPISODE_SORT_SENTINEL
-                            continue
-                        version_slot_by_index[index] = occurrence_by_pair.get(pair, 0)
-                        occurrence_by_pair[pair] = version_slot_by_index[index] + 1
+                    version_slot_by_index = episode_version_slots_by_index(
+                        playlist,
+                        season_episode_pairs,
+                        sentinel=_EPISODE_SORT_SENTINEL,
+                    )
                     indexed_playlist.sort(
                         key=lambda entry: (
                             version_slot_by_index[entry[0]],
@@ -1004,6 +1002,7 @@ class AppCoordinator(QObject):
             seeded = seed_original_titles([replace(item) for item in playlist])
             return repr(
                 (
+                    _EPISODE_TITLE_PLAYLIST_CACHE_VERSION,
                     provider_source_kind,
                     str(getattr(session_vod, "vod_name", "") or "").strip(),
                     str(getattr(session_vod, "vod_year", "") or "").strip(),
