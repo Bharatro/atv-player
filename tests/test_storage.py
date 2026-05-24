@@ -2372,3 +2372,91 @@ def test_settings_repository_normalizes_invalid_youtube_category_source(tmp_path
     assert loaded.youtube_category_source_type == "builtin"
     assert loaded.youtube_category_source_value == "http://example.test/youtube.json"
     assert loaded.youtube_category_cache_refreshed_at == 0
+
+
+def test_settings_repository_persists_bilibili_grouped_playlist_tree_enabled(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.bilibili_grouped_playlist_tree_enabled = True
+
+    repo.save_config(config)
+    loaded = SettingsRepository(tmp_path / "app.db").load_config()
+
+    assert loaded.bilibili_grouped_playlist_tree_enabled is True
+
+
+def test_settings_repository_defaults_missing_bilibili_grouped_playlist_tree_enabled_to_false(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                theme_mode TEXT NOT NULL DEFAULT 'system',
+                logging_enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                disabled_danmaku_provider_ids TEXT NOT NULL DEFAULT '[]',
+                disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
+                metadata_douban_cookie TEXT NOT NULL DEFAULT '',
+                metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                network_proxy_mode TEXT NOT NULL DEFAULT 'direct',
+                network_proxy_url TEXT NOT NULL DEFAULT '',
+                network_proxy_bypass_rules TEXT NOT NULL DEFAULT '[]',
+                network_proxy_rules TEXT NOT NULL DEFAULT '[]',
+                youtube_cookie_browser TEXT NOT NULL DEFAULT '',
+                youtube_max_height INTEGER NOT NULL DEFAULT 1080,
+                youtube_video_codec TEXT NOT NULL DEFAULT 'vp9',
+                youtube_default_subtitle_lang TEXT NOT NULL DEFAULT '',
+                youtube_default_audio_lang TEXT NOT NULL DEFAULT '',
+                youtube_metadata_language TEXT NOT NULL DEFAULT '',
+                youtube_region TEXT NOT NULL DEFAULT '',
+                youtube_category_source_type TEXT NOT NULL DEFAULT 'builtin',
+                youtube_category_source_value TEXT NOT NULL DEFAULT '',
+                youtube_category_cache_json TEXT NOT NULL DEFAULT '',
+                youtube_category_cache_refreshed_at INTEGER NOT NULL DEFAULT 0,
+                youtube_category_cache_error TEXT NOT NULL DEFAULT '',
+                mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
+                mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
+                mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
+                mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
+                mpv_extra_options TEXT NOT NULL DEFAULT '',
+                playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
+                m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
+                last_path TEXT NOT NULL DEFAULT '/'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, theme_mode,
+                logging_enabled, metadata_enhancement_enabled, episode_title_enhancement_enabled,
+                disabled_danmaku_provider_ids, disabled_metadata_provider_ids,
+                metadata_douban_cookie, metadata_tmdb_api_key, metadata_bangumi_access_token,
+                network_proxy_mode, network_proxy_url, network_proxy_bypass_rules, network_proxy_rules,
+                youtube_cookie_browser, youtube_max_height, youtube_video_codec,
+                youtube_default_subtitle_lang, youtube_default_audio_lang, youtube_metadata_language,
+                youtube_region, youtube_category_source_type, youtube_category_source_value,
+                youtube_category_cache_json, youtube_category_cache_refreshed_at, youtube_category_cache_error,
+                mpv_cache_size_mb, mpv_hwdec_mode, mpv_network_timeout_seconds,
+                mpv_default_readahead_secs, mpv_extra_options,
+                playback_auto_switch_source_on_failure, m3u_proxy_segment_prefetch_size, last_path
+            )
+            VALUES (
+                1, 'http://127.0.0.1:4567', '', '', '', 'system',
+                1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '[]', '[]',
+                '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '',
+                512, 'auto-safe', 15, 20, '', 0, 2, '/'
+            )
+            """
+        )
+
+    loaded = SettingsRepository(db_path).load_config()
+
+    assert loaded.bilibili_grouped_playlist_tree_enabled is False

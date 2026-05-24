@@ -51,6 +51,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -673,6 +675,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
+        self._bilibili_tree_flat_index_by_item_id: dict[int, int] = {}
+        self._bilibili_tree_flat_index_by_group_item: dict[tuple[int, int], int] = {}
+        self._bilibili_tree_group_item_by_flat_index: dict[int, tuple[int, int]] = {}
         self._restore_saved_splitter_on_next_wide_exit = False
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_loader: _PendingPlaybackLoader | None = None
@@ -867,6 +872,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.playlist.customContextMenuRequested.connect(lambda pos: self._show_playlist_context_menu(pos))
         self.playlist.viewport().installEventFilter(self)
+        self.bilibili_playlist_tree = QTreeWidget()
+        self.bilibili_playlist_tree.setHeaderHidden(True)
+        self.bilibili_playlist_tree.setIndentation(14)
+        self.bilibili_playlist_tree.setHidden(True)
+        self.bilibili_playlist_tree.itemClicked.connect(self._handle_bilibili_tree_item_clicked)
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space", role="primary")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp", role="secondary")
         self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn", role="secondary")
@@ -1150,8 +1160,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_stack_layout.addWidget(self.video_poster_overlay)
         video_layout.addWidget(self.video_stack)
 
+        self.playlist_panel = QWidget()
+        self.playlist_panel_layout = QVBoxLayout(self.playlist_panel)
+        self.playlist_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.playlist_panel_layout.setSpacing(0)
+        self.playlist_panel_layout.addWidget(self.playlist)
+        self.playlist_panel_layout.addWidget(self.bilibili_playlist_tree)
+
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.sidebar_splitter.addWidget(self.playlist)
+        self.sidebar_splitter.addWidget(self.playlist_panel)
         self.sidebar_splitter.addWidget(self.details)
         self.sidebar_splitter.setChildrenCollapsible(True)
 
@@ -1281,6 +1298,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.details.setStyleSheet(build_player_panel_qss(tokens))
         self.sidebar_container.setStyleSheet(build_player_panel_qss(tokens))
         self.playlist.setStyleSheet(build_player_list_qss(tokens))
+        self.bilibili_playlist_tree.setStyleSheet(build_player_list_qss(tokens))
         self.playlist_title_tabs.setStyleSheet(build_player_tabbar_qss(tokens))
         self.metadata_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="12px 14px"))
         self.log_view.setStyleSheet(build_player_text_panel_qss(tokens, padding="10px 12px"))
@@ -1691,6 +1709,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _change_playlist_title_mode(self, index: int) -> None:
         self.playlist_title_mode = "original" if index == 1 else "episode"
         self._render_playlist_items()
+        self._render_bilibili_playlist_tree()
 
     def _playlist_panel_visible(self) -> bool:
         return (
@@ -1698,6 +1717,78 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and not self.wide_button.isChecked()
             and self.toggle_playlist_button.isChecked()
         )
+
+    def _bilibili_grouped_playlist_tree_enabled(self) -> bool:
+        return bool(
+            self.config is not None
+            and getattr(self.config, "bilibili_grouped_playlist_tree_enabled", False)
+            and self.session is not None
+            and str(getattr(self.session, "source_kind", "") or "").strip() == "bilibili"
+            and len(self.session.playlists) > 1
+        )
+
+    def _sync_playlist_panel_mode(self) -> None:
+        tree_mode = self._bilibili_grouped_playlist_tree_enabled()
+        self.playlist.setHidden(tree_mode)
+        self.bilibili_playlist_tree.setHidden(not tree_mode)
+        if tree_mode:
+            self.playlist_group_combo.setHidden(True)
+            self.playlist_source_combo.setHidden(True)
+
+    def _build_bilibili_tree_flat_playlist(
+        self,
+    ) -> tuple[list[PlayItem], dict[int, int], dict[tuple[int, int], int], dict[int, tuple[int, int]]]:
+        if self.session is None:
+            return [], {}, {}, {}
+        flat_playlist: list[PlayItem] = []
+        flat_index_by_item_id: dict[int, int] = {}
+        flat_index_by_group_item: dict[tuple[int, int], int] = {}
+        group_item_by_flat_index: dict[int, tuple[int, int]] = {}
+        for group_index, playlist in enumerate(self.session.playlists):
+            for item_index, play_item in enumerate(playlist):
+                flat_index = len(flat_playlist)
+                flat_playlist.append(play_item)
+                flat_index_by_item_id[id(play_item)] = flat_index
+                flat_index_by_group_item[(group_index, item_index)] = flat_index
+                group_item_by_flat_index[flat_index] = (group_index, item_index)
+        return flat_playlist, flat_index_by_item_id, flat_index_by_group_item, group_item_by_flat_index
+
+    def _sync_bilibili_tree_active_group_from_current_index(self) -> None:
+        if self.session is None or not self._bilibili_grouped_playlist_tree_enabled():
+            return
+        group_item = self._bilibili_tree_group_item_by_flat_index.get(self.current_index)
+        if group_item is None:
+            return
+        group_index, _item_index = group_item
+        self.session.playlist_index = group_index
+        self.session.source_group_index = group_index
+        self.session.source_index = 0
+
+    def _activate_bilibili_tree_playlist(
+        self,
+        *,
+        preferred_group_item: tuple[int, int] | None = None,
+    ) -> None:
+        if self.session is None or not self._bilibili_grouped_playlist_tree_enabled():
+            return
+        current_item = self.session.playlist[self.current_index] if 0 <= self.current_index < len(self.session.playlist) else None
+        (
+            flat_playlist,
+            self._bilibili_tree_flat_index_by_item_id,
+            self._bilibili_tree_flat_index_by_group_item,
+            self._bilibili_tree_group_item_by_flat_index,
+        ) = self._build_bilibili_tree_flat_playlist()
+        if not flat_playlist:
+            return
+        self.session.playlist = flat_playlist
+        if preferred_group_item is not None:
+            self.current_index = self._bilibili_tree_flat_index_by_group_item.get(preferred_group_item, 0)
+        elif current_item is not None:
+            self.current_index = self._bilibili_tree_flat_index_by_item_id.get(id(current_item), 0)
+        else:
+            self.current_index = 0
+        self.session.start_index = self.current_index
+        self._sync_bilibili_tree_active_group_from_current_index()
 
     def _render_playlist_title_tabs(self) -> None:
         playlist = list(self.session.playlist if self.session is not None else [])
@@ -1728,6 +1819,66 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
         self._sync_playlist_item_styles()
+
+    def _render_bilibili_playlist_tree(self) -> None:
+        self.bilibili_playlist_tree.clear()
+        if self.session is None or not self._bilibili_grouped_playlist_tree_enabled():
+            return
+        for group_index, playlist in enumerate(self.session.playlists):
+            if not playlist:
+                continue
+            group_item = QTreeWidgetItem([self._playlist_group_label(playlist, group_index)])
+            group_item.setData(0, Qt.ItemDataRole.UserRole, ("group", group_index, -1))
+            group_item.setExpanded(True)
+            self.bilibili_playlist_tree.addTopLevelItem(group_item)
+            for item_index, play_item in enumerate(playlist):
+                leaf = QTreeWidgetItem([playlist_item_display_title(play_item, self.playlist_title_mode)])
+                leaf.setData(0, Qt.ItemDataRole.UserRole, ("leaf", group_index, item_index))
+                group_item.addChild(leaf)
+        self._sync_bilibili_tree_item_styles()
+
+    def _sync_bilibili_tree_item_styles(self) -> None:
+        if self.session is None or not self._bilibili_grouped_playlist_tree_enabled():
+            return
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        for flat_index, group_item_key in self._bilibili_tree_group_item_by_flat_index.items():
+            group_index, item_index = group_item_key
+            group_item = self.bilibili_playlist_tree.topLevelItem(group_index)
+            if group_item is None or item_index >= group_item.childCount():
+                continue
+            leaf = group_item.child(item_index)
+            font = leaf.font(0)
+            if flat_index == self.current_index:
+                leaf.setForeground(0, QBrush(QColor(tokens.accent)))
+                font.setBold(True)
+            elif flat_index < self.current_index:
+                leaf.setForeground(0, QBrush(QColor(tokens.text_secondary)))
+                font.setBold(False)
+            else:
+                leaf.setForeground(0, QBrush(QColor(tokens.text_primary)))
+                font.setBold(False)
+            leaf.setFont(0, font)
+        current_group_item = self._bilibili_tree_group_item_by_flat_index.get(self.current_index)
+        if current_group_item is not None:
+            group_index, item_index = current_group_item
+            group_item = self.bilibili_playlist_tree.topLevelItem(group_index)
+            if group_item is not None and item_index < group_item.childCount():
+                group_item.setExpanded(True)
+                self.bilibili_playlist_tree.setCurrentItem(group_item.child(item_index))
+
+    def _handle_bilibili_tree_item_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(payload, tuple) or not payload or payload[0] != "leaf":
+            item.setExpanded(not item.isExpanded())
+            return
+        if self.session is None:
+            return
+        flat_index = self._bilibili_tree_flat_index_by_group_item.get((payload[1], payload[2]))
+        if flat_index is None or flat_index == self.current_index:
+            return
+        self.report_progress(force_remote_report=True)
+        self._stop_current_playback()
+        self._play_item_at_index(flat_index, preserve_primary_external_subtitle_selection=True)
 
     def _sync_playlist_item_styles(self) -> None:
         if self.session is None:
@@ -2427,7 +2578,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_saved_year = ""
         self._metadata_scrape_saved_category = ""
         self._metadata_scrape_saved_provider = ""
+        self._bilibili_tree_flat_index_by_item_id = {}
+        self._bilibili_tree_flat_index_by_group_item = {}
+        self._bilibili_tree_group_item_by_flat_index = {}
         self.current_index = session.start_index
+        if self._bilibili_grouped_playlist_tree_enabled():
+            self._activate_bilibili_tree_playlist()
         current_title = (
             session.playlist[self.current_index].title
             if 0 <= self.current_index < len(session.playlist)
@@ -2473,6 +2629,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_playlist_source_combos()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._render_bilibili_playlist_tree()
+        self._sync_playlist_panel_mode()
         self._render_detail_actions()
         self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
@@ -2615,6 +2773,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
+        if self._bilibili_grouped_playlist_tree_enabled():
+            group_index, _item_index = self._bilibili_tree_group_item_by_flat_index.get(
+                self.current_index,
+                (self.session.playlist_index, 0),
+            )
+            self.session.playlist_index = group_index
+            self.session.source_group_index = group_index
+            self.session.source_index = 0
         active_group = self.session.source_groups[self.session.source_group_index]
         active_source = active_group.sources[self.session.source_index]
         active_source.playlist = replacement
@@ -2624,10 +2790,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             0,
             min(load_result.replacement_start_index, len(replacement) - 1),
         )
+        if self._bilibili_grouped_playlist_tree_enabled():
+            self._activate_bilibili_tree_playlist(
+                preferred_group_item=(self.session.playlist_index, self.current_index)
+            )
         self._render_playlist_source_combos()
         self.playlist_title_mode = "episode"
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._render_bilibili_playlist_tree()
+        self._sync_playlist_panel_mode()
         self._render_detail_actions()
         self.session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
@@ -3149,9 +3321,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if callable(reset_prefetch):
                 reset_prefetch(self.session)
         self.current_index = index
+        self._sync_bilibili_tree_active_group_from_current_index()
         try:
             self.playlist.setCurrentRow(self.current_index)
             self._sync_playlist_item_styles()
+            self._sync_bilibili_tree_item_styles()
             self._refresh_danmaku_source_entry_points()
             self._render_metadata()
             self._render_detail_fields()
@@ -4557,6 +4731,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.session.source_index = source_index
             self._render_playlist_source_combos()
             self._render_playlist_items()
+            self._render_bilibili_playlist_tree()
+            self._sync_playlist_panel_mode()
             return
         previous_index = self.current_index
         target_index = min(previous_index, len(target_playlist) - 1)
@@ -4578,6 +4754,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_playlist_source_combos()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
+        self._render_bilibili_playlist_tree()
+        self._sync_playlist_panel_mode()
         self.session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
         try:

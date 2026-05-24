@@ -282,6 +282,10 @@ def _normalize_playback_auto_switch_source_on_failure(value: object) -> bool:
     return bool(value)
 
 
+def _normalize_bilibili_grouped_playlist_tree_enabled(value: object) -> bool:
+    return bool(value)
+
+
 def _normalize_m3u_proxy_segment_prefetch_size(value: object) -> int:
     try:
         normalized = int(value)
@@ -343,6 +347,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
                     mpv_extra_options TEXT NOT NULL DEFAULT '',
                     playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
+                    bilibili_grouped_playlist_tree_enabled INTEGER NOT NULL DEFAULT 0,
                     m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
@@ -507,6 +512,10 @@ class SettingsRepository:
             if "playback_auto_switch_source_on_failure" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0"
+                )
+            if "bilibili_grouped_playlist_tree_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN bilibili_grouped_playlist_tree_enabled INTEGER NOT NULL DEFAULT 0"
                 )
             if "m3u_proxy_segment_prefetch_size" not in columns:
                 conn.execute(
@@ -682,6 +691,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs,
                     mpv_extra_options,
                     playback_auto_switch_source_on_failure,
+                    bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
                     last_path,
                     last_active_window,
@@ -718,7 +728,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -766,6 +776,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs,
                     mpv_extra_options,
                     playback_auto_switch_source_on_failure,
+                    bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
                     last_path,
                     last_active_window,
@@ -841,6 +852,7 @@ class SettingsRepository:
             mpv_default_readahead_secs,
             mpv_extra_options,
             playback_auto_switch_source_on_failure,
+            bilibili_grouped_playlist_tree_enabled,
             m3u_proxy_segment_prefetch_size,
             last_path,
             last_active_window,
@@ -922,6 +934,9 @@ class SettingsRepository:
             playback_auto_switch_source_on_failure=_normalize_playback_auto_switch_source_on_failure(
                 playback_auto_switch_source_on_failure
             ),
+            bilibili_grouped_playlist_tree_enabled=_normalize_bilibili_grouped_playlist_tree_enabled(
+                bilibili_grouped_playlist_tree_enabled
+            ),
             m3u_proxy_segment_prefetch_size=_normalize_m3u_proxy_segment_prefetch_size(
                 m3u_proxy_segment_prefetch_size
             ),
@@ -1001,6 +1016,7 @@ class SettingsRepository:
                     mpv_default_readahead_secs = ?,
                     mpv_extra_options = ?,
                     playback_auto_switch_source_on_failure = ?,
+                    bilibili_grouped_playlist_tree_enabled = ?,
                     m3u_proxy_segment_prefetch_size = ?,
                     last_path = ?,
                     last_active_window = ?,
@@ -1085,6 +1101,7 @@ class SettingsRepository:
                     _normalize_mpv_default_readahead_secs(config.mpv_default_readahead_secs),
                     _normalize_mpv_extra_options(config.mpv_extra_options),
                     int(config.playback_auto_switch_source_on_failure),
+                    int(config.bilibili_grouped_playlist_tree_enabled),
                     _normalize_m3u_proxy_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size),
                     config.last_path,
                     config.last_active_window,
