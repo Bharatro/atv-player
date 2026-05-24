@@ -19060,15 +19060,73 @@ def test_player_window_hides_playlist_title_tabs_when_playlist_panel_is_closed(q
     assert window.playlist.isHidden() is False
     assert window.playlist_title_tabs.isHidden() is False
 
-    window.toggle_playlist_button.click()
+    window._cycle_playlist_panel_mode()
 
     assert window.playlist.isHidden() is True
     assert window.playlist_title_tabs.isHidden() is True
 
-    window.toggle_playlist_button.click()
+    window._cycle_playlist_panel_mode()
 
     assert window.playlist.isHidden() is False
     assert window.playlist_title_tabs.isHidden() is False
+
+
+def test_player_window_playlist_button_cycles_bilibili_playlist_panel_modes(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=False),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.open_session(make_bilibili_grouped_session())
+    window.show()
+
+    assert window.playlist.isHidden() is False
+    assert window.bilibili_playlist_tree.isHidden() is True
+    assert window.toggle_playlist_button.toolTip() == "播放列表：普通列表"
+
+    window._cycle_playlist_panel_mode()
+
+    assert window.playlist.isHidden() is True
+    assert window.bilibili_playlist_tree.isHidden() is False
+    assert window.toggle_playlist_button.toolTip() == "播放列表：分组树"
+
+    window._cycle_playlist_panel_mode()
+
+    assert window.playlist.isHidden() is True
+    assert window.bilibili_playlist_tree.isHidden() is True
+    assert window.playlist_title_tabs.isHidden() is True
+    assert window.toggle_playlist_button.toolTip() == "播放列表：隐藏"
+
+    window._cycle_playlist_panel_mode()
+
+    assert window.playlist.isHidden() is False
+    assert window.bilibili_playlist_tree.isHidden() is True
+    assert window.toggle_playlist_button.toolTip() == "播放列表：普通列表"
+
+
+def test_player_window_playlist_button_remains_two_state_for_non_bilibili_sessions(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.open_session(make_player_session(start_index=0))
+    window.show()
+
+    assert window.playlist.isHidden() is False
+    assert window.toggle_playlist_button.toolTip() == "播放列表：普通列表"
+
+    window._cycle_playlist_panel_mode()
+
+    assert window.playlist.isHidden() is True
+    assert window.toggle_playlist_button.toolTip() == "播放列表：隐藏"
+
+    window._cycle_playlist_panel_mode()
+
+    assert window.playlist.isHidden() is False
+    assert window.toggle_playlist_button.toolTip() == "播放列表：普通列表"
 
 
 def test_player_window_switches_playlist_labels_without_changing_current_index(qtbot) -> None:
@@ -19957,7 +20015,7 @@ def test_player_window_shows_bilibili_grouped_playlist_tree_when_enabled(qtbot) 
     assert window.playlist_group_combo.isHidden() is True
     assert window.bilibili_playlist_tree.topLevelItemCount() == 3
     assert window.bilibili_playlist_tree.topLevelItem(0).text(0) == "BiliBili"
-    assert window.bilibili_playlist_tree.topLevelItem(1).text(0) == "相关视频"
+    assert window.bilibili_playlist_tree.topLevelItem(1).text(0) == "相关视频(2)"
     assert window.bilibili_playlist_tree.topLevelItem(2).text(0) == "UP主视频"
 
 
@@ -19992,7 +20050,7 @@ def test_player_window_ignores_bilibili_tree_mode_for_non_bilibili_sessions(qtbo
     assert window.bilibili_playlist_tree.isHidden() is True
 
 
-def test_player_window_bilibili_tree_click_plays_leaf_item(qtbot) -> None:
+def test_player_window_bilibili_tree_single_click_does_not_play_leaf_item(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(
         controller,
@@ -20007,7 +20065,71 @@ def test_player_window_bilibili_tree_click_plays_leaf_item(qtbot) -> None:
     window._handle_bilibili_tree_item_clicked(related_leaf, 0)
 
     assert window.session is not None
+    assert window.session.playlist[window.current_index].title == "正片"
+
+
+def test_player_window_bilibili_tree_double_click_plays_leaf_item(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(
+        controller,
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(make_bilibili_grouped_session())
+    related_leaf = window.bilibili_playlist_tree.topLevelItem(1).child(1)
+
+    window._handle_bilibili_tree_item_activated(related_leaf, 0)
+
+    assert window.session is not None
     assert window.session.playlist[window.current_index].title == "相关2"
+
+
+def test_player_window_bilibili_tree_leaf_tooltip_matches_plain_playlist(qtbot) -> None:
+    main_group = [
+        PlayItem(
+            title="正片",
+            url="http://bili/main.mp4",
+            vod_id="BV-main",
+            play_source="BiliBili",
+            original_title="Bili.Main.Full.Title.2160p.mkv",
+            episode_display_title="第1集 正片",
+        )
+    ]
+    related_group = [
+        PlayItem(
+            title="相关1",
+            url="http://bili/r1.mp4",
+            vod_id="BV-r1",
+            play_source="相关视频",
+            original_title="Related.Video.Full.Title.1080p.mp4",
+            episode_display_title="相关视频 1",
+        )
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV-main", vod_name="B站视频"),
+        playlist=main_group,
+        playlists=[main_group, related_group],
+        playlist_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    main_leaf = window.bilibili_playlist_tree.topLevelItem(0).child(0)
+    related_leaf = window.bilibili_playlist_tree.topLevelItem(1).child(0)
+
+    assert main_leaf.toolTip(0) == "Bili.Main.Full.Title.2160p.mkv"
+    assert related_leaf.toolTip(0) == "Related.Video.Full.Title.1080p.mp4"
 
 
 def test_player_window_bilibili_tree_play_next_crosses_group_boundaries(qtbot) -> None:
