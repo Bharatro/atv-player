@@ -327,6 +327,15 @@ class FavoriteRecord:
 
 
 @dataclass(slots=True)
+class FavoriteCardItem:
+    record: FavoriteRecord
+    display_title: str
+    source_label: str
+    updated_hint: bool
+    secondary_text: str
+
+
+@dataclass(slots=True)
 class HistoryRecord:
     id: int
     key: str
