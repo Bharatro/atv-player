@@ -9140,7 +9140,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.closed_to_main.emit()
 
     def close(self) -> bool:
-        if not self._quit_requested and not self._app_quit_requested:
+        # Returning to the main window keeps this player instance alive; only
+        # clear the owner reference when the window is actually closing.
+        if (
+            not self._quit_requested
+            and not self._app_quit_requested
+            and self.session is None
+        ):
             on_window_closed = getattr(self, "_on_window_closed", None)
             if callable(on_window_closed):
                 on_window_closed()
