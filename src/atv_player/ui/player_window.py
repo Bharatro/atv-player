@@ -617,6 +617,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         "很大": 130,
     }
     _TINTED_ICON_NAMES = {
+        "favorite.svg",
+        "favorite-filled.svg",
         "grid.svg",
         "maximize.svg",
         "queue.svg",
@@ -636,6 +638,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         m3u8_ad_filter=None,
         playback_parser_service=None,
         default_video_cover_loader=None,
+        favorite_is_active=None,
+        favorite_toggle=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -653,6 +657,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._startup_coordinator = PlaybackStartupCoordinator()
         self._startup_state = self._startup_coordinator.idle()
         self._default_video_cover_loader = default_video_cover_loader
+        self._favorite_is_active = favorite_is_active or (lambda _item: False)
+        self._favorite_toggle = favorite_toggle or (lambda _item: None)
         self._default_video_cover_source: str | None = None
         self.session = None
         self.current_index = 0
@@ -1050,6 +1056,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._poster_row_layout.addWidget(self._poster_next_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self._poster_row_layout.addStretch(1)
         metadata_layout.addWidget(self._poster_row_widget)
+        self.favorite_action_widget = QWidget()
+        self.favorite_action_layout = QHBoxLayout(self.favorite_action_widget)
+        self.favorite_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.favorite_action_layout.setSpacing(8)
+        self.favorite_button = self._create_icon_button("favorite.svg", "收藏")
+        self.favorite_button.clicked.connect(self._toggle_current_favorite)
+        self.favorite_action_layout.addWidget(self.favorite_button)
+        self.favorite_action_layout.addStretch(1)
+        metadata_layout.addWidget(self.favorite_action_widget)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -2229,6 +2244,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
+        self._refresh_favorite_button()
         actions = self._current_detail_actions()
         self.detail_actions_widget.setHidden(not actions)
         for action in actions:
@@ -2240,6 +2256,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             button.setProperty("detail_action_base_enabled", action.enabled)
             button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
             self.detail_actions_layout.addWidget(button)
+
+    def _refresh_favorite_button(self) -> None:
+        item = self._current_play_item()
+        active = item is not None and self._favorite_is_active(item)
+        self.favorite_action_widget.setHidden(item is None)
+        self.favorite_button.setToolTip("取消收藏" if active else "收藏")
+        self._set_button_icon(self.favorite_button, "favorite-filled.svg" if active else "favorite.svg")
+
+    def _toggle_current_favorite(self) -> None:
+        item = self._current_play_item()
+        if item is None:
+            return
+        self._favorite_toggle(item)
+        self._refresh_favorite_button()
 
     def _set_startup_state(self, state: PlaybackStartupState) -> None:
         self._startup_state = state

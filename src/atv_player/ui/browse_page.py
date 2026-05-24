@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -177,6 +178,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         configure_table_columns(self.table, stretch_column=1)
         self.table.setSortingEnabled(False)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
         self.current_page = 1
@@ -193,6 +195,8 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._resolve_request_id = 0
         self._search_request_id = 0
         self._file_action_request_id = 0
+        self._favorite_is_active = lambda _item: False
+        self._favorite_toggle = lambda _item: None
         self._folder_signals = _FolderLoadSignals()
         self._connect_async_signal(self._folder_signals.succeeded, self._handle_folder_load_succeeded)
         self._connect_async_signal(self._folder_signals.failed, self._handle_folder_load_failed)
@@ -277,6 +281,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.delete_file_button.clicked.connect(self._delete_selected_file)
         self.table.itemSelectionChanged.connect(self._update_file_action_buttons)
         self.table.cellDoubleClicked.connect(self._handle_open)
+        self.table.customContextMenuRequested.connect(self._show_item_context_menu)
         header = self.table.horizontalHeader()
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(False)
@@ -776,7 +781,11 @@ class BrowsePage(QWidget, AsyncGuardMixin):
     def _item_rating(self, item: VodItem) -> str:
         return item.vod_remarks if getattr(item, "vod_tag", "") == "folder" else ""
 
-    def _handle_open(self, row: int, _column: int) -> None:
+    def set_favorite_handlers(self, *, is_favorited, toggle_favorite) -> None:
+        self._favorite_is_active = is_favorited
+        self._favorite_toggle = toggle_favorite
+
+    def _item_for_row(self, row: int) -> VodItem | None:
         row_item = self.table.item(row, 1)
         item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
         if item is None:
@@ -784,6 +793,27 @@ class BrowsePage(QWidget, AsyncGuardMixin):
             item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
         if item is None and 0 <= row < len(self.current_items):
             item = self.current_items[row]
+        return item if isinstance(item, VodItem) else None
+
+    def _build_item_context_menu(self, row: int) -> QMenu:
+        menu = QMenu(self)
+        item = self._item_for_row(row)
+        if item is not None and item.type == 2:
+            label = "取消收藏" if self._favorite_is_active(item) else "收藏"
+            menu.addAction(label, lambda current=item: self._favorite_toggle(current))
+        return menu
+
+    def _show_item_context_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        menu = self._build_item_context_menu(row)
+        if not menu.actions():
+            return
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _handle_open(self, row: int, _column: int) -> None:
+        item = self._item_for_row(row)
         if item is None:
             return
         if item.type == 1:
