@@ -561,6 +561,7 @@ class _PendingPlaybackLoader:
     start_position_seconds: int
     pause: bool
     hydrate_only: bool = False
+    youtube_detail_parse: bool = False
 
 
 class _PlayerToolDialog(ThemedDialogBase):
@@ -2645,6 +2646,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not hydrate_only:
             self._set_startup_state(self._startup_coordinator.resolving(self._resolving_startup_message(current_item)))
         playback_loader = self.session.playback_loader
+        youtube_detail_parse = self._is_youtube_playback_loader_item(current_item)
+        if youtube_detail_parse:
+            self._append_log("详情解析中", dedupe=True)
         if not hydrate_only:
             self._append_log(f"正在加载播放地址: {current_item.title}")
         self._playback_loader_request_id += 1
@@ -2655,6 +2659,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             start_position_seconds=start_position_seconds,
             pause=pause,
             hydrate_only=hydrate_only,
+            youtube_detail_parse=youtube_detail_parse,
         )
 
         def run() -> None:
@@ -2797,6 +2802,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if hostname.startswith("www."):
             hostname = hostname[4:]
         return hostname in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
+
+    def _is_youtube_playback_loader_item(self, item: PlayItem) -> bool:
+        if self.session is not None:
+            if str(getattr(self.session, "source_kind", "") or "").strip().lower() == "youtube":
+                return True
+            for vod in (self.session.vod, getattr(self.session, "original_vod", None)):
+                if getattr(vod, "detail_style", "") == "youtube":
+                    return True
+        for value in (item.original_url, item.url, item.vod_id, item.path):
+            normalized = str(value or "").strip()
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered.startswith(("yt:video:", "yt:channel:", "yt:playlist:")):
+                return True
+            if self._is_youtube_page_url(normalized) or looks_like_youtube_video_id(normalized):
+                return True
+        return False
 
     def _start_current_item_playback(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
@@ -3968,6 +3991,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_xml),
             bool(self.session and 0 <= self.current_index < len(self.session.playlist) and self.session.playlist[self.current_index].danmaku_pending),
         )
+        if pending_loader.youtube_detail_parse:
+            self._append_log("详情解析完成", dedupe=True)
         if pending_loader.hydrate_only:
             current_item = self.session.playlist[self.current_index]
             self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)

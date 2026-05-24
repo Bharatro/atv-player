@@ -17822,6 +17822,42 @@ def test_player_window_keeps_resolving_state_plain_and_logs_source_address_in_pl
     ready.set()
 
 
+def test_player_window_logs_youtube_detail_parse_progress(qtbot) -> None:
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "https://media.example/youtube.mp4"
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="yt:video:test123", vod_name="YouTube", detail_style="youtube"),
+        playlist=[
+            PlayItem(
+                title="YouTube Video",
+                url="",
+                original_url="https://www.youtube.com/watch?v=test123",
+                vod_id="yt:video:test123",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        async_playback_loader=True,
+    )
+    session.playback_loader = load_item
+
+    window.open_session(session)
+
+    assert "详情解析中" in window.log_view.toPlainText()
+    ready.set()
+    qtbot.waitUntil(lambda: "详情解析完成" in window.log_view.toPlainText(), timeout=1000)
+
+
 def test_player_window_logs_resolving_startup_message(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
