@@ -2457,6 +2457,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if hasattr(self.browse_controller, "load_folder"):
                 self.browse_page.ensure_loaded(self.config.last_path or "/")
             return
+        if widget is self.favorites_page:
+            if hasattr(self.favorites_page.controller, "load_page"):
+                self.favorites_page.load_page()
+            return
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
                 self.history_page.ensure_loaded()
@@ -2650,7 +2654,56 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_global_search()
 
     def _handle_video_item_context_favorite(self, page: PosterGridPage, item) -> None:
-        del page, item
+        payload = self._video_item_favorite_payload(page, item)
+        if payload is None:
+            return
+        self._favorites_controller.add_favorite(payload)
+
+    def _video_item_favorite_source(self, page: PosterGridPage) -> tuple[str, str, str] | None:
+        static_sources = {
+            self.telegram_page: ("telegram", "", "电报影视"),
+            self.live_page: ("live", "", "网络直播"),
+            self.emby_page: ("emby", "", "Emby"),
+            self.bilibili_page: ("bilibili", "", "B站"),
+            self.youtube_page: ("youtube", "", "YouTube"),
+            self.jellyfin_page: ("jellyfin", "", "Jellyfin"),
+            self.feiniu_page: ("feiniu", "", "飞牛影视"),
+        }
+        source = static_sources.get(page)
+        if source is not None:
+            return source
+        for plugin_page, _controller, plugin_id in self._plugin_pages:
+            if page is plugin_page:
+                title = next(
+                    (definition.title for definition in self._plugin_tab_definitions if definition.key == f"plugin:{plugin_id}"),
+                    "插件",
+                )
+                return ("plugin", plugin_id, title)
+        return None
+
+    def _video_item_favorite_payload(self, page: PosterGridPage, item) -> dict[str, object] | None:
+        source = self._video_item_favorite_source(page)
+        if source is None:
+            return None
+        vod_id = str(getattr(item, "vod_id", "") or "").strip()
+        if not vod_id:
+            return None
+        source_kind, source_key, source_name = source
+        title = str(getattr(item, "vod_name", "") or "").strip()
+        now = int(time.time())
+        return {
+            "source_kind": source_kind,
+            "source_key": source_key,
+            "source_name": source_name,
+            "vod_id": vod_id,
+            "vod_name_snapshot": title,
+            "latest_vod_name": title,
+            "vod_pic": str(getattr(item, "vod_pic", "") or ""),
+            "vod_remarks": str(getattr(item, "vod_remarks", "") or ""),
+            "title_changed": False,
+            "created_at": now,
+            "updated_at": now,
+        }
 
     def _open_plugin_category_manager(self, plugin_id: int) -> bool:
         if self._plugin_manager is None:
@@ -3720,6 +3773,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "telegram": "电报影视",
             "bilibili": "B站",
             "youtube": "YouTube",
+            "live": "网络直播",
             "emby": "Emby",
             "jellyfin": "Jellyfin",
             "feiniu": "飞牛影视",
@@ -3874,6 +3928,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         if record.source_kind == "youtube":
             self._start_open_request(lambda: self.youtube_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "live":
+            self._start_open_request(lambda: self.live_controller.build_request(record.vod_id))
             return
         if record.source_kind == "emby":
             self._start_open_request(lambda: self.emby_controller.build_request(record.vod_id))

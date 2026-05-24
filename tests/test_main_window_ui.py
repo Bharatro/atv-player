@@ -13,7 +13,16 @@ import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import AppConfig, FavoriteRecord, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+from atv_player.models import (
+    AppConfig,
+    FavoriteCardItem,
+    FavoriteRecord,
+    HistoryRecord,
+    OpenPlayerRequest,
+    PlayItem,
+    PlaybackDetailFieldAction,
+    VodItem,
+)
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.ui.main_window import (
     MainWindow,
@@ -195,9 +204,10 @@ class FakeFavoritesController:
     def __init__(self) -> None:
         self.add_calls: list[dict[str, object]] = []
         self.remove_calls: list[list[FavoriteRecord]] = []
+        self.load_calls: list[tuple[int, int, str]] = []
 
     def load_page(self, *, page: int, size: int, keyword: str):
-        del page, size, keyword
+        self.load_calls.append((page, size, keyword))
         return [], 0
 
     def is_favorited(self, *, source_kind: str, source_key: str, vod_id: str) -> bool:
@@ -263,6 +273,72 @@ def test_main_window_registers_favorites_tab_and_header_button(qtbot) -> None:
     assert window._tab_key_for_widget(window.favorites_page) == "favorites"
 
 
+def test_main_window_loads_favorites_when_tab_is_selected(qtbot) -> None:
+    favorites = FakeFavoritesController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        favorites_controller=favorites,
+    )
+    qtbot.addWidget(window)
+
+    window.favorites_button.click()
+
+    assert favorites.load_calls == [(1, 20, "")]
+
+
+def test_main_window_favorites_tab_renders_new_context_menu_favorite(qtbot) -> None:
+    class MemoryFavoritesController(FakeFavoritesController):
+        def load_page(self, *, page: int, size: int, keyword: str):
+            self.load_calls.append((page, size, keyword))
+            items = []
+            for payload in self.add_calls:
+                record = FavoriteRecord(
+                    source_kind=str(payload["source_kind"]),
+                    source_key=str(payload["source_key"]),
+                    source_name=str(payload["source_name"]),
+                    vod_id=str(payload["vod_id"]),
+                    vod_name_snapshot=str(payload["vod_name_snapshot"]),
+                    latest_vod_name=str(payload["latest_vod_name"]),
+                    vod_pic=str(payload["vod_pic"]),
+                    vod_remarks=str(payload["vod_remarks"]),
+                    title_changed=False,
+                    created_at=int(payload["created_at"]),
+                    updated_at=int(payload["updated_at"]),
+                )
+                items.append(
+                    FavoriteCardItem(
+                        record=record,
+                        display_title=record.latest_vod_name,
+                        source_label=record.source_name,
+                        updated_hint=False,
+                        secondary_text="",
+                    )
+                )
+            return items, len(items)
+
+    favorites = MemoryFavoritesController()
+    window = MainWindow(
+        telegram_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=favorites,
+    )
+    qtbot.addWidget(window)
+
+    window._handle_video_item_context_favorite(
+        window.telegram_page,
+        VodItem(vod_id="vod-1", vod_name="测试影片"),
+    )
+    window.favorites_button.click()
+
+    assert [card.title_label.text() for card in window.favorites_page.card_widgets] == ["测试影片"]
+
+
 def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
     opened: list[OpenPlayerRequest] = []
     browse_controller = SimpleNamespace(
@@ -301,6 +377,48 @@ def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
     window.open_favorite_detail(record)
 
     assert opened[0].source_kind == "browse"
+
+
+def test_main_window_opens_live_favorite_record(qtbot, monkeypatch) -> None:
+    opened: list[OpenPlayerRequest] = []
+    live_controller = SimpleNamespace(
+        build_request=lambda vod_id: OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="直播详情"),
+            playlist=[PlayItem(title="直播", url="https://media.example/live.m3u8")],
+            clicked_index=0,
+            source_kind="live",
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+    )
+    window = MainWindow(
+        live_controller=live_controller,
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
+
+    window.open_favorite_detail(
+        FavoriteRecord(
+            source_kind="live",
+            source_key="",
+            source_name="网络直播",
+            vod_id="live-1",
+            vod_name_snapshot="直播频道",
+            latest_vod_name="直播频道",
+            vod_pic="",
+            vod_remarks="",
+            title_changed=False,
+            created_at=10,
+            updated_at=10,
+        )
+    )
+
+    assert opened[0].source_kind == "live"
 
 
 def test_main_window_enables_resize_support(qtbot) -> None:
@@ -2045,22 +2163,51 @@ def test_main_window_video_context_menu_global_search_uses_item_title(qtbot, mon
     assert started_keywords == ["成何体统"]
 
 
-def test_main_window_video_context_menu_favorite_placeholder_keeps_state_unchanged(qtbot) -> None:
+def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -> None:
+    favorites = FakeFavoritesController()
     window = MainWindow(
+        telegram_controller=FakeStaticController(),
         browse_controller=FakeStaticController(),
         history_controller=FakeStaticController(),
         player_controller=FakePlayerController(),
         config=AppConfig(),
+        favorites_controller=favorites,
     )
     qtbot.addWidget(window)
-    window.global_search_edit.setText("原值")
 
     window._handle_video_item_context_favorite(
         window.telegram_page,
-        VodItem(vod_id="vod-1", vod_name="测试影片"),
+        VodItem(vod_id="vod-1", vod_name="测试影片", vod_pic="poster.jpg", vod_remarks="更新至第1集"),
     )
 
-    assert window.global_search_edit.text() == "原值"
+    assert len(favorites.add_calls) == 1
+    payload = favorites.add_calls[0]
+    assert {
+        key: payload[key]
+        for key in (
+            "source_kind",
+            "source_key",
+            "source_name",
+            "vod_id",
+            "vod_name_snapshot",
+            "latest_vod_name",
+            "vod_pic",
+            "vod_remarks",
+            "title_changed",
+        )
+    } == {
+        "source_kind": "telegram",
+        "source_key": "",
+        "source_name": "电报影视",
+        "vod_id": "vod-1",
+        "vod_name_snapshot": "测试影片",
+        "latest_vod_name": "测试影片",
+        "vod_pic": "poster.jpg",
+        "vod_remarks": "更新至第1集",
+        "title_changed": False,
+    }
+    assert isinstance(payload["created_at"], int)
+    assert isinstance(payload["updated_at"], int)
 
 
 def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:

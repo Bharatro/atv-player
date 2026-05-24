@@ -1823,6 +1823,7 @@ class AppCoordinator(QObject):
                 "telegram": lambda record, controller=telegram_controller: controller.build_request(record.vod_id).vod,
                 "bilibili": lambda record, controller=bilibili_controller: controller.build_request(record.vod_id).vod,
                 "youtube": lambda record, controller=youtube_controller: None if controller is None else controller.build_request(record.vod_id).vod,
+                "live": lambda record, controller=live_controller: controller.build_request(record.vod_id).vod,
                 "emby": lambda record, controller=emby_controller: controller.build_request(record.vod_id).vod,
                 "jellyfin": lambda record, controller=jellyfin_controller: controller.build_request(record.vod_id).vod,
                 "feiniu": lambda record, controller=feiniu_controller: controller.build_request(record.vod_id).vod,
