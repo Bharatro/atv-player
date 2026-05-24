@@ -312,6 +312,21 @@ class PlaybackSourceGroup:
 
 
 @dataclass(slots=True)
+class FavoriteRecord:
+    source_kind: str
+    source_key: str
+    source_name: str
+    vod_id: str
+    vod_name_snapshot: str
+    latest_vod_name: str
+    vod_pic: str
+    vod_remarks: str
+    title_changed: bool
+    created_at: int
+    updated_at: int
+
+
+@dataclass(slots=True)
 class HistoryRecord:
     id: int
     key: str
