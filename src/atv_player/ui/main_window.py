@@ -1179,8 +1179,15 @@ class _NavigationTabs(QWidget):
 
 class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     logout_requested = Signal()
-    _SEARCH_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "search.svg"
-    _SEARCH_POPUP_ICON_PATH = Path(__file__).resolve().parent.parent / "icons" / "rank.svg"
+    _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
+    _SEARCH_ICON_PATH = _ICONS_DIR / "search.svg"
+    _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
+    _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
+    _HISTORY_ICON_PATH = _ICONS_DIR / "history.svg"
+    _PLUGIN_MANAGER_ICON_PATH = _ICONS_DIR / "plugin.svg"
+    _LIVE_SOURCE_MANAGER_ICON_PATH = _ICONS_DIR / "live-source.svg"
+    _ADVANCED_SETTINGS_ICON_PATH = _ICONS_DIR / "sliders.svg"
+    _LOGOUT_ICON_PATH = _ICONS_DIR / "logout.svg"
 
     def __init__(
             self,
@@ -1293,10 +1300,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.startup_plugin_status_label = QLabel("")
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
-        self.plugin_manager_button = QPushButton("插件管理")
-        self.live_source_manager_button = QPushButton("直播源管理")
-        self.advanced_settings_button = QPushButton("高级设置")
-        self.logout_button = QPushButton("退出登录")
+        self.browse_button = QPushButton("")
+        self.history_button = QPushButton("")
+        self.plugin_manager_button = QPushButton("")
+        self.live_source_manager_button = QPushButton("")
+        self.advanced_settings_button = QPushButton("")
+        self.logout_button = QPushButton("")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(
             douban_controller or _EmptyDoubanController(),
@@ -1442,6 +1451,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_active = False
         self._global_search_in_progress = False
         self._global_search_keyword = ""
+        self._global_search_restore_plugin_keys: list[str] = []
         self._global_search_popup_signals = _GlobalSearchPopupSignals()
         self._connect_async_signal(self._global_search_popup_signals.hotkeys_loaded, self._handle_global_search_hotkeys_loaded)
         self._global_search_hotkey_request_id = 0
@@ -1470,6 +1480,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_button.setText("")
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_popup_button.setFixedSize(36, 36)
+        self._configure_header_icon_button(self.browse_button, "文件浏览")
+        self._configure_header_icon_button(self.history_button, "播放记录")
+        self._configure_header_icon_button(self.plugin_manager_button, "插件管理")
+        self._configure_header_icon_button(self.live_source_manager_button, "直播源管理")
+        self._configure_header_icon_button(self.advanced_settings_button, "高级设置")
+        self._configure_header_icon_button(self.logout_button, "退出登录")
         self._apply_global_search_button_theme()
         self.global_search_status_label.setWordWrap(True)
         self.global_search_clear_button.setEnabled(False)
@@ -1520,6 +1536,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_overflow_drawer.plugin_context_requested.connect(self._open_plugin_context_menu)
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
+        self.browse_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.browse_page))
+        self.history_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.history_page))
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         self.advanced_settings_button.clicked.connect(self._open_advanced_settings)
@@ -1546,6 +1564,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.header_layout.addStretch(1)
         self.header_layout.addWidget(self.startup_plugin_status_label)
         self.header_layout.addWidget(self.startup_plugin_retry_button)
+        self.header_layout.addWidget(self.browse_button)
+        self.header_layout.addWidget(self.history_button)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
         self.header_layout.addWidget(self.advanced_settings_button)
@@ -1705,6 +1725,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_button.setIcon(load_tinted_icon(self._SEARCH_ICON_PATH, tokens.text_primary))
         self.global_search_popup_button.setIcon(load_tinted_icon(self._SEARCH_POPUP_ICON_PATH, tokens.text_primary))
 
+    def _configure_header_icon_button(self, button: QPushButton, tooltip: str) -> None:
+        button.setText("")
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setFixedSize(36, 36)
+        button.setIconSize(QSize(20, 20))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _apply_header_action_button_theme(self) -> None:
+        tokens = current_tokens()
+        button_qss = build_round_icon_button_qss(tokens)
+        button_icons = {
+            self.browse_button: self._BROWSE_ICON_PATH,
+            self.history_button: self._HISTORY_ICON_PATH,
+            self.plugin_manager_button: self._PLUGIN_MANAGER_ICON_PATH,
+            self.live_source_manager_button: self._LIVE_SOURCE_MANAGER_ICON_PATH,
+            self.advanced_settings_button: self._ADVANCED_SETTINGS_ICON_PATH,
+            self.logout_button: self._LOGOUT_ICON_PATH,
+        }
+        for button, icon_path in button_icons.items():
+            button.setStyleSheet(button_qss)
+            button.setIcon(load_tinted_icon(icon_path, tokens.text_primary, size=button.iconSize()))
+
     def _apply_navigation_tab_theme(self) -> None:
         tokens = current_tokens()
         self.nav_tabs.tab_bar.setStyleSheet(build_navigation_tabbar_qss(tokens))
@@ -1716,6 +1759,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         tokens = current_tokens()
         self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
         self._apply_global_search_button_theme()
+        self._apply_header_action_button_theme()
         self._apply_navigation_tab_theme()
         self._global_search_popup._apply_theme()
         for page in (
@@ -1821,6 +1865,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return max(available, 0)
 
     def _split_visible_and_hidden_plugin_tabs(self) -> tuple[list[_TabDefinition], list[_TabDefinition]]:
+        if self._global_search_restore_plugin_keys:
+            restore_keys = set(self._global_search_restore_plugin_keys)
+            visible = [definition for definition in self._plugin_tab_definitions if definition.key in restore_keys]
+            hidden = [definition for definition in self._plugin_tab_definitions if definition.key not in restore_keys]
+            return visible, hidden
         available = self._available_plugin_tab_width()
         if not self._plugin_tab_definitions:
             return [], []
@@ -2976,6 +3025,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._global_search_request_id += 1
         request_id = self._global_search_request_id
+        self._global_search_restore_plugin_keys = [
+            key
+            for key in (self._tab_key_for_widget(self.nav_tabs.widget(index)) for index in range(self.nav_tabs.count()))
+            if key is not None and key.startswith("plugin:")
+        ]
         self._global_search_active = True
         self._global_search_in_progress = True
         self._global_search_keyword = keyword
@@ -3077,6 +3131,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if isinstance(definition.page, PosterGridPage):
                 definition.page.clear_external_results()
         self._refresh_visible_tabs()
+        self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
 

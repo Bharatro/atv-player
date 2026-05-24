@@ -564,7 +564,55 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "文件浏览",
         "播放记录",
     ]
-    assert window.plugin_manager_button.text() == "插件管理"
+
+
+def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=object(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    buttons = [
+        window.browse_button,
+        window.history_button,
+        window.plugin_manager_button,
+        window.live_source_manager_button,
+        window.advanced_settings_button,
+        window.logout_button,
+    ]
+
+    assert [button.text() for button in buttons] == ["", "", "", "", "", ""]
+    assert [button.toolTip() for button in buttons] == [
+        "文件浏览",
+        "播放记录",
+        "插件管理",
+        "直播源管理",
+        "高级设置",
+        "退出登录",
+    ]
+    assert all(not button.icon().isNull() for button in buttons)
+    assert all(button.width() == 36 for button in buttons)
+    assert [
+        window.header_layout.indexOf(button)
+        for button in buttons
+    ] == sorted(window.header_layout.indexOf(button) for button in buttons)
+
+    window.history_button.click()
+    assert window.nav_tabs.currentWidget() is window.history_page
+    window.browse_button.click()
+    assert window.nav_tabs.currentWidget() is window.browse_page
 
 
 def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> None:
@@ -3850,8 +3898,8 @@ def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.text() == "插件管理"
-    assert window.live_source_manager_button.text() == "直播源管理"
+    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.live_source_manager_button.toolTip() == "直播源管理"
 
 
 def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) -> None:
@@ -3871,8 +3919,8 @@ def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) 
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.text() == "插件管理"
-    assert window.live_source_manager_button.text() == "直播源管理"
+    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.live_source_manager_button.toolTip() == "直播源管理"
     assert not hasattr(window, "parse_manager_button")
 
 
@@ -3894,8 +3942,8 @@ def test_main_window_shows_advanced_settings_button_after_live_source_manager(qt
     qtbot.addWidget(window)
     window.show()
 
-    assert window.live_source_manager_button.text() == "直播源管理"
-    assert window.advanced_settings_button.text() == "高级设置"
+    assert window.live_source_manager_button.toolTip() == "直播源管理"
+    assert window.advanced_settings_button.toolTip() == "高级设置"
     assert window.header_layout.indexOf(window.live_source_manager_button) < window.header_layout.indexOf(window.advanced_settings_button)
 
 

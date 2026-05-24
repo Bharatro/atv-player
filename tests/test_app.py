@@ -1319,7 +1319,7 @@ def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
 
     qtbot.addWidget(window)
 
-    assert window.logout_button.text() == "退出登录"
+    assert window.logout_button.toolTip() == "退出登录"
     with qtbot.waitSignal(window.logout_requested, timeout=1000):
         window.logout_button.click()
 
