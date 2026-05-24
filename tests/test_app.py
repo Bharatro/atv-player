@@ -4715,6 +4715,14 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
         def set_vod_token(self, vod_token: str) -> None:
             self.vod_token = vod_token
 
+        def get_text(self, url: str) -> str:
+            del url
+            return ""
+
+        def get_text(self, url: str) -> str:
+            del url
+            return ""
+
     class FakeMainWindow:
         logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
 
@@ -5181,6 +5189,10 @@ def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) 
         def set_vod_token(self, vod_token: str) -> None:
             self.vod_token = vod_token
 
+        def get_text(self, url: str) -> str:
+            del url
+            return ""
+
     captured: dict[str, object] = {}
 
     class FakeMainWindow:
@@ -5211,6 +5223,63 @@ def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) 
 
     assert captured["window_kwargs"]["metadata_hydrator_factory"] is marker
     assert plugin_manager._metadata_hydrator_factory is marker
+
+
+def test_app_coordinator_show_main_wires_favorites_controller(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+            self.database_path = Path("/tmp/app.db")
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+        def get_text(self, url: str) -> str:
+            del url
+            return ""
+
+    captured: dict[str, object] = {}
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured["window_kwargs"] = kwargs
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+    monkeypatch.setattr(coordinator, "_start_live_background_refresh", lambda *args: None)
+
+    coordinator._show_main()
+
+    assert captured["window_kwargs"]["favorites_controller"] is not None
 
 
 def test_app_coordinator_show_main_wires_danmaku_controller_factory(monkeypatch) -> None:

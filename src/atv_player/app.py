@@ -22,6 +22,7 @@ from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
+from atv_player.controllers.favorites_controller import FavoritesController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.controllers.emby_controller import EmbyController
@@ -48,6 +49,7 @@ from atv_player.episode_titles import (
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+from atv_player.favorites_repository import FavoritesRepository
 from atv_player.metadata import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     MetadataBindingRepository,
@@ -423,6 +425,7 @@ class AppCoordinator(QObject):
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
+            self._favorites_repository = FavoritesRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
             self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
@@ -448,6 +451,7 @@ class AppCoordinator(QObject):
             self._live_epg_repository = None
             self._plugin_repository = None
             self._playback_history_repository = None
+            self._favorites_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
         self._metadata_binding_repository = (
@@ -1812,6 +1816,18 @@ class AppCoordinator(QObject):
         browse_controller = BrowseController(self._api_client)
         pansou_controller = PansouController(browse_controller) if bool(capabilities.get("pansou")) else None
         history_controller = HistoryController(self._api_client, self._playback_history_repository)
+        favorites_controller = FavoritesController(
+            self._favorites_repository,
+            detail_loader_by_source={
+                "browse": lambda record, controller=browse_controller: controller.build_request_from_detail(record.vod_id).vod,
+                "telegram": lambda record, controller=telegram_controller: controller.build_request(record.vod_id).vod,
+                "bilibili": lambda record, controller=bilibili_controller: controller.build_request(record.vod_id).vod,
+                "youtube": lambda record, controller=youtube_controller: None if controller is None else controller.build_request(record.vod_id).vod,
+                "emby": lambda record, controller=emby_controller: controller.build_request(record.vod_id).vod,
+                "jellyfin": lambda record, controller=jellyfin_controller: controller.build_request(record.vod_id).vod,
+                "feiniu": lambda record, controller=feiniu_controller: controller.build_request(record.vod_id).vod,
+            },
+        )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
@@ -1824,6 +1840,7 @@ class AppCoordinator(QObject):
         )
         self.main_window = MainWindow(
             browse_controller=browse_controller,
+            favorites_controller=favorites_controller,
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,

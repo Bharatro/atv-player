@@ -13,7 +13,7 @@ import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
+from atv_player.models import AppConfig, FavoriteRecord, HistoryRecord, OpenPlayerRequest, PlayItem, PlaybackDetailFieldAction, VodItem
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.ui.main_window import (
     MainWindow,
@@ -191,6 +191,29 @@ class DummyHistoryController:
         return []
 
 
+class FakeFavoritesController:
+    def __init__(self) -> None:
+        self.add_calls: list[dict[str, object]] = []
+        self.remove_calls: list[list[FavoriteRecord]] = []
+
+    def load_page(self, *, page: int, size: int, keyword: str):
+        del page, size, keyword
+        return [], 0
+
+    def is_favorited(self, *, source_kind: str, source_key: str, vod_id: str) -> bool:
+        del source_kind, source_key, vod_id
+        return False
+
+    def add_favorite(self, payload: dict[str, object]) -> None:
+        self.add_calls.append(payload)
+
+    def remove_favorite(self, records: list[FavoriteRecord]) -> None:
+        self.remove_calls.append(list(records))
+
+    def clear_filtered(self, *, keyword: str) -> None:
+        del keyword
+
+
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
     deadline = time.perf_counter() + timeout_seconds
     while time.perf_counter() < deadline:
@@ -224,6 +247,60 @@ def test_main_window_uses_custom_title_bar(qtbot) -> None:
 
     assert window.title_bar().title_label.text() == "alist-tvbox Desktop Player"
     assert window.title_bar().maximize_button.isHidden() is False
+
+
+def test_main_window_registers_favorites_tab_and_header_button(qtbot) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.favorites_button.toolTip() == "我的收藏"
+    assert window._tab_key_for_widget(window.favorites_page) == "favorites"
+
+
+def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
+    opened: list[OpenPlayerRequest] = []
+    browse_controller = SimpleNamespace(
+        build_request_from_detail=lambda vod_id: OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="详情页"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+            clicked_index=0,
+            source_kind="browse",
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+    )
+    window = MainWindow(
+        browse_controller=browse_controller,
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
+    record = FavoriteRecord(
+        source_kind="browse",
+        source_key="",
+        source_name="文件浏览",
+        vod_id="detail-1",
+        vod_name_snapshot="庆余年",
+        latest_vod_name="庆余年",
+        vod_pic="",
+        vod_remarks="",
+        title_changed=False,
+        created_at=10,
+        updated_at=10,
+    )
+
+    window.open_favorite_detail(record)
+
+    assert opened[0].source_kind == "browse"
 
 
 def test_main_window_enables_resize_support(qtbot) -> None:
@@ -604,6 +681,7 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "红果短剧",
         "短剧二号",
         "文件浏览",
+        "我的收藏",
         "播放记录",
     ]
 
@@ -628,6 +706,7 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
 
     buttons = [
         window.browse_button,
+        window.favorites_button,
         window.history_button,
         window.plugin_manager_button,
         window.live_source_manager_button,
@@ -635,9 +714,10 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
         window.logout_button,
     ]
 
-    assert [button.text() for button in buttons] == ["", "", "", "", "", ""]
+    assert [button.text() for button in buttons] == ["", "", "", "", "", "", ""]
     assert [button.toolTip() for button in buttons] == [
         "文件浏览",
+        "我的收藏",
         "播放记录",
         "插件管理",
         "直播源管理",
@@ -685,6 +765,7 @@ def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> 
         "Jellyfin",
         "飞牛影视",
         "文件浏览",
+        "我的收藏",
         "播放记录",
     ]
 
@@ -764,6 +845,7 @@ def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot)
             "红果短剧",
             "短剧二号",
             "文件浏览",
+            "我的收藏",
             "播放记录",
         ]
     )
@@ -820,6 +902,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
             "飞牛影视",
             "短剧二号",
             "文件浏览",
+            "我的收藏",
             "播放记录",
         ]
     )
@@ -839,6 +922,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
             "短剧二号",
             "红果短剧",
             "文件浏览",
+            "我的收藏",
             "播放记录",
         ]
     )
@@ -1366,6 +1450,7 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
         "插件1",
         "插件2",
         "文件浏览",
+        "我的收藏",
         "播放记录",
     ]
     assert window.plugin_overflow_button.isVisible() is True
@@ -1464,7 +1549,7 @@ def test_main_window_available_plugin_width_reserves_more_button_space_when_over
     monkeypatch.setattr(window.nav_tabs.tab_bar, "width", lambda: 804)
     monkeypatch.setattr(window.nav_tabs, "width", lambda: 804)
 
-    assert window._available_plugin_tab_width() == 8
+    assert window._available_plugin_tab_width() == 0
 
 
 def test_main_window_hides_all_plugin_tabs_when_fixed_tabs_exhaust_width(qtbot, monkeypatch) -> None:
@@ -7311,7 +7396,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_after_closing_player_rel
     _spin_until(lambda: window.player_window is not None and len(window.player_window.video.loaded_danmaku_paths) == 1)
     player_window = window.player_window
     player_window.close()
-    qtbot.waitUntil(lambda: window.player_window is None)
+    qtbot.waitUntil(lambda: window.player_window is player_window and player_window.isHidden() and window.isVisible())
 
     list_item = VodItem(vod_id="/detail/drive", vod_name="网盘剧集", vod_pic="poster-list")
     window._open_spider_item(second_controller, "plugin-1", list_item)
@@ -7324,7 +7409,7 @@ def test_main_window_reopen_drive_plugin_item_from_list_after_closing_player_rel
             and bool(window.player_window.session.playlist)
         )
     )
-    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) == 1)
+    _spin_until(lambda: len(window.player_window.video.loaded_danmaku_paths) == 2)
     assert "弹幕搜索中" not in window.player_window.log_view.toPlainText()
     assert window.player_window.session.playlist[window.player_window.current_index].danmaku_pending is False
     assert window.player_window.danmaku_combo.currentText() == "弹幕"

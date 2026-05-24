@@ -2,7 +2,7 @@ import threading
 
 import pytest
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHeaderView, QSizePolicy, QSplitter, QTableWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHeaderView, QMenu, QSizePolicy, QSplitter, QTableWidgetItem
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
@@ -581,6 +581,30 @@ def test_browse_page_enables_file_actions_for_non_playlist_selection(qtbot) -> N
     page.table.selectRow(0)
     assert page.rename_file_button.isEnabled() is True
     assert page.delete_file_button.isEnabled() is True
+
+
+def test_browse_page_video_context_menu_shows_favorite_toggle(qtbot) -> None:
+    toggles: list[str] = []
+
+    class Controller(FakeBrowseController):
+        def load_folder(self, path: str, page: int = 1, size: int = 50):
+            return [VodItem(vod_id="detail-1", vod_name="庆余年", type=2, path="/庆余年")], 1
+
+    page = BrowsePage(Controller())
+    page.set_favorite_handlers(
+        is_favorited=lambda item: item.vod_id == "detail-1",
+        toggle_favorite=lambda item: toggles.append(item.vod_id),
+    )
+    qtbot.addWidget(page)
+    page.load_path("/")
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1)
+
+    menu = page._build_item_context_menu(0)
+
+    assert isinstance(menu, QMenu)
+    assert [action.text() for action in menu.actions()] == ["取消收藏"]
+    menu.actions()[0].trigger()
+    assert toggles == ["detail-1"]
 
     page.table.selectRow(1)
     assert page.rename_file_button.isEnabled() is False

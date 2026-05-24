@@ -4,6 +4,7 @@ import json
 import platform
 import re
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ from atv_player.log_store import AppLogFilter
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
     AppConfig,
+    FavoriteRecord,
     HistoryRecord,
     OpenPlayerRequest,
     PlayItem,
@@ -51,6 +53,7 @@ from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, 
 from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.poster_grid_page import PosterGridPage
+from atv_player.ui.favorites_page import FavoritesPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
@@ -113,6 +116,25 @@ class _EmptyJellyfinController(_EmptyDoubanController):
 class _EmptyFeiniuController(_EmptyDoubanController):
     def build_request(self, vod_id: str):
         raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
+class _EmptyFavoritesController:
+    def load_page(self, *, page: int, size: int, keyword: str):
+        del page, size, keyword
+        return [], 0
+
+    def is_favorited(self, *, source_kind: str, source_key: str, vod_id: str) -> bool:
+        del source_kind, source_key, vod_id
+        return False
+
+    def add_favorite(self, payload: dict[str, object]) -> None:
+        del payload
+
+    def remove_favorite(self, records: list[FavoriteRecord]) -> None:
+        del records
+
+    def clear_filtered(self, *, keyword: str) -> None:
+        del keyword
 
 
 class _HistoryGlobalSearchAdapter:
@@ -1198,6 +1220,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     _SEARCH_ICON_PATH = _ICONS_DIR / "search.svg"
     _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
     _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
+    _FAVORITES_ICON_PATH = _ICONS_DIR / "favorite.svg"
     _HISTORY_ICON_PATH = _ICONS_DIR / "history.svg"
     _PLUGIN_MANAGER_ICON_PATH = _ICONS_DIR / "plugin.svg"
     _LIVE_SOURCE_MANAGER_ICON_PATH = _ICONS_DIR / "live-source.svg"
@@ -1210,6 +1233,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             history_controller,
             player_controller,
             config,
+            favorites_controller=None,
             app_log_service=None,
             save_config=None,
             apply_theme=None,
@@ -1316,6 +1340,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
         self.browse_button = QPushButton("")
+        self.favorites_button = QPushButton("")
         self.history_button = QPushButton("")
         self.plugin_manager_button = QPushButton("")
         self.live_source_manager_button = QPushButton("")
@@ -1382,6 +1407,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("feiniu"),
             )
+        self._favorites_controller = favorites_controller or _EmptyFavoritesController()
+        self.favorites_page = FavoritesPage(self._favorites_controller)
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
@@ -1502,6 +1529,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_popup_button.setFixedSize(36, 36)
         self._configure_header_icon_button(self.browse_button, "文件浏览")
+        self._configure_header_icon_button(self.favorites_button, "我的收藏")
         self._configure_header_icon_button(self.history_button, "播放记录")
         self._configure_header_icon_button(self.plugin_manager_button, "插件管理")
         self._configure_header_icon_button(self.live_source_manager_button, "直播源管理")
@@ -1557,6 +1585,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self._trailing_tab_definitions = [
             _TabDefinition("browse", "文件浏览", self.browse_page),
+            _TabDefinition("favorites", "我的收藏", self.favorites_page),
             _TabDefinition("history", "播放记录", self.history_page),
         ]
         self._rebuild_spider_plugin_tabs()
@@ -1568,6 +1597,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
         self.browse_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.browse_page))
+        self.favorites_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.favorites_page))
         self.history_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.history_page))
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
@@ -1596,6 +1626,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.header_layout.addWidget(self.startup_plugin_status_label)
         self.header_layout.addWidget(self.startup_plugin_retry_button)
         self.header_layout.addWidget(self.browse_button)
+        self.header_layout.addWidget(self.favorites_button)
         self.header_layout.addWidget(self.history_button)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
@@ -1613,8 +1644,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._defer_navigation_refresh = False
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
+        self.favorites_page.open_detail_requested.connect(self.open_favorite_detail)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
+        self.browse_page.set_favorite_handlers(
+            is_favorited=lambda item: self._favorites_controller.is_favorited(
+                source_kind="browse",
+                source_key="",
+                vod_id=item.vod_id,
+            ),
+            toggle_favorite=self._toggle_browse_favorite,
+        )
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self._connect_video_item_context_menu(self.douban_page)
         self._connect_video_item_context_menu(self.telegram_page)
@@ -1779,6 +1819,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         button_qss = build_round_icon_button_qss(tokens)
         button_icons = {
             self.browse_button: self._BROWSE_ICON_PATH,
+            self.favorites_button: self._FAVORITES_ICON_PATH,
             self.history_button: self._HISTORY_ICON_PATH,
             self.plugin_manager_button: self._PLUGIN_MANAGER_ICON_PATH,
             self.live_source_manager_button: self._LIVE_SOURCE_MANAGER_ICON_PATH,
@@ -3671,6 +3712,102 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 return _plugin_value(definition, "controller")
         return None
 
+    def _favorite_source_name(self, source_kind: str) -> str:
+        return {
+            "browse": "文件浏览",
+            "plugin": "插件",
+            "spider_plugin": "插件",
+            "telegram": "电报影视",
+            "bilibili": "B站",
+            "youtube": "YouTube",
+            "emby": "Emby",
+            "jellyfin": "Jellyfin",
+            "feiniu": "飞牛影视",
+            "direct_parse": "全局解析",
+        }.get(source_kind, source_kind or "未知来源")
+
+    def _favorite_record_for_identity(self, source_kind: str, source_key: str, vod_id: str) -> FavoriteRecord:
+        return FavoriteRecord(
+            source_kind=source_kind,
+            source_key=source_key,
+            source_name=self._favorite_source_name(source_kind),
+            vod_id=vod_id,
+            vod_name_snapshot="",
+            latest_vod_name="",
+            vod_pic="",
+            vod_remarks="",
+            title_changed=False,
+            created_at=0,
+            updated_at=0,
+        )
+
+    def _toggle_browse_favorite(self, item: VodItem) -> None:
+        if self._favorites_controller.is_favorited(source_kind="browse", source_key="", vod_id=item.vod_id):
+            self._favorites_controller.remove_favorite([self._favorite_record_for_identity("browse", "", item.vod_id)])
+            return
+        now = int(time.time())
+        self._favorites_controller.add_favorite(
+            {
+                "source_kind": "browse",
+                "source_key": "",
+                "source_name": "文件浏览",
+                "vod_id": item.vod_id,
+                "vod_name_snapshot": item.vod_name,
+                "latest_vod_name": item.vod_name,
+                "vod_pic": item.vod_pic,
+                "vod_remarks": item.vod_remarks,
+                "title_changed": False,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    def _current_player_favorite_payload(self, item: PlayItem) -> dict[str, object] | None:
+        if self.player_window is None or self.player_window.session is None:
+            return None
+        session = self.player_window.session
+        vod = session.vod
+        vod_id = str(item.vod_id or vod.vod_id or "").strip()
+        if not vod_id:
+            return None
+        now = int(time.time())
+        title = str(vod.vod_name or item.title or "").strip()
+        return {
+            "source_kind": session.source_kind or "browse",
+            "source_key": session.source_key or "",
+            "source_name": self._favorite_source_name(session.source_kind or "browse"),
+            "vod_id": vod_id,
+            "vod_name_snapshot": title,
+            "latest_vod_name": title,
+            "vod_pic": str(vod.vod_pic or ""),
+            "vod_remarks": str(vod.vod_remarks or ""),
+            "title_changed": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def _player_item_is_favorited(self, item: PlayItem) -> bool:
+        payload = self._current_player_favorite_payload(item)
+        if payload is None:
+            return False
+        return self._favorites_controller.is_favorited(
+            source_kind=str(payload["source_kind"]),
+            source_key=str(payload["source_key"]),
+            vod_id=str(payload["vod_id"]),
+        )
+
+    def _toggle_player_item_favorite(self, item: PlayItem) -> None:
+        payload = self._current_player_favorite_payload(item)
+        if payload is None:
+            return
+        source_kind = str(payload["source_kind"])
+        source_key = str(payload["source_key"])
+        vod_id = str(payload["vod_id"])
+        if self._favorites_controller.is_favorited(source_kind=source_kind, source_key=source_key, vod_id=vod_id):
+            self._favorites_controller.remove_favorite([self._favorite_record_for_identity(source_kind, source_key, vod_id)])
+            return
+        self._favorites_controller.add_favorite(payload)
+
     def open_history_detail(self, record: HistoryRecord) -> None:
         if record.source_kind == "direct_parse":
             self._start_open_request(lambda: self._build_parse_request(record.key))
@@ -3717,6 +3854,37 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._start_open_request(lambda: self._apply_request_playback_history_title(self.feiniu_controller.build_request(record.key)))
             return
         self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
+
+    def open_favorite_detail(self, record: FavoriteRecord) -> None:
+        if record.source_kind == "direct_parse":
+            self._start_open_request(lambda: self._build_parse_request(record.vod_id))
+            return
+        if record.source_kind in {"plugin", "spider_plugin"}:
+            controller = self._plugin_controller_by_id(record.source_key)
+            if controller is None:
+                self.show_error(f"没有可播放的项目: {record.source_name or record.vod_id}")
+                return
+            self._start_open_request(lambda: controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "telegram":
+            self._start_open_request(lambda: self.telegram_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "bilibili":
+            self._start_open_request(lambda: self.bilibili_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "youtube":
+            self._start_open_request(lambda: self.youtube_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "emby":
+            self._start_open_request(lambda: self.emby_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "jellyfin":
+            self._start_open_request(lambda: self.jellyfin_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "feiniu":
+            self._start_open_request(lambda: self.feiniu_controller.build_request(record.vod_id))
+            return
+        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.vod_id))
 
     def _start_open_request(self, builder) -> int:
         self._open_request_id += 1
@@ -4033,6 +4201,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "m3u8_ad_filter": self._m3u8_ad_filter,
             "playback_parser_service": self._playback_parser_service,
             "default_video_cover_loader": self._default_video_cover_loader,
+            "favorite_is_active": self._player_item_is_favorited,
+            "favorite_toggle": self._toggle_player_item_favorite,
         }
         try:
             parameters = inspect.signature(PlayerWindow).parameters

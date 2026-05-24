@@ -8656,6 +8656,35 @@ def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> No
     assert window.detail_actions_layout.itemAt(1).widget().isEnabled() is False
 
 
+def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
+    toggled: list[str] = []
+    item = PlayItem(title="庆余年", url="https://media/1.m3u8", vod_id="detail-1")
+    session = PlayerSession(
+        vod=VodItem(vod_id="detail-1", vod_name="庆余年"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        favorite_is_active=lambda current_item: current_item.vod_id == "detail-1",
+        favorite_toggle=lambda current_item: toggled.append(current_item.vod_id),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.favorite_action_widget.isHidden() is False
+    assert window.favorite_button.toolTip() == "取消收藏"
+    window.favorite_button.click()
+
+    assert toggled == ["detail-1"]
+
+
 def test_player_window_executes_detail_action_and_refreshes_current_item(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
