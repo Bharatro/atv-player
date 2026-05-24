@@ -602,6 +602,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     }
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
     _DANMAKU_SECONDARY_SCALE = 100
+    _FAVORITE_ACTIVE_ICON_COLOR = "#e53935"
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
         "偏上": 30,
@@ -1057,15 +1058,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._poster_row_layout.addWidget(self._poster_next_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self._poster_row_layout.addStretch(1)
         metadata_layout.addWidget(self._poster_row_widget)
-        self.favorite_action_widget = QWidget()
-        self.favorite_action_layout = QHBoxLayout(self.favorite_action_widget)
-        self.favorite_action_layout.setContentsMargins(0, 0, 0, 0)
-        self.favorite_action_layout.setSpacing(8)
-        self.favorite_button = self._create_icon_button("favorite.svg", "收藏")
+        self.favorite_button = self._create_icon_button("favorite.svg", "加入收藏")
         self.favorite_button.clicked.connect(self._toggle_current_favorite)
-        self.favorite_action_layout.addWidget(self.favorite_button)
-        self.favorite_action_layout.addStretch(1)
-        metadata_layout.addWidget(self.favorite_action_widget)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1079,8 +1073,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.metadata_heading = QLabel("影片详情")
         self._metadata_heading_row = QHBoxLayout()
         self._metadata_heading_row.setContentsMargins(0, 0, 8, 0)
-        self._metadata_heading_row.setSpacing(8)
+        self._metadata_heading_row.setSpacing(6)
         self._metadata_heading_row.addWidget(self.metadata_heading)
+        self._metadata_heading_row.addWidget(self.favorite_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self._metadata_heading_row.addStretch(1)
         self._metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
         metadata_layout.addLayout(self._metadata_heading_row)
@@ -1333,6 +1328,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._poster_previous_button.setStyleSheet(poster_arrow_qss)
         self._poster_next_button.setStyleSheet(poster_arrow_qss)
+        self._apply_favorite_button_theme()
         sidebar_combo_qss = build_combobox_qss(tokens)
         sidebar_combo_popup_qss = build_combobox_popup_qss(
             background=tokens.menu_bg,
@@ -1550,6 +1546,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if shortcut is None:
             return label
         return f"{label} ({shortcut})"
+
+    def _apply_favorite_button_theme(self) -> None:
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        self.favorite_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 10px;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {tokens.panel_alt_bg};
+            }}
+            QPushButton:pressed {{
+                background-color: {tokens.input_bg};
+            }}
+            """
+        )
+        self._refresh_favorite_button()
 
     def _create_icon_button(
         self,
@@ -2261,9 +2277,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _refresh_favorite_button(self) -> None:
         item = self._current_play_item()
         active = item is not None and self._favorite_is_active(item)
-        self.favorite_action_widget.setHidden(item is None)
-        self.favorite_button.setToolTip("取消收藏" if active else "收藏")
-        self._set_button_icon(self.favorite_button, "favorite-filled.svg" if active else "favorite.svg")
+        tooltip = "取消收藏" if active else "加入收藏"
+        self.favorite_button.setHidden(item is None)
+        self.favorite_button.setToolTip(tooltip)
+        self.favorite_button.setAccessibleName(tooltip)
+        self.favorite_button.setProperty("favorite_active", active)
+        self._set_favorite_button_icon(active)
+
+    def _set_favorite_button_icon(self, active: bool) -> None:
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        icon_name = "favorite-filled.svg" if active else "favorite.svg"
+        color = self._FAVORITE_ACTIVE_ICON_COLOR if active else tokens.text_secondary
+        self.favorite_button.setProperty("icon_name", icon_name)
+        self.favorite_button.setIcon(
+            tint_icon(load_icon(self._icons_dir / icon_name), color, size=self.favorite_button.iconSize())
+        )
 
     def _toggle_current_favorite(self) -> None:
         item = self._current_play_item()

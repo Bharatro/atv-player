@@ -799,7 +799,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         menu = QMenu(self)
         item = self._item_for_row(row)
         if item is not None and item.type == 2:
-            label = "取消收藏" if self._favorite_is_active(item) else "收藏"
+            label = "取消收藏" if self._favorite_is_active(item) else "加入收藏"
             menu.addAction(label, lambda current=item: self._favorite_toggle(current))
         return menu
 
