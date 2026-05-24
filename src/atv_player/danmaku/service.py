@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 import httpx
 import logging
@@ -303,14 +304,32 @@ def _source_option_query_match_priority(query_name: str, option: DanmakuSourceOp
 
 
 class DanmakuService:
-    def __init__(self, providers: dict[str, DanmakuProvider], provider_order: list[str]) -> None:
+    def __init__(
+        self,
+        providers: dict[str, DanmakuProvider],
+        provider_order: list[str],
+        disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+    ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
+        self._disabled_provider_ids_loader = disabled_provider_ids_loader
+
+    def _disabled_provider_ids(self) -> set[str]:
+        if self._disabled_provider_ids_loader is None:
+            return set()
+        try:
+            return {str(item or "").strip() for item in self._disabled_provider_ids_loader()}
+        except Exception:
+            logger.exception("Failed to load disabled danmaku provider ids")
+            return set()
+
+    def _provider_enabled(self, key: str) -> bool:
+        return key in self._providers and key not in self._disabled_provider_ids()
 
     def _preferred_provider_key(self, reg_src: str) -> str | None:
         matched = match_provider(reg_src)
-        if matched and matched in self._providers:
+        if matched and self._provider_enabled(matched):
             return matched
         return None
 
@@ -318,11 +337,11 @@ class DanmakuService:
         matched = self._preferred_provider_key(reg_src)
         if matched is not None:
             return [matched]
-        return [key for key in self._provider_order if key in self._providers]
+        return [key for key in self._provider_order if self._provider_enabled(key)]
 
     @property
     def provider_order(self) -> list[str]:
-        return list(self._provider_order)
+        return [key for key in self._provider_order if self._provider_enabled(key)]
 
     def search_danmu_sources(
         self,
@@ -431,8 +450,8 @@ class DanmakuService:
         primary_query = search_keyword
         preferred_key = self._preferred_provider_key(reg_src)
         if provider_filter:
-            provider_keys = [provider_filter] if provider_filter in self._providers else []
-            preferred_key = provider_filter if provider_filter in self._providers else None
+            provider_keys = [provider_filter] if self._provider_enabled(provider_filter) else []
+            preferred_key = provider_filter if self._provider_enabled(provider_filter) else None
         else:
             provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query, normalized)
@@ -442,7 +461,7 @@ class DanmakuService:
                 has_variety_match = any(_variety_issue_key_for_item(item) == variety_issue_key for item in results)
                 if not has_variety_match:
                     fallback_keys = [
-                        key for key in self._provider_order if key in self._providers and key != preferred_key
+                        key for key in self._provider_order if self._provider_enabled(key) and key != preferred_key
                     ]
                     if fallback_keys:
                         results.extend(self._collect_search_results(fallback_keys, primary_query, normalized))
@@ -466,7 +485,7 @@ class DanmakuService:
             ]
             if not matching and preferred_key is not None and not provider_filter:
                 fallback_keys = [
-                    key for key in self._provider_order if key in self._providers and key != preferred_key
+                    key for key in self._provider_order if self._provider_enabled(key) and key != preferred_key
                 ]
                 if fallback_keys:
                     results.extend(self._collect_search_results(fallback_keys, primary_query, normalized))
@@ -717,6 +736,8 @@ class DanmakuService:
 
     def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         for key in self._provider_order:
+            if not self._provider_enabled(key):
+                continue
             provider = self._providers.get(key)
             if provider is None or not provider.supports(page_url):
                 continue
@@ -731,7 +752,13 @@ class DanmakuService:
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
 
-def create_default_danmaku_service(get=httpx.get, post=httpx.post) -> DanmakuService:
+def create_default_danmaku_service(
+    get=httpx.get,
+    post=httpx.post,
+    disabled_provider_ids: list[str] | None = None,
+    disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+) -> DanmakuService:
+    disabled = {str(item or "").strip() for item in (disabled_provider_ids or [])}
     providers = {
         "tencent": TencentDanmakuProvider(get=get, post=post),
         "youku": YoukuDanmakuProvider(get=get, post=post),
@@ -740,4 +767,15 @@ def create_default_danmaku_service(get=httpx.get, post=httpx.post) -> DanmakuSer
         "mgtv": MgtvDanmakuProvider(get=get),
         "sohu": SohuDanmakuProvider(get=get),
     }
-    return DanmakuService(providers, provider_order=["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu"])
+    provider_order = [
+        key
+        for key in ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu"]
+        if key not in disabled
+    ]
+    if disabled_provider_ids_loader is None and disabled:
+        disabled_provider_ids_loader = lambda: list(disabled)
+    return DanmakuService(
+        providers,
+        provider_order=provider_order,
+        disabled_provider_ids_loader=disabled_provider_ids_loader,
+    )

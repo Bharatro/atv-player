@@ -8175,6 +8175,56 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     assert bangumi_tokens == [""]
 
 
+def test_app_coordinator_scrape_service_excludes_disabled_metadata_sources(monkeypatch, tmp_path) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_douban_cookie="bid=demo;",
+                metadata_tmdb_api_key="tmdb-key",
+                disabled_metadata_provider_ids=["iqiyi", "tmdb", "official_douban"],
+            )
+
+    class RecordingProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def can_enrich(self, _context) -> bool:
+            return False
+
+        def search(self, _candidate):
+            return []
+
+        def get_detail(self, _match):
+            raise AssertionError("not used")
+
+    monkeypatch.setattr(app_module, "BangumiClient", lambda access_token="", proxy_decider=None: object(), raising=False)
+    monkeypatch.setattr(app_module, "BangumiMetadataProvider", lambda client: RecordingProvider("bangumi"), raising=False)
+    monkeypatch.setattr(app_module, "BilibiliMetadataProvider", lambda: RecordingProvider("bilibili"), raising=False)
+    monkeypatch.setattr(app_module, "IqiyiMetadataProvider", lambda: RecordingProvider("iqiyi"), raising=False)
+    monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: RecordingProvider("tencent"), raising=False)
+    monkeypatch.setattr(app_module, "SohuMetadataProvider", lambda: RecordingProvider("sohu"), raising=False)
+    monkeypatch.setattr(app_module, "LocalDoubanClient", lambda cookie="", proxy_decider=None: object(), raising=False)
+    monkeypatch.setattr(app_module, "OfficialDoubanProvider", lambda client: RecordingProvider("official_douban"), raising=False)
+    monkeypatch.setattr(app_module, "TMDBClient", lambda api_key="", proxy_decider=None: object(), raising=False)
+    monkeypatch.setattr(app_module, "TMDBProvider", lambda client: RecordingProvider("tmdb"), raising=False)
+    monkeypatch.setattr(app_module, "LocalDoubanProvider", lambda api_client: RecordingProvider("local_douban"), raising=False)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_metadata_scrape_service_factory(object())
+    service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
+
+    assert service is not None
+    assert [provider.name for provider in service._providers] == [
+        "bangumi",
+        "bilibili",
+        "tencent",
+        "sohu",
+        "local_douban",
+    ]
+
+
 def test_metadata_context_to_query_includes_original_base_match_fields() -> None:
     vod = VodItem(
         vod_id="vod-1",

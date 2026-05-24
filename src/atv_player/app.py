@@ -416,6 +416,7 @@ class AppCoordinator(QObject):
         self._danmaku_service = create_default_danmaku_service(
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),
+            disabled_provider_ids_loader=lambda: self.repo.load_config().disabled_danmaku_provider_ids,
         )
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
@@ -630,29 +631,41 @@ class AppCoordinator(QObject):
         raw_detail=None,
     ) -> list[object]:
         providers: list[object] = []
+        disabled_provider_ids = {
+            str(item or "").strip()
+            for item in config.disabled_metadata_provider_ids
+        }
+
+        def enabled(provider_id: str) -> bool:
+            return provider_id not in disabled_provider_ids
+
         proxy_decider = self._build_proxy_decider()
-        if source_kind == "plugin":
+        if source_kind == "plugin" and enabled("plugin"):
             plugin_payload = self._build_plugin_metadata_payload(raw_detail)
             if plugin_payload is not None:
                 providers.append(CustomPluginProvider(plugin_payload))
-        providers.append(
-            BangumiMetadataProvider(
-                BangumiClient(
-                    access_token=config.metadata_bangumi_access_token,
-                    proxy_decider=proxy_decider,
+        if enabled("bangumi"):
+            providers.append(
+                BangumiMetadataProvider(
+                    BangumiClient(
+                        access_token=config.metadata_bangumi_access_token,
+                        proxy_decider=proxy_decider,
+                    )
                 )
             )
-        )
-        providers.append(BilibiliMetadataProvider())
-        providers.append(IqiyiMetadataProvider())
-        providers.append(TencentMetadataProvider())
-        if str(config.metadata_douban_cookie or "").strip():
+        if enabled("bilibili"):
+            providers.append(BilibiliMetadataProvider())
+        if enabled("iqiyi"):
+            providers.append(IqiyiMetadataProvider())
+        if enabled("tencent"):
+            providers.append(TencentMetadataProvider())
+        if enabled("official_douban") and str(config.metadata_douban_cookie or "").strip():
             local_douban_client = LocalDoubanClient(
                 cookie=config.metadata_douban_cookie,
                 proxy_decider=proxy_decider,
             )
             providers.append(OfficialDoubanProvider(local_douban_client))
-        if str(config.metadata_tmdb_api_key or "").strip():
+        if enabled("tmdb") and str(config.metadata_tmdb_api_key or "").strip():
             providers.append(
                 TMDBProvider(
                     TMDBClient(
@@ -661,8 +674,10 @@ class AppCoordinator(QObject):
                     )
                 )
             )
-        providers.append(SohuMetadataProvider())
-        providers.append(LocalDoubanProvider(api_client))
+        if enabled("sohu"):
+            providers.append(SohuMetadataProvider())
+        if enabled("local_douban") and enabled("remote_douban"):
+            providers.append(LocalDoubanProvider(api_client))
         return providers
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
@@ -1178,6 +1193,12 @@ class AppCoordinator(QObject):
                 return None
             if not config.episode_title_enhancement_enabled:
                 return None
+            disabled_metadata_provider_ids = {
+                str(item or "").strip()
+                for item in config.disabled_metadata_provider_ids
+            }
+            if "tmdb" in disabled_metadata_provider_ids:
+                return None
             if not config.metadata_tmdb_api_key.strip():
                 return None
             query = MetadataContext(vod=vod, source_kind=source_kind).to_query()
@@ -1198,11 +1219,17 @@ class AppCoordinator(QObject):
             tencent_provider = TencentMetadataProvider()
             iqiyi_provider = IqiyiMetadataProvider()
             metadata_title_providers[:] = [
-                bangumi_provider,
-                bilibili_provider,
-                tencent_provider,
-                iqiyi_provider,
+                provider
+                for provider in (
+                    bangumi_provider,
+                    bilibili_provider,
+                    tencent_provider,
+                    iqiyi_provider,
+                )
+                if provider.name not in disabled_metadata_provider_ids
             ]
+            if not metadata_title_providers:
+                return None
 
             def _bound_episode_candidate(session_vod: VodItem, current_item: PlayItem | None = None):
                 bindings = self._metadata_binding_repository

@@ -8,6 +8,19 @@ from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 
 
+def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.disabled_danmaku_provider_ids = ["youku", "mgtv"]
+    config.disabled_metadata_provider_ids = ["tmdb", "official_douban"]
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.disabled_danmaku_provider_ids == ["youku", "mgtv"]
+    assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban"]
+
+
 def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 

@@ -4298,6 +4298,34 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.danmaku_source_checkboxes["youku"].setChecked(False)
+    dialog.metadata_source_checkboxes["tmdb"].setChecked(False)
+    dialog.metadata_source_checkboxes["official_douban"].setChecked(False)
+    dialog._save()
+
+    assert config.disabled_danmaku_provider_ids == ["youku"]
+    assert config.disabled_metadata_provider_ids == ["official_douban", "tmdb"]
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.metadata_source_group.layout().columnCount() == 3
+    assert dialog.danmaku_source_group.layout().columnCount() == 3
+
+
 def test_advanced_settings_dialog_adds_appearance_tab_and_populates_theme_mode(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

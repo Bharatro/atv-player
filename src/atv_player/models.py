@@ -56,6 +56,8 @@ class AppConfig:
     playback_auto_switch_source_on_failure: bool = False
     m3u_proxy_segment_prefetch_size: int = 2
     episode_title_enhancement_enabled: bool = True
+    disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
+    disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"
     last_playback_source: str = "browse"

@@ -89,6 +89,12 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert youku.search_calls == []
 
 
+def test_create_default_danmaku_service_excludes_disabled_providers() -> None:
+    service = create_default_danmaku_service(disabled_provider_ids=["youku", "mgtv"])
+
+    assert service.provider_order == ["tencent", "bilibili", "iqiyi", "sohu"]
+
+
 def test_search_danmu_searches_providers_with_max_concurrency_of_four() -> None:
     state = {"active": 0, "max_active": 0}
     lock = threading.Lock()

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -33,6 +34,7 @@ from atv_player.controllers.youtube_category_config import (
 )
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
+from atv_player.source_preferences import DANMAKU_SOURCE_PREFERENCES, METADATA_SOURCE_PREFERENCES
 from atv_player.ui.log_console import LogConsoleWidget
 from atv_player.ui.theme import (
     FlatComboBox,
@@ -43,6 +45,16 @@ from atv_player.ui.theme import (
     current_tokens,
 )
 from atv_player.ui.window_chrome import ThemedDialogBase
+
+
+def _build_source_checkbox_layout(checkboxes: list[QCheckBox]) -> QGridLayout:
+    layout = QGridLayout()
+    column_count = 3 if len(checkboxes) > 4 else 2
+    for index, checkbox in enumerate(checkboxes):
+        row = index // column_count
+        column = index % column_count
+        layout.addWidget(checkbox, row, column)
+    return layout
 
 
 class AdvancedSettingsDialog(ThemedDialogBase):
@@ -80,8 +92,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.theme_hint_label = QLabel("跟随系统会在应用启动时读取当前系统浅深色；播放器播放区保持偏暗。")
         self.theme_hint_label.setWordWrap(True)
         self.metadata_group = QGroupBox("元数据增强配置")
+        self.metadata_source_group = QGroupBox("刮削源")
+        self.danmaku_source_group = QGroupBox("弹幕源")
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
+        self.metadata_source_checkboxes: dict[str, QCheckBox] = {}
+        self.danmaku_source_checkboxes: dict[str, QCheckBox] = {}
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -221,6 +237,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         self.metadata_enabled_checkbox.setChecked(config.metadata_enhancement_enabled)
         self.episode_title_enhancement_checkbox.setChecked(config.episode_title_enhancement_enabled)
+        disabled_metadata_sources = set(config.disabled_metadata_provider_ids)
+        for source in METADATA_SOURCE_PREFERENCES:
+            checkbox = QCheckBox(source.label)
+            checkbox.setChecked(source.id not in disabled_metadata_sources)
+            self.metadata_source_checkboxes[source.id] = checkbox
+        disabled_danmaku_sources = set(config.disabled_danmaku_provider_ids)
+        for source in DANMAKU_SOURCE_PREFERENCES:
+            checkbox = QCheckBox(source.label)
+            checkbox.setChecked(source.id not in disabled_danmaku_sources)
+            self.danmaku_source_checkboxes[source.id] = checkbox
         self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
@@ -289,8 +315,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         metadata_layout.addRow("Bangumi Access Token", self.bangumi_access_token_edit)
         metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
         self.metadata_group.setLayout(metadata_layout)
+        self.metadata_source_group.setLayout(
+            _build_source_checkbox_layout(list(self.metadata_source_checkboxes.values()))
+        )
+        self.danmaku_source_group.setLayout(
+            _build_source_checkbox_layout(list(self.danmaku_source_checkboxes.values()))
+        )
         metadata_tab_layout = QVBoxLayout(self.metadata_tab)
         metadata_tab_layout.addWidget(self.metadata_group)
+        metadata_tab_layout.addWidget(self.metadata_source_group)
+        metadata_tab_layout.addWidget(self.danmaku_source_group)
         metadata_tab_layout.addStretch(1)
 
         network_proxy_layout = QFormLayout()
@@ -576,6 +610,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.douban_cookie_edit.setEnabled(enabled)
         self.tmdb_api_key_edit.setEnabled(enabled)
         self.bangumi_access_token_edit.setEnabled(enabled)
+        self.metadata_source_group.setEnabled(enabled)
 
     def _sync_network_proxy_inputs(self) -> None:
         manual_mode = self.network_proxy_mode_combo.currentData() in {"http", "https", "socks5"}
@@ -827,6 +862,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
         self._config.episode_title_enhancement_enabled = self.episode_title_enhancement_checkbox.isChecked()
+        self._config.disabled_danmaku_provider_ids = [
+            provider_id
+            for provider_id, checkbox in self.danmaku_source_checkboxes.items()
+            if not checkbox.isChecked()
+        ]
+        self._config.disabled_metadata_provider_ids = [
+            provider_id
+            for provider_id, checkbox in self.metadata_source_checkboxes.items()
+            if not checkbox.isChecked()
+        ]
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()

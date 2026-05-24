@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from atv_player.models import AppConfig
+from atv_player.source_preferences import VALID_DANMAKU_PROVIDER_IDS, VALID_METADATA_PROVIDER_IDS
 from atv_player.sqlite_utils import managed_connection
 
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
@@ -106,6 +107,27 @@ def _normalize_global_search_history(value: object) -> list[str]:
         history.append(text)
         seen.add(text)
     return history[:_GLOBAL_SEARCH_HISTORY_LIMIT]
+
+
+def _normalize_disabled_provider_ids(value: object, valid_ids: set[str]) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen or text not in valid_ids:
+            continue
+        normalized.append(text)
+        seen.add(text)
+    return normalized
 
 
 def _normalize_theme_mode(value: object) -> str:
@@ -295,6 +317,8 @@ class SettingsRepository:
                     logging_enabled INTEGER NOT NULL DEFAULT 1,
                     metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
+                    disabled_danmaku_provider_ids TEXT NOT NULL DEFAULT '[]',
+                    disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
                     metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
@@ -379,6 +403,14 @@ class SettingsRepository:
             if "episode_title_enhancement_enabled" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "disabled_danmaku_provider_ids" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN disabled_danmaku_provider_ids TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "disabled_metadata_provider_ids" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]'"
                 )
             if "metadata_douban_cookie" not in columns:
                 conn.execute(
@@ -624,6 +656,8 @@ class SettingsRepository:
                     logging_enabled,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
+                    disabled_danmaku_provider_ids,
+                    disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
                     metadata_bangumi_access_token,
@@ -684,7 +718,7 @@ class SettingsRepository:
                     global_search_hot_source
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
                 )
@@ -705,6 +739,8 @@ class SettingsRepository:
                     logging_enabled,
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
+                    disabled_danmaku_provider_ids,
+                    disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
                     metadata_bangumi_access_token,
@@ -778,6 +814,8 @@ class SettingsRepository:
             logging_enabled,
             metadata_enhancement_enabled,
             episode_title_enhancement_enabled,
+            disabled_danmaku_provider_ids,
+            disabled_metadata_provider_ids,
             metadata_douban_cookie,
             metadata_tmdb_api_key,
             metadata_bangumi_access_token,
@@ -847,6 +885,14 @@ class SettingsRepository:
             logging_enabled=_normalize_logging_enabled(logging_enabled),
             metadata_enhancement_enabled=bool(metadata_enhancement_enabled),
             episode_title_enhancement_enabled=bool(episode_title_enhancement_enabled),
+            disabled_danmaku_provider_ids=_normalize_disabled_provider_ids(
+                disabled_danmaku_provider_ids,
+                VALID_DANMAKU_PROVIDER_IDS,
+            ),
+            disabled_metadata_provider_ids=_normalize_disabled_provider_ids(
+                disabled_metadata_provider_ids,
+                VALID_METADATA_PROVIDER_IDS,
+            ),
             metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
             metadata_tmdb_api_key=str(metadata_tmdb_api_key or "").strip(),
             metadata_bangumi_access_token=str(metadata_bangumi_access_token or "").strip(),
@@ -928,6 +974,8 @@ class SettingsRepository:
                     logging_enabled = ?,
                     metadata_enhancement_enabled = ?,
                     episode_title_enhancement_enabled = ?,
+                    disabled_danmaku_provider_ids = ?,
+                    disabled_metadata_provider_ids = ?,
                     metadata_douban_cookie = ?,
                     metadata_tmdb_api_key = ?,
                     metadata_bangumi_access_token = ?,
@@ -998,6 +1046,20 @@ class SettingsRepository:
                     int(config.logging_enabled),
                     int(config.metadata_enhancement_enabled),
                     int(config.episode_title_enhancement_enabled),
+                    json.dumps(
+                        _normalize_disabled_provider_ids(
+                            config.disabled_danmaku_provider_ids,
+                            VALID_DANMAKU_PROVIDER_IDS,
+                        ),
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        _normalize_disabled_provider_ids(
+                            config.disabled_metadata_provider_ids,
+                            VALID_METADATA_PROVIDER_IDS,
+                        ),
+                        ensure_ascii=False,
+                    ),
                     str(config.metadata_douban_cookie or "").strip(),
                     str(config.metadata_tmdb_api_key or "").strip(),
                     str(config.metadata_bangumi_access_token or "").strip(),
