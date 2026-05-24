@@ -995,15 +995,23 @@ def build_player_section_heading_qss(tokens: ThemeTokens) -> str:
     """
 
 
-def build_player_tabbar_qss(tokens: ThemeTokens) -> str:
+def build_player_tabbar_qss(
+    tokens: ThemeTokens,
+    *,
+    font_size: int = 13,
+    padding: str = "8px 14px",
+    border_radius: int = 12,
+    margin_right: int = 6,
+) -> str:
     return f"""
     QTabBar::tab {{
         background: {tokens.panel_alt_bg};
         color: {tokens.text_secondary};
         border: 1px solid {tokens.border_subtle};
-        border-radius: 12px;
-        padding: 8px 14px;
-        margin-right: 6px;
+        border-radius: {border_radius}px;
+        font-size: {font_size}px;
+        padding: {padding};
+        margin-right: {margin_right}px;
     }}
     QTabBar::tab:hover {{
         color: {tokens.text_primary};
@@ -1015,6 +1023,16 @@ def build_player_tabbar_qss(tokens: ThemeTokens) -> str:
         border-color: {tokens.accent};
     }}
     """
+
+
+def build_compact_player_tabbar_qss(tokens: ThemeTokens) -> str:
+    return build_player_tabbar_qss(
+        tokens,
+        font_size=12,
+        padding="6px 10px",
+        border_radius=10,
+        margin_right=4,
+    )
 
 
 def build_player_immersive_qss(tokens: ThemeTokens) -> str:

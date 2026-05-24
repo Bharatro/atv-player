@@ -216,6 +216,33 @@ def test_build_navigation_tabbar_qss_uses_explicit_dark_theme_text_colors() -> N
     assert "margin-right: 2px;" in qss
 
 
+def test_build_player_tabbar_qss_uses_default_player_tab_spacing() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    qss = theme_module.build_player_tabbar_qss(tokens)
+
+    assert "font-size: 13px;" in qss
+    assert "padding: 8px 14px;" in qss
+    assert "border-radius: 12px;" in qss
+    assert "margin-right: 6px;" in qss
+
+
+def test_build_compact_player_tabbar_qss_uses_smaller_chrome() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    qss = theme_module.build_compact_player_tabbar_qss(tokens)
+
+    assert f"background: {tokens.panel_alt_bg};" in qss
+    assert f"color: {tokens.text_secondary};" in qss
+    assert "font-size: 12px;" in qss
+    assert "padding: 6px 10px;" in qss
+    assert "border-radius: 10px;" in qss
+    assert "margin-right: 4px;" in qss
+    assert f"border-color: {tokens.accent};" in qss
+
+
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "dark")
     tokens = manager.tokens_for("dark")
