@@ -8658,6 +8658,15 @@ def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> No
 
 def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
     toggled: list[str] = []
+    favorite_ids = {"detail-1"}
+
+    def toggle_favorite(current_item: PlayItem) -> None:
+        toggled.append(current_item.vod_id)
+        if current_item.vod_id in favorite_ids:
+            favorite_ids.remove(current_item.vod_id)
+        else:
+            favorite_ids.add(current_item.vod_id)
+
     item = PlayItem(title="庆余年", url="https://media/1.m3u8", vod_id="detail-1")
     session = PlayerSession(
         vod=VodItem(vod_id="detail-1", vod_name="庆余年"),
@@ -8670,19 +8679,27 @@ def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
         FakePlayerController(),
         config=AppConfig(),
         save_config=lambda: None,
-        favorite_is_active=lambda current_item: current_item.vod_id == "detail-1",
-        favorite_toggle=lambda current_item: toggled.append(current_item.vod_id),
+        favorite_is_active=lambda current_item: current_item.vod_id in favorite_ids,
+        favorite_toggle=toggle_favorite,
     )
     qtbot.addWidget(window)
     window.video = RecordingVideo()
 
     window.open_session(session)
 
-    assert window.favorite_action_widget.isHidden() is False
+    heading_index = window._metadata_heading_row.indexOf(window.metadata_heading)
+    assert heading_index >= 0
+    assert window._metadata_heading_row.indexOf(window.favorite_button) == heading_index + 1
+    assert "border: none" in window.favorite_button.styleSheet()
+    assert window.favorite_button.property("favorite_active") is True
     assert window.favorite_button.toolTip() == "取消收藏"
+    assert window.favorite_button.property("icon_name") == "favorite-filled.svg"
     window.favorite_button.click()
 
     assert toggled == ["detail-1"]
+    assert window.favorite_button.property("favorite_active") is False
+    assert window.favorite_button.toolTip() == "加入收藏"
+    assert window.favorite_button.property("icon_name") == "favorite.svg"
 
 
 def test_player_window_executes_detail_action_and_refreshes_current_item(qtbot) -> None:

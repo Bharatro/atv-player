@@ -592,7 +592,7 @@ def test_browse_page_video_context_menu_shows_favorite_toggle(qtbot) -> None:
 
     page = BrowsePage(Controller())
     page.set_favorite_handlers(
-        is_favorited=lambda item: item.vod_id == "detail-1",
+        is_favorited=lambda item: False,
         toggle_favorite=lambda item: toggles.append(item.vod_id),
     )
     qtbot.addWidget(page)
@@ -602,6 +602,14 @@ def test_browse_page_video_context_menu_shows_favorite_toggle(qtbot) -> None:
     menu = page._build_item_context_menu(0)
 
     assert isinstance(menu, QMenu)
+    assert [action.text() for action in menu.actions()] == ["加入收藏"]
+
+    page.set_favorite_handlers(
+        is_favorited=lambda item: item.vod_id == "detail-1",
+        toggle_favorite=lambda item: toggles.append(item.vod_id),
+    )
+    menu = page._build_item_context_menu(0)
+
     assert [action.text() for action in menu.actions()] == ["取消收藏"]
     menu.actions()[0].trigger()
     assert toggles == ["detail-1"]
