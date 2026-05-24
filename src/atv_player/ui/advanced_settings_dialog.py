@@ -3,25 +3,34 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
-    QDialog,
     QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from atv_player.controllers.youtube_category_config import load_youtube_category_config, parse_youtube_category_config
+from atv_player import cache_management
+from atv_player.controllers.youtube_category_config import (
+    load_youtube_category_config,
+    parse_youtube_category_config,
+)
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
 from atv_player.ui.log_console import LogConsoleWidget
@@ -61,6 +70,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
         self.youtube_tab = QWidget()
+        self.cache_tab = QWidget()
         self.logs_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
         self.theme_mode_combo = FlatComboBox()
@@ -172,6 +182,36 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_scope_label.setWordWrap(True)
         self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
         self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
+        self.cache_group = QGroupBox("缓存管理")
+        self.cache_root_label = QLabel("")
+        self.cache_root_label.setWordWrap(True)
+        self.cache_total_size_label = QLabel("总大小：0 B")
+        self.cache_total_files_label = QLabel("文件数量：0")
+        self.cache_open_root_button = QPushButton("打开缓存目录")
+        self.cache_refresh_button = QPushButton("刷新")
+        self.cache_old_days_spinbox = QSpinBox()
+        self.cache_old_days_spinbox.setRange(1, 365)
+        self.cache_old_days_spinbox.setValue(30)
+        self.cache_old_days_spinbox.setSuffix(" 天以前")
+        self.cache_clear_old_button = QPushButton("清理旧缓存")
+        self.cache_clear_all_button = QPushButton("清空全部")
+        self.cache_category_table = QTableWidget(0, 5)
+        self.cache_category_table.setHorizontalHeaderLabels(
+            ["分类", "路径", "大小", "文件数量", "操作"]
+        )
+        self.cache_category_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.cache_category_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.cache_category_table.verticalHeader().setVisible(False)
+        header = self.cache_category_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.save_button = QPushButton("保存")
         self.cancel_button = QPushButton("取消")
 
@@ -302,11 +342,29 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         logs_tab_layout = QVBoxLayout(self.logs_tab)
         logs_tab_layout.addWidget(self.log_console)
 
+        cache_summary_row = QHBoxLayout()
+        cache_summary_row.addWidget(self.cache_total_size_label)
+        cache_summary_row.addWidget(self.cache_total_files_label)
+        cache_summary_row.addStretch(1)
+        cache_summary_row.addWidget(self.cache_open_root_button)
+        cache_summary_row.addWidget(self.cache_refresh_button)
+        cache_summary_row.addWidget(self.cache_old_days_spinbox)
+        cache_summary_row.addWidget(self.cache_clear_old_button)
+        cache_summary_row.addWidget(self.cache_clear_all_button)
+        cache_layout = QVBoxLayout()
+        cache_layout.addWidget(self.cache_root_label)
+        cache_layout.addLayout(cache_summary_row)
+        cache_layout.addWidget(self.cache_category_table)
+        self.cache_group.setLayout(cache_layout)
+        cache_tab_layout = QVBoxLayout(self.cache_tab)
+        cache_tab_layout.addWidget(self.cache_group)
+
         self.settings_tabs.addTab(self.appearance_tab, "外观")
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
+        self.settings_tabs.addTab(self.cache_tab, "缓存管理")
         self.settings_tabs.addTab(self.logs_tab, "日志")
 
         button_row = QHBoxLayout()
@@ -324,10 +382,15 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
         self.youtube_category_test_button.clicked.connect(self._test_youtube_category_source)
         self.youtube_category_refresh_button.clicked.connect(self._refresh_youtube_category_cache)
+        self.cache_open_root_button.clicked.connect(self._open_cache_root)
+        self.cache_refresh_button.clicked.connect(self._refresh_cache_summary)
+        self.cache_clear_old_button.clicked.connect(self._clear_old_cache)
+        self.cache_clear_all_button.clicked.connect(self._clear_all_cache)
         self.save_button.clicked.connect(self._save)
         self.cancel_button.clicked.connect(self.reject)
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
         self._sync_network_proxy_inputs()
+        self._refresh_cache_summary()
         self._apply_theme()
 
     def _apply_theme(self) -> None:
@@ -363,6 +426,141 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             edit.setStyleSheet(line_edit_qss)
             edit.setFixedHeight(42)
         self.log_console.apply_theme()
+
+    def _refresh_cache_summary(self) -> None:
+        try:
+            summary = cache_management.build_cache_summary()
+        except OSError as exc:
+            QMessageBox.warning(self, "缓存统计失败", str(exc))
+            return
+        self.cache_root_label.setText(f"缓存目录：{summary.root}")
+        self.cache_total_size_label.setText(
+            f"总大小：{cache_management.format_cache_size(summary.total_size_bytes)}"
+        )
+        self.cache_total_files_label.setText(f"文件数量：{summary.total_file_count}")
+        self.cache_category_table.setRowCount(len(summary.categories))
+        for row, category in enumerate(summary.categories):
+            self.cache_category_table.setItem(row, 0, QTableWidgetItem(category.label))
+            self.cache_category_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(category.path_summary),
+            )
+            self.cache_category_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(cache_management.format_cache_size(category.size_bytes)),
+            )
+            self.cache_category_table.setItem(
+                row,
+                3,
+                QTableWidgetItem(str(category.file_count)),
+            )
+            self.cache_category_table.setCellWidget(
+                row,
+                4,
+                self._cache_action_widget(category.id),
+            )
+
+    def _cache_action_widget(self, category_id: str) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        open_button = QPushButton("打开")
+        clear_button = QPushButton("清空")
+        open_button.clicked.connect(
+            lambda _checked=False, item_id=category_id: (
+                self._open_cache_category(item_id)
+            )
+        )
+        clear_button.clicked.connect(
+            lambda _checked=False, item_id=category_id: (
+                self._clear_cache_category(item_id)
+            )
+        )
+        layout.addWidget(open_button)
+        layout.addWidget(clear_button)
+        return widget
+
+    def _open_cache_root(self) -> None:
+        try:
+            path = cache_management.build_cache_summary().root
+            path.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        except OSError as exc:
+            QMessageBox.warning(self, "打开缓存目录失败", str(exc))
+
+    def _open_cache_category(self, category_id: str) -> None:
+        try:
+            path = cache_management.category_open_path(category_id)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "打开缓存目录失败", str(exc))
+
+    def _clear_cache_category(self, category_id: str) -> None:
+        try:
+            summary = cache_management.build_cache_summary()
+            category = next(item for item in summary.categories if item.id == category_id)
+        except (OSError, StopIteration) as exc:
+            QMessageBox.warning(self, "清空缓存失败", str(exc))
+            return
+        result = QMessageBox.question(
+            self,
+            "清空缓存",
+            f"确认清空{category.label}？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            cache_management.clear_cache_category(category_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "清空缓存失败", str(exc))
+            return
+        self._refresh_cache_summary()
+
+    def _clear_all_cache(self) -> None:
+        result = QMessageBox.question(
+            self,
+            "清空全部缓存",
+            "确认清空全部应用缓存？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            cache_management.clear_all_cache()
+        except OSError as exc:
+            QMessageBox.warning(self, "清空缓存失败", str(exc))
+            return
+        self._refresh_cache_summary()
+
+    def _clear_old_cache(self) -> None:
+        days = int(self.cache_old_days_spinbox.value())
+        result = QMessageBox.question(
+            self,
+            "清理旧缓存",
+            f"确认删除 {days} 天以前的缓存文件？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            cleanup_result = cache_management.clear_cache_older_than(days)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "清理旧缓存失败", str(exc))
+            return
+        self._refresh_cache_summary()
+        QMessageBox.information(
+            self,
+            "清理旧缓存",
+            "已删除 "
+            f"{cleanup_result.removed_file_count} 个旧缓存文件，释放 "
+            f"{cache_management.format_cache_size(cleanup_result.removed_size_bytes)}。",
+        )
 
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)

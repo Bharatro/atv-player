@@ -4661,6 +4661,147 @@ def test_advanced_settings_dialog_adds_logs_tab_with_logging_toggle(qtbot) -> No
     assert "仅可查看历史日志" in dialog.log_console.status_label.text()
 
 
+def test_advanced_settings_dialog_adds_cache_management_tab_and_summary(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from atv_player import cache_management
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    monkeypatch.setattr(cache_management, "app_cache_dir", lambda: tmp_path)
+    (tmp_path / "posters").mkdir(parents=True)
+    (tmp_path / "posters" / "poster.img").write_bytes(b"123")
+    (tmp_path / "metadata" / "detail").mkdir(parents=True)
+    (tmp_path / "metadata" / "detail" / "item.json").write_bytes(b"12")
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    tab_labels = [
+        dialog.settings_tabs.tabText(index)
+        for index in range(dialog.settings_tabs.count())
+    ]
+    assert "缓存管理" in tab_labels
+    assert dialog.cache_root_label.text().endswith(str(tmp_path))
+    assert dialog.cache_total_size_label.text() == "总大小：5 B"
+    assert dialog.cache_total_files_label.text() == "文件数量：2"
+    assert dialog.cache_category_table.rowCount() == len(cache_management.CACHE_CATEGORIES)
+
+    labels = [
+        dialog.cache_category_table.item(row, 0).text()
+        for row in range(dialog.cache_category_table.rowCount())
+    ]
+    assert labels == [
+        "插件缓存",
+        "海报缓存",
+        "元数据缓存",
+        "弹幕缓存",
+        "播放缓存",
+        "其他缓存",
+    ]
+
+
+def test_advanced_settings_dialog_clears_single_cache_category(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from atv_player import cache_management
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    monkeypatch.setattr(cache_management, "app_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: module.QMessageBox.StandardButton.Yes,
+    )
+    (tmp_path / "posters").mkdir(parents=True)
+    (tmp_path / "posters" / "poster.img").write_bytes(b"123")
+    (tmp_path / "plugins").mkdir(parents=True)
+    (tmp_path / "plugins" / "plugin.py").write_bytes(b"12")
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog._clear_cache_category("posters")
+
+    assert list((tmp_path / "posters").iterdir()) == []
+    assert (tmp_path / "plugins" / "plugin.py").exists()
+    assert dialog.cache_total_size_label.text() == "总大小：2 B"
+    assert dialog.cache_total_files_label.text() == "文件数量：1"
+
+
+def test_advanced_settings_dialog_clears_all_cache(qtbot, tmp_path, monkeypatch) -> None:
+    from atv_player import cache_management
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    monkeypatch.setattr(cache_management, "app_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: module.QMessageBox.StandardButton.Yes,
+    )
+    (tmp_path / "posters").mkdir(parents=True)
+    (tmp_path / "posters" / "poster.img").write_bytes(b"123")
+    (tmp_path / "loose.tmp").write_bytes(b"12")
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog.cache_clear_all_button.click()
+
+    assert list(tmp_path.iterdir()) == []
+    assert dialog.cache_total_size_label.text() == "总大小：0 B"
+    assert dialog.cache_total_files_label.text() == "文件数量：0"
+
+
+def test_advanced_settings_dialog_clears_old_cache(qtbot, tmp_path, monkeypatch) -> None:
+    import os
+    import time
+
+    from atv_player import cache_management
+    from atv_player.ui import advanced_settings_dialog as module
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    monkeypatch.setattr(cache_management, "app_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: module.QMessageBox.StandardButton.Yes,
+    )
+    messages: list[str] = []
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "information",
+        lambda _parent, _title, text: messages.append(text),
+    )
+    old_file = tmp_path / "posters" / "old.img"
+    new_file = tmp_path / "posters" / "new.img"
+    old_file.parent.mkdir(parents=True)
+    old_file.write_bytes(b"123")
+    new_file.write_bytes(b"12")
+    now = time.time()
+    old_mtime = now - (8 * 24 * 60 * 60)
+    new_mtime = now - (2 * 24 * 60 * 60)
+    os.utime(old_file, (old_mtime, old_mtime))
+    os.utime(new_file, (new_mtime, new_mtime))
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+    dialog.cache_old_days_spinbox.setValue(7)
+
+    dialog.cache_clear_old_button.click()
+
+    assert old_file.exists() is False
+    assert new_file.exists() is True
+    assert dialog.cache_total_size_label.text() == "总大小：2 B"
+    assert dialog.cache_total_files_label.text() == "文件数量：1"
+    assert messages == ["已删除 1 个旧缓存文件，释放 3 B。"]
+
+
 def test_advanced_settings_dialog_saves_logging_enabled_toggle(qtbot) -> None:
     from atv_player.log_store import AppLogFilter
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
