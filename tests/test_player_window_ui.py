@@ -19058,16 +19058,19 @@ def test_player_window_hides_playlist_title_tabs_when_playlist_panel_is_closed(q
     window.show()
 
     assert window.playlist.isHidden() is False
+    assert window.playlist_panel.isHidden() is False
     assert window.playlist_title_tabs.isHidden() is False
 
     window._cycle_playlist_panel_mode()
 
     assert window.playlist.isHidden() is True
+    assert window.playlist_panel.isHidden() is True
     assert window.playlist_title_tabs.isHidden() is True
 
     window._cycle_playlist_panel_mode()
 
     assert window.playlist.isHidden() is False
+    assert window.playlist_panel.isHidden() is False
     assert window.playlist_title_tabs.isHidden() is False
 
 

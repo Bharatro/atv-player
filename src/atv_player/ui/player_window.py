@@ -1195,6 +1195,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.main_splitter.setStretchFactor(1, 1)
         self._restore_main_splitter_state()
         self._sidebar_sizes = self.main_splitter.sizes()
+        self._sidebar_splitter_sizes = [1, 1]
         if self.wide_button.isChecked():
             self._restore_saved_splitter_on_next_wide_exit = bool(
                 self.config is not None and self.config.player_main_splitter_state
@@ -8830,11 +8831,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_visible = self.toggle_details_button.isChecked()
         log_visible = self.toggle_log_button.isChecked()
         playlist_visible = self._playlist_panel_visible()
+        playlist_panel_visible = playlist_visible and not sidebar_hidden
         tree_mode = self._bilibili_grouped_playlist_tree_enabled()
         self._update_log_section_host_layout()
         self.bottom_area.setHidden(is_fullscreen)
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
+        if playlist_panel_visible:
+            self.playlist_panel.setHidden(False)
+            self.sidebar_splitter.setSizes(self._restoreable_sidebar_splitter_sizes())
+        else:
+            if not self.playlist_panel.isHidden():
+                self._remember_sidebar_splitter_sizes()
+            self.playlist_panel.setHidden(True)
+            self.sidebar_splitter.setSizes([0, 1])
         self.playlist.setHidden(not playlist_visible or tree_mode)
         self.bilibili_playlist_tree.setHidden(not playlist_visible or not tree_mode)
         if playlist_visible and not tree_mode and self.session is not None:
@@ -8912,10 +8922,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._sidebar_sizes = sizes
 
+    def _remember_sidebar_splitter_sizes(self) -> None:
+        sizes = self.sidebar_splitter.sizes()
+        if self._has_collapsed_splitter_sizes(sizes):
+            return
+        self._sidebar_splitter_sizes = sizes
+
     def _restoreable_sidebar_sizes(self) -> list[int]:
         sizes = getattr(self, "_sidebar_sizes", self._DEFAULT_MAIN_SPLITTER_SIZES)
         if self._has_collapsed_splitter_sizes(sizes):
             return self._DEFAULT_MAIN_SPLITTER_SIZES
+        return sizes
+
+    def _restoreable_sidebar_splitter_sizes(self) -> list[int]:
+        sizes = getattr(self, "_sidebar_splitter_sizes", [1, 1])
+        if self._has_collapsed_splitter_sizes(sizes):
+            return [1, 1]
         return sizes
 
     def _main_splitter_state_for_persistence(self) -> bytes:
