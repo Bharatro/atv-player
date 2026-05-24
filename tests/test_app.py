@@ -4450,6 +4450,36 @@ def test_advanced_settings_dialog_defaults_youtube_quality_to_1080p(qtbot) -> No
     assert dialog.youtube_max_height_combo.currentData() == 1080
 
 
+def test_advanced_settings_dialog_saves_bilibili_grouped_playlist_tree_enabled(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    save_calls: list[bool] = []
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: save_calls.append(config.bilibili_grouped_playlist_tree_enabled),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.bilibili_grouped_playlist_tree_enabled_checkbox.setChecked(True)
+    dialog._save()
+
+    assert config.bilibili_grouped_playlist_tree_enabled is True
+    assert save_calls == [True]
+
+
+def test_advanced_settings_dialog_restores_bilibili_grouped_playlist_tree_enabled(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked() is True
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 

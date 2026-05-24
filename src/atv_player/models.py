@@ -54,6 +54,7 @@ class AppConfig:
     mpv_default_readahead_secs: int = 20
     mpv_extra_options: str = ""
     playback_auto_switch_source_on_failure: bool = False
+    bilibili_grouped_playlist_tree_enabled: bool = False
     m3u_proxy_segment_prefetch_size: int = 2
     episode_title_enhancement_enabled: bool = True
     disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
