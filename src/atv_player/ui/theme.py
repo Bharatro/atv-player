@@ -1028,10 +1028,10 @@ def build_player_tabbar_qss(
 def build_compact_player_tabbar_qss(tokens: ThemeTokens) -> str:
     return build_player_tabbar_qss(
         tokens,
-        font_size=12,
-        padding="6px 10px",
-        border_radius=10,
-        margin_right=4,
+        font_size=11,
+        padding="4px 8px",
+        border_radius=8,
+        margin_right=2,
     )
 
 

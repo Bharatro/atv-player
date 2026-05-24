@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QTabBar, QVBoxLayout, QWidget
 
 import atv_player.ui.theme as theme_module
 from atv_player.ui.theme import ThemeManager, install_theme
@@ -236,11 +236,42 @@ def test_build_compact_player_tabbar_qss_uses_smaller_chrome() -> None:
 
     assert f"background: {tokens.panel_alt_bg};" in qss
     assert f"color: {tokens.text_secondary};" in qss
-    assert "font-size: 12px;" in qss
-    assert "padding: 6px 10px;" in qss
-    assert "border-radius: 10px;" in qss
-    assert "margin-right: 4px;" in qss
+    assert "font-size: 11px;" in qss
+    assert "padding: 4px 8px;" in qss
+    assert "border-radius: 8px;" in qss
+    assert "margin-right: 2px;" in qss
     assert f"border-color: {tokens.accent};" in qss
+
+
+def test_build_compact_player_tabbar_qss_shrinks_actual_tabbar_size_hint() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+    tokens = manager.tokens_for("light")
+
+    default_bar = QTabBar()
+    default_bar.addTab("剧集标题")
+    default_bar.addTab("原始文件名")
+    default_bar.setStyleSheet(theme_module.build_player_tabbar_qss(tokens))
+    default_bar.ensurePolished()
+    default_bar.adjustSize()
+
+    compact_bar = QTabBar()
+    compact_bar.addTab("剧集标题")
+    compact_bar.addTab("原始文件名")
+    compact_bar.setStyleSheet(theme_module.build_compact_player_tabbar_qss(tokens))
+    compact_bar.ensurePolished()
+    compact_bar.adjustSize()
+
+    app.processEvents()
+
+    default_hint = default_bar.sizeHint()
+    compact_hint = compact_bar.sizeHint()
+
+    assert default_hint.height() == 35
+    assert compact_hint.height() <= 25
+    assert compact_hint.width() <= 140
+    assert compact_hint.height() <= default_hint.height() - 10
+    assert compact_hint.width() <= default_hint.width() - 40
 
 
 def test_build_form_line_edit_qss_uses_disabled_surface_tokens() -> None:
