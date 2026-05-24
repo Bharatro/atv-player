@@ -230,6 +230,25 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
     )
 
 
+def make_bilibili_grouped_session() -> PlayerSession:
+    main_group = [PlayItem(title="正片", url="http://bili/main.mp4", vod_id="BV-main", play_source="BiliBili")]
+    related_group = [
+        PlayItem(title="相关1", url="http://bili/r1.mp4", vod_id="BV-r1", play_source="相关视频"),
+        PlayItem(title="相关2", url="http://bili/r2.mp4", vod_id="BV-r2", play_source="相关视频"),
+    ]
+    up_group = [PlayItem(title="UP主1", url="http://bili/u1.mp4", vod_id="BV-u1", play_source="UP主视频")]
+    return PlayerSession(
+        vod=VodItem(vod_id="BV-main", vod_name="B站视频"),
+        playlist=main_group,
+        playlists=[main_group, related_group, up_group],
+        playlist_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+    )
+
+
 def test_player_window_details_panel_uses_global_light_theme_tokens(qtbot) -> None:
     from atv_player.ui.theme import ThemeManager, install_theme
 
@@ -19921,6 +19940,56 @@ def test_player_window_route_selector_uses_formatted_spider_play_source_label(qt
     assert window.playlist_group_combo.itemText(0) == "播放源 1"
     assert window.playlist_group_combo.itemText(1) == "网盘线(夸克)"
     assert window.video.load_calls == []
+
+
+def test_player_window_shows_bilibili_grouped_playlist_tree_when_enabled(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(make_bilibili_grouped_session())
+
+    assert window.playlist.isHidden() is True
+    assert window.bilibili_playlist_tree.isHidden() is False
+    assert window.playlist_group_combo.isHidden() is True
+    assert window.bilibili_playlist_tree.topLevelItemCount() == 3
+    assert window.bilibili_playlist_tree.topLevelItem(0).text(0) == "BiliBili"
+    assert window.bilibili_playlist_tree.topLevelItem(1).text(0) == "相关视频"
+    assert window.bilibili_playlist_tree.topLevelItem(2).text(0) == "UP主视频"
+
+
+def test_player_window_keeps_plain_playlist_for_bilibili_when_tree_mode_disabled(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=False),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    window.open_session(make_bilibili_grouped_session())
+
+    assert window.playlist.isHidden() is False
+    assert window.bilibili_playlist_tree.isHidden() is True
+    assert window.playlist_group_combo.isHidden() is False
+
+
+def test_player_window_ignores_bilibili_tree_mode_for_non_bilibili_sessions(qtbot) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(bilibili_grouped_playlist_tree_enabled=True),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    session = make_player_session(start_index=0)
+    session.source_kind = "browse"
+    window.open_session(session)
+
+    assert window.playlist.isHidden() is False
+    assert window.bilibili_playlist_tree.isHidden() is True
 
 
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:
