@@ -785,7 +785,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._favorite_is_active = is_favorited
         self._favorite_toggle = toggle_favorite
 
-    def _item_for_row(self, row: int) -> VodItem | None:
+    def _item_for_row(self, row: int):
         row_item = self.table.item(row, 1)
         item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
         if item is None:
@@ -793,7 +793,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
             item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
         if item is None and 0 <= row < len(self.current_items):
             item = self.current_items[row]
-        return item if isinstance(item, VodItem) else None
+        return item
 
     def _build_item_context_menu(self, row: int) -> QMenu:
         menu = QMenu(self)
