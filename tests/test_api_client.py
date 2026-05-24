@@ -305,6 +305,45 @@ def test_api_client_gets_video_cover_setting() -> None:
     assert seen == {"path": "/api/settings/video_cover", "query": ""}
 
 
+def test_api_client_renames_video() -> None:
+    seen = {"method": "", "path": "", "json": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["json"] = request.read().decode()
+        return httpx.Response(200, json={})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.rename_video("91483", "新名.mkv")
+
+    assert seen == {"method": "POST", "path": "/api/videos/91483/rename", "json": '{"name":"新名.mkv"}'}
+
+
+def test_api_client_deletes_video() -> None:
+    seen = {"method": "", "path": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.delete_video("91483")
+
+    assert seen == {"method": "DELETE", "path": "/api/videos/91483"}
+
+
 def test_api_client_get_video_cover_returns_empty_string_for_missing_value() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"name": "video_cover", "value": None})

@@ -11,6 +11,8 @@ class FakeApiClient:
         self.search_keywords: list[str] = []
         self.search_payload: list[dict] = []
         self.detail_calls: list[str] = []
+        self.rename_video_calls: list[tuple[str, str]] = []
+        self.delete_video_calls: list[str] = []
         self.detail_payload = {
             "list": [
                 {
@@ -41,6 +43,12 @@ class FakeApiClient:
     def telegram_search(self, keyword: str) -> list[dict]:
         self.search_keywords.append(keyword)
         return self.search_payload
+
+    def rename_video(self, video_id: str, name: str) -> None:
+        self.rename_video_calls.append((video_id, name))
+
+    def delete_video(self, video_id: str) -> None:
+        self.delete_video_calls.append(video_id)
 
 
 def test_filter_search_results_by_drive_type() -> None:
@@ -316,3 +324,21 @@ def test_load_folder_wraps_path_without_encoding_for_file_list_api() -> None:
     controller.load_folder("/电影/国产", page=2, size=30)
 
     assert api.list_vod_calls == [("1$/电影/国产$1", 2, 30)]
+
+
+def test_rename_file_uses_backend_video_id_from_vod_id() -> None:
+    api = FakeApiClient()
+    controller = BrowseController(api)
+
+    controller.rename_file(VodItem(vod_id="1$91483$1", vod_name="旧名.mkv"), "新名.mkv")
+
+    assert api.rename_video_calls == [("91483", "新名.mkv")]
+
+
+def test_delete_file_uses_backend_video_id_from_vod_id() -> None:
+    api = FakeApiClient()
+    controller = BrowseController(api)
+
+    controller.delete_file(VodItem(vod_id="1$91483$1", vod_name="旧名.mkv"))
+
+    assert api.delete_video_calls == ["91483"]

@@ -10,6 +10,13 @@ def build_vod_list_path(path: str) -> str:
     return f"1${normalized}$1"
 
 
+def _video_id_from_vod_id(vod_id: str) -> str:
+    parts = str(vod_id or "").split("$")
+    if len(parts) >= 2 and parts[1]:
+        return parts[1]
+    return str(vod_id or "")
+
+
 def _map_play_item(payload: dict, index: int) -> PlayItem:
     title = str(payload.get("title") or payload.get("name") or "")
     original_title = str(payload.get("name") or payload.get("title") or "")
@@ -152,6 +159,12 @@ class BrowseController:
 
     def resolve_search_result(self, item: VodItem) -> str:
         return self._api_client.resolve_share_link(item.vod_play_url)
+
+    def rename_file(self, item: VodItem, name: str) -> None:
+        self._api_client.rename_video(_video_id_from_vod_id(item.vod_id), name)
+
+    def delete_file(self, item: VodItem) -> None:
+        self._api_client.delete_video(_video_id_from_vod_id(item.vod_id))
 
     def build_request_from_detail(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_detail(vod_id)

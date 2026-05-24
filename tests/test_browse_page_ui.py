@@ -227,6 +227,35 @@ class AsyncResolveController(FakeBrowseController):
         self._events_by_vod_id[vod_id].pop(0).set()
 
 
+class AsyncFileActionController(AsyncBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rename_calls: list[tuple[VodItem, str]] = []
+        self.delete_calls: list[VodItem] = []
+        self._rename_events: list[threading.Event] = []
+        self._delete_events: list[threading.Event] = []
+
+    def rename_file(self, item: VodItem, name: str) -> None:
+        self.rename_calls.append((item, name))
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._rename_events.append(event)
+        assert event.wait(timeout=5), "rename_file was never released"
+
+    def finish_rename(self) -> None:
+        self._rename_events.pop(0).set()
+
+    def delete_file(self, item: VodItem) -> None:
+        self.delete_calls.append(item)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._delete_events.append(event)
+        assert event.wait(timeout=5), "delete_file was never released"
+
+    def finish_delete(self) -> None:
+        self._delete_events.pop(0).set()
+
+
 def _make_open_request(vod_id: str, vod_name: str) -> OpenPlayerRequest:
     return OpenPlayerRequest(
         vod=VodItem(vod_id=vod_id, vod_name=vod_name),
@@ -526,6 +555,76 @@ def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
     assert page.table.item(1, 4).text() == "8.6"
     assert page.table.item(0, 1).toolTip() == "Episode 1"
     assert page.table.item(1, 1).toolTip() == "Movie Folder"
+
+
+def test_browse_page_exposes_rename_and_delete_file_actions(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    assert page.rename_file_button.text() == "重命名"
+    assert page.delete_file_button.text() == "删除"
+    assert page.rename_file_button.isEnabled() is False
+    assert page.delete_file_button.isEnabled() is False
+
+
+def test_browse_page_enables_file_actions_for_non_playlist_selection(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            VodItem(vod_id="1$91483$1", vod_name="Episode 1", type=2),
+            VodItem(vod_id="playlist", vod_name="Playlist", type=9),
+        ]
+    )
+
+    page.table.selectRow(0)
+    assert page.rename_file_button.isEnabled() is True
+    assert page.delete_file_button.isEnabled() is True
+
+    page.table.selectRow(1)
+    assert page.rename_file_button.isEnabled() is False
+    assert page.delete_file_button.isEnabled() is False
+
+
+def test_browse_page_renames_selected_file_outside_main_thread_and_refreshes(qtbot, monkeypatch) -> None:
+    controller = AsyncFileActionController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.current_path = "/电影"
+    item = VodItem(vod_id="1$91483$1", vod_name="旧名.mkv", type=2)
+    page._populate_table([item])
+    page.table.selectRow(0)
+    monkeypatch.setattr(page, "_prompt_rename_file", lambda selected: "新名.mkv")
+
+    page._rename_selected_file()
+
+    qtbot.waitUntil(lambda: len(controller.rename_calls) == 1, timeout=1000)
+    assert controller.rename_calls[0] == (item, "新名.mkv")
+
+    controller.finish_rename()
+    _wait_for_folder_load(qtbot, controller, "/电影")
+    controller.finish("/电影", items=[], total=0)
+    qtbot.waitUntil(lambda: page.table.rowCount() == 0, timeout=1000)
+
+
+def test_browse_page_deletes_selected_file_outside_main_thread_and_refreshes(qtbot, monkeypatch) -> None:
+    controller = AsyncFileActionController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.current_path = "/电影"
+    item = VodItem(vod_id="1$91483$1", vod_name="旧名.mkv", type=2)
+    page._populate_table([item])
+    page.table.selectRow(0)
+    monkeypatch.setattr(page, "_confirm_delete_file", lambda selected: True)
+
+    page._delete_selected_file()
+
+    qtbot.waitUntil(lambda: controller.delete_calls == [item], timeout=1000)
+    controller.finish_delete()
+    _wait_for_folder_load(qtbot, controller, "/电影")
+    controller.finish("/电影", items=[], total=0)
+    qtbot.waitUntil(lambda: page.table.rowCount() == 0, timeout=1000)
 
 
 def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:

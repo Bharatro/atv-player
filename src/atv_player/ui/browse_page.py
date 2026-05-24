@@ -9,8 +9,10 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -124,6 +126,12 @@ class _ResolveSignals(QObject):
     unauthorized = Signal(int)
 
 
+class _FileActionSignals(QObject):
+    succeeded = Signal(int)
+    failed = Signal(int, str)
+    unauthorized = Signal(int)
+
+
 class BrowsePage(QWidget, AsyncGuardMixin):
     open_requested = Signal(object)
     unauthorized = Signal()
@@ -153,6 +161,10 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
         self.breadcrumb_layout.setSpacing(4)
         self.breadcrumb_buttons: list[QPushButton] = []
+        self.rename_file_button = QPushButton("重命名")
+        self.delete_file_button = QPushButton("删除")
+        self.rename_file_button.setEnabled(False)
+        self.delete_file_button.setEnabled(False)
         self.refresh_button = QPushButton("刷新")
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
@@ -180,6 +192,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._open_request_id = 0
         self._resolve_request_id = 0
         self._search_request_id = 0
+        self._file_action_request_id = 0
         self._folder_signals = _FolderLoadSignals()
         self._connect_async_signal(self._folder_signals.succeeded, self._handle_folder_load_succeeded)
         self._connect_async_signal(self._folder_signals.failed, self._handle_folder_load_failed)
@@ -196,6 +209,10 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._search_signals.succeeded, self._handle_search_succeeded)
         self._connect_async_signal(self._search_signals.failed, self._handle_search_failed)
         self._connect_async_signal(self._search_signals.unauthorized, self._handle_search_unauthorized)
+        self._file_action_signals = _FileActionSignals()
+        self._connect_async_signal(self._file_action_signals.succeeded, self._handle_file_action_succeeded)
+        self._connect_async_signal(self._file_action_signals.failed, self._handle_file_action_failed)
+        self._connect_async_signal(self._file_action_signals.unauthorized, self._handle_file_action_unauthorized)
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.filter_combo.addItem(label, value)
@@ -227,6 +244,8 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         file_layout = QVBoxLayout()
         breadcrumb_row = QHBoxLayout()
         breadcrumb_row.addWidget(self.breadcrumb_bar, 1)
+        breadcrumb_row.addWidget(self.rename_file_button)
+        breadcrumb_row.addWidget(self.delete_file_button)
         breadcrumb_row.addWidget(self.refresh_button)
         file_layout.addLayout(breadcrumb_row)
         file_layout.addWidget(self.table)
@@ -254,6 +273,9 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_search_result)
         self.refresh_button.clicked.connect(self.reload)
+        self.rename_file_button.clicked.connect(self._rename_selected_file)
+        self.delete_file_button.clicked.connect(self._delete_selected_file)
+        self.table.itemSelectionChanged.connect(self._update_file_action_buttons)
         self.table.cellDoubleClicked.connect(self._handle_open)
         header = self.table.horizontalHeader()
         header.setSectionsClickable(True)
@@ -611,6 +633,104 @@ class BrowsePage(QWidget, AsyncGuardMixin):
             self.table.setItem(row, 3, SortableTableWidgetItem(dbid_text, _parse_int_value(dbid_text), item))
             self.table.setItem(row, 4, SortableTableWidgetItem(rating_text, _parse_float_value(rating_text), item))
             self.table.setItem(row, 5, SortableTableWidgetItem(time_text, _parse_time_value(time_text), item))
+        self._update_file_action_buttons()
+
+    def _selected_file_action_item(self) -> VodItem | None:
+        selected_ranges = self.table.selectedRanges()
+        if len(selected_ranges) != 1:
+            return None
+        selected_range = selected_ranges[0]
+        if selected_range.rowCount() != 1:
+            return None
+        row = selected_range.topRow()
+        row_item = self.table.item(row, 1) or self.table.item(row, 0)
+        item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
+        if not isinstance(item, VodItem):
+            return None
+        if item.type == 9:
+            return None
+        return item
+
+    def _update_file_action_buttons(self) -> None:
+        has_action_item = self._selected_file_action_item() is not None
+        self.rename_file_button.setEnabled(has_action_item)
+        self.delete_file_button.setEnabled(has_action_item)
+
+    def _prompt_rename_file(self, item: VodItem) -> str:
+        name, accepted = QInputDialog.getText(self, "重命名文件", item.path or item.vod_name, text=item.vod_name)
+        if not accepted:
+            return ""
+        return name.strip()
+
+    def _confirm_delete_file(self, item: VodItem) -> bool:
+        message = item.path or item.vod_name
+        return (
+            QMessageBox.question(
+                self,
+                "删除文件",
+                f"是否删除文件？\n{message}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _rename_selected_file(self) -> None:
+        item = self._selected_file_action_item()
+        if item is None:
+            return
+        new_name = self._prompt_rename_file(item).strip()
+        if not new_name:
+            return
+        self._start_file_action(lambda: self.controller.rename_file(item, new_name))
+
+    def _delete_selected_file(self) -> None:
+        item = self._selected_file_action_item()
+        if item is None:
+            return
+        if not self._confirm_delete_file(item):
+            return
+        self._start_file_action(lambda: self.controller.delete_file(item))
+
+    def _start_file_action(self, action) -> int:
+        self._file_action_request_id += 1
+        request_id = self._file_action_request_id
+        self.rename_file_button.setEnabled(False)
+        self.delete_file_button.setEnabled(False)
+
+        def run() -> None:
+            try:
+                action()
+            except UnauthorizedError:
+                if self._is_widget_alive():
+                    self._file_action_signals.unauthorized.emit(request_id)
+                return
+            except ApiError as exc:
+                if self._is_widget_alive():
+                    self._file_action_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_widget_alive():
+                self._file_action_signals.succeeded.emit(request_id)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_file_action_succeeded(self, request_id: int) -> None:
+        if request_id != self._file_action_request_id:
+            return
+        self.reload()
+
+    def _handle_file_action_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._file_action_request_id:
+            return
+        self._set_breadcrumb_status(message)
+        self._update_file_action_buttons()
+
+    def _handle_file_action_unauthorized(self, request_id: int) -> None:
+        if request_id != self._file_action_request_id:
+            return
+        self._update_file_action_buttons()
+        self.unauthorized.emit()
 
     def _sort_file_table(self, column: int) -> None:
         if column not in self._sortable_columns:

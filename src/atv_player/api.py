@@ -360,6 +360,12 @@ class ApiClient:
         )
         return str(data)
 
+    def rename_video(self, video_id: str, name: str) -> None:
+        self._request("POST", f"/api/videos/{video_id}/rename", json={"name": name})
+
+    def delete_video(self, video_id: str) -> None:
+        self._request("DELETE", f"/api/videos/{video_id}")
+
     def get_history(self, key: str) -> HistoryRecord | None:
         data = self._request("GET", f"/history/{self._vod_token}", params={"key": key})
         if not data:
