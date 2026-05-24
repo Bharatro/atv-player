@@ -1608,8 +1608,21 @@ def test_main_window_selecting_hidden_plugin_from_drawer_switches_content_withou
 
     assert window._active_widget is original_pages[2]
     assert window.nav_tabs.currentWidget() is original_pages[2]
+    assert window.plugin_overflow_button.isChecked() is True
+    assert window.nav_tabs.tab_bar.property("hiddenPluginActive") is True
     assert window._plugin_pages[2][0] is original_pages[2]
     assert controllers[2].load_calls <= 1
+
+    window._open_plugin_overflow_drawer()
+    window.plugin_overflow_button.click()
+
+    assert window._plugin_overflow_drawer.isVisible() is False
+    assert window.plugin_overflow_button.isChecked() is True
+
+    window.nav_tabs.setCurrentWidget(window.douban_page)
+
+    assert window.plugin_overflow_button.isChecked() is False
+    assert window.nav_tabs.tab_bar.property("hiddenPluginActive") is False
 
 
 def test_main_window_resize_keeps_active_hidden_plugin_page_instance(qtbot, monkeypatch) -> None:

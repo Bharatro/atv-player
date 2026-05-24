@@ -1086,6 +1086,7 @@ class _NavigationTabs(QWidget):
         self.tab_bar.setUsesScrollButtons(False)
         self.tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.plugin_overflow_button = QPushButton("更多", self)
+        self.plugin_overflow_button.setCheckable(True)
         self.plugin_overflow_button.hide()
         self.content_stack = QStackedWidget(self)
         self._visible_widgets: list[QWidget] = []
@@ -1158,10 +1159,14 @@ class _NavigationTabs(QWidget):
 
     def setCurrentWidget(self, widget: QWidget) -> None:
         self.ensure_widget(widget)
+        previous_widget = self.currentWidget()
         index = self.indexOf(widget)
         if index >= 0:
+            previous_index = self.tab_bar.currentIndex()
             self.tab_bar.setCurrentIndex(index)
             self.content_stack.setCurrentWidget(widget)
+            if previous_index == index and previous_widget is not widget and not self.signalsBlocked():
+                self.currentChanged.emit(index)
             return
         if self.tab_bar.currentIndex() != -1:
             self.tab_bar.setCurrentIndex(-1)
@@ -1779,7 +1784,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         tokens = current_tokens()
         self.nav_tabs.tab_bar.setStyleSheet(build_navigation_tabbar_qss(tokens))
         self.plugin_overflow_button.setStyleSheet(
-            build_pill_button_qss(tokens, border_radius=12, horizontal_padding=8)
+            build_pill_button_qss(tokens, checked_accent=True, border_radius=12, horizontal_padding=8)
         )
 
     def _apply_theme(self) -> None:
@@ -2455,6 +2460,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
 
     def _sync_plugin_overflow_drawer(self, *, reset_search: bool = False) -> None:
+        self._sync_plugin_overflow_active_state()
         if not self._hidden_plugin_tab_definitions:
             self._close_plugin_overflow_drawer()
             return
@@ -2468,6 +2474,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         if self._plugin_overflow_drawer.isVisible():
             self._close_plugin_overflow_drawer()
+            self._sync_plugin_overflow_active_state()
             return
         self._open_plugin_overflow_drawer()
 
@@ -2482,6 +2489,25 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _close_plugin_overflow_drawer(self) -> None:
         self._plugin_overflow_drawer.hide()
+
+    def _sync_plugin_overflow_active_state(self) -> None:
+        active_key = self._tab_key_for_widget(self._active_widget or self.nav_tabs.currentWidget())
+        hidden_plugin_active = any(
+            definition.key == active_key
+            for definition in self._hidden_plugin_tab_definitions
+        )
+        self.plugin_overflow_button.setChecked(hidden_plugin_active)
+        self._set_dynamic_property(self.nav_tabs.tab_bar, "hiddenPluginActive", hidden_plugin_active)
+
+    @staticmethod
+    def _set_dynamic_property(widget: QWidget, name: str, value: object) -> None:
+        if widget.property(name) == value:
+            return
+        widget.setProperty(name, value)
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+        widget.update()
 
     def _handle_hidden_plugin_selected(self, plugin_key: str) -> None:
         definition = next((item for item in self._plugin_tab_definitions if item.key == plugin_key), None)
