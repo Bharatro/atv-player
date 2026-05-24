@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
@@ -2716,6 +2716,36 @@ def test_player_window_applies_bordered_form_styles_in_danmaku_settings_dialog(q
 
     assert window._danmaku_position_preset_combo.isEnabled() is False
     assert window._danmaku_position_preset_combo.property("flat_combo_disabled_field_bg") == tokens.panel_alt_bg
+
+
+def test_player_window_uses_uniform_label_widths_in_danmaku_settings_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+
+    dialog = window._ensure_danmaku_settings_dialog()
+    dialog.show()
+    qtbot.waitUntil(lambda: len(visible_danmaku_settings_dialogs()) == 1)
+
+    expected_texts = {
+        "显示行数",
+        "显示模式",
+        "位置预设",
+        "颜色模式",
+        "统一颜色",
+        "文字大小",
+        "透明度",
+        "滚动速率",
+    }
+    labels_by_text = {
+        label.text(): label
+        for label in dialog.findChildren(QLabel)
+        if label.text() in expected_texts
+    }
+
+    assert set(labels_by_text) == expected_texts
+    assert len({label.width() for label in labels_by_text.values()}) == 1
+    expected_min_width = max(dialog.fontMetrics().horizontalAdvance(text) for text in expected_texts) + 8
+    assert next(iter(labels_by_text.values())).width() >= expected_min_width
 
 
 def test_player_window_uses_color_palette_button_in_danmaku_settings_dialog(qtbot) -> None:

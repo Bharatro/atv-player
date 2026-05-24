@@ -6839,76 +6839,71 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         dialog = _PlayerToolDialog(title="弹幕设置", parent=self, size=(420, 320))
         host = dialog.content_widget()
         layout = dialog.content_layout()
+        setting_label_texts = (
+            "显示行数",
+            "显示模式",
+            "位置预设",
+            "颜色模式",
+            "统一颜色",
+            "文字大小",
+            "透明度",
+            "滚动速率",
+        )
+        setting_label_width = max(host.fontMetrics().horizontalAdvance(text) for text in setting_label_texts) + 8
 
-        line_count_row = QHBoxLayout()
-        line_count_row.addWidget(QLabel("显示行数", host))
+        def add_setting_row(label_text: str, field: QWidget) -> None:
+            row = QHBoxLayout()
+            label = QLabel(label_text, host)
+            label.setFixedWidth(setting_label_width)
+            row.addWidget(label)
+            row.addWidget(field, 1)
+            layout.addLayout(row)
+
         self._danmaku_line_count_spin = QSpinBox(host)
         self._danmaku_line_count_spin.setRange(1, 10)
-        line_count_row.addWidget(self._danmaku_line_count_spin, 1)
-        layout.addLayout(line_count_row)
+        add_setting_row("显示行数", self._danmaku_line_count_spin)
 
-        render_row = QHBoxLayout()
-        render_row.addWidget(QLabel("显示模式", host))
         self._danmaku_render_mode_combo = FlatComboBox(host)
         self._danmaku_render_mode_combo.addItem("静态", "static")
         self._danmaku_render_mode_combo.addItem("仅滚动", "scroll_only")
         self._danmaku_render_mode_combo.addItem("混合", "mixed")
-        render_row.addWidget(self._danmaku_render_mode_combo, 1)
-        layout.addLayout(render_row)
+        add_setting_row("显示模式", self._danmaku_render_mode_combo)
 
-        position_row = QHBoxLayout()
-        position_row.addWidget(QLabel("位置预设", host))
         self._danmaku_position_preset_combo = FlatComboBox(host)
         self._danmaku_position_preset_combo.addItem("顶部", "top")
         self._danmaku_position_preset_combo.addItem("顶部偏下", "upper")
         self._danmaku_position_preset_combo.addItem("中上", "mid_upper")
         self._danmaku_position_preset_combo.addItem("底部", "bottom")
-        position_row.addWidget(self._danmaku_position_preset_combo, 1)
-        layout.addLayout(position_row)
+        add_setting_row("位置预设", self._danmaku_position_preset_combo)
 
-        color_mode_row = QHBoxLayout()
-        color_mode_row.addWidget(QLabel("颜色模式", host))
         self._danmaku_color_mode_combo = FlatComboBox(host)
         self._danmaku_color_mode_combo.addItem("统一颜色", "uniform")
         self._danmaku_color_mode_combo.addItem("保留原色", "source")
-        color_mode_row.addWidget(self._danmaku_color_mode_combo, 1)
-        layout.addLayout(color_mode_row)
+        add_setting_row("颜色模式", self._danmaku_color_mode_combo)
 
-        uniform_color_row = QHBoxLayout()
-        uniform_color_row.addWidget(QLabel("统一颜色", host))
         self._danmaku_uniform_color_edit = None
         self._danmaku_uniform_color_button = QPushButton(host)
-        uniform_color_row.addWidget(self._danmaku_uniform_color_button, 1)
-        layout.addLayout(uniform_color_row)
+        add_setting_row("统一颜色", self._danmaku_uniform_color_button)
 
-        font_size_row = QHBoxLayout()
-        font_size_row.addWidget(QLabel("文字大小", host))
         self._danmaku_font_size_spin = QSpinBox(host)
         self._danmaku_font_size_spin.setRange(16, 72)
         self._danmaku_font_size_spin.setSingleStep(2)
-        font_size_row.addWidget(self._danmaku_font_size_spin, 1)
-        layout.addLayout(font_size_row)
+        add_setting_row("文字大小", self._danmaku_font_size_spin)
 
-        opacity_row = QHBoxLayout()
-        opacity_row.addWidget(QLabel("透明度", host))
         self._danmaku_opacity_spin = QSpinBox(host)
         self._danmaku_opacity_spin.setRange(30, 100)
         self._danmaku_opacity_spin.setSingleStep(5)
         self._danmaku_opacity_spin.setSuffix("%")
-        opacity_row.addWidget(self._danmaku_opacity_spin, 1)
-        layout.addLayout(opacity_row)
+        add_setting_row("透明度", self._danmaku_opacity_spin)
 
         self._danmaku_outline_strength_combo = None
 
-        scroll_speed_row = QHBoxLayout()
-        scroll_speed_row.addWidget(QLabel("滚动速率", host))
         self._danmaku_scroll_speed_spin = QDoubleSpinBox(host)
         self._danmaku_scroll_speed_spin.setRange(0.5, 2.0)
         self._danmaku_scroll_speed_spin.setSingleStep(0.1)
         self._danmaku_scroll_speed_spin.setDecimals(1)
         self._danmaku_scroll_speed_spin.setSuffix("x")
-        scroll_speed_row.addWidget(self._danmaku_scroll_speed_spin, 1)
-        layout.addLayout(scroll_speed_row)
+        add_setting_row("滚动速率", self._danmaku_scroll_speed_spin)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
