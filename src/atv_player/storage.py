@@ -18,6 +18,7 @@ _VALID_YOUTUBE_AUDIO_LANGS = {"", "zh", "en"}
 _VALID_YOUTUBE_REGIONS = {"", "CN", "US", "JP", "SG", "HK", "TW"}
 _VALID_YOUTUBE_CATEGORY_SOURCE_TYPES = {"builtin", "remote", "local"}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
+_VALID_FOLLOWING_EPISODE_DISPLAY_MODES = {"compact", "poster", "full"}
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
     "localhost",
@@ -294,6 +295,11 @@ def _normalize_m3u_proxy_segment_prefetch_size(value: object) -> int:
     return max(0, min(normalized, 10))
 
 
+def _normalize_following_episode_display_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_FOLLOWING_EPISODE_DISPLAY_MODES else "poster"
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -381,7 +387,8 @@ class SettingsRepository:
                     last_selected_category_tab TEXT NOT NULL DEFAULT '',
                     last_selected_category_id TEXT NOT NULL DEFAULT '',
                     global_search_history TEXT NOT NULL DEFAULT '[]',
-                    global_search_hot_source TEXT NOT NULL DEFAULT '360'
+                    global_search_hot_source TEXT NOT NULL DEFAULT '360',
+                    following_episode_display_mode TEXT NOT NULL DEFAULT 'poster'
                 )
                 """
             )
@@ -649,6 +656,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN global_search_hot_source TEXT NOT NULL DEFAULT '360'"
                 )
+            if "following_episode_display_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN following_episode_display_mode TEXT NOT NULL DEFAULT 'poster'"
+                )
             if "network_proxy_rules" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN network_proxy_rules TEXT NOT NULL DEFAULT '[]'"
@@ -725,12 +736,13 @@ class SettingsRepository:
                     last_selected_category_tab,
                     last_selected_category_id,
                     global_search_history,
-                    global_search_hot_source
+                    global_search_hot_source,
+                    following_episode_display_mode
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360'
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360', 'poster'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -810,7 +822,8 @@ class SettingsRepository:
                     last_selected_category_tab,
                     last_selected_category_id,
                     global_search_history,
-                    global_search_hot_source
+                    global_search_hot_source,
+                    following_episode_display_mode
                 FROM app_config
                 WHERE id = 1
                 """
@@ -887,6 +900,7 @@ class SettingsRepository:
             last_selected_category_id,
             global_search_history,
             global_search_hot_source,
+            following_episode_display_mode,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -973,6 +987,9 @@ class SettingsRepository:
             last_selected_category_id=last_selected_category_id,
             global_search_history=_normalize_global_search_history(global_search_history),
             global_search_hot_source=str(global_search_hot_source or "360").strip() or "360",
+            following_episode_display_mode=_normalize_following_episode_display_mode(
+                following_episode_display_mode
+            ),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1050,7 +1067,8 @@ class SettingsRepository:
                     last_selected_category_tab = ?,
                     last_selected_category_id = ?,
                     global_search_history = ?,
-                    global_search_hot_source = ?
+                    global_search_hot_source = ?,
+                    following_episode_display_mode = ?
                 WHERE id = 1
                 """,
                 (
@@ -1136,6 +1154,7 @@ class SettingsRepository:
                     config.last_selected_category_id,
                     json.dumps(_normalize_global_search_history(config.global_search_history), ensure_ascii=False),
                     str(config.global_search_hot_source or "360").strip() or "360",
+                    _normalize_following_episode_display_mode(config.following_episode_display_mode),
                 ),
             )
 

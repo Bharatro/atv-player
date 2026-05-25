@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -22,6 +21,11 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+)
+from atv_player.models import AppConfig
+from atv_player.ui.following_episode_browser import (
+    FollowingEpisodeBrowser,
+    build_episode_season_groups,
 )
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
@@ -146,55 +150,6 @@ class FollowingProgressDialog(ThemedDialogBase):
         self.accept()
 
 
-class FollowingEpisodeCard(QPushButton):
-    def __init__(
-        self, episode: FollowingEpisode, parent: QWidget | None = None
-    ) -> None:
-        super().__init__(parent)
-        self.episode = episode
-        self.setObjectName("episodeCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(240, 270)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(4)
-
-        self.still_label = QLabel("分集封面", self)
-        self.still_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.still_label.setFixedSize(220, 124)
-        self.still_label.setObjectName("episodeStill")
-        self.title_label = QLabel(_episode_title(episode), self)
-        self.title_label.setWordWrap(True)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
-        )
-        self.meta_label = QLabel(
-            episode.air_date or f"第 {episode.episode_number} 集", self
-        )
-        self.meta_label.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
-        )
-        self.title_meta_layout = QVBoxLayout()
-        self.title_meta_layout.setContentsMargins(0, 0, 0, 0)
-        self.title_meta_layout.setSpacing(2)
-        self.title_meta_layout.addWidget(self.title_label)
-        self.title_meta_layout.addWidget(self.meta_label)
-        self.overview_label = QLabel(episode.overview or "暂无剧情概要", self)
-        self.overview_label.setWordWrap(True)
-        self.overview_label.setMaximumHeight(54)
-
-        layout.addWidget(self.still_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addLayout(self.title_meta_layout)
-        layout.addWidget(self.overview_label, 1)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            FollowingEpisodePreviewDialog(self.episode, self).exec()
-        super().mouseReleaseEvent(event)
-
-
 class FollowingPersonCard(QFrame):
     def __init__(
         self, person: dict[str, object], parent: QWidget | None = None
@@ -217,10 +172,12 @@ class FollowingPersonCard(QFrame):
         self.avatar_label.setFixedSize(144, 216)
         self.avatar_label.setProperty("person_avatar", True)
         self.avatar_label.setObjectName("personAvatar")
+        self.avatar_label.setStyleSheet(_person_avatar_fallback_qss())
         self.name_label = QLabel(str(person.get("name") or ""), self)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(True)
         self.name_label.setObjectName("personName")
+        self.name_label.setStyleSheet(_person_inner_label_qss())
         role = (
             person.get("role")
             or person.get("character")
@@ -232,6 +189,7 @@ class FollowingPersonCard(QFrame):
         self.role_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.role_label.setWordWrap(True)
         self.role_label.setObjectName("personRole")
+        self.role_label.setStyleSheet(_person_inner_label_qss())
         self.role_label.setVisible(bool(str(role).strip()))
 
         layout.addWidget(self.avatar_label, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -255,14 +213,20 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     check_finished = Signal(int, object, str)
     metadata_refresh_finished = Signal(int, object, str)
 
-    def __init__(self, controller) -> None:
+    def __init__(
+        self,
+        controller,
+        *,
+        config: AppConfig | None = None,
+        save_config=None,
+    ) -> None:
         super().__init__()
         self._init_async_guard()
         self.controller = controller
+        self._config = config or AppConfig()
+        self._save_config = save_config
         self.current_following_id = 0
         self.current_view = None
-        self.episode_widgets: list[FollowingEpisodeCard] = []
-        self._pending_episodes: list[FollowingEpisode] = []
         self._pending_people: list[dict[str, object]] = []
         self._batch_timer = QTimer(self)
         self._batch_timer.setInterval(1)
@@ -282,17 +246,16 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.refresh_metadata_button = QPushButton("更新元数据")
         self.set_progress_button = QPushButton("设置进度")
         self.unfollow_button = QPushButton("取消追更")
-        self.season_tabs = QTabBar()
         self.poster_carousel_label = QLabel("海报轮播")
         self.poster_carousel_index = 0
         self.poster_carousel_sources: list[str] = []
         self.poster_carousel_timer = QTimer(self)
         self.poster_carousel_timer.setInterval(4500)
+        self.episode_browser = FollowingEpisodeBrowser(
+            initial_display_mode=self._config.following_episode_display_mode,
+            parent=self,
+        )
 
-        self._episodes_container = QWidget()
-        self._episodes_layout = QHBoxLayout(self._episodes_container)
-        self._episodes_layout.setContentsMargins(0, 0, 0, 0)
-        self._episodes_layout.setSpacing(12)
         self._cast_container = QWidget()
         self._cast_layout = QHBoxLayout(self._cast_container)
         self._cast_layout.setContentsMargins(0, 0, 0, 0)
@@ -304,17 +267,22 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self.image_loaded, self._handle_image_loaded)
         self._connect_async_signal(self.check_finished, self._handle_check_finished)
         self._connect_async_signal(self.metadata_refresh_finished, self._handle_metadata_refresh_finished)
+        self.episode_browser.episode_activated.connect(self._open_episode_preview)
+        self.episode_browser.display_mode_changed.connect(
+            self._handle_episode_display_mode_changed
+        )
         self._apply_style()
 
     def load_record(self, following_id: int) -> None:
         self._batch_timer.stop()
-        self._pending_episodes = []
         self._pending_people = []
         self.current_following_id = int(following_id)
         self.current_view = self.controller.load_detail(self.current_following_id, refresh_if_empty=False)
         self._render(self.current_view.record, self.current_view.snapshot)
         if self._snapshot_needs_refresh(self.current_view.snapshot):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
+        elif self._snapshot_people_missing_avatars(self.current_view.snapshot):
+            QTimer.singleShot(0, self._refresh_metadata)
 
     def _build_layout(self) -> None:
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -375,15 +343,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         top_layout.addWidget(self.metadata_panel, 3)
         top_layout.addWidget(self.poster_carousel_panel, 2)
 
-        self.season_tabs.setExpanding(False)
-
-        self.episodes_scroll = QScrollArea()
-        self.episodes_scroll.setWidgetResizable(True)
-        self.episodes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.episodes_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.episodes_scroll.setWidget(self._episodes_container)
-        self.episodes_scroll.setFixedHeight(294)
-
         self.cast_scroll = QScrollArea()
         self.cast_scroll.setWidgetResizable(True)
         self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -398,8 +357,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         episodes_section_layout.setContentsMargins(14, 14, 14, 14)
         episodes_section_layout.setSpacing(10)
         episodes_section_layout.addWidget(QLabel("分集详情", self.episodes_section))
-        episodes_section_layout.addWidget(self.season_tabs)
-        episodes_section_layout.addWidget(self.episodes_scroll)
+        episodes_section_layout.addWidget(self.episode_browser)
 
         self.cast_section = QFrame(content)
         self.cast_section.setObjectName("followingDetailCastSection")
@@ -443,40 +401,22 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.meta_label.setText(_meta_text(record))
         self.overview_label.setText(_format_detail_text(snapshot))
         self._render_poster_carousel(record, snapshot)
-        self._render_seasons(snapshot.episodes, record.season_number)
-        self.episode_widgets = []
+        groups = build_episode_season_groups(
+            snapshot.episodes,
+            fallback_season=record.season_number,
+        )
+        self.episode_browser.set_content(
+            groups=groups,
+            current_episode=record.current_episode,
+        )
         self.cast_widgets = []
-        _clear_layout(self._episodes_layout)
         _clear_layout(self._cast_layout)
-        self._pending_episodes = list(snapshot.episodes)
         self._pending_people = [*snapshot.cast, *snapshot.crew]
         self._render_next_batch()
-
-    def _render_seasons(
-        self, episodes: list[FollowingEpisode], fallback_season: int
-    ) -> None:
-        while self.season_tabs.count():
-            self.season_tabs.removeTab(0)
-        seasons = sorted(
-            {episode.season_number for episode in episodes if episode.season_number > 0}
-        )
-        if not seasons and fallback_season > 0:
-            seasons = [fallback_season]
-        if not seasons:
-            seasons = [1]
-        for season in seasons:
-            self.season_tabs.addTab(f"第 {season} 季")
 
     def _render_next_batch(self) -> None:
         batch = 20
         n = 0
-        while self._pending_episodes and n < batch:
-            episode = self._pending_episodes.pop(0)
-            card = FollowingEpisodeCard(episode, self._episodes_container)
-            self._episodes_layout.addWidget(card)
-            self.episode_widgets.append(card)
-            self._start_image_load(card.still_label, episode.still)
-            n += 1
         while self._pending_people and n < batch:
             person = self._pending_people.pop(0)
             card = FollowingPersonCard(person, self._cast_container)
@@ -484,10 +424,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.cast_widgets.append(card)
             self._start_image_load(card.avatar_label, _person_avatar(person))
             n += 1
-        if self._pending_episodes or self._pending_people:
+        if self._pending_people:
             self._batch_timer.start()
         else:
-            self._episodes_layout.addStretch(1)
             self._cast_layout.addStretch(1)
 
     def _render_poster_carousel(
@@ -523,6 +462,17 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _emit_unfollow(self) -> None:
         self.unfollow_requested.emit(self.current_following_id)
+
+    def _open_episode_preview(self, episode: FollowingEpisode) -> None:
+        FollowingEpisodePreviewDialog(episode, self).exec()
+
+    def _handle_episode_display_mode_changed(self, display_mode: str) -> None:
+        normalized = str(display_mode or "").strip() or "poster"
+        if self._config.following_episode_display_mode == normalized:
+            return
+        self._config.following_episode_display_mode = normalized
+        if callable(self._save_config):
+            self._save_config()
 
     def _manual_check(self) -> None:
         if self.current_following_id <= 0:
@@ -664,22 +614,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             QLabel#followingDetailTitle {{
                 font-size: 26px;
                 font-weight: 700;
-            }}
-            QPushButton#episodeCard {{
-                border: 1px solid {tokens.border_subtle};
-                border-radius: 14px;
-                background: {tokens.panel_bg};
-                text-align: left;
-                padding: 0;
-            }}
-            QPushButton#episodeCard:hover {{
-                border-color: {tokens.accent};
-            }}
-            QLabel#episodeStill {{
-                border: 0;
-                border-radius: 0;
-                background: {tokens.panel_alt_bg};
-                color: {tokens.text_secondary};
             }}
             QFrame#personCard {{
                 border: 1px solid {tokens.border_subtle};
@@ -867,5 +801,3 @@ def _person_avatar_initial(person: dict[str, object]) -> str:
     if not name:
         return ""
     return name[:1].upper()
-
-

@@ -92,6 +92,7 @@ class AppConfig:
     last_selected_category_id: str = ""
     global_search_history: list[str] = field(default_factory=list)
     global_search_hot_source: str = "360"
+    following_episode_display_mode: str = "poster"
 
 
 @dataclass(slots=True)

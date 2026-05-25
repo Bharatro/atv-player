@@ -7,9 +7,9 @@ from atv_player.following_models import (
     FollowingEpisode,
     FollowingRecord,
 )
+from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
     FollowingDetailPage,
-    FollowingEpisodeCard,
     FollowingPersonCard,
     QDesktopServices,
     _person_avatar,
@@ -124,7 +124,10 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert "更新状态:" not in page.overview_label.text()
     assert "简介:\n长篇简介" in page.overview_label.text()
     assert page.page_scroll.verticalScrollBarPolicy().name == "ScrollBarAsNeeded"
-    assert page.episode_widgets[0].title_label.text().startswith("128")
+    episode_model = page.episode_browser.episode_list.model()
+    assert episode_model.data(
+        episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole
+    ).startswith("128")
     assert page.cast_widgets[0].name_label.text() == "韩立"
     assert search_play == [1]
     assert unfollow == [1]
@@ -145,8 +148,85 @@ def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None
     assert page.poster_carousel_panel.layout().indexOf(page.poster_label) == -1
     assert page.episodes_section.objectName() == "followingDetailEpisodesSection"
     assert page.cast_section.objectName() == "followingDetailCastSection"
-    assert page.episodes_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
+    assert page.episode_browser.mode_tabs.count() == 3
+    assert page.episode_browser.season_list.model().rowCount() == 1
+    assert page.episode_browser.episode_list.model().rowCount() == 1
     assert page.cast_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
+
+
+def test_following_detail_page_groups_multiple_seasons_and_switches_current_season(qtbot) -> None:
+    class MultiSeasonController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.snapshot.episodes = [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
+                FollowingEpisode(episode_number=1, season_number=2, title="S2E1"),
+            ]
+            return view
+
+    page = FollowingDetailPage(MultiSeasonController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    season_model = page.episode_browser.season_list.model()
+    episode_model = page.episode_browser.episode_list.model()
+    assert season_model.rowCount() == 2
+    assert episode_model.rowCount() == 2
+
+    page.episode_browser.season_list.setCurrentIndex(season_model.index(1, 0))
+
+    assert episode_model.rowCount() == 1
+    assert "S2E1" in episode_model.data(
+        episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole
+    )
+
+
+def test_following_detail_page_uses_configured_initial_display_mode(qtbot) -> None:
+    page = FollowingDetailPage(
+        FakeController(),
+        config=AppConfig(following_episode_display_mode="full"),
+    )
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    assert page.episode_browser.display_mode() == "full"
+
+
+def test_following_detail_page_switches_and_persists_episode_display_mode(qtbot) -> None:
+    config = AppConfig(following_episode_display_mode="poster")
+    saved: list[str] = []
+
+    def save_config() -> None:
+        saved.append(config.following_episode_display_mode)
+
+    page = FollowingDetailPage(FakeController(), config=config, save_config=save_config)
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    page.episode_browser.set_display_mode("full")
+
+    assert config.following_episode_display_mode == "full"
+    assert saved == ["full"]
+
+
+def test_following_detail_page_opens_preview_dialog_from_episode_activation(
+    qtbot, monkeypatch
+) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+    opened: list[int] = []
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingEpisodePreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.episode.episode_number) or 1,
+    )
+
+    model = page.episode_browser.episode_list.model()
+    page.episode_browser._handle_episode_activated(model.index(0, 0))
+
+    assert opened == [128]
 
 
 def test_following_detail_title_and_metadata_text_are_selectable(qtbot) -> None:
@@ -221,29 +301,6 @@ def test_following_person_card_opens_tmdb_person_link_on_click(qtbot, monkeypatc
     qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
 
     assert opened == ["https://www.themoviedb.org/person/2027615"]
-
-
-def test_following_episode_card_keeps_title_and_date_tight(qtbot) -> None:
-    card = FollowingEpisodeCard(
-        FollowingEpisode(
-            episode_number=1,
-            title="天黑别出门",
-            air_date="2026-05-25",
-            overview="剧情",
-        )
-    )
-    qtbot.addWidget(card)
-    card.resize(240, 310)
-    card.show()
-    qtbot.wait(0)
-
-    assert "border: 0" in card.still_label.styleSheet()
-    assert card.minimumHeight() <= 270
-    assert card.title_meta_layout.spacing() <= 2
-    assert card.title_label.height() <= card.title_label.sizeHint().height() + 2
-    assert card.meta_label.height() <= card.meta_label.sizeHint().height() + 2
-    assert card.title_label.geometry().top() - card.still_label.geometry().bottom() - 1 <= 4
-    assert card.overview_label.geometry().top() - card.meta_label.geometry().bottom() - 1 <= 4
 
 
 def test_following_detail_page_omits_unknown_episode_counts(qtbot) -> None:
