@@ -39,7 +39,7 @@ class FollowingSearchDialog(ThemedDialogBase):
         search_row.addWidget(QLabel("当前集数", host), 0, 1)
         self.current_episode_spin = QSpinBox(host)
         self.current_episode_spin.setRange(0, 9999)
-        self.current_episode_spin.setSpecialValueText("未设置")
+        self.current_episode_spin.setSpecialValueText(" ")
         search_row.addWidget(self.current_episode_spin, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         self.search_button = QPushButton("搜索", host)
         search_row.addWidget(self.search_button, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
@@ -138,8 +138,7 @@ class FollowingSearchDialog(ThemedDialogBase):
         title = str(getattr(candidate, "title", "") or "")
         year = str(getattr(candidate, "year", "") or "")
         subtitle = str(getattr(candidate, "subtitle", "") or "")
-        provider_id = str(getattr(candidate, "provider_id", "") or "")
-        return " · ".join(part for part in (title, year, subtitle, provider_id) if part) or "未命名条目"
+        return " · ".join(part for part in (title, year, subtitle) if part) or "未命名条目"
 
     def _selected_candidate(self):
         item = self.result_list.currentItem()

@@ -49,6 +49,54 @@ def _season_number_from_provider_id(provider_id: str) -> tuple[str, int | None]:
     return match.group(1), int(match.group(2))
 
 
+def _tmdb_person_image(path: object) -> str:
+    return str(path or "").strip()
+
+
+def _poster_url_from_payload(payload: dict[str, object]) -> str:
+    url = str(payload.get("poster_url") or "").strip()
+    if url:
+        return url
+    path = str(payload.get("poster_path") or "").strip()
+    if not path:
+        return ""
+    return f"https://image.tmdb.org/t/p/w185{path}"
+
+
+def _tmdb_cast_role(item: dict[str, object]) -> str:
+    roles = item.get("roles")
+    if isinstance(roles, list):
+        for role in roles:
+            if isinstance(role, dict) and str(role.get("character") or "").strip():
+                return str(role.get("character") or "").strip()
+    return str(item.get("character") or "").strip()
+
+
+def _tmdb_crew_job(item: dict[str, object]) -> str:
+    jobs = item.get("jobs")
+    if isinstance(jobs, list):
+        for job in jobs:
+            if isinstance(job, dict) and str(job.get("job") or "").strip():
+                return str(job.get("job") or "").strip()
+    return str(item.get("job") or "").strip()
+
+
+def _cast_detail(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": str(item.get("name") or "").strip(),
+        "role": _tmdb_cast_role(item),
+        "avatar": _tmdb_person_image(item.get("profile_path")),
+    }
+
+
+def _crew_detail(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": str(item.get("name") or "").strip(),
+        "job": _tmdb_crew_job(item),
+        "avatar": _tmdb_person_image(item.get("profile_path")),
+    }
+
+
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
     media_hints = " ".join(
         str(value or "").strip().lower()
@@ -236,17 +284,19 @@ class TMDBProvider:
             if match is None:
                 if _should_reject_year_mismatch("tv", candidate.year, item_year):
                     continue
+                fallback_raw: dict[str, object] = {}
+                if extract_season_number(candidate.title) is not None:
+                    fallback_raw["season_number"] = extract_season_number(candidate.title)
+                fallback_poster = _poster_url_from_payload(item)
+                if fallback_poster:
+                    fallback_raw["poster_url"] = fallback_poster
                 match = MetadataMatch(
                     provider=self.name,
                     provider_id=f"tv:{_provider_id_with_season('tv', provider_id, candidate.title)}",
                     title=item_title,
                     year=item_year,
                     score=0.55,
-                    raw=(
-                        {"season_number": extract_season_number(candidate.title)}
-                        if extract_season_number(candidate.title) is not None
-                        else {}
-                    ),
+                    raw=fallback_raw,
                 )
             normalized_item_title = _normalize_title(item_title)
             item_base = _normalize_title(_strip_search_season_suffix(item_title))
@@ -272,8 +322,7 @@ class TMDBProvider:
         if not ranked:
             return []
         ranked.sort(key=lambda entry: entry[0], reverse=True)
-        best = ranked[0][1]
-        return [best]
+        return [ranked[0][1]]
 
     def _match_from_payload(
         self,
@@ -300,13 +349,19 @@ class TMDBProvider:
         if not provider_id:
             return None
         season_number = extract_season_number(query_title) if media_type == "tv" else None
+        raw: dict[str, object] = {}
+        if season_number is not None:
+            raw["season_number"] = season_number
+        poster_url = _poster_url_from_payload(item)
+        if poster_url:
+            raw["poster_url"] = poster_url
         return MetadataMatch(
             provider=self.name,
             provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, query_title)}",
             title=item_title,
             year=item_year,
             score=1.0,
-            raw={"season_number": season_number} if season_number is not None else {},
+            raw=raw,
         )
 
     def _search_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
@@ -339,6 +394,12 @@ class TMDBProvider:
             item_year = _extract_year(normalized_item, media_type=media_type)
             if _should_reject_year_mismatch(media_type, candidate.year, item_year):
                 continue
+            fb_raw: dict[str, object] = {}
+            if media_type == "tv" and extract_season_number(candidate.title) is not None:
+                fb_raw["season_number"] = extract_season_number(candidate.title)
+            fb_poster = _poster_url_from_payload(normalized_item)
+            if fb_poster:
+                fb_raw["poster_url"] = fb_poster
             fallback_matches.append(
                 MetadataMatch(
                     provider=self.name,
@@ -346,11 +407,7 @@ class TMDBProvider:
                     title=item_title,
                     year=item_year,
                     score=0.55,
-                    raw=(
-                        {"season_number": extract_season_number(candidate.title)}
-                        if media_type == "tv" and extract_season_number(candidate.title) is not None
-                        else {}
-                    ),
+                    raw=fb_raw,
                 )
             )
         return matches or fallback_matches[:1]
@@ -366,6 +423,110 @@ class TMDBProvider:
             if matches:
                 return matches
         return []
+
+    def _search_all_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
+        search_fn = self._client.search_movie if media_type == "movie" else self._client.search_tv
+        search_title = _strip_search_season_suffix(candidate.title) if media_type == "tv" else candidate.title
+        search_year = self._search_year(media_type, candidate)
+        payload = search_fn(search_title, year=search_year)
+        if not payload and search_title != candidate.title and not (media_type == "tv" and _title_has_season_marker(candidate.title)):
+            payload = search_fn(candidate.title, year=search_year)
+        if media_type == "tv":
+            ranked: list[tuple[tuple[int, int, int, int, int, int], MetadataMatch]] = []
+            for raw_item in payload:
+                item = dict(raw_item)
+                provider_id = str(item.get("id") or "").strip()
+                item_title = str(
+                    item.get("title")
+                    or item.get("name")
+                    or item.get("original_title")
+                    or item.get("original_name")
+                    or ""
+                ).strip()
+                if not provider_id or not item_title:
+                    continue
+                item_year = _extract_year(item, media_type="tv")
+                match = self._match_from_payload("tv", item, search_title, candidate.year, candidate.title)
+                if match is None:
+                    if _should_reject_year_mismatch("tv", candidate.year, item_year):
+                        continue
+                    sa_raw: dict[str, object] = {}
+                    if extract_season_number(candidate.title) is not None:
+                        sa_raw["season_number"] = extract_season_number(candidate.title)
+                    sa_poster = _poster_url_from_payload(item)
+                    if sa_poster:
+                        sa_raw["poster_url"] = sa_poster
+                    match = MetadataMatch(
+                        provider=self.name,
+                        provider_id=f"tv:{_provider_id_with_season('tv', provider_id, candidate.title)}",
+                        title=item_title,
+                        year=item_year,
+                        score=0.55,
+                        raw=sa_raw,
+                    )
+                ranked.append(
+                    (
+                        (
+                            1 if _normalize_title(item_title) == _normalize_title(candidate.title) else 0,
+                            1 if _normalize_title(item_title) == _normalize_title(search_title) else 0,
+                            self._tv_category_preference(candidate, item),
+                            self._tv_season_coverage(item, candidate.title),
+                            self._tv_year_closeness(candidate, item),
+                        ),
+                        match,
+                    )
+                )
+            ranked.sort(key=lambda entry: entry[0], reverse=True)
+            return [match for _, match in ranked]
+        all_matches: list[MetadataMatch] = []
+        fallback_matches: list[MetadataMatch] = []
+        for item in payload:
+            normalized_item = dict(item)
+            match = self._match_from_payload(media_type, normalized_item, search_title, candidate.year, candidate.title)
+            if match is not None:
+                all_matches.append(match)
+                continue
+            provider_id = str(normalized_item.get("id") or "").strip()
+            item_title = str(
+                normalized_item.get("title")
+                or normalized_item.get("name")
+                or normalized_item.get("original_title")
+                or normalized_item.get("original_name")
+                or ""
+            ).strip()
+            if not provider_id or not item_title:
+                continue
+            item_year = _extract_year(normalized_item, media_type=media_type)
+            if _should_reject_year_mismatch(media_type, candidate.year, item_year):
+                continue
+            fb_raw: dict[str, object] = {}
+            if media_type == "tv" and extract_season_number(candidate.title) is not None:
+                fb_raw["season_number"] = extract_season_number(candidate.title)
+            fb_poster = _poster_url_from_payload(normalized_item)
+            if fb_poster:
+                fb_raw["poster_url"] = fb_poster
+            fallback_matches.append(
+                MetadataMatch(
+                    provider=self.name,
+                    provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, candidate.title)}",
+                    title=item_title,
+                    year=item_year,
+                    score=0.55,
+                    raw=fb_raw,
+                )
+            )
+        return all_matches + fallback_matches
+
+    def search_all(self, candidate: MetadataQuery) -> list[MetadataMatch]:
+        if not candidate.title:
+            return []
+        inferred = infer_tmdb_media_type(candidate)
+        if inferred:
+            return self._search_all_media_type(inferred, candidate)
+        all_matches: list[MetadataMatch] = []
+        for media_type in ("movie", "tv"):
+            all_matches.extend(self._search_all_media_type(media_type, candidate))
+        return all_matches
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         media_type, provider_id = str(match.provider_id).split(":", 1)
@@ -396,15 +557,15 @@ class TMDBProvider:
             cast = credits.get("cast") or []
             crew = credits.get("crew") or []
             alt_titles = ((payload.get("alternative_titles") or {}).get("results") or [])
-        actors = [
-            str(item.get("name") or "").strip()
-            for item in cast
-            if str(item.get("name") or "").strip()
-        ]
+        cast_details = [_cast_detail(item) for item in cast]
+        cast_details = [item for item in cast_details if item.get("name")]
+        crew_details = [_crew_detail(item) for item in crew]
+        crew_details = [item for item in crew_details if item.get("name")]
+        actors = [str(item.get("name") or "").strip() for item in cast_details]
         directors = [
             str(item.get("name") or "").strip()
-            for item in crew
-            if str(item.get("job") or "").strip() == "Director" and str(item.get("name") or "").strip()
+            for item in crew_details
+            if str(item.get("job") or "").strip() == "Director"
         ]
         aliases = [
             str(item.get("title") or item.get("name") or "").strip()
@@ -423,6 +584,70 @@ class TMDBProvider:
             rating=str(payload.get("vote_average") or "").strip(),
             actors=_split_names(actors),
             directors=_split_names(directors),
+            cast_details=cast_details,
+            crew_details=crew_details,
+            genres=_split_names(genres),
+            aliases=_split_names(aliases),
+            imdb_id=str(external_ids.get("imdb_id") or "").strip(),
+            tmdb_id=str(payload.get("id") or "").strip(),
+            detail_fields=detail_fields,
+        )
+
+    def get_detail_full(self, match: MetadataMatch) -> MetadataRecord:
+        media_type, provider_id = str(match.provider_id).split(":", 1)
+        provider_id, season_number = _season_number_from_provider_id(provider_id)
+        if media_type == "movie":
+            return self.get_detail(match)
+        payload = self._client.get_tv_detail_with_season(provider_id, season_number=season_number)
+        season_overview = ""
+        detail_fields: list[dict[str, object]] = []
+        season_key = f"season/{season_number}" if season_number else None
+        if season_key and isinstance(payload.get(season_key), dict):
+            season_payload = payload[season_key]
+            season_overview = str(season_payload.get("overview") or "").strip()
+            detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
+        elif season_number is not None:
+            season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
+            season_overview = str(season_payload.get("overview") or "").strip()
+            detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
+        genres = [
+            str(item.get("name") or "").strip()
+            for item in payload.get("genres") or []
+            if str(item.get("name") or "").strip()
+        ]
+        credits = payload.get("credits") or {}
+        cast = credits.get("cast") or []
+        crew = credits.get("crew") or []
+        alt_titles = ((payload.get("alternative_titles") or {}).get("results") or [])
+        cast_details = [_cast_detail(item) for item in cast]
+        cast_details = [item for item in cast_details if item.get("name")]
+        crew_details = [_crew_detail(item) for item in crew]
+        crew_details = [item for item in crew_details if item.get("name")]
+        actors = [str(item.get("name") or "").strip() for item in cast_details]
+        directors = [
+            str(item.get("name") or "").strip()
+            for item in crew_details
+            if str(item.get("job") or "").strip() == "Director"
+        ]
+        aliases = [
+            str(item.get("title") or item.get("name") or "").strip()
+            for item in alt_titles
+            if str(item.get("title") or item.get("name") or "").strip()
+        ]
+        external_ids = payload.get("external_ids") or {}
+        return MetadataRecord(
+            provider=self.name,
+            provider_id=match.provider_id,
+            title=str(payload.get("title") or payload.get("name") or match.title or "").strip(),
+            year=_extract_year(payload, media_type="tv") or str(match.year or "").strip(),
+            poster=str(payload.get("poster_url") or "").strip(),
+            backdrop=str(payload.get("backdrop_url") or "").strip(),
+            overview=season_overview or str(payload.get("overview") or "").strip(),
+            rating=str(payload.get("vote_average") or "").strip(),
+            actors=_split_names(actors),
+            directors=_split_names(directors),
+            cast_details=cast_details,
+            crew_details=crew_details,
             genres=_split_names(genres),
             aliases=_split_names(aliases),
             imdb_id=str(external_ids.get("imdb_id") or "").strip(),

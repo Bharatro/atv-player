@@ -147,6 +147,10 @@ def _query_media_kind(query: MetadataQuery) -> str:
 
 def _match_media_kind(match: MetadataMatch) -> str:
     if match.provider == "bangumi":
+        raw = dict(match.raw or {})
+        categories = raw.get("categories") or []
+        if "动漫" not in (categories if isinstance(categories, list) else []):
+            return ""
         return "anime"
     if match.provider == "tmdb" and str(match.provider_id or "").strip().startswith("movie:"):
         return "movie"
@@ -407,6 +411,42 @@ class MetadataScrapeService:
             )
         return groups
 
+    def search_following(
+        self,
+        query: MetadataQuery,
+        provider_filter: str = "",
+    ) -> list[MetadataScrapeGroup]:
+        normalized_title, normalized_year = normalize_metadata_query_inputs(query.title, query.year)
+        query = replace(query, title=normalized_title, year=normalized_year)
+        providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
+
+        fetched_results = run_provider_searches(
+            providers,
+            query,
+            max_concurrency=max(1, len(providers)),
+            use_search_all=True,
+        )
+
+        groups: list[MetadataScrapeGroup] = []
+        for provider, result in zip(providers, fetched_results):
+            if result.error is not None:
+                groups.append(
+                    MetadataScrapeGroup(
+                        provider=provider.name,
+                        provider_label=self._provider_label(provider.name),
+                        error_text=str(result.error),
+                    )
+                )
+                continue
+            groups.append(
+                MetadataScrapeGroup(
+                    provider=provider.name,
+                    provider_label=self._provider_label(provider.name),
+                    items=[self._candidate_from_match(match) for match in result.matches],
+                )
+            )
+        return groups
+
     def build_episode_title_playlist(
         self,
         vod: VodItem,
@@ -507,4 +547,21 @@ class MetadataScrapeService:
             if record is None:
                 raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
             self._cache.save_detail(candidate.provider, candidate.provider_id, record)
+        return record
+
+    def detail_record_full(self, candidate: MetadataScrapeCandidate):
+        provider = self._providers_by_name[candidate.provider]
+        get_detail_fn = getattr(provider, "get_detail_full", None)
+        if not callable(get_detail_fn):
+            return self.detail_record(candidate)
+        match = MetadataMatch(
+            provider=candidate.provider,
+            provider_id=candidate.provider_id,
+            title=candidate.title,
+            year=candidate.year,
+            raw=dict(candidate.raw),
+        )
+        record = get_detail_fn(match)
+        if record is None:
+            raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
         return record

@@ -84,6 +84,8 @@ class MetadataRecord:
     rating: str = ""
     actors: list[str] = field(default_factory=list)
     directors: list[str] = field(default_factory=list)
+    cast_details: list[dict[str, object]] = field(default_factory=list)
+    crew_details: list[dict[str, object]] = field(default_factory=list)
     genres: list[str] = field(default_factory=list)
     country: str = ""
     language: str = ""

@@ -50,6 +50,9 @@ class FollowingController:
                 )
             ]
         query = MetadataQuery(title=keyword.strip())
+        search_fn = getattr(self._metadata_search_service, "search_following", None)
+        if callable(search_fn):
+            return search_fn(query)
         return self._metadata_search_service.search(query)
 
     def candidate_from_url(self, url: str):
@@ -215,6 +218,34 @@ class FollowingController:
             return None
         return self._update_service.check_record(following_id)
 
+    def refresh_metadata(self, following_id: int) -> FollowingDetailView:
+        record = self._repository.get(following_id)
+        if record is None:
+            raise KeyError(f"following not found: {following_id}")
+        candidate = self._metadata_refresh_candidate(record)
+        if candidate is None:
+            raise RuntimeError("没有找到可用于更新元数据的匹配结果")
+        refreshed_record, snapshot = build_following_from_metadata_candidate(
+            candidate,
+            metadata_search_service=self._metadata_search_service,
+            now=self._now(),
+            media_kind=record.media_kind,
+            use_full_detail=True,
+        )
+        refreshed_record.current_episode = record.current_episode
+        refreshed_record.position_seconds = record.position_seconds
+        refreshed_record.latest_episode = record.latest_episode
+        refreshed_record.previous_latest_episode = record.previous_latest_episode
+        refreshed_record.total_episodes = record.total_episodes
+        refreshed_record.has_update = record.has_update
+        refreshed_record.new_episode_count = record.new_episode_count
+        refreshed_record.homepage_prompt_pending = record.homepage_prompt_pending
+        refreshed_record.watched_latest_episode = record.watched_latest_episode
+        self._repository.update_metadata(following_id, refreshed_record)
+        snapshot.following_id = following_id
+        self._repository.save_detail_snapshot(following_id, snapshot)
+        return self.load_detail(following_id, refresh_if_empty=False)
+
     def check_all_due(self):
         if self._update_service is None:
             return []
@@ -222,6 +253,35 @@ class FollowingController:
 
     def delete(self, following_id: int) -> None:
         self._repository.delete(following_id)
+
+    def _metadata_refresh_candidate(self, record: FollowingRecord):
+        query = MetadataQuery(
+            title=record.title,
+            category_name="动漫" if record.media_kind == "anime" else record.media_kind,
+        )
+        groups = self._metadata_search_service.search(query)
+        candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
+        if not candidates:
+            return None
+        identity = (record.provider, record.provider_id)
+        for candidate in candidates:
+            if (
+                str(getattr(candidate, "provider", "") or ""),
+                str(getattr(candidate, "provider_id", "") or ""),
+            ) == identity:
+                return candidate
+        for provider, external_id in record.external_ids.items():
+            for candidate in candidates:
+                if str(getattr(candidate, "provider", "") or "") != provider:
+                    continue
+                if str(external_id) in str(getattr(candidate, "provider_id", "") or ""):
+                    return candidate
+        provider_order = [record.provider, *list(record.provider_priority or []), "tmdb", "bangumi", "douban"]
+        for provider in provider_order:
+            for candidate in candidates:
+                if str(getattr(candidate, "provider", "") or "") == provider:
+                    return candidate
+        return candidates[0]
 
     def _progress_text(self, record: FollowingRecord) -> str:
         parts = []

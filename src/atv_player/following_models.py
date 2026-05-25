@@ -33,6 +33,7 @@ class FollowingEpisode:
 class FollowingDetailSnapshot:
     following_id: int = 0
     overview: str = ""
+    metadata_fields: list[dict[str, str]] = field(default_factory=list)
     cast: list[dict[str, object]] = field(default_factory=list)
     crew: list[dict[str, object]] = field(default_factory=list)
     episodes: list[FollowingEpisode] = field(default_factory=list)

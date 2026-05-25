@@ -101,18 +101,25 @@ class BangumiMetadataProvider:
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         title = str(candidate.title or "").strip()
-        if not title or not is_bangumi_anime_query(candidate):
+        if not title:
             return []
+        is_anime = is_bangumi_anime_query(candidate)
         matches: list[MetadataMatch] = []
         for row in self._search_rows(title):
-            if int(row.get("type") or 0) != 2:
+            subject_type = int(row.get("type") or 0)
+            if is_anime and subject_type != 2:
                 continue
             match_title = str(row.get("name_cn") or row.get("name") or "").strip()
             if not match_title:
                 continue
             raw = dict(row)
             raw["aliases"] = _subject_aliases(raw)
-            raw["categories"] = ["动漫"]
+            raw["categories"] = ["动漫"] if subject_type == 2 else []
+            images = row.get("images")
+            if isinstance(images, dict):
+                poster = str(images.get("large") or images.get("common") or images.get("grid") or "").strip()
+                if poster:
+                    raw["poster_url"] = poster
             match = MetadataMatch(
                 provider=self.name,
                 provider_id=f"subject:{row['id']}",

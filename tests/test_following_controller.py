@@ -63,6 +63,79 @@ class FakeDetailSearchService(FakeSearchService):
         )
 
 
+class FakeFollowingMetadataRefreshService:
+    def __init__(self) -> None:
+        self.detail_provider_ids: list[tuple[str, str]] = []
+
+    def search(self, query, provider_filter=""):
+        assert query.title == "仙逆"
+        if provider_filter:
+            return []
+        return [
+            MetadataScrapeGroup(
+                provider="bangumi",
+                provider_label="Bangumi",
+                items=[
+                    MetadataScrapeCandidate(
+                        provider="bangumi",
+                        provider_label="Bangumi",
+                        provider_id="subject:1",
+                        title="仙逆",
+                        subtitle="动漫",
+                    )
+                ],
+            ),
+            MetadataScrapeGroup(
+                provider="tmdb",
+                provider_label="TMDB",
+                items=[
+                    MetadataScrapeCandidate(
+                        provider="tmdb",
+                        provider_label="TMDB",
+                        provider_id="tv:236534:season:1",
+                        title="仙逆",
+                        subtitle="剧集",
+                    )
+                ],
+            ),
+        ]
+
+    def detail_record(self, candidate):
+        self.detail_provider_ids.append((candidate.provider, candidate.provider_id))
+        if candidate.provider == "bangumi":
+            return MetadataRecord(
+                provider="bangumi",
+                provider_id="subject:1",
+                title="仙逆",
+                overview="Bangumi简介",
+                rating="8.4",
+            )
+        return MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:236534:season:1",
+            title="仙逆",
+            poster="tmdb-poster",
+            backdrop="tmdb-backdrop",
+            rating="7.6",
+            tmdb_id="236534",
+            actors=["史泽鲲"],
+            directors=["导演"],
+            detail_fields=[
+                {
+                    "label": "episodes",
+                    "value": [
+                        {
+                            "episode_number": 1,
+                            "name": "TMDB第1集",
+                            "overview": "TMDB剧情",
+                            "still_url": "tmdb-still",
+                        }
+                    ],
+                }
+            ],
+        )
+
+
 class FakeUpdateService:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
@@ -325,3 +398,52 @@ def test_following_controller_uses_playlist_count_for_latest_and_metadata_count_
     assert snapshot is not None
     assert len(snapshot.episodes) == 92
     assert snapshot.episodes[-1].title == "TMDB 92"
+
+
+def test_following_controller_refreshes_metadata_with_tmdb_details_for_bangumi_following(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="仙逆",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:1",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "1"},
+            rating="8.4",
+            latest_episode=84,
+            total_episodes=92,
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[FollowingEpisode(episode_number=1, title="Bangumi第1集")],
+        ),
+    )
+    service = FakeFollowingMetadataRefreshService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    refreshed = controller.refresh_metadata(record_id)
+
+    loaded = repo.get(record_id)
+    snapshot = repo.get_detail_snapshot(record_id)
+    assert service.detail_provider_ids == [
+        ("bangumi", "subject:1"),
+        ("tmdb", "tv:236534:season:1"),
+    ]
+    assert loaded is not None
+    assert loaded.provider == "bangumi"
+    assert loaded.provider_id == "subject:1"
+    assert loaded.rating == "8.4"
+    assert loaded.poster == "tmdb-poster"
+    assert loaded.backdrop == "tmdb-backdrop"
+    assert loaded.latest_episode == 84
+    assert loaded.total_episodes == 92
+    assert refreshed.snapshot.episodes[0].title == "TMDB第1集"
+    assert snapshot is not None
+    assert snapshot.episodes[0].overview == "TMDB剧情"
+    assert snapshot.episodes[0].still == "tmdb-still"
+    assert snapshot.cast[0]["name"] == "史泽鲲"

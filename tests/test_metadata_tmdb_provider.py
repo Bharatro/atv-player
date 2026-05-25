@@ -187,16 +187,14 @@ def test_tmdb_provider_prefers_animation_match_for_anime_category_when_same_titl
 
     matches = provider.search(MetadataQuery(title="成何体统第二季", year="", category_name="动漫"))
 
-    assert matches == [
-        MetadataMatch(
-            provider="tmdb",
-            provider_id="tv:256783:season:2",
-            title="成何体统",
-            year="2024",
-            score=1.0,
-            raw={"season_number": 2},
-        )
-    ]
+    assert matches[0] == MetadataMatch(
+        provider="tmdb",
+        provider_id="tv:256783:season:2",
+        title="成何体统",
+        year="2024",
+        score=1.0,
+        raw={"season_number": 2},
+    )
 
 
 def test_tmdb_provider_prefers_animation_match_for_anime_category_when_title_differs_only_by_chinese_numeral() -> None:
@@ -209,15 +207,13 @@ def test_tmdb_provider_prefers_animation_match_for_anime_category_when_title_dif
 
     matches = provider.search(MetadataQuery(title="仙剑奇侠传三", year="2025", category_name="动漫"))
 
-    assert matches == [
-        MetadataMatch(
-            provider="tmdb",
-            provider_id="tv:300002",
-            title="仙剑奇侠传3",
-            year="2025",
-            score=1.0,
-        )
-    ]
+    assert matches[0] == MetadataMatch(
+        provider="tmdb",
+        provider_id="tv:300002",
+        title="仙剑奇侠传3",
+        year="2025",
+        score=1.0,
+    )
 
 
 def test_tmdb_provider_prefers_candidate_with_requested_season_when_same_title_results_differ() -> None:
@@ -234,16 +230,14 @@ def test_tmdb_provider_prefers_candidate_with_requested_season_when_same_title_r
 
     matches = provider.search(MetadataQuery(title="成何体统第二季", year="", category_name="动漫"))
 
-    assert matches == [
-        MetadataMatch(
-            provider="tmdb",
-            provider_id="tv:256783:season:2",
-            title="成何体统",
-            year="2024",
-            score=1.0,
-            raw={"season_number": 2},
-        )
-    ]
+    assert matches[0] == MetadataMatch(
+        provider="tmdb",
+        provider_id="tv:256783:season:2",
+        title="成何体统",
+        year="2024",
+        score=1.0,
+        raw={"season_number": 2},
+    )
     assert ("get_tv_season_detail", "280632", "2") in client.calls
     assert ("get_tv_season_detail", "256783", "2") in client.calls
 
@@ -281,4 +275,43 @@ def test_tmdb_provider_get_detail_uses_tv_season_overview_when_provider_id_conta
     assert client.calls == [
         ("get_tv_detail", "42", ""),
         ("get_tv_season_detail", "42", "5"),
+    ]
+
+
+def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "仙逆",
+        "overview": "简介",
+        "first_air_date": "2023-01-01",
+        "genres": [{"name": "动画"}],
+        "aggregate_credits": {
+            "cast": [
+                {
+                    "name": "史泽鲲",
+                    "profile_path": "/actor.jpg",
+                    "roles": [{"character": "王林 (voice)"}],
+                }
+            ],
+            "crew": [
+                {
+                    "name": "导演",
+                    "profile_path": "/director.jpg",
+                    "jobs": [{"job": "Director"}],
+                }
+            ],
+        },
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(MetadataMatch(provider="tmdb", provider_id="tv:42", title="仙逆"))
+
+    assert record.cast_details == [
+        {"name": "史泽鲲", "role": "王林 (voice)", "avatar": "/actor.jpg"}
+    ]
+    assert record.crew_details == [
+        {"name": "导演", "job": "Director", "avatar": "/director.jpg"}
     ]

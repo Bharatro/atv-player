@@ -222,6 +222,8 @@ def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_sti
         douban_id=129,
         actors=["张若昀"],
         directors=["孙皓"],
+        cast_details=[{"name": "张若昀", "role": "范闲", "avatar": "/actor.jpg"}],
+        crew_details=[{"name": "孙皓", "job": "Director", "avatar": "/director.jpg"}],
         detail_fields=[
             {
                 "label": "episodes",
@@ -237,7 +239,10 @@ def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_sti
     assert following.external_ids == {"tmdb": "456", "douban": "129"}
     assert following.backdrop == "backdrop"
     assert snapshot.cast[0]["name"] == "张若昀"
+    assert snapshot.cast[0]["role"] == "范闲"
+    assert snapshot.cast[0]["avatar"] == "/actor.jpg"
     assert snapshot.crew[0]["name"] == "孙皓"
+    assert snapshot.crew[0]["avatar"] == "/director.jpg"
     assert snapshot.episodes[0].still == "still"
 
 

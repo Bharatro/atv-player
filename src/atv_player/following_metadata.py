@@ -221,11 +221,15 @@ def build_following_from_metadata_candidate(
     now: int,
     media_kind: str = "",
     include_related: bool = True,
+    use_full_detail: bool = False,
 ) -> tuple[FollowingRecord, FollowingDetailSnapshot]:
     candidate = hydrate_following_candidate(metadata_search_service, candidate)
     record, snapshot = build_following_from_candidate(candidate, now=now)
     field_sources = _initial_field_sources(record)
-    detail_record, detail_error = load_candidate_detail_record(metadata_search_service, candidate)
+    if use_full_detail:
+        detail_record, detail_error = load_candidate_detail_record_full(metadata_search_service, candidate)
+    else:
+        detail_record, detail_error = load_candidate_detail_record(metadata_search_service, candidate)
     if detail_record is None:
         if detail_error:
             record.last_error = f"详情拉取失败: {detail_error}"
@@ -294,6 +298,16 @@ def load_candidate_detail_record(metadata_search_service, candidate):
     detail_record = getattr(metadata_search_service, "detail_record", None)
     if not callable(detail_record):
         return None, ""
+    try:
+        return detail_record(candidate), ""
+    except Exception as exc:
+        return None, str(exc)
+
+
+def load_candidate_detail_record_full(metadata_search_service, candidate):
+    detail_record = getattr(metadata_search_service, "detail_record_full", None)
+    if not callable(detail_record):
+        return load_candidate_detail_record(metadata_search_service, candidate)
     try:
         return detail_record(candidate), ""
     except Exception as exc:
@@ -410,9 +424,22 @@ def merge_following_snapshot(
     prefer_episodes: bool = False,
 ) -> FollowingDetailSnapshot:
     if fill_missing:
+        if prefer_episodes:
+            return replace(
+                snapshot,
+                overview=detail.overview or snapshot.overview,
+                metadata_fields=detail.metadata_fields or snapshot.metadata_fields,
+                cast=detail.cast or snapshot.cast,
+                crew=detail.crew or snapshot.crew,
+                episodes=detail.episodes or snapshot.episodes,
+                posters=detail.posters or snapshot.posters,
+                backdrops=detail.backdrops or snapshot.backdrops,
+                refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
+            )
         return replace(
             snapshot,
             overview=snapshot.overview or detail.overview,
+            metadata_fields=snapshot.metadata_fields or detail.metadata_fields,
             cast=snapshot.cast or detail.cast,
             crew=snapshot.crew or detail.crew,
             episodes=detail.episodes if prefer_episodes and detail.episodes else snapshot.episodes or detail.episodes,
@@ -423,6 +450,7 @@ def merge_following_snapshot(
     return replace(
         snapshot,
         overview=detail.overview or snapshot.overview,
+        metadata_fields=detail.metadata_fields or snapshot.metadata_fields,
         cast=detail.cast or snapshot.cast,
         crew=detail.crew or snapshot.crew,
         episodes=detail.episodes or snapshot.episodes,
@@ -470,14 +498,90 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     )
     snapshot = FollowingDetailSnapshot(
         overview=str(getattr(record, "overview", "") or "").strip(),
-        cast=[{"name": name} for name in list(getattr(record, "actors", []) or [])],
-        crew=[{"name": name, "job": "Director"} for name in list(getattr(record, "directors", []) or [])],
+        metadata_fields=_metadata_fields_from_record(record),
+        cast=_people_details(
+            list(getattr(record, "cast_details", []) or []),
+            list(getattr(record, "actors", []) or []),
+        ),
+        crew=_people_details(
+            list(getattr(record, "crew_details", []) or []),
+            list(getattr(record, "directors", []) or []),
+            fallback_job="Director",
+        ),
         episodes=[_episode_from_raw(item) for item in raw_episodes],
         posters=[following.poster] if following.poster else [],
         backdrops=[following.backdrop] if following.backdrop else [],
         refreshed_at=now,
     )
     return following, snapshot
+
+
+def _metadata_fields_from_record(record) -> list[dict[str, str]]:
+    fields: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def put(label: str, value: object) -> None:
+        normalized = str(value or "").strip()
+        if not normalized or label in seen:
+            return
+        fields.append({"label": label, "value": normalized})
+        seen.add(label)
+
+    put("类型", " / ".join(str(item).strip() for item in list(getattr(record, "genres", []) or []) if str(item).strip()))
+    put("年代", getattr(record, "year", ""))
+    put("地区", getattr(record, "country", ""))
+    put("语言", getattr(record, "language", ""))
+    put("导演", ", ".join(str(item).strip() for item in list(getattr(record, "directors", []) or []) if str(item).strip()))
+    put("演员", ", ".join(str(item).strip() for item in list(getattr(record, "actors", []) or []) if str(item).strip()))
+    put("别名", " / ".join(str(item).strip() for item in list(getattr(record, "aliases", []) or []) if str(item).strip()))
+    douban_id = _to_int(getattr(record, "douban_id", 0))
+    if douban_id:
+        put("豆瓣ID", str(douban_id))
+    put("IMDb ID", getattr(record, "imdb_id", ""))
+    put("TMDB ID", getattr(record, "tmdb_id", ""))
+    for item in list(getattr(record, "detail_fields", []) or []):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        if label == "episodes":
+            continue
+        value = item.get("value")
+        if isinstance(value, list):
+            continue
+        put(label, value)
+    return fields
+
+
+def _people_details(
+    details: list[object],
+    names: list[object],
+    *,
+    fallback_job: str = "",
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        normalized = {key: value for key, value in item.items() if value}
+        normalized["name"] = name
+        if fallback_job and not normalized.get("job"):
+            normalized["job"] = fallback_job
+        result.append(normalized)
+        seen.add(name)
+    for name_value in names:
+        name = str(name_value or "").strip()
+        if not name or name in seen:
+            continue
+        item = {"name": name}
+        if fallback_job:
+            item["job"] = fallback_job
+        result.append(item)
+        seen.add(name)
+    return result
 
 
 class FollowingMetadataGateway:

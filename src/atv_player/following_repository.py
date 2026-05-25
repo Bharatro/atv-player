@@ -128,6 +128,7 @@ class FollowingRepository:
                 CREATE TABLE IF NOT EXISTS following_detail_snapshots (
                     following_id INTEGER PRIMARY KEY,
                     overview TEXT NOT NULL DEFAULT '',
+                    metadata_fields_json TEXT NOT NULL DEFAULT '[]',
                     cast_json TEXT NOT NULL DEFAULT '[]',
                     crew_json TEXT NOT NULL DEFAULT '[]',
                     episodes_json TEXT NOT NULL DEFAULT '[]',
@@ -137,6 +138,10 @@ class FollowingRepository:
                 )
                 """
             )
+            try:
+                conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN metadata_fields_json TEXT NOT NULL DEFAULT '[]'")
+            except Exception:
+                pass
 
     def upsert(self, record: FollowingRecord) -> int:
         with self._connect() as conn:
@@ -228,12 +233,13 @@ class FollowingRepository:
             conn.execute(
                 """
                 INSERT INTO following_detail_snapshots (
-                    following_id, overview, cast_json, crew_json, episodes_json,
+                    following_id, overview, metadata_fields_json, cast_json, crew_json, episodes_json,
                     posters_json, backdrops_json, refreshed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(following_id) DO UPDATE SET
                     overview = excluded.overview,
+                    metadata_fields_json = excluded.metadata_fields_json,
                     cast_json = excluded.cast_json,
                     crew_json = excluded.crew_json,
                     episodes_json = excluded.episodes_json,
@@ -244,6 +250,7 @@ class FollowingRepository:
                 (
                     following_id,
                     snapshot.overview,
+                    _json_dumps(snapshot.metadata_fields),
                     _json_dumps(snapshot.cast),
                     _json_dumps(snapshot.crew),
                     _json_dumps([_episode_to_dict(episode) for episode in snapshot.episodes]),
@@ -257,7 +264,7 @@ class FollowingRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT following_id, overview, cast_json, crew_json, episodes_json,
+                SELECT following_id, overview, metadata_fields_json, cast_json, crew_json, episodes_json,
                        posters_json, backdrops_json, refreshed_at
                 FROM following_detail_snapshots
                 WHERE following_id = ?
@@ -269,12 +276,17 @@ class FollowingRepository:
         return FollowingDetailSnapshot(
             following_id=int(row[0]),
             overview=str(row[1]),
-            cast=list(_json_loads(row[2], [])),
-            crew=list(_json_loads(row[3], [])),
-            episodes=[_episode_from_dict(item) for item in _json_loads(row[4], [])],
-            posters=[str(item) for item in _json_loads(row[5], [])],
-            backdrops=[str(item) for item in _json_loads(row[6], [])],
-            refreshed_at=int(row[7]),
+            metadata_fields=[
+                {"label": str(item.get("label") or ""), "value": str(item.get("value") or "")}
+                for item in _json_loads(row[2], [])
+                if isinstance(item, dict)
+            ],
+            cast=list(_json_loads(row[3], [])),
+            crew=list(_json_loads(row[4], [])),
+            episodes=[_episode_from_dict(item) for item in _json_loads(row[5], [])],
+            posters=[str(item) for item in _json_loads(row[6], [])],
+            backdrops=[str(item) for item in _json_loads(row[7], [])],
+            refreshed_at=int(row[8]),
         )
 
     def update_progress(

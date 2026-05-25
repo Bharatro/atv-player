@@ -4,13 +4,14 @@ from atv_player.following_models import (
     FollowingEpisode,
     FollowingRecord,
 )
-from atv_player.ui.following_detail_page import FollowingDetailPage
+from atv_player.ui.following_detail_page import FollowingDetailPage, FollowingEpisodeCard
 
 
 class FakeController:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
-        self.mark_latest: list[int] = []
+        self.metadata_refreshes: list[int] = []
+        self.progress_updates: list[tuple[int, int]] = []
 
     def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
         del refresh_if_empty
@@ -31,6 +32,20 @@ class FakeController:
             snapshot=FollowingDetailSnapshot(
                 following_id=following_id,
                 overview="长篇简介",
+                metadata_fields=[
+                    {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+                    {"label": "年代", "value": "2026"},
+                    {"label": "地区", "value": "内地"},
+                    {"label": "语言", "value": "普通话"},
+                    {"label": "导演", "value": "刘海波"},
+                    {"label": "演员", "value": "王骁,田曦薇,王传君,朱云峰"},
+                    {"label": "别名", "value": "擒贼记 / Low IQ Crime / Born with Luck"},
+                    {"label": "豆瓣ID", "value": "35517044"},
+                    {"label": "IMDb ID", "value": "tt32592348"},
+                    {"label": "TMDB ID", "value": "272432"},
+                    {"label": "更新时间", "value": "2026-05-25"},
+                    {"label": "更新状态", "value": "更新至第128集"},
+                ],
                 cast=[{"name": "韩立", "role": "主角", "avatar": ""}],
                 crew=[{"name": "导演", "job": "Director"}],
                 episodes=[
@@ -48,8 +63,12 @@ class FakeController:
     def check_one(self, following_id: int) -> None:
         self.manual_checks.append(following_id)
 
-    def mark_watched_latest(self, following_id: int) -> None:
-        self.mark_latest.append(following_id)
+    def refresh_metadata(self, following_id: int):
+        self.metadata_refreshes.append(following_id)
+        return self.load_detail(following_id, refresh_if_empty=False)
+
+    def record_playback_progress(self, following_id: int, *, current_episode: int, position_seconds: int) -> None:
+        self.progress_updates.append((following_id, current_episode))
 
 
 def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> None:
@@ -66,18 +85,78 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     page.manual_check_button.click()
     qtbot.waitUntil(lambda: page.status_label.text() == "已完成手动检查", timeout=1000)
     assert page.status_label.text() == "已完成手动检查"
-    page.mark_latest_button.click()
+    page.refresh_metadata_button.click()
+    qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
+    assert page.status_label.text() == "元数据已更新"
+
+    from unittest.mock import patch
+    from atv_player.ui.following_detail_page import FollowingProgressDialog
+
+    original_exec = FollowingProgressDialog.exec
+
+    def fake_exec(self_dialog):
+        self_dialog.accepted_episode = 128
+        return 1
+
+    with patch.object(FollowingProgressDialog, "exec", fake_exec):
+        page.set_progress_button.click()
+
     page.unfollow_button.click()
 
     assert page.title_label.text() == "凡人修仙传"
     assert "最新 128 / 总 156" in page.meta_label.text()
+    assert "类型: 喜剧 / 悬疑 / 犯罪" in page.overview_label.text()
+    assert "导演: 刘海波" in page.overview_label.text()
+    assert "演员: 王骁,田曦薇,王传君,朱云峰" in page.overview_label.text()
+    assert "豆瓣ID: 35517044" in page.overview_label.text()
+    assert "IMDb ID: tt32592348" in page.overview_label.text()
+    assert "TMDB ID: 272432" in page.overview_label.text()
+    assert "更新时间:" not in page.overview_label.text()
+    assert "更新状态:" not in page.overview_label.text()
+    assert "简介:\n长篇简介" in page.overview_label.text()
     assert page.page_scroll.verticalScrollBarPolicy().name == "ScrollBarAsNeeded"
     assert page.episode_widgets[0].title_label.text().startswith("128")
     assert page.cast_widgets[0].name_label.text() == "韩立"
     assert search_play == [1]
     assert unfollow == [1]
     assert controller.manual_checks == [1]
-    assert controller.mark_latest == [1]
+    assert controller.metadata_refreshes == [1]
+    assert controller.progress_updates == [(1, 128)]
+
+
+def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert page.top_section.objectName() == "followingDetailTopSection"
+    assert page.metadata_panel.objectName() == "followingDetailMetadataPanel"
+    assert page.poster_carousel_panel.objectName() == "followingDetailPosterCarousel"
+    assert page.poster_carousel_panel.layout().indexOf(page.poster_label) == -1
+    assert page.episodes_section.objectName() == "followingDetailEpisodesSection"
+    assert page.cast_section.objectName() == "followingDetailCastSection"
+    assert page.episodes_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
+    assert page.cast_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
+
+
+def test_following_episode_card_keeps_title_and_date_tight(qtbot) -> None:
+    card = FollowingEpisodeCard(
+        FollowingEpisode(
+            episode_number=1,
+            title="天黑别出门",
+            air_date="2026-05-25",
+            overview="剧情",
+        )
+    )
+    qtbot.addWidget(card)
+    card.resize(240, 310)
+    card.show()
+    qtbot.wait(0)
+
+    assert card.title_meta_layout.spacing() <= 2
+    assert card.title_label.height() <= card.title_label.sizeHint().height() + 2
+    assert card.meta_label.height() <= card.meta_label.sizeHint().height() + 2
 
 
 def test_following_detail_page_omits_unknown_episode_counts(qtbot) -> None:

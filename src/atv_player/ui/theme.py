@@ -504,6 +504,7 @@ def build_window_chrome_qss(tokens: ThemeTokens) -> str:
         border: 1px solid {tokens.window_chrome_border};
         border-radius: 10px;
         padding: 0;
+        font-size: 14px;
     }}
     QWidget#customTitleBar QPushButton:hover {{
         background: {tokens.titlebar_button_hover_bg};

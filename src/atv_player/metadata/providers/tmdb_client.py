@@ -73,6 +73,17 @@ class TMDBClient:
         )
         return self._with_image_urls(payload)
 
+    def get_tv_detail_with_season(self, tmdb_id: str | int, *, season_number: int | None = None) -> dict[str, Any]:
+        self._image_base("poster")
+        parts = ["external_ids", "images", "alternative_titles", "credits"]
+        if season_number is not None and season_number > 0:
+            parts.append(f"season/{season_number}")
+        payload = self._request(
+            f"/tv/{tmdb_id}",
+            append_to_response=",".join(parts),
+        )
+        return self._with_image_urls(payload)
+
     def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, Any]:
         payload = self._request(f"/tv/{tmdb_id}/season/{season_number}")
         episodes: list[dict[str, Any]] = []
