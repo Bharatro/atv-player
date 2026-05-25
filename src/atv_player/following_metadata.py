@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from atv_player.following_models import (
     FollowingDetailSnapshot,
@@ -8,6 +9,7 @@ from atv_player.following_models import (
     FollowingRecord,
     provider_priority_for_media_kind,
 )
+from atv_player.metadata.models import MetadataQuery
 
 
 def following_provider_priority(media_kind: str) -> list[str]:
@@ -146,3 +148,23 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         refreshed_at=now,
     )
     return following, snapshot
+
+
+class FollowingMetadataGateway:
+    def __init__(self, metadata_search_service) -> None:
+        self._metadata_search_service = metadata_search_service
+
+    def refresh(self, record: FollowingRecord, provider: str):
+        groups = self._metadata_search_service.search(
+            MetadataQuery(title=record.title),
+            provider_filter=provider,
+        )
+        candidates = [item for group in groups for item in group.items]
+        preferred = next(
+            (item for item in candidates if item.provider_id == record.provider_id),
+            None,
+        )
+        candidate = preferred or (candidates[0] if candidates else None)
+        if candidate is None:
+            raise RuntimeError(f"{provider} returned no following candidate")
+        return build_following_from_candidate(candidate, now=int(time.time()))
