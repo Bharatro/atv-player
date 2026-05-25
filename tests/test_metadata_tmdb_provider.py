@@ -288,6 +288,32 @@ def test_tmdb_provider_get_detail_uses_tv_season_overview_when_provider_id_conta
     ]
 
 
+def test_tmdb_provider_get_detail_formats_vote_average_to_one_decimal() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "仙逆",
+        "overview": "简介",
+        "first_air_date": "2023-01-01",
+        "vote_average": 8,
+        "genres": [{"name": "动画"}],
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:1",
+            title="仙逆",
+        )
+    )
+
+    assert record.rating == "8.0"
+
+
 def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
     client = FakeTMDBClient()
     client.tv_detail = {
@@ -324,6 +350,63 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
     assert record.detail_fields[0]["label"] == "episodes"
     assert record.detail_fields[0]["value"][0]["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
     assert client.calls == [("get_tv_detail_with_season", "272432", "1")]
+
+
+def test_tmdb_provider_get_detail_full_formats_vote_average_to_one_decimal() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 272432,
+        "name": "低智商犯罪",
+        "overview": "剧集简介",
+        "first_air_date": "2026-05-04",
+        "vote_average": 7.66,
+        "genres": [{"name": "犯罪"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="低智商犯罪",
+        )
+    )
+
+    assert record.rating == "7.7"
+
+
+def test_tmdb_provider_get_detail_returns_empty_rating_for_invalid_vote_average() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "仙逆",
+        "overview": "简介",
+        "first_air_date": "2023-01-01",
+        "vote_average": "not-a-number",
+        "genres": [{"name": "动画"}],
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:42:season:1",
+            title="仙逆",
+        )
+    )
+
+    assert record.rating == ""
 
 
 def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:

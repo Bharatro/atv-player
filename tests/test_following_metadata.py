@@ -104,7 +104,7 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
                 title="盗妖行",
                 poster="tmdb-poster",
                 backdrop="tmdb-backdrop",
-                rating="7.5",
+                rating="7.66",
                 tmdb_id="315088",
                 detail_fields=[
                     {
@@ -132,7 +132,7 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
     assert record.media_kind == "anime"
     assert record.poster == "tmdb-poster"
     assert record.backdrop == "tmdb-backdrop"
-    assert record.rating == "7.5"
+    assert record.rating == "7.7"
     assert record.latest_episode == 1
     assert record.total_episodes == 1
     assert snapshot.overview == "爱奇艺简介"
