@@ -49,6 +49,8 @@ from atv_player.models import (
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+from atv_player.ui.following_detail_page import FollowingDetailPage
+from atv_player.ui.following_page import FollowingPage
 from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.plugin_actions import PluginActions
@@ -69,7 +71,7 @@ from atv_player.ui.theme import (
     current_resolved_theme,
     current_tokens,
 )
-from atv_player.ui.window_chrome import ThemedMainWindowBase
+from atv_player.ui.window_chrome import ThemedDialogBase, ThemedMainWindowBase
 
 
 class _EmptyDoubanController:
@@ -135,6 +137,21 @@ class _EmptyFavoritesController:
 
     def clear_filtered(self, *, keyword: str) -> None:
         del keyword
+
+
+class _EmptyFollowingController:
+    def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+        del page, size, keyword, only_updates
+        return [], 0
+
+    def load_homepage_prompts(self):
+        return []
+
+    def clear_homepage_prompt(self, following_id: int) -> None:
+        del following_id
+
+    def snooze_prompt(self, following_id: int) -> None:
+        del following_id
 
 
 class _HistoryGlobalSearchAdapter:
@@ -1221,6 +1238,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
     _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
     _FAVORITES_ICON_PATH = _ICONS_DIR / "favorite.svg"
+    _FOLLOWING_ICON_PATH = _ICONS_DIR / "refresh.svg"
     _HISTORY_ICON_PATH = _ICONS_DIR / "history.svg"
     _PLUGIN_MANAGER_ICON_PATH = _ICONS_DIR / "plugin.svg"
     _LIVE_SOURCE_MANAGER_ICON_PATH = _ICONS_DIR / "live-source.svg"
@@ -1234,6 +1252,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             player_controller,
             config,
             favorites_controller=None,
+            following_controller=None,
+            following_update_service=None,
             app_log_service=None,
             save_config=None,
             apply_theme=None,
@@ -1279,6 +1299,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._save_config = save_config or (lambda: None)
         self._apply_application_theme = apply_theme or (lambda: None)
         self._app_log_service = app_log_service
+        self._following_update_service = following_update_service
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
@@ -1341,6 +1362,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.startup_plugin_retry_button.hide()
         self.browse_button = QPushButton("")
         self.favorites_button = QPushButton("")
+        self.following_button = QPushButton("")
         self.history_button = QPushButton("")
         self.plugin_manager_button = QPushButton("")
         self.live_source_manager_button = QPushButton("")
@@ -1408,7 +1430,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 initial_category_id=self._initial_category_id_for_tab("feiniu"),
             )
         self._favorites_controller = favorites_controller or _EmptyFavoritesController()
+        self._following_controller = following_controller or _EmptyFollowingController()
         self.favorites_page = FavoritesPage(self._favorites_controller)
+        self.following_page = FollowingPage(self._following_controller)
+        self.following_detail_page = FollowingDetailPage(self._following_controller)
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
@@ -1438,6 +1463,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
+        self._following_prompt_dialog: ThemedDialogBase | None = None
+        self._following_prompt_detail_button: QPushButton | None = None
+        self._following_prompt_search_button: QPushButton | None = None
+        self._following_prompt_snooze_button: QPushButton | None = None
         self.config = config
         self._open_request_id = 0
         self._media_request_id = 0
@@ -1530,6 +1559,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_popup_button.setFixedSize(36, 36)
         self._configure_header_icon_button(self.browse_button, "文件浏览")
         self._configure_header_icon_button(self.favorites_button, "我的收藏")
+        self._configure_header_icon_button(self.following_button, "我的追更")
         self._configure_header_icon_button(self.history_button, "播放记录")
         self._configure_header_icon_button(self.plugin_manager_button, "插件管理")
         self._configure_header_icon_button(self.live_source_manager_button, "直播源管理")
@@ -1586,6 +1616,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._trailing_tab_definitions = [
             _TabDefinition("browse", "文件浏览", self.browse_page),
             _TabDefinition("favorites", "我的收藏", self.favorites_page),
+            _TabDefinition("following", "我的追更", self.following_page),
             _TabDefinition("history", "播放记录", self.history_page),
         ]
         self._rebuild_spider_plugin_tabs()
@@ -1598,6 +1629,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
         self.browse_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.browse_page))
         self.favorites_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.favorites_page))
+        self.following_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.following_page))
         self.history_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.history_page))
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
@@ -1627,6 +1659,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.header_layout.addWidget(self.startup_plugin_retry_button)
         self.header_layout.addWidget(self.browse_button)
         self.header_layout.addWidget(self.favorites_button)
+        self.header_layout.addWidget(self.following_button)
         self.header_layout.addWidget(self.history_button)
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
@@ -1645,8 +1678,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.favorites_page.open_detail_requested.connect(self.open_favorite_detail)
+        self.following_page.open_detail_requested.connect(self.open_following_detail)
+        self.following_detail_page.back_requested.connect(
+            lambda: self.nav_tabs.setCurrentWidget(self.following_page)
+        )
+        self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
+        if self._following_update_service is not None:
+            update_finished = getattr(self._following_update_service, "update_finished", None)
+            if update_finished is not None:
+                update_finished.connect(lambda _results: self.show_following_homepage_prompts())
         self.browse_page.set_favorite_handlers(
             is_favorited=lambda item: self._favorites_controller.is_favorited(
                 source_kind="browse",
@@ -1820,6 +1862,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         button_icons = {
             self.browse_button: self._BROWSE_ICON_PATH,
             self.favorites_button: self._FAVORITES_ICON_PATH,
+            self.following_button: self._FOLLOWING_ICON_PATH,
             self.history_button: self._HISTORY_ICON_PATH,
             self.plugin_manager_button: self._PLUGIN_MANAGER_ICON_PATH,
             self.live_source_manager_button: self._LIVE_SOURCE_MANAGER_ICON_PATH,
@@ -2460,6 +2503,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.favorites_page:
             if hasattr(self.favorites_page.controller, "load_page"):
                 self.favorites_page.load_page()
+            return
+        if widget is self.following_page:
+            if hasattr(self.following_page.controller, "load_page"):
+                self.following_page.load_page()
             return
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
@@ -3862,6 +3909,146 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._favorites_controller.add_favorite(payload)
 
+    def _player_following_identity(self, item: PlayItem) -> tuple[str, str, str] | None:
+        if self.player_window is None or self.player_window.session is None:
+            return None
+        session = self.player_window.session
+        vod = session.vod
+        source_kind = session.source_kind or "browse"
+        source_key = session.source_key or ""
+        identity = str(vod.vod_id or item.vod_id or item.media_title or item.title or "").strip()
+        if not identity:
+            return None
+        return source_kind, source_key, f"{source_kind}:{source_key}:{identity}"
+
+    def _player_following_record(self, item: PlayItem):
+        identity = self._player_following_identity(item)
+        if identity is None or not hasattr(self._following_controller, "load_page"):
+            return None
+        _source_kind, _source_key, provider_id = identity
+        records, _total = self._following_controller.load_page(
+            page=1,
+            size=1000,
+            keyword="",
+            only_updates=False,
+        )
+        for entry in records:
+            record = getattr(entry, "record", entry)
+            if getattr(record, "provider", "") == "player" and getattr(record, "provider_id", "") == provider_id:
+                return record
+        return None
+
+    def _player_item_is_followed(self, item: PlayItem) -> bool:
+        return self._player_following_record(item) is not None
+
+    def _toggle_player_item_following(self, item: PlayItem) -> None:
+        record = self._player_following_record(item)
+        if record is not None and hasattr(self._following_controller, "delete"):
+            self._following_controller.delete(record.id)
+            return
+        if (
+            self.player_window is None
+            or self.player_window.session is None
+            or not hasattr(self._following_controller, "add_from_player")
+        ):
+            return
+        source_kind = self.player_window.session.source_kind or "browse"
+        source_key = self.player_window.session.source_key or ""
+        position_seconds = 0
+        video = getattr(self.player_window, "video", None)
+        if video is not None and hasattr(video, "position_seconds"):
+            try:
+                position_seconds = int(video.position_seconds() or 0)
+            except Exception:
+                position_seconds = 0
+        self._following_controller.add_from_player(
+            vod=self.player_window.session.vod,
+            item=item,
+            source_kind=source_kind,
+            source_key=source_key,
+            position_seconds=position_seconds,
+        )
+
+    def _report_player_item_following_progress(
+        self,
+        item: PlayItem,
+        *,
+        position_seconds: int,
+        duration_seconds: int = 0,
+    ) -> None:
+        del duration_seconds
+        record = self._player_following_record(item)
+        if record is None or not hasattr(self._following_controller, "record_playback_progress"):
+            return
+        current_episode = max(int(getattr(record, "current_episode", 0) or 0), self._current_player_episode_number())
+        self._following_controller.record_playback_progress(
+            record.id,
+            current_episode=current_episode,
+            position_seconds=position_seconds,
+        )
+
+    def _current_player_episode_number(self) -> int:
+        if self.player_window is None or self.player_window.session is None:
+            return 0
+        return max(0, int(getattr(self.player_window, "current_index", 0) or 0) + 1)
+
+    def open_following_detail(self, following_id: int) -> None:
+        self._following_controller.clear_homepage_prompt(following_id)
+        self.following_detail_page.load_record(following_id)
+        self.nav_tabs.setCurrentWidget(self.following_detail_page)
+        self._close_following_prompt_dialog()
+
+    def search_play_for_following(self, following_id: int) -> None:
+        view = self._following_controller.load_detail(following_id)
+        self._following_controller.clear_homepage_prompt(following_id)
+        self.global_search_edit.setText(view.record.title)
+        self.nav_tabs.setCurrentWidget(self.douban_page)
+        self._close_following_prompt_dialog()
+        self._start_global_search()
+
+    def _snooze_following_prompt(self, following_id: int) -> None:
+        self._following_controller.snooze_prompt(following_id)
+        self._close_following_prompt_dialog()
+
+    def _close_following_prompt_dialog(self) -> None:
+        if self._following_prompt_dialog is not None:
+            self._following_prompt_dialog.close()
+        self._following_prompt_dialog = None
+
+    def show_following_homepage_prompts(self) -> None:
+        records = list(self._following_controller.load_homepage_prompts())
+        if not records:
+            return
+        record = records[0]
+        dialog = ThemedDialogBase(title="追更更新", parent=self, resizable=False)
+        layout = dialog.content_layout()
+        title_label = QLabel(record.title, dialog)
+        detail_label = QLabel(
+            f"更新 {record.new_episode_count} 集，最新第 {record.latest_episode} 集",
+            dialog,
+        )
+        button_row = QHBoxLayout()
+        self._following_prompt_detail_button = QPushButton("查看详情", dialog)
+        self._following_prompt_search_button = QPushButton("搜索播放", dialog)
+        self._following_prompt_snooze_button = QPushButton("稍后提醒", dialog)
+        button_row.addWidget(self._following_prompt_detail_button)
+        button_row.addWidget(self._following_prompt_search_button)
+        button_row.addWidget(self._following_prompt_snooze_button)
+        layout.addWidget(title_label)
+        layout.addWidget(detail_label)
+        layout.addLayout(button_row)
+        self._following_prompt_detail_button.clicked.connect(
+            lambda: self.open_following_detail(record.id)
+        )
+        self._following_prompt_search_button.clicked.connect(
+            lambda: self.search_play_for_following(record.id)
+        )
+        self._following_prompt_snooze_button.clicked.connect(
+            lambda: self._snooze_following_prompt(record.id)
+        )
+        self._following_prompt_dialog = dialog
+        dialog.show()
+
     def open_history_detail(self, record: HistoryRecord) -> None:
         if record.source_kind == "direct_parse":
             self._start_open_request(lambda: self._build_parse_request(record.key))
@@ -4260,6 +4447,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "default_video_cover_loader": self._default_video_cover_loader,
             "favorite_is_active": self._player_item_is_favorited,
             "favorite_toggle": self._toggle_player_item_favorite,
+            "following_is_active": self._player_item_is_followed,
+            "following_toggle": self._toggle_player_item_following,
+            "following_progress_reporter": self._report_player_item_following_progress,
         }
         try:
             parameters = inspect.signature(PlayerWindow).parameters
