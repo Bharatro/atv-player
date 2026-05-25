@@ -2,6 +2,9 @@ from types import SimpleNamespace
 
 from PySide6.QtWidgets import QDialog
 
+from atv_player.controllers.following_controller import FollowingController
+from atv_player.following_repository import FollowingRepository
+from atv_player.metadata.models import MetadataRecord
 from atv_player.ui.following_search_dialog import FollowingSearchDialog
 
 
@@ -71,3 +74,28 @@ def test_following_search_dialog_passes_manual_current_episode_when_supported(qt
     dialog.add_button.click()
 
     assert controller.added == [(candidate, 12)]
+
+
+def test_following_search_dialog_renders_tmdb_url_candidate_details(qtbot, tmp_path) -> None:
+    class SearchService:
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title="名侦探柯南",
+                year="1996",
+                tmdb_id="30983",
+            )
+
+    controller = FollowingController(
+        FollowingRepository(tmp_path / "app.db"),
+        metadata_search_service=SearchService(),
+    )
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+
+    dialog.search_edit.setText("https://www.themoviedb.org/tv/30983-case-closed")
+    dialog.run_search()
+
+    assert dialog.result_list.count() == 1
+    assert dialog.result_list.item(0).text() == "名侦探柯南 · 1996 · 剧集"

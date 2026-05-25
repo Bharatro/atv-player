@@ -166,6 +166,22 @@ class FakeTMDBIdRefreshService:
         )
 
 
+class FakeTMDBUrlSearchService:
+    def __init__(self) -> None:
+        self.detail_provider_ids: list[str] = []
+
+    def detail_record(self, candidate):
+        self.detail_provider_ids.append(candidate.provider_id)
+        return MetadataRecord(
+            provider="tmdb",
+            provider_id=candidate.provider_id,
+            title="名侦探柯南",
+            year="1996",
+            tmdb_id="30983",
+            overview="高中生侦探化身小学生继续破案。",
+        )
+
+
 class FakeUpdateService:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
@@ -234,6 +250,25 @@ def test_following_controller_adds_candidate_with_manual_current_episode(tmp_pat
     assert loaded.has_update is False
 
 
+def test_following_controller_preserves_existing_progress_when_adding_duplicate_candidate(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    candidate = controller.search_media("凡人修仙传")[0].items[0]
+    first = controller.add_candidate(candidate)
+    controller.record_playback_progress(first.id, current_episode=1, position_seconds=42)
+
+    second = controller.add_candidate(candidate)
+
+    loaded = repo.get(first.id)
+    assert second.id == first.id
+    assert loaded is not None
+    assert loaded.current_episode == 1
+    assert loaded.position_seconds == 42
+    assert loaded.watched_latest_episode is True
+    assert loaded.has_update is False
+
+
 def test_following_controller_adds_candidate_with_detail_snapshot(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     service = FakeDetailSearchService()
@@ -259,6 +294,23 @@ def test_following_controller_adds_candidate_with_detail_snapshot(tmp_path: Path
     assert snapshot.overview == "详情简介"
     assert snapshot.episodes[0].title == "第一集"
     assert snapshot.cast[0]["name"] == "张若昀"
+
+
+def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FakeTMDBUrlSearchService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    groups = controller.search_media("https://www.themoviedb.org/tv/30983-case-closed")
+
+    assert len(groups) == 1
+    assert groups[0].provider == "tmdb"
+    assert service.detail_provider_ids == ["tv:30983:season:1"]
+    candidate = groups[0].items[0]
+    assert candidate.provider_id == "tv:30983:season:1"
+    assert candidate.title == "名侦探柯南"
+    assert candidate.year == "1996"
+    assert candidate.subtitle == "剧集"
 
 
 def test_following_controller_builds_card_and_detail_models(tmp_path: Path) -> None:

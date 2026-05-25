@@ -12,6 +12,7 @@ from atv_player.following_metadata import (
     build_following_from_metadata_candidate,
     compute_episode_counts,
     following_candidate_from_url,
+    load_candidate_detail_record,
     merge_following_snapshot,
 )
 from atv_player.following_models import (
@@ -45,6 +46,7 @@ class FollowingController:
         if url_candidate is not None:
             from atv_player.metadata.scrape import MetadataScrapeGroup
 
+            url_candidate = self._hydrate_url_candidate(url_candidate)
             return [
                 MetadataScrapeGroup(
                     provider=url_candidate.provider,
@@ -67,6 +69,33 @@ class FollowingController:
             except Exception:
                 available = set()
         return following_candidate_from_url(url, available_providers=available)
+
+    def _hydrate_url_candidate(self, candidate):
+        detail_record, _detail_error = load_candidate_detail_record(self._metadata_search_service, candidate)
+        if detail_record is None:
+            return candidate
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        detail_fields = list(getattr(detail_record, "detail_fields", []) or [])
+        if detail_fields:
+            raw["detail_fields"] = detail_fields
+        tmdb_id = str(getattr(detail_record, "tmdb_id", "") or "").strip()
+        if tmdb_id:
+            raw["tmdb_id"] = tmdb_id
+        overview = str(getattr(detail_record, "overview", "") or "").strip()
+        if overview:
+            raw["overview"] = overview
+        poster = str(getattr(detail_record, "poster", "") or "").strip()
+        if poster:
+            raw["poster"] = poster
+        backdrop = str(getattr(detail_record, "backdrop", "") or "").strip()
+        if backdrop:
+            raw["backdrop"] = backdrop
+        return replace(
+            candidate,
+            title=str(getattr(detail_record, "title", "") or getattr(candidate, "title", "") or "").strip(),
+            year=str(getattr(detail_record, "year", "") or getattr(candidate, "year", "") or "").strip(),
+            raw=raw,
+        )
 
     def add_candidate(self, candidate, *, current_episode: int = 0) -> FollowingRecord:
         now = self._now()
