@@ -160,6 +160,19 @@ def _best_backdrop_urls(payload: dict[str, object], base_url: str, *, limit: int
     return urls
 
 
+def _format_tmdb_rating(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        normalized = round(float(text), 1)
+    except (TypeError, ValueError):
+        return ""
+    return f"{normalized:.1f}"
+
+
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
     media_hints = " ".join(
         str(value or "").strip().lower()
@@ -653,7 +666,7 @@ class TMDBProvider:
             backdrop=str(payload.get("backdrop_url") or "").strip(),
             backdrops=backdrops,
             overview=season_overview or str(payload.get("overview") or "").strip(),
-            rating=str(payload.get("vote_average") or "").strip(),
+            rating=_format_tmdb_rating(payload.get("vote_average")),
             actors=_split_names(actors),
             directors=_split_names(directors),
             cast_details=cast_details,
@@ -723,7 +736,7 @@ class TMDBProvider:
             backdrop=str(payload.get("backdrop_url") or "").strip(),
             backdrops=backdrops,
             overview=season_overview or str(payload.get("overview") or "").strip(),
-            rating=str(payload.get("vote_average") or "").strip(),
+            rating=_format_tmdb_rating(payload.get("vote_average")),
             actors=_split_names(actors),
             directors=_split_names(directors),
             cast_details=cast_details,
