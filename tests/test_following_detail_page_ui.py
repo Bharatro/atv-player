@@ -361,3 +361,26 @@ def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot)
 
     assert controller.metadata_refreshes == [1]
     assert page.cast_widgets[0].person["avatar"] == "/wang.jpg"
+
+
+def test_following_detail_page_detaches_stale_person_cards_after_metadata_refresh(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+    old_card = page.cast_widgets[0]
+
+    refreshed_view = FollowingDetailView(
+        record=FollowingRecord(id=1, title="凡人修仙传", provider="tmdb"),
+        snapshot=FollowingDetailSnapshot(
+            following_id=1,
+            overview="刷新简介",
+            cast=[{"name": "韩立", "role": "主角", "avatar": "/hanli.jpg"}],
+        ),
+    )
+
+    page._handle_metadata_refresh_finished(1, refreshed_view, "")
+
+    assert old_card.parent() is None
+    assert old_card.isVisible() is False
+    assert page.cast_widgets[0] is not old_card
+    assert page.cast_widgets[0].person["avatar"] == "/hanli.jpg"

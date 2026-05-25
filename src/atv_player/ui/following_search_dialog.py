@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
-from atv_player.ui.theme import build_pill_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.theme import build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
@@ -181,7 +181,23 @@ class FollowingSearchDialog(ThemedDialogBase):
             """
         )
         self.search_button.setFixedHeight(40)
-        button_qss = build_pill_button_qss(tokens, checked_accent=True)
+        button_qss = f"""
+        QPushButton {{
+            background-color: {tokens.button_bg};
+            border: 1px solid {tokens.border_subtle};
+            border-radius: 12px;
+            color: {tokens.text_primary};
+            padding: 6px 14px;
+        }}
+        QPushButton:hover {{
+            border-color: {tokens.accent_hover};
+        }}
+        QPushButton:disabled {{
+            background-color: {tokens.button_disabled_bg};
+            border: 1px solid {tokens.button_disabled_border};
+            color: {tokens.button_disabled_text};
+        }}
+        """
         for button in (self.search_button, self.add_button, self.close_button):
             button.setStyleSheet(button_qss)
         list_qss = f"""

@@ -72,8 +72,7 @@ class FollowingCardButton(QPushButton):
         tokens = current_tokens()
         self.poster_label.setStyleSheet(
             "border: none;"
-            "border-radius: 8px;"
-            f"background: {tokens.panel_alt_bg};"
+            "background: transparent;"
             f"color: {tokens.text_secondary};"
         )
         self.title_label.setStyleSheet(

@@ -37,7 +37,7 @@ class FavoriteCardButton(QPushButton):
         self.setCheckable(True)
         self.setProperty("title_changed", item.updated_hint)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(220, 320)
+        self.setMinimumSize(220, 300)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         layout = QVBoxLayout(self)
@@ -61,14 +61,20 @@ class FavoriteCardButton(QPushButton):
         title_row.addWidget(self.updated_icon, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(title_row)
 
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(6)
         self.source_label = QLabel(item.source_label, self)
+        self.source_label.setWordWrap(True)
+        meta_row.addWidget(self.source_label, 1)
+        self.time_label = QLabel(self._format_time(item.record.created_at), self)
+        meta_row.addWidget(self.time_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(meta_row)
+
         self.secondary_label = QLabel(item.secondary_text, self)
         self.secondary_label.setWordWrap(True)
         self.secondary_label.setVisible(bool(item.secondary_text))
-        self.time_label = QLabel(self._format_time(item.record.created_at), self)
-        for label in (self.source_label, self.secondary_label, self.time_label):
-            label.setWordWrap(True)
-            layout.addWidget(label)
+        layout.addWidget(self.secondary_label)
         layout.addStretch(1)
         self._apply_label_styles()
         self._apply_state_style()
@@ -99,8 +105,7 @@ class FavoriteCardButton(QPushButton):
         tokens = current_tokens()
         self.poster_label.setStyleSheet(
             "border: none;"
-            "border-radius: 12px;"
-            f"background: {tokens.panel_alt_bg};"
+            "background: transparent;"
             f"color: {tokens.text_secondary};"
         )
         self.title_label.setStyleSheet(

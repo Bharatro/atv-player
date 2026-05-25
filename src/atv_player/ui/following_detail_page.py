@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shiboken6
 import threading
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
@@ -77,6 +78,8 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
         threading.Thread(target=load, daemon=True).start()
 
     def _handle_image_loaded(self, label: QLabel, image) -> None:
+        if not shiboken6.isValid(label):
+            return
         label.setText("")
         label.setPixmap(QPixmap.fromImage(image))
 
@@ -619,6 +622,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         threading.Thread(target=load, daemon=True).start()
 
     def _handle_image_loaded(self, label: QLabel, image) -> None:
+        if not shiboken6.isValid(label):
+            return
         label.setText("")
         if label.property("person_avatar"):
             label.setStyleSheet(_person_inner_label_qss())
@@ -684,6 +689,8 @@ def _clear_layout(layout: QHBoxLayout) -> None:
         item = layout.takeAt(0)
         widget = item.widget()
         if widget is not None:
+            widget.hide()
+            widget.setParent(None)
             widget.deleteLater()
 
 
