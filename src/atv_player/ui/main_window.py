@@ -4585,6 +4585,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
+            if hasattr(self.player_window, "global_search_requested"):
+                self.player_window.global_search_requested.connect(self._handle_favorite_global_search)
         self._close_help_dialog()
         self.config.last_active_window = "player"
         self.config.last_playback_source = request.source_kind

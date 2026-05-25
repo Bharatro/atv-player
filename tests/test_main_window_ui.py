@@ -2406,6 +2406,65 @@ def test_main_window_video_context_menu_global_search_uses_item_title(qtbot, mon
     assert started_keywords == ["成何体统"]
 
 
+def test_main_window_player_detail_name_global_search_signal_starts_global_search(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self, *args) -> None:
+            for callback in list(self.callbacks):
+                callback(*args)
+
+    class RecordingPlayerWindow:
+        last_instance = None
+
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+            self.global_search_requested = FakeSignal()
+            RecordingPlayerWindow.last_instance = self
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    started_keywords: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="movie-1", vod_name="播放详情"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+        clicked_index=0,
+        source_kind="browse",
+        source_vod_id="movie-1",
+    )
+
+    window.open_player(request)
+    qtbot.waitUntil(lambda: RecordingPlayerWindow.last_instance is not None)
+    RecordingPlayerWindow.last_instance.global_search_requested.emit("刮削后的标题")
+
+    assert window.global_search_edit.text() == "刮削后的标题"
+    assert started_keywords == ["刮削后的标题"]
+
+
 def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -> None:
     favorites = FakeFavoritesController()
     window = MainWindow(

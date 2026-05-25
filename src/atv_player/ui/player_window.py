@@ -576,6 +576,7 @@ class _PlayerToolDialog(ThemedDialogBase):
 class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
     closed_to_main = Signal()
+    global_search_requested = Signal(str)
     _SEEK_SHORTCUT_SECONDS = 15
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
@@ -2484,6 +2485,25 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _external_metadata_link_html(self, url: str, label: str) -> str:
         return external_link_html(url, label)
 
+    def _global_search_url(self, keyword: str) -> QUrl:
+        url = QUrl("atv-player://global-search")
+        query = QUrlQuery()
+        query.addQueryItem("keyword", keyword)
+        url.setQuery(query)
+        return url
+
+    def _global_search_link_html(self, keyword: object) -> str:
+        text = str(keyword or "").strip()
+        if not text:
+            return ""
+        href = html.escape(self._global_search_url(text).toString())
+        accent = current_theme_manager().tokens_for(current_resolved_theme()).accent
+        return (
+            f'<a href="{href}" style=" text-decoration:none; '
+            f'color:{accent}; font-weight:600;">'
+            f"{html.escape(text)}</a>"
+        )
+
     def _external_metadata_url(self, vod: VodItem | None, label: str, value: object, target: str = "") -> str:
         text = str(value or "").strip()
         if not text:
@@ -2592,6 +2612,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _metadata_row_html(self, vod: VodItem, label: str, value: object) -> str:
         text = str(value or "")
+        if label == "名称":
+            search_html = self._global_search_link_html(text)
+            if search_html:
+                return f"{html.escape(label)}: {search_html}".rstrip()
         url = self._external_metadata_url(vod, label, text)
         if url:
             return f"{html.escape(label)}: {self._external_metadata_link_html(url, text)}".rstrip()
@@ -2629,6 +2653,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if url.scheme() in {"http", "https"}:
             if not QDesktopServices.openUrl(url):
                 self._append_log(f"详情跳转失败[link]: 无法打开链接 {url.toString()}")
+            return
+        if url.scheme() == "atv-player" and url.host() == "global-search":
+            keyword = QUrlQuery(url).queryItemValue("keyword", QUrl.ComponentFormattingOption.FullyDecoded).strip()
+            if keyword:
+                self.global_search_requested.emit(keyword)
+                self._return_to_main()
             return
         if url.scheme() != "atv-player" or url.host() != "detail-field":
             return

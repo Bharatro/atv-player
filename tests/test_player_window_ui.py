@@ -8237,6 +8237,51 @@ def test_player_window_renders_clickable_detail_field_value_parts_inside_metadat
     assert clicked == [PlaybackDetailFieldAction(type="search", value="演员1")]
 
 
+def test_player_window_clicking_normal_detail_name_requests_global_search(qtbot) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="刮削后的标题", vod_content="简介文本"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    searched: list[str] = []
+    closed = {"count": 0}
+    window.global_search_requested.connect(searched.append)
+    window.closed_to_main.connect(lambda: closed.__setitem__("count", closed["count"] + 1))
+
+    window.open_session(session)
+    window.show()
+
+    assert "名称: 刮削后的标题" in window.metadata_view.toPlainText()
+    assert "atv-player://global-search" in window.metadata_view.toHtml()
+    window._handle_metadata_link(
+        QUrl("atv-player://global-search?keyword=%E5%88%AE%E5%89%8A%E5%90%8E%E7%9A%84%E6%A0%87%E9%A2%98")
+    )
+    assert searched == ["刮削后的标题"]
+    assert closed["count"] == 1
+    assert window.isHidden() is True
+
+
+@pytest.mark.parametrize("detail_style", ["youtube", "live"])
+def test_player_window_does_not_make_youtube_or_live_title_global_search_link(qtbot, detail_style: str) -> None:
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="标题文本", vod_content="简介文本", detail_style=detail_style),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert "atv-player://global-search" not in window.metadata_view.toHtml()
+
+
 def test_player_window_renders_bilibili_cr_link_inside_metadata_value(qtbot) -> None:
     session = PlayerSession(
         vod=VodItem(
