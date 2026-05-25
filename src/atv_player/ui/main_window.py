@@ -1934,7 +1934,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setCurrentWidget(self.browse_page)
 
     def _all_tab_definitions(self) -> list[_TabDefinition]:
-        return [*self._static_tab_definitions, *self._plugin_tab_definitions, *self._trailing_tab_definitions]
+        return [*self._static_tab_definitions, *self._trailing_tab_definitions, *self._plugin_tab_definitions]
 
     def _startup_plugin_placeholder_definition(self) -> _TabDefinition | None:
         if (
@@ -2051,14 +2051,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self._hidden_plugin_tab_definitions = []
                 self.plugin_overflow_button.hide()
                 self._close_plugin_overflow_drawer()
-                definitions = [*visible_static_definitions, placeholder_definition, *self._trailing_tab_definitions]
+                definitions = [*visible_static_definitions, *self._trailing_tab_definitions, placeholder_definition]
             else:
                 self._hidden_plugin_tab_definitions = hidden_plugins
                 self.plugin_overflow_button.setVisible(bool(hidden_plugins))
                 self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
                 if not hidden_plugins:
                     self._close_plugin_overflow_drawer()
-                definitions = [*visible_static_definitions, *visible_plugins, *self._trailing_tab_definitions]
+                definitions = [*visible_static_definitions, *self._trailing_tab_definitions, *visible_plugins]
 
         self.nav_tabs.blockSignals(True)
         self.nav_tabs.clear()

@@ -990,7 +990,7 @@ def _popup_hot_ranks(window: MainWindow) -> list[str]:
     return window._global_search_popup.hot_item_ranks()
 
 
-def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
+def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
         telegram_controller=FakeStaticController(),
@@ -1019,11 +1019,12 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "Emby",
         "Jellyfin",
         "飞牛影视",
-        "红果短剧",
-        "短剧二号",
         "文件浏览",
         "我的收藏",
+        "我的追更",
         "播放记录",
+        "红果短剧",
+        "短剧二号",
     ]
 
 
@@ -1048,6 +1049,7 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
     buttons = [
         window.browse_button,
         window.favorites_button,
+        window.following_button,
         window.history_button,
         window.plugin_manager_button,
         window.live_source_manager_button,
@@ -1055,10 +1057,11 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
         window.logout_button,
     ]
 
-    assert [button.text() for button in buttons] == ["", "", "", "", "", "", ""]
+    assert [button.text() for button in buttons] == ["", "", "", "", "", "", "", ""]
     assert [button.toolTip() for button in buttons] == [
         "文件浏览",
         "我的收藏",
+        "我的追更",
         "播放记录",
         "插件管理",
         "直播源管理",
@@ -1127,6 +1130,7 @@ def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> 
         "飞牛影视",
         "文件浏览",
         "我的收藏",
+        "我的追更",
         "播放记录",
     ]
 
@@ -1203,11 +1207,12 @@ def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot)
             "Emby",
             "Jellyfin",
             "飞牛影视",
-            "红果短剧",
-            "短剧二号",
             "文件浏览",
             "我的收藏",
+            "我的追更",
             "播放记录",
+            "红果短剧",
+            "短剧二号",
         ]
     )
 
@@ -1261,10 +1266,11 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
             "Emby",
             "Jellyfin",
             "飞牛影视",
-            "短剧二号",
             "文件浏览",
             "我的收藏",
+            "我的追更",
             "播放记录",
+            "短剧二号",
         ]
     )
     assert window._startup_plugin_load_state == "loading"
@@ -1280,11 +1286,12 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
             "Emby",
             "Jellyfin",
             "飞牛影视",
-            "短剧二号",
-            "红果短剧",
             "文件浏览",
             "我的收藏",
+            "我的追更",
             "播放记录",
+            "短剧二号",
+            "红果短剧",
         ]
     )
 
@@ -1808,18 +1815,19 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
         "Emby",
         "Jellyfin",
         "飞牛影视",
-        "插件1",
-        "插件2",
         "文件浏览",
         "我的收藏",
+        "我的追更",
         "播放记录",
+        "插件1",
+        "插件2",
     ]
     assert window.plugin_overflow_button.isVisible() is True
     assert window.plugin_overflow_button.text() == "更多(3)"
     assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件3", "插件4", "插件5"]
 
 
-def test_main_window_keeps_trailing_tabs_visible_when_more_button_is_shown(qtbot) -> None:
+def test_main_window_keeps_personal_tabs_before_plugins_with_more_button(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
         telegram_controller=FakeStaticController(),
@@ -1849,11 +1857,29 @@ def test_main_window_keeps_trailing_tabs_visible_when_more_button_is_shown(qtbot
     window._refresh_navigation_tabs()
 
     assert window.plugin_overflow_button.isVisible() is True
-    last_index = window.nav_tabs.count() - 1
-    last_rect = window.nav_tabs.tab_bar.tabRect(last_index)
+    tab_titles = [
+        window.nav_tabs.tabText(index)
+        for index in range(window.nav_tabs.count())
+    ]
+    personal_indices = [
+        tab_titles.index(title)
+        for title in ["文件浏览", "我的收藏", "我的追更", "播放记录"]
+    ]
+    visible_plugin_indices = [
+        index
+        for index, title in enumerate(tab_titles)
+        if title.startswith("插件")
+    ]
 
-    assert window.nav_tabs.tabText(last_index) == "播放记录"
-    assert last_rect.right() <= window.nav_tabs.tab_bar.width()
+    assert personal_indices == sorted(personal_indices)
+    assert visible_plugin_indices == [] or (
+        max(personal_indices) < min(visible_plugin_indices)
+    )
+    assert all(
+        window.nav_tabs.tab_bar.tabRect(index).right()
+        <= window.nav_tabs.tab_bar.width()
+        for index in personal_indices
+    )
 
 
 def test_main_window_hides_more_button_when_all_plugin_tabs_fit(qtbot, monkeypatch) -> None:
