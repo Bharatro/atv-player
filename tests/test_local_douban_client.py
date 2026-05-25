@@ -1,8 +1,17 @@
 import httpx
 import pytest
 
-from atv_player.metadata.providers.local_douban_client import DoubanBlockedError, LocalDoubanClient
+from atv_player.metadata.providers.local_douban_client import (
+    DoubanBlockedError,
+    DoubanRateLimitedError,
+    LocalDoubanClient,
+)
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
+
+
+@pytest.fixture(autouse=True)
+def reset_douban_rate_limit() -> None:
+    LocalDoubanClient._last_allowed_at = None
 
 
 def test_local_douban_client_builds_direct_httpx_client_for_bypass() -> None:
@@ -10,7 +19,10 @@ def test_local_douban_client_builds_direct_httpx_client_for_bypass() -> None:
 
     def fake_client_factory(**kwargs):
         captured.update(kwargs)
-        return httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, text="[]")))
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, text="[]")
+        )
+        return httpx.Client(transport=transport)
 
     client = LocalDoubanClient(
         cookie="bid=demo;",
@@ -47,11 +59,55 @@ def test_local_douban_client_sends_cookie_header() -> None:
         seen["cookie"] = request.headers.get("Cookie", "")
         return httpx.Response(200, text="[]")
 
-    client = LocalDoubanClient(cookie="bid=demo;", transport=httpx.MockTransport(handler))
+    client = LocalDoubanClient(
+        cookie="bid=demo;",
+        transport=httpx.MockTransport(handler),
+    )
 
     client.search("深空彼岸")
 
     assert seen["cookie"] == "bid=demo;"
+
+
+def test_local_douban_client_skips_second_request_inside_rate_limit_window() -> None:
+    now = 100.0
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, text="[]")
+
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(handler),
+        monotonic=lambda: now,
+    )
+
+    assert client.search("深空彼岸") == []
+
+    with pytest.raises(DoubanRateLimitedError):
+        client.search("深空彼岸")
+
+    assert len(calls) == 1
+
+
+def test_local_douban_client_allows_request_after_rate_limit_window() -> None:
+    now = 100.0
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, text="[]")
+
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(handler),
+        monotonic=lambda: now,
+    )
+
+    client.search("深空彼岸")
+    now = 110.0
+    client.search("深空彼岸")
+
+    assert len(calls) == 2
 
 
 def test_local_douban_client_parses_search_results_and_filters_year() -> None:
@@ -62,7 +118,9 @@ def test_local_douban_client_parses_search_results_and_filters_year() -> None:
     ]
     """
     client = LocalDoubanClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=payload)),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=payload)
+        ),
     )
 
     results = client.search("深空彼岸", year="2026")
