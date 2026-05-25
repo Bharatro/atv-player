@@ -8702,6 +8702,80 @@ def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
     assert window.favorite_button.property("icon_name") == "favorite.svg"
 
 
+def test_player_window_following_button_sits_next_to_favorite(
+    qtbot,
+) -> None:
+    followed_ids: set[str] = {"vod-1"}
+    toggled: list[str] = []
+
+    def toggle_following(current_item: PlayItem) -> None:
+        toggled.append(current_item.vod_id)
+        if current_item.vod_id in followed_ids:
+            followed_ids.remove(current_item.vod_id)
+        else:
+            followed_ids.add(current_item.vod_id)
+
+    item = PlayItem(title="第1集", url="https://media/1.m3u8", vod_id="vod-1")
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        following_is_active=lambda current_item: current_item.vod_id in followed_ids,
+        following_toggle=toggle_following,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert (
+        window._metadata_heading_row.indexOf(window.following_button)
+        == window._metadata_heading_row.indexOf(window.favorite_button) + 1
+    )
+    assert window.following_button.property("following_active") is True
+    assert window.following_button.toolTip() == "取消追更"
+
+    window.following_button.click()
+
+    assert toggled == ["vod-1"]
+    assert window.following_button.property("following_active") is False
+    assert window.following_button.toolTip() == "加入追更"
+
+
+def test_player_window_reports_following_progress_with_current_item(qtbot) -> None:
+    reports: list[tuple[str, int, int]] = []
+    item = PlayItem(title="第1集", url="https://media/1.m3u8", vod_id="vod-1")
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        following_progress_reporter=lambda current_item, **kwargs: reports.append(
+            (
+                current_item.vod_id,
+                kwargs["position_seconds"],
+                kwargs["duration_seconds"],
+            )
+        ),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window.report_progress()
+
+    assert reports == [("vod-1", 30, 120)]
+
+
 def test_player_window_executes_detail_action_and_refreshes_current_item(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
