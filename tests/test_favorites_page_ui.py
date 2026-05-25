@@ -246,3 +246,80 @@ def test_favorites_page_displays_loaded_card_poster(qtbot, monkeypatch) -> None:
         and page.card_widgets[0].poster_label.pixmap() is not None
     )
     assert page.card_widgets[0].poster_label.text() == ""
+
+
+def test_favorites_page_card_context_menu_matches_video_cards(qtbot) -> None:
+    class Controller:
+        def load_page(self, *, page: int, size: int, keyword: str):
+            record = FavoriteRecord(
+                source_kind="browse",
+                source_key="",
+                source_name="文件浏览",
+                vod_id="detail-1",
+                vod_name_snapshot="庆余年",
+                latest_vod_name="庆余年",
+                vod_pic="",
+                vod_remarks="",
+                title_changed=False,
+                created_at=10,
+                updated_at=10,
+            )
+            return [
+                FavoriteCardItem(
+                    record=record,
+                    display_title="庆余年",
+                    source_label="文件浏览",
+                    updated_hint=False,
+                    secondary_text="",
+                )
+            ], 1
+
+    page = FavoritesPage(Controller())
+    qtbot.addWidget(page)
+    page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: len(page.card_widgets) == 1)
+    menu = page._build_card_context_menu(page.card_widgets[0])
+
+    assert [action.text() for action in menu.actions()] == ["打开播放", "全局搜索", "取消收藏"]
+
+
+def test_favorites_page_card_context_remove_deletes_record(qtbot) -> None:
+    deleted = []
+
+    class Controller:
+        def load_page(self, *, page: int, size: int, keyword: str):
+            record = FavoriteRecord(
+                source_kind="browse",
+                source_key="",
+                source_name="文件浏览",
+                vod_id="detail-1",
+                vod_name_snapshot="庆余年",
+                latest_vod_name="庆余年",
+                vod_pic="",
+                vod_remarks="",
+                title_changed=False,
+                created_at=10,
+                updated_at=10,
+            )
+            return [
+                FavoriteCardItem(
+                    record=record,
+                    display_title="庆余年",
+                    source_label="文件浏览",
+                    updated_hint=False,
+                    secondary_text="",
+                )
+            ], 1
+
+        def remove_favorite(self, records):
+            deleted.extend(records)
+
+    page = FavoritesPage(Controller())
+    qtbot.addWidget(page)
+    page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: len(page.card_widgets) == 1)
+    page._handle_card_context_action(page.card_widgets[0], "remove")
+
+    assert [record.vod_id for record in deleted] == ["detail-1"]

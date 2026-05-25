@@ -1408,7 +1408,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 initial_category_id=self._initial_category_id_for_tab("feiniu"),
             )
         self._favorites_controller = favorites_controller or _EmptyFavoritesController()
-        self.favorites_page = FavoritesPage(self._favorites_controller)
+        self.favorites_page = FavoritesPage(
+            self._favorites_controller,
+            source_label_resolver=self._favorite_record_source_label,
+        )
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
@@ -1645,6 +1648,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.favorites_page.open_detail_requested.connect(self.open_favorite_detail)
+        self.favorites_page.global_search_requested.connect(self._handle_favorite_global_search)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.browse_page.set_favorite_handlers(
@@ -2648,6 +2652,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _handle_video_item_context_global_search(self, item) -> None:
         keyword = str(getattr(item, "vod_name", "") or "").strip()
+        if not keyword:
+            return
+        self._handle_favorite_global_search(keyword)
+
+    def _handle_favorite_global_search(self, keyword: str) -> None:
+        keyword = str(keyword or "").strip()
         if not keyword:
             return
         self.global_search_edit.setText(keyword)
@@ -3765,7 +3775,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 return _plugin_value(definition, "controller")
         return None
 
-    def _favorite_source_name(self, source_kind: str) -> str:
+    def _favorite_source_name(self, source_kind: str, source_key: str = "") -> str:
+        if source_kind in {"plugin", "spider_plugin"} and source_key:
+            title = next(
+                (
+                    definition.title
+                    for definition in self._plugin_tab_definitions
+                    if definition.key == f"plugin:{source_key}"
+                ),
+                "",
+            )
+            if title:
+                return title
         return {
             "browse": "文件浏览",
             "plugin": "插件",
@@ -3780,11 +3801,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "direct_parse": "全局解析",
         }.get(source_kind, source_kind or "未知来源")
 
+    def _favorite_record_source_label(self, record: FavoriteRecord) -> str:
+        return self._favorite_source_name(record.source_kind, record.source_key)
+
     def _favorite_record_for_identity(self, source_kind: str, source_key: str, vod_id: str) -> FavoriteRecord:
         return FavoriteRecord(
             source_kind=source_kind,
             source_key=source_key,
-            source_name=self._favorite_source_name(source_kind),
+            source_name=self._favorite_source_name(source_kind, source_key),
             vod_id=vod_id,
             vod_name_snapshot="",
             latest_vod_name="",
@@ -3829,7 +3853,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return {
             "source_kind": session.source_kind or "browse",
             "source_key": session.source_key or "",
-            "source_name": self._favorite_source_name(session.source_kind or "browse"),
+            "source_name": self._favorite_source_name(session.source_kind or "browse", session.source_key or ""),
             "vod_id": vod_id,
             "vod_name_snapshot": title,
             "latest_vod_name": title,

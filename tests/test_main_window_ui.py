@@ -2210,6 +2210,88 @@ def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -
     assert isinstance(payload["updated_at"], int)
 
 
+def test_main_window_player_favorite_uses_plugin_display_name(qtbot) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {
+                "id": "1",
+                "title": "插件1",
+                "controller": FakeSpiderController("插件1"),
+                "search_enabled": True,
+            }
+        ],
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+    window.player_window = SimpleNamespace(
+        session=SimpleNamespace(
+            vod=VodItem(vod_id="vod-1", vod_name="测试影片", vod_pic="poster.jpg", vod_remarks="完结"),
+            source_kind="plugin",
+            source_key="1",
+        )
+    )
+
+    payload = window._current_player_favorite_payload(PlayItem(title="第1集", url="https://media.example/1.m3u8"))
+
+    assert payload is not None
+    assert payload["source_kind"] == "plugin"
+    assert payload["source_key"] == "1"
+    assert payload["source_name"] == "插件1"
+
+
+def test_main_window_favorites_page_resolves_saved_plugin_source_name(qtbot) -> None:
+    class Controller:
+        def load_page(self, *, page: int, size: int, keyword: str):
+            record = FavoriteRecord(
+                source_kind="plugin",
+                source_key="1",
+                source_name="插件",
+                vod_id="vod-1",
+                vod_name_snapshot="测试影片",
+                latest_vod_name="测试影片",
+                vod_pic="",
+                vod_remarks="",
+                title_changed=False,
+                created_at=10,
+                updated_at=10,
+            )
+            return [
+                FavoriteCardItem(
+                    record=record,
+                    display_title="测试影片",
+                    source_label=record.source_name,
+                    updated_hint=False,
+                    secondary_text="",
+                )
+            ], 1
+
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {
+                "id": "1",
+                "title": "插件1",
+                "controller": FakeSpiderController("插件1"),
+                "search_enabled": True,
+            }
+        ],
+        favorites_controller=Controller(),
+    )
+    qtbot.addWidget(window)
+
+    window.favorites_page.ensure_loaded()
+    qtbot.waitUntil(lambda: len(window.favorites_page.card_widgets) == 1)
+
+    assert window.favorites_page.card_widgets[0].source_label.text() == "插件1"
+
+
 def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:
     manager = WidthAwarePluginManager()
     window = MainWindow(

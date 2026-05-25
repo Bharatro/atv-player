@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 import threading
 
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -123,13 +126,20 @@ class FavoriteCardButton(QPushButton):
 
 class FavoritesPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(object)
+    global_search_requested = Signal(str)
     poster_loaded = Signal(object, object)
     unauthorized = Signal()
 
-    def __init__(self, controller) -> None:
+    def __init__(
+        self,
+        controller,
+        *,
+        source_label_resolver: Callable[[FavoriteRecord], str] | None = None,
+    ) -> None:
         super().__init__()
         self._init_async_guard()
         self.controller = controller
+        self._source_label_resolver = source_label_resolver
         self._initial_load_started = False
         self.current_page = 1
         self.page_size = 20
@@ -222,15 +232,60 @@ class FavoritesPage(QWidget, AsyncGuardMixin):
             if widget is not None:
                 widget.deleteLater()
         for favorite in items:
+            favorite = self._resolve_card_source_label(favorite)
             card = FavoriteCardButton(favorite, self.cards_container)
+            card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             card.clicked.connect(self._sync_action_state)
             card.clicked.connect(
                 lambda _checked=False, current=favorite.record: self.open_detail_requested.emit(current)
+            )
+            card.customContextMenuRequested.connect(
+                lambda pos, current=card: self._handle_card_context_menu_requested(current, pos)
             )
             self.cards_layout.addWidget(card)
             self.card_widgets.append(card)
             self._start_card_poster_load(card)
         self._sync_action_state()
+
+    def _resolve_card_source_label(self, item: FavoriteCardItem) -> FavoriteCardItem:
+        if self._source_label_resolver is None:
+            return item
+        source_label = str(self._source_label_resolver(item.record) or "").strip()
+        if not source_label or source_label == item.source_label:
+            return item
+        return replace(item, source_label=source_label)
+
+    def _build_card_context_menu(self, card: FavoriteCardButton) -> QMenu:
+        del card
+        menu = QMenu(self)
+        open_action = menu.addAction("打开播放")
+        open_action.setData("open")
+        search_action = menu.addAction("全局搜索")
+        search_action.setData("search")
+        remove_action = menu.addAction("取消收藏")
+        remove_action.setData("remove")
+        return menu
+
+    def _handle_card_context_menu_requested(self, card: FavoriteCardButton, pos) -> None:
+        menu = self._build_card_context_menu(card)
+        chosen = menu.exec(card.mapToGlobal(pos))
+        if chosen is None:
+            return
+        self._handle_card_context_action(card, str(chosen.data() or ""))
+
+    def _handle_card_context_action(self, card: FavoriteCardButton, action_id: str) -> None:
+        if card not in self.card_widgets:
+            return
+        if action_id == "open":
+            self.open_detail_requested.emit(card.item.record)
+            return
+        if action_id == "search":
+            keyword = str(card.item.display_title or card.item.record.latest_vod_name or card.item.record.vod_name_snapshot)
+            self.global_search_requested.emit(keyword.strip())
+            return
+        if action_id == "remove":
+            self.controller.remove_favorite([card.item.record])
+            self._reload_after_mutation()
 
     def _start_card_poster_load(self, card: FavoriteCardButton) -> None:
         poster_source = card.item.record.vod_pic or ""
