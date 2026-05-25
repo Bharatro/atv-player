@@ -376,9 +376,11 @@ class TMDBProvider:
             else self._client.get_tv_detail(provider_id)
         )
         season_overview = ""
+        detail_fields: list[dict[str, object]] = []
         if media_type == "tv" and season_number is not None:
             season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
             season_overview = str(season_payload.get("overview") or "").strip()
+            detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []
@@ -425,4 +427,5 @@ class TMDBProvider:
             aliases=_split_names(aliases),
             imdb_id=str(external_ids.get("imdb_id") or "").strip(),
             tmdb_id=str(payload.get("id") or "").strip(),
+            detail_fields=detail_fields,
         )

@@ -603,6 +603,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
     _DANMAKU_SECONDARY_SCALE = 100
     _FAVORITE_ACTIVE_ICON_COLOR = "#e53935"
+    _FOLLOWING_ACTIVE_ICON_COLOR = "#ff6a3d"
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
         "偏上": 30,
@@ -641,6 +642,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         default_video_cover_loader=None,
         favorite_is_active=None,
         favorite_toggle=None,
+        following_is_active=None,
+        following_toggle=None,
+        following_progress_reporter=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -660,6 +664,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._default_video_cover_loader = default_video_cover_loader
         self._favorite_is_active = favorite_is_active or (lambda _item: False)
         self._favorite_toggle = favorite_toggle or (lambda _item: None)
+        self._following_is_active = following_is_active or (lambda _item: False)
+        self._following_toggle = following_toggle or (lambda _item: None)
+        self._following_progress_reporter = following_progress_reporter or (
+            lambda *_args, **_kwargs: None
+        )
         self._default_video_cover_source: str | None = None
         self.session = None
         self.current_index = 0
@@ -1060,6 +1069,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_layout.addWidget(self._poster_row_widget)
         self.favorite_button = self._create_icon_button("favorite.svg", "加入收藏")
         self.favorite_button.clicked.connect(self._toggle_current_favorite)
+        self.following_button = self._create_icon_button("refresh.svg", "加入追更")
+        self.following_button.clicked.connect(self._toggle_current_following)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1075,7 +1086,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_heading_row.setContentsMargins(0, 0, 8, 0)
         self._metadata_heading_row.setSpacing(6)
         self._metadata_heading_row.addWidget(self.metadata_heading)
-        self._metadata_heading_row.addWidget(self.favorite_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._metadata_heading_row.addWidget(
+            self.favorite_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._metadata_heading_row.addWidget(
+            self.following_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
         self._metadata_heading_row.addStretch(1)
         self._metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
         metadata_layout.addLayout(self._metadata_heading_row)
@@ -1549,7 +1565,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _apply_favorite_button_theme(self) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
-        self.favorite_button.setStyleSheet(
+        qss = (
             f"""
             QPushButton {{
                 background: transparent;
@@ -1565,7 +1581,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             }}
             """
         )
+        self.favorite_button.setStyleSheet(qss)
+        self.following_button.setStyleSheet(qss)
         self._refresh_favorite_button()
+        self._refresh_following_button()
 
     def _create_icon_button(
         self,
@@ -2262,6 +2281,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
         self._refresh_favorite_button()
+        self._refresh_following_button()
         actions = self._current_detail_actions()
         self.detail_actions_widget.setHidden(not actions)
         for action in actions:
@@ -2284,13 +2304,39 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.favorite_button.setProperty("favorite_active", active)
         self._set_favorite_button_icon(active)
 
+    def _refresh_following_button(self) -> None:
+        item = self._current_play_item()
+        active = item is not None and self._following_is_active(item)
+        tooltip = "取消追更" if active else "加入追更"
+        self.following_button.setHidden(item is None)
+        self.following_button.setToolTip(tooltip)
+        self.following_button.setAccessibleName(tooltip)
+        self.following_button.setProperty("following_active", active)
+        self._set_following_button_icon(active)
+
     def _set_favorite_button_icon(self, active: bool) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
         icon_name = "favorite-filled.svg" if active else "favorite.svg"
         color = self._FAVORITE_ACTIVE_ICON_COLOR if active else tokens.text_secondary
         self.favorite_button.setProperty("icon_name", icon_name)
         self.favorite_button.setIcon(
-            tint_icon(load_icon(self._icons_dir / icon_name), color, size=self.favorite_button.iconSize())
+            tint_icon(
+                load_icon(self._icons_dir / icon_name),
+                color,
+                size=self.favorite_button.iconSize(),
+            )
+        )
+
+    def _set_following_button_icon(self, active: bool) -> None:
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        color = self._FOLLOWING_ACTIVE_ICON_COLOR if active else tokens.text_secondary
+        self.following_button.setProperty("icon_name", "refresh.svg")
+        self.following_button.setIcon(
+            tint_icon(
+                load_icon(self._icons_dir / "refresh.svg"),
+                color,
+                size=self.following_button.iconSize(),
+            )
         )
 
     def _toggle_current_favorite(self) -> None:
@@ -2299,6 +2345,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._favorite_toggle(item)
         self._refresh_favorite_button()
+
+    def _toggle_current_following(self) -> None:
+        item = self._current_play_item()
+        if item is None:
+            return
+        self._following_toggle(item)
+        self._refresh_following_button()
 
     def _set_startup_state(self, state: PlaybackStartupState) -> None:
         self._startup_state = state
@@ -4835,6 +4888,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             session.opening_seconds = opening_seconds
             session.ending_seconds = ending_seconds
             duration_seconds = self._current_media_duration_seconds()
+            item = self._current_play_item()
 
             def report() -> None:
                 self.controller.report_progress(
@@ -4850,6 +4904,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 )
 
             self._enqueue_controller_task("进度上报失败", report)
+            if item is not None:
+                self._following_progress_reporter(
+                    item,
+                    position_seconds=int(position_seconds),
+                    duration_seconds=int(duration_seconds),
+                )
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
 

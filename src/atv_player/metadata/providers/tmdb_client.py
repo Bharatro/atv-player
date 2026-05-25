@@ -74,4 +74,16 @@ class TMDBClient:
         return self._with_image_urls(payload)
 
     def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, Any]:
-        return self._request(f"/tv/{tmdb_id}/season/{season_number}")
+        payload = self._request(f"/tv/{tmdb_id}/season/{season_number}")
+        episodes: list[dict[str, Any]] = []
+        still_base = ""
+        for episode in payload.get("episodes") or []:
+            row = dict(episode)
+            still_path = str(row.get("still_path") or "").strip()
+            if still_path and not still_base:
+                still_base = self._image_base("backdrop")
+            row["still_url"] = f"{still_base}{still_path}" if still_path else ""
+            row["season_number"] = season_number
+            episodes.append(row)
+        payload["episodes"] = episodes
+        return payload

@@ -12,7 +12,9 @@ import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.player_controller import PlayerController
+from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord
 from atv_player.models import (
     AppConfig,
     FavoriteCardItem,
@@ -224,6 +226,49 @@ class FakeFavoritesController:
         del keyword
 
 
+class FakeFollowingController:
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[int, int, str, bool]] = []
+        self.cleared: list[int] = []
+        self.snoozed: list[int] = []
+
+    def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+        self.load_calls.append((page, size, keyword, only_updates))
+        return [], 0
+
+    def load_homepage_prompts(self):
+        return [
+            FollowingRecord(
+                id=1,
+                title="凡人修仙传",
+                provider="bangumi",
+                provider_id="subject:1",
+                latest_episode=128,
+                new_episode_count=1,
+                homepage_prompt_pending=True,
+            )
+        ]
+
+    def load_detail(self, following_id: int):
+        return FollowingDetailView(
+            record=FollowingRecord(
+                id=following_id,
+                title="凡人修仙传",
+                provider="bangumi",
+                provider_id="subject:1",
+                latest_episode=128,
+                new_episode_count=1,
+            ),
+            snapshot=FollowingDetailSnapshot(following_id=following_id),
+        )
+
+    def clear_homepage_prompt(self, following_id: int) -> None:
+        self.cleared.append(following_id)
+
+    def snooze_prompt(self, following_id: int) -> None:
+        self.snoozed.append(following_id)
+
+
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
     deadline = time.perf_counter() + timeout_seconds
     while time.perf_counter() < deadline:
@@ -271,6 +316,56 @@ def test_main_window_registers_favorites_tab_and_header_button(qtbot) -> None:
 
     assert window.favorites_button.toolTip() == "我的收藏"
     assert window._tab_key_for_widget(window.favorites_page) == "favorites"
+
+
+def test_main_window_registers_following_tab_and_header_button(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    assert window.following_page is not None
+    assert window.following_button.toolTip() == "我的追更"
+    assert window._tab_key_for_widget(window.following_page) == "following"
+
+
+def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    window.following_button.click()
+
+    assert following.load_calls == [(1, 20, "", False)]
+
+
+def test_main_window_homepage_prompt_actions(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    window.show_following_homepage_prompts()
+
+    assert window._following_prompt_dialog is not None
+    window._following_prompt_detail_button.click()
+    assert following.cleared == [1]
 
 
 def test_main_window_loads_favorites_when_tab_is_selected(qtbot) -> None:

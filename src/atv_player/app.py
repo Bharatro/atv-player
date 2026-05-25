@@ -23,6 +23,7 @@ from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.favorites_controller import FavoritesController
+from atv_player.controllers.following_controller import FollowingController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.controllers.emby_controller import EmbyController
@@ -50,6 +51,9 @@ from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.favorites_repository import FavoritesRepository
+from atv_player.following_metadata import FollowingMetadataGateway
+from atv_player.following_repository import FollowingRepository
+from atv_player.following_update_service import FollowingUpdateService
 from atv_player.metadata import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     MetadataBindingRepository,
@@ -426,6 +430,7 @@ class AppCoordinator(QObject):
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             self._favorites_repository = FavoritesRepository(repo.database_path)
+            self._following_repository = FollowingRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
             self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
@@ -452,6 +457,7 @@ class AppCoordinator(QObject):
             self._plugin_repository = None
             self._playback_history_repository = None
             self._favorites_repository = None
+            self._following_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
         self._metadata_binding_repository = (
@@ -750,6 +756,19 @@ class AppCoordinator(QObject):
             return MetadataScrapeService(cache=cache, providers=providers)
 
         return factory
+
+    def _build_following_metadata_search_service(self, api_client: ApiClient) -> MetadataScrapeService:
+        config = self.repo.load_config()
+        providers = self._build_metadata_providers(
+            api_client=api_client,
+            config=config,
+            source_kind="browse",
+            raw_detail=None,
+        )
+        return MetadataScrapeService(
+            cache=MetadataCache(app_cache_dir() / "metadata"),
+            providers=providers,
+        )
 
     def _build_danmaku_controller_factory(self):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
@@ -1829,6 +1848,19 @@ class AppCoordinator(QObject):
                 "feiniu": lambda record, controller=feiniu_controller: controller.build_request(record.vod_id).vod,
             },
         )
+        following_controller = None
+        following_update_service = None
+        if self._following_repository is not None:
+            following_search_service = self._build_following_metadata_search_service(self._api_client)
+            following_update_service = FollowingUpdateService(
+                self._following_repository,
+                metadata_gateway=FollowingMetadataGateway(following_search_service),
+            )
+            following_controller = FollowingController(
+                self._following_repository,
+                metadata_search_service=following_search_service,
+                update_service=following_update_service,
+            )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
@@ -1842,6 +1874,8 @@ class AppCoordinator(QObject):
         self.main_window = MainWindow(
             browse_controller=browse_controller,
             favorites_controller=favorites_controller,
+            following_controller=following_controller,
+            following_update_service=following_update_service,
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,
@@ -1897,6 +1931,8 @@ class AppCoordinator(QObject):
             metadata_binding_repository=self._metadata_binding_repository,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
+        if following_update_service is not None:
+            following_update_service.start()
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
