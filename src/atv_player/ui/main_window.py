@@ -1346,6 +1346,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.live_source_manager_button = QPushButton("")
         self.advanced_settings_button = QPushButton("")
         self.logout_button = QPushButton("")
+        self.header_action_separators = [self._create_header_action_separator() for _ in range(2)]
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(
             douban_controller or _EmptyDoubanController(),
@@ -1631,9 +1632,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.header_layout.addWidget(self.browse_button)
         self.header_layout.addWidget(self.favorites_button)
         self.header_layout.addWidget(self.history_button)
+        self.header_layout.addWidget(self.header_action_separators[0])
         self.header_layout.addWidget(self.plugin_manager_button)
         self.header_layout.addWidget(self.live_source_manager_button)
         self.header_layout.addWidget(self.advanced_settings_button)
+        self.header_layout.addWidget(self.header_action_separators[1])
         self.header_layout.addWidget(self.logout_button)
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1822,6 +1825,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         button.setIconSize(QSize(20, 20))
         button.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    def _create_header_action_separator(self) -> QFrame:
+        separator = QFrame(self)
+        separator.setObjectName("headerActionSeparator")
+        separator.setFixedSize(1, 22)
+        separator.setFrameShape(QFrame.Shape.NoFrame)
+        return separator
+
     def _apply_header_action_button_theme(self) -> None:
         tokens = current_tokens()
         button_qss = build_round_icon_button_qss(tokens)
@@ -1837,6 +1847,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         for button, icon_path in button_icons.items():
             button.setStyleSheet(button_qss)
             button.setIcon(load_tinted_icon(icon_path, tokens.text_primary, size=button.iconSize()))
+        for separator in getattr(self, "header_action_separators", []):
+            separator.setStyleSheet(f"QFrame#headerActionSeparator {{ background: {tokens.border_subtle}; }}")
 
     def _apply_navigation_tab_theme(self) -> None:
         tokens = current_tokens()

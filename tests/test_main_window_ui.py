@@ -976,6 +976,26 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
         window.header_layout.indexOf(button)
         for button in buttons
     ] == sorted(window.header_layout.indexOf(button) for button in buttons)
+    assert len(window.header_action_separators) == 2
+    assert [
+        window.header_layout.indexOf(window.history_button),
+        window.header_layout.indexOf(window.header_action_separators[0]),
+        window.header_layout.indexOf(window.plugin_manager_button),
+        window.header_layout.indexOf(window.live_source_manager_button),
+        window.header_layout.indexOf(window.advanced_settings_button),
+        window.header_layout.indexOf(window.header_action_separators[1]),
+        window.header_layout.indexOf(window.logout_button),
+    ] == sorted(
+        [
+            window.header_layout.indexOf(window.history_button),
+            window.header_layout.indexOf(window.header_action_separators[0]),
+            window.header_layout.indexOf(window.plugin_manager_button),
+            window.header_layout.indexOf(window.live_source_manager_button),
+            window.header_layout.indexOf(window.advanced_settings_button),
+            window.header_layout.indexOf(window.header_action_separators[1]),
+            window.header_layout.indexOf(window.logout_button),
+        ]
+    )
 
     window.history_button.click()
     assert window.nav_tabs.currentWidget() is window.history_page
