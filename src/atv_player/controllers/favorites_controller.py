@@ -75,5 +75,8 @@ class FavoritesController:
     def remove_favorite(self, records: list[FavoriteRecord]) -> None:
         self._repository.delete_favorites(records)
 
+    def search_items(self, keyword: str, page: int) -> tuple[list[FavoriteCardItem], int]:
+        return self.load_page(page=page, size=20, keyword=keyword)
+
     def clear_filtered(self, *, keyword: str) -> None:
         self._repository.delete_filtered(keyword=keyword)

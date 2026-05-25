@@ -125,6 +125,10 @@ class _EmptyFavoritesController:
         del page, size, keyword
         return [], 0
 
+    def search_items(self, keyword: str, page: int):
+        del keyword, page
+        return [], 0
+
     def is_favorited(self, *, source_kind: str, source_key: str, vod_id: str) -> bool:
         del source_kind, source_key, vod_id
         return False
@@ -142,6 +146,10 @@ class _EmptyFavoritesController:
 class _EmptyFollowingController:
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         del page, size, keyword, only_updates
+        return [], 0
+
+    def search_items(self, keyword: str, page: int):
+        del keyword, page
         return [], 0
 
     def load_homepage_prompts(self):
@@ -1619,8 +1627,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self._trailing_tab_definitions = [
             _TabDefinition("browse", "文件浏览", self.browse_page),
-            _TabDefinition("favorites", "我的收藏", self.favorites_page),
-            _TabDefinition("following", "我的追更", self.following_page),
+            _TabDefinition("favorites", "我的收藏", self.favorites_page, self._favorites_controller),
+            _TabDefinition("following", "我的追更", self.following_page, self._following_controller),
             _TabDefinition("history", "播放记录", self.history_page),
         ]
         self._rebuild_spider_plugin_tabs()
@@ -3413,22 +3421,30 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_edit.blockSignals(False)
         self.global_search_status_label.setText("")
         for definition in self._all_tab_definitions():
-            if isinstance(definition.page, PosterGridPage):
-                definition.page.clear_external_results()
-            elif isinstance(definition.page, HistoryPage):
-                definition.page.clear_external_results()
+            page = definition.page
+            if isinstance(page, (PosterGridPage, HistoryPage, FavoritesPage, FollowingPage)):
+                page.clear_external_results()
         self._refresh_visible_tabs()
         self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
 
     def _show_global_search_result(self, result: _GlobalSearchResult) -> None:
+        page_loader = self._build_global_search_page_loader(result.key)
         if isinstance(result.page, HistoryPage):
             result.page.show_external_results(
                 result.items,
                 result.total,
                 page=result.page_number,
-                page_loader=self._build_global_search_page_loader(result.key),
+                page_loader=page_loader,
+            )
+        elif isinstance(result.page, (FavoritesPage, FollowingPage)):
+            result.page.show_external_results(
+                result.items,
+                result.total,
+                page=result.page_number,
+                empty_message="无搜索结果",
+                page_loader=page_loader,
             )
         else:
             cast(PosterGridPage, result.page).show_external_results(
@@ -3436,7 +3452,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 result.total,
                 page=result.page_number,
                 empty_message="无搜索结果",
-                page_loader=self._build_global_search_page_loader(result.key),
+                page_loader=page_loader,
             )
         self._global_search_results[result.key] = result
 

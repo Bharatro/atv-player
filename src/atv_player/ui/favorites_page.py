@@ -376,12 +376,25 @@ class FavoritesPage(QWidget, AsyncGuardMixin):
         self.load_page()
 
     def previous_page(self) -> None:
+        if self._external_results_active:
+            if self._external_page <= 1:
+                return
+            if self._external_page_loader is not None:
+                self._external_page_loader(self._external_page - 1)
+            return
         if self.current_page <= 1:
             return
         self.current_page -= 1
         self.load_page()
 
     def next_page(self) -> None:
+        if self._external_results_active:
+            total_pages = max(1, (self._external_total + 20 - 1) // 20) if self._external_total > 0 else 1
+            if self._external_page >= total_pages:
+                return
+            if self._external_page_loader is not None:
+                self._external_page_loader(self._external_page + 1)
+            return
         if self.current_page >= self._total_pages():
             return
         self.current_page += 1
@@ -400,3 +413,48 @@ class FavoritesPage(QWidget, AsyncGuardMixin):
         has_selection = any(card.isChecked() for card in self.card_widgets)
         self.delete_button.setEnabled(has_selection)
         self.clear_button.setEnabled(bool(self.records))
+
+    _external_results_active: bool = False
+    _external_page_loader: Callable[[int], None] | None = None
+    _external_page: int = 1
+    _external_total: int = 0
+
+    def show_external_results(
+        self,
+        items: list[FavoriteCardItem],
+        total: int,
+        page: int = 1,
+        empty_message: str = "无搜索结果",
+        page_loader: Callable[[int], None] | None = None,
+    ) -> None:
+        self._external_results_active = True
+        self._external_page_loader = page_loader
+        self._external_page = page
+        self._external_total = total
+        self.search_edit.hide()
+        self.refresh_button.hide()
+        self.delete_button.hide()
+        self.clear_button.hide()
+        self._render_cards(list(items))
+        self._update_external_pagination()
+
+    def clear_external_results(self) -> None:
+        if not self._external_results_active:
+            return
+        self._external_results_active = False
+        self._external_page_loader = None
+        self.search_edit.show()
+        self.refresh_button.show()
+        self.delete_button.show()
+        self.clear_button.show()
+        self.current_page = 1
+        self.load_page()
+
+    def _update_external_pagination(self) -> None:
+        total_pages = max(1, (self._external_total + 20 - 1) // 20) if self._external_total > 0 else 1
+        self.page_label.setText(f"第 {self._external_page} / {total_pages} 页")
+        self.prev_page_button.setEnabled(self._external_page > 1)
+        self.next_page_button.setEnabled(self._external_page < total_pages)
+
+    def _is_external_mode(self) -> bool:
+        return self._external_results_active
