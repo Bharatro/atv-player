@@ -359,6 +359,7 @@ def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
         favorites_controller=FakeFavoritesController(),
     )
     qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_open_favorite_placeholder", lambda record: None)
     monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
     record = FavoriteRecord(
         source_kind="browse",
@@ -400,6 +401,7 @@ def test_main_window_opens_live_favorite_record(qtbot, monkeypatch) -> None:
         favorites_controller=FakeFavoritesController(),
     )
     qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_open_favorite_placeholder", lambda record: None)
     monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
 
     window.open_favorite_detail(
@@ -419,6 +421,90 @@ def test_main_window_opens_live_favorite_record(qtbot, monkeypatch) -> None:
     )
 
     assert opened[0].source_kind == "live"
+
+
+def test_main_window_favorite_click_opens_placeholder_player_immediately(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+            self.logs: list[str] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+            message = session.get("initial_log_message", "")
+            if message:
+                self.logs.append(message)
+
+        def append_status_log(self, message: str) -> None:
+            self.logs.append(message)
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class SlowPluginController(FakeSpiderController):
+        def __init__(self) -> None:
+            super().__init__("插件一")
+            self._event = threading.Event()
+
+        def build_request(self, vod_id: str):
+            self.open_calls.append(vod_id)
+            assert self._event.wait(timeout=5), "favorite request was never released"
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="真实标题"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_key="plugin-1",
+            )
+
+        def release(self) -> None:
+            self._event.set()
+
+    controller = SlowPluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+
+    window.open_favorite_detail(
+        FavoriteRecord(
+            source_kind="plugin",
+            source_key="plugin-1",
+            source_name="插件一",
+            vod_id="vod-1",
+            vod_name_snapshot="收藏标题",
+            latest_vod_name="收藏标题",
+            vod_pic="poster.jpg",
+            vod_remarks="完结",
+            title_changed=False,
+            created_at=10,
+            updated_at=10,
+        )
+    )
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+    assert window.player_window.opened[0][0]["is_placeholder"] is True
+    assert window.player_window.opened[0][0]["vod"].vod_name == "收藏标题"
+    assert window.player_window.logs == ["正在加载详情..."]
+
+    controller.release()
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2, timeout=1000)
+    assert window.player_window.opened[1][0]["is_placeholder"] is False
+    assert window.player_window.opened[1][0]["vod"].vod_name == "真实标题"
 
 
 def test_main_window_enables_resize_support(qtbot) -> None:

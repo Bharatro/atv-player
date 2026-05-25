@@ -3978,6 +3978,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def open_favorite_detail(self, record: FavoriteRecord) -> None:
         if record.source_kind == "direct_parse":
+            self._open_favorite_placeholder(record)
             self._start_open_request(lambda: self._build_parse_request(record.vod_id))
             return
         if record.source_kind in {"plugin", "spider_plugin"}:
@@ -3985,8 +3986,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if controller is None:
                 self.show_error(f"没有可播放的项目: {record.source_name or record.vod_id}")
                 return
-            self._start_open_request(lambda: controller.build_request(record.vod_id))
+            self._open_favorite_placeholder(record)
+            self._start_open_request(lambda: self._prepare_favorite_request(controller.build_request(record.vod_id), record))
             return
+        self._open_favorite_placeholder(record)
         if record.source_kind == "telegram":
             self._start_open_request(lambda: self.telegram_controller.build_request(record.vod_id))
             return
@@ -4009,6 +4012,27 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._start_open_request(lambda: self.feiniu_controller.build_request(record.vod_id))
             return
         self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.vod_id))
+
+    def _open_favorite_placeholder(self, record: FavoriteRecord) -> None:
+        source_kind = "plugin" if record.source_kind == "spider_plugin" else record.source_kind or "browse"
+        placeholder = self._build_placeholder_player_request(
+            VodItem(
+                vod_id=record.vod_id,
+                vod_name=record.latest_vod_name or record.vod_name_snapshot or record.vod_id,
+                vod_pic=record.vod_pic,
+                vod_remarks=record.vod_remarks,
+            ),
+            source_kind=source_kind,
+            source_key=record.source_key,
+        )
+        self._open_player_immediately(placeholder)
+
+    @staticmethod
+    def _prepare_favorite_request(request: OpenPlayerRequest, record: FavoriteRecord) -> OpenPlayerRequest:
+        if record.source_kind in {"plugin", "spider_plugin"}:
+            request.source_kind = "plugin"
+            request.source_key = record.source_key
+        return request
 
     def _start_open_request(self, builder) -> int:
         self._open_request_id += 1
