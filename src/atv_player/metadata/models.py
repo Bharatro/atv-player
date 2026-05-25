@@ -80,6 +80,7 @@ class MetadataRecord:
     year: str = ""
     poster: str = ""
     backdrop: str = ""
+    backdrops: list[str] = field(default_factory=list)
     overview: str = ""
     rating: str = ""
     actors: list[str] = field(default_factory=list)

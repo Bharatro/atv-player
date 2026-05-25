@@ -4,13 +4,14 @@ from __future__ import annotations
 import re
 import time
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.following_metadata import (
     build_following_from_metadata_candidate,
     compute_episode_counts,
     following_candidate_from_url,
+    merge_following_snapshot,
 )
 from atv_player.following_models import (
     FollowingCardItem,
@@ -21,6 +22,7 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
 )
 from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
 
 
@@ -222,7 +224,11 @@ class FollowingController:
         record = self._repository.get(following_id)
         if record is None:
             raise KeyError(f"following not found: {following_id}")
-        candidate = self._metadata_refresh_candidate(record)
+        existing_snapshot = self._repository.get_detail_snapshot(following_id)
+        candidate = self._tmdb_refresh_candidate_from_record(record)
+        include_related = candidate is None
+        if candidate is None:
+            candidate = self._metadata_refresh_candidate(record)
         if candidate is None:
             raise RuntimeError("没有找到可用于更新元数据的匹配结果")
         refreshed_record, snapshot = build_following_from_metadata_candidate(
@@ -230,6 +236,7 @@ class FollowingController:
             metadata_search_service=self._metadata_search_service,
             now=self._now(),
             media_kind=record.media_kind,
+            include_related=include_related,
             use_full_detail=True,
         )
         refreshed_record.current_episode = record.current_episode
@@ -242,6 +249,8 @@ class FollowingController:
         refreshed_record.homepage_prompt_pending = record.homepage_prompt_pending
         refreshed_record.watched_latest_episode = record.watched_latest_episode
         self._repository.update_metadata(following_id, refreshed_record)
+        if existing_snapshot is not None:
+            snapshot = self._merge_refreshed_snapshot(existing_snapshot, snapshot)
         snapshot.following_id = following_id
         self._repository.save_detail_snapshot(following_id, snapshot)
         return self.load_detail(following_id, refresh_if_empty=False)
@@ -282,6 +291,81 @@ class FollowingController:
                 if str(getattr(candidate, "provider", "") or "") == provider:
                     return candidate
         return candidates[0]
+
+    def _tmdb_refresh_candidate_from_record(self, record: FollowingRecord):
+        provider_id = ""
+        if record.provider == "tmdb":
+            provider_id = record.provider_id
+        if not provider_id:
+            provider_id = str(record.external_ids.get("tmdb") or "").strip()
+        normalized, season_number = self._normalize_tmdb_refresh_provider_id(
+            provider_id,
+            media_kind=record.media_kind,
+            season_number=record.season_number,
+        )
+        if not normalized:
+            return None
+        raw = {"season_number": season_number} if season_number > 0 and normalized.startswith("tv:") else {}
+        return MetadataScrapeCandidate(
+            provider="tmdb",
+            provider_label="TMDB",
+            provider_id=normalized,
+            title=record.title,
+            subtitle="电影" if normalized.startswith("movie:") else "剧集",
+            raw=raw,
+        )
+
+    def _normalize_tmdb_refresh_provider_id(
+        self,
+        provider_id: str,
+        *,
+        media_kind: str,
+        season_number: int,
+    ) -> tuple[str, int]:
+        text = str(provider_id or "").strip()
+        if not text:
+            return "", 0
+        normalized_kind = str(media_kind or "").strip().lower()
+        if text.startswith("movie:"):
+            return text, 0
+        if text.startswith("tv:"):
+            parts = text.split(":")
+            if len(parts) >= 4 and parts[2] == "season":
+                return text, self._to_int(parts[3]) or 1
+            season = season_number if season_number > 0 else 1
+            return f"{text}:season:{season}", season
+        if not text.isdigit():
+            return "", 0
+        if normalized_kind == "movie" or "电影" in normalized_kind:
+            return f"movie:{text}", 0
+        season = season_number if season_number > 0 else 1
+        return f"tv:{text}:season:{season}", season
+
+    def _merge_refreshed_snapshot(
+        self,
+        existing: FollowingDetailSnapshot,
+        refreshed: FollowingDetailSnapshot,
+    ) -> FollowingDetailSnapshot:
+        merged = merge_following_snapshot(existing, refreshed)
+        if not merged.episodes:
+            return merged
+        old_stills = {
+            (episode.season_number, episode.episode_number): episode.still
+            for episode in existing.episodes
+            if episode.still
+        }
+        if not old_stills:
+            return merged
+        episodes = [
+            replace(
+                episode,
+                still=episode.still
+                or old_stills.get((episode.season_number, episode.episode_number), "")
+                or old_stills.get((0, episode.episode_number), ""),
+            )
+            for episode in merged.episodes
+        ]
+        return replace(merged, episodes=episodes)
 
     def _progress_text(self, record: FollowingRecord) -> str:
         parts = []

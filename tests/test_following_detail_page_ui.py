@@ -46,7 +46,7 @@ class FakeController:
                     {"label": "更新时间", "value": "2026-05-25"},
                     {"label": "更新状态", "value": "更新至第128集"},
                 ],
-                cast=[{"name": "韩立", "role": "主角", "avatar": ""}],
+                cast=[{"name": "韩立", "role": "主角", "avatar": "avatar"}],
                 crew=[{"name": "导演", "job": "Director"}],
                 episodes=[
                     FollowingEpisode(
@@ -237,7 +237,17 @@ def test_following_detail_page_renders_completed_progress_text(qtbot) -> None:
 
 def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot) -> None:
     class NoAvatarController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refreshed = False
+
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            cast = [
+                {"name": "王骁", "role": "Zhang Yi'ang"},
+                {"name": "田曦薇", "role": "Li Qian"},
+            ]
+            if self.refreshed:
+                cast[0]["avatar"] = "/wang.jpg"
             return FollowingDetailView(
                 record=FollowingRecord(
                     id=following_id,
@@ -248,13 +258,14 @@ def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot)
                 snapshot=FollowingDetailSnapshot(
                     following_id=following_id,
                     overview="简介",
-                    cast=[
-                        {"name": "王骁", "role": "Zhang Yi'ang"},
-                        {"name": "田曦薇", "role": "Li Qian"},
-                    ],
+                    cast=cast,
                     crew=[{"name": "刘海波", "job": "Director"}],
                 ),
             )
+
+        def refresh_metadata(self, following_id: int):
+            self.refreshed = True
+            return super().refresh_metadata(following_id)
 
     controller = NoAvatarController()
     page = FollowingDetailPage(controller)
@@ -262,4 +273,8 @@ def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot)
 
     page.load_record(1)
 
+    qtbot.waitUntil(lambda: controller.metadata_refreshes == [1], timeout=1000)
+    qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
+
     assert controller.metadata_refreshes == [1]
+    assert page.cast_widgets[0].person["avatar"] == "/wang.jpg"

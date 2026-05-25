@@ -97,6 +97,54 @@ def _crew_detail(item: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _backdrop_score(img: dict[str, object]) -> float:
+    def _num(value: object) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    vote = _num(img.get("vote_average"))
+    count = _num(img.get("vote_count"))
+    width = _num(img.get("width"))
+    height = _num(img.get("height"))
+    ratio = (width / height) if width > 0 and height > 0 else 16 / 9
+    ratio_penalty = abs(ratio - 16 / 9) * 1.4
+    return vote * 1000 + min(count, 1000) * 2 + min(width, 3840) / 20 - ratio_penalty * 100
+
+
+def _best_backdrop_urls(payload: dict[str, object], base_url: str, *, limit: int = 8) -> list[str]:
+    candidates: list[dict[str, object]] = []
+    default_path = str(payload.get("backdrop_path") or "").strip()
+    if default_path:
+        candidates.append(
+            {
+                "file_path": default_path,
+                "vote_average": 11,
+                "vote_count": float("inf"),
+                "width": 1280,
+                "height": 720,
+            }
+        )
+    images = payload.get("images") if isinstance(payload, dict) else None
+    raw_backdrops = (images or {}).get("backdrops") if isinstance(images, dict) else None
+    for img in raw_backdrops or []:
+        if isinstance(img, dict) and str(img.get("file_path") or "").strip():
+            candidates.append(img)
+    candidates.sort(key=_backdrop_score, reverse=True)
+    seen: set[str] = set()
+    urls: list[str] = []
+    for img in candidates:
+        path = str(img.get("file_path") or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        urls.append(f"{base_url}{path}")
+        if len(urls) >= limit:
+            break
+    return urls
+
+
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
     media_hints = " ".join(
         str(value or "").strip().lower()
@@ -573,6 +621,7 @@ class TMDBProvider:
             if str(item.get("title") or item.get("name") or "").strip()
         ]
         external_ids = payload.get("external_ids") or {}
+        backdrops = _best_backdrop_urls(payload, self._client.image_base("backdrop"))
         return MetadataRecord(
             provider=self.name,
             provider_id=match.provider_id,
@@ -580,6 +629,7 @@ class TMDBProvider:
             year=_extract_year(payload, media_type=media_type) or str(match.year or "").strip(),
             poster=str(payload.get("poster_url") or "").strip(),
             backdrop=str(payload.get("backdrop_url") or "").strip(),
+            backdrops=backdrops,
             overview=season_overview or str(payload.get("overview") or "").strip(),
             rating=str(payload.get("vote_average") or "").strip(),
             actors=_split_names(actors),
@@ -635,6 +685,7 @@ class TMDBProvider:
             if str(item.get("title") or item.get("name") or "").strip()
         ]
         external_ids = payload.get("external_ids") or {}
+        backdrops = _best_backdrop_urls(payload, self._client.image_base("backdrop"))
         return MetadataRecord(
             provider=self.name,
             provider_id=match.provider_id,
@@ -642,6 +693,7 @@ class TMDBProvider:
             year=_extract_year(payload, media_type="tv") or str(match.year or "").strip(),
             poster=str(payload.get("poster_url") or "").strip(),
             backdrop=str(payload.get("backdrop_url") or "").strip(),
+            backdrops=backdrops,
             overview=season_overview or str(payload.get("overview") or "").strip(),
             rating=str(payload.get("vote_average") or "").strip(),
             actors=_split_names(actors),

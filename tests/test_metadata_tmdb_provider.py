@@ -12,6 +12,9 @@ class FakeTMDBClient:
         self.tv_season_details_by_key: dict[tuple[str, int], dict] = {}
         self.calls: list[tuple[str, str, str]] = []
 
+    def image_base(self, kind: str) -> str:
+        return "https://image.tmdb.org/t/p/original"
+
     def search_movie(self, title: str, year: str = "") -> list[dict]:
         self.calls.append(("search_movie", title, year))
         return list(self.movie_search_results)
@@ -27,6 +30,13 @@ class FakeTMDBClient:
     def get_tv_detail(self, tmdb_id: str | int) -> dict:
         self.calls.append(("get_tv_detail", str(tmdb_id), ""))
         return dict(self.tv_detail)
+
+    def get_tv_detail_with_season(self, tmdb_id: str | int, *, season_number: int | None = None) -> dict:
+        self.calls.append(("get_tv_detail_with_season", str(tmdb_id), str(season_number or "")))
+        payload = dict(self.tv_detail)
+        if season_number is not None:
+            payload[f"season/{season_number}"] = dict(self.tv_season_detail)
+        return payload
 
     def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict:
         self.calls.append(("get_tv_season_detail", str(tmdb_id), str(season_number)))
@@ -276,6 +286,44 @@ def test_tmdb_provider_get_detail_uses_tv_season_overview_when_provider_id_conta
         ("get_tv_detail", "42", ""),
         ("get_tv_season_detail", "42", "5"),
     ]
+
+
+def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 272432,
+        "name": "低智商犯罪",
+        "overview": "剧集简介",
+        "first_air_date": "2026-05-04",
+        "genres": [{"name": "犯罪"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [
+            {
+                "episode_number": 1,
+                "name": "第一集",
+                "still_url": "https://image.tmdb.org/t/p/w1280/episode.jpg",
+            }
+        ],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="低智商犯罪",
+        )
+    )
+
+    assert record.detail_fields[0]["label"] == "episodes"
+    assert record.detail_fields[0]["value"][0]["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
+    assert client.calls == [("get_tv_detail_with_season", "272432", "1")]
 
 
 def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:

@@ -247,6 +247,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.current_view = None
         self.episode_widgets: list[FollowingEpisodeCard] = []
         self.cast_widgets: list[FollowingPersonCard] = []
+        self._auto_metadata_avatar_refresh_ids: set[int] = set()
 
         self.back_button = QPushButton("返回")
         self.backdrop_label = QLabel("海报背景")
@@ -290,6 +291,12 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._render(self.current_view.record, self.current_view.snapshot)
         if self._snapshot_needs_refresh(self.current_view.snapshot):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
+        elif (
+            self.current_following_id not in self._auto_metadata_avatar_refresh_ids
+            and self._snapshot_people_missing_avatars(self.current_view.snapshot)
+        ):
+            self._auto_metadata_avatar_refresh_ids.add(self.current_following_id)
+            self._refresh_metadata()
 
     def _build_layout(self) -> None:
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -608,6 +615,11 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
                 snapshot.backdrops,
             )
         )
+
+    def _snapshot_people_missing_avatars(self, snapshot: FollowingDetailSnapshot) -> bool:
+        if not snapshot.cast:
+            return False
+        return any(str(person.get("name") or "").strip() and not _person_avatar(person) for person in snapshot.cast)
 
     def _apply_style(self) -> None:
         tokens = current_tokens()

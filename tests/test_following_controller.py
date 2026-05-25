@@ -136,6 +136,34 @@ class FakeFollowingMetadataRefreshService:
         )
 
 
+class FakeTMDBIdRefreshService:
+    def __init__(self) -> None:
+        self.search_calls = 0
+        self.full_detail_provider_ids: list[str] = []
+
+    def search(self, query, provider_filter=""):
+        del query, provider_filter
+        self.search_calls += 1
+        return []
+
+    def detail_record_full(self, candidate):
+        self.full_detail_provider_ids.append(candidate.provider_id)
+        return MetadataRecord(
+            provider="tmdb",
+            provider_id=candidate.provider_id,
+            title="低智商犯罪",
+            poster="tmdb-poster",
+            backdrop="tmdb-backdrop",
+            overview="TMDB简介",
+            tmdb_id="272432",
+            actors=["王骁", "田曦薇"],
+            cast_details=[
+                {"name": "王骁", "role": "Zhang Yi'ang", "avatar": "/wang.jpg"},
+                {"name": "田曦薇", "role": "Li Qian", "avatar": "/tian.jpg"},
+            ],
+        )
+
+
 class FakeUpdateService:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
@@ -447,3 +475,38 @@ def test_following_controller_refreshes_metadata_with_tmdb_details_for_bangumi_f
     assert snapshot.episodes[0].overview == "TMDB剧情"
     assert snapshot.episodes[0].still == "tmdb-still"
     assert snapshot.cast[0]["name"] == "史泽鲲"
+
+
+def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_id(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="低智商犯罪",
+            media_kind="live_action",
+            provider="player",
+            provider_id="player:source:vod-1",
+            external_ids={"tmdb": "272432"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="原简介",
+            cast=[{"name": "王骁"}, {"name": "田曦薇"}],
+            episodes=[FollowingEpisode(episode_number=1, title="第一集", still="old-still")],
+        ),
+    )
+    service = FakeTMDBIdRefreshService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    refreshed = controller.refresh_metadata(record_id)
+
+    snapshot = repo.get_detail_snapshot(record_id)
+    assert service.search_calls == 0
+    assert service.full_detail_provider_ids == ["tv:272432:season:1"]
+    assert refreshed.snapshot.cast[0]["avatar"] == "/wang.jpg"
+    assert snapshot is not None
+    assert snapshot.cast[1]["avatar"] == "/tian.jpg"
+    assert snapshot.episodes[0].still == "old-still"

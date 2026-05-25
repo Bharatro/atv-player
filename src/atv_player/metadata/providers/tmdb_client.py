@@ -35,7 +35,7 @@ class TMDBClient:
         response.raise_for_status()
         return dict(response.json())
 
-    def _image_base(self, kind: str) -> str:
+    def image_base(self, kind: str) -> str:
         if self._image_config is None:
             self._image_config = self._request("/configuration").get("images") or {}
         sizes = list(self._image_config.get(f"{kind}_sizes") or [])
@@ -43,12 +43,35 @@ class TMDBClient:
         base = str(self._image_config.get("secure_base_url") or "https://image.tmdb.org/t/p/")
         return f"{base}{size}"
 
+    def _image_base(self, kind: str) -> str:
+        return self.image_base(kind)
+
     def _with_image_urls(self, payload: dict[str, Any]) -> dict[str, Any]:
         detail = dict(payload)
         poster_path = str(detail.get("poster_path") or "").strip()
         backdrop_path = str(detail.get("backdrop_path") or "").strip()
-        detail["poster_url"] = f"{self._image_base('poster')}{poster_path}" if poster_path else ""
-        detail["backdrop_url"] = f"{self._image_base('backdrop')}{backdrop_path}" if backdrop_path else ""
+        detail["poster_url"] = f"{self.image_base('poster')}{poster_path}" if poster_path else ""
+        detail["backdrop_url"] = f"{self.image_base('backdrop')}{backdrop_path}" if backdrop_path else ""
+        return detail
+
+    def _with_episode_still_urls(
+        self,
+        payload: dict[str, Any],
+        *,
+        season_number: int,
+    ) -> dict[str, Any]:
+        detail = dict(payload)
+        episodes: list[dict[str, Any]] = []
+        still_base = ""
+        for episode in detail.get("episodes") or []:
+            row = dict(episode)
+            still_path = str(row.get("still_path") or "").strip()
+            if still_path and not still_base:
+                still_base = self._image_base("backdrop")
+            row["still_url"] = f"{still_base}{still_path}" if still_path else ""
+            row["season_number"] = season_number
+            episodes.append(row)
+        detail["episodes"] = episodes
         return detail
 
     def search_movie(self, title: str, year: str = "") -> list[dict[str, object]]:
@@ -82,19 +105,15 @@ class TMDBClient:
             f"/tv/{tmdb_id}",
             append_to_response=",".join(parts),
         )
-        return self._with_image_urls(payload)
+        detail = self._with_image_urls(payload)
+        season_key = f"season/{season_number}" if season_number is not None and season_number > 0 else ""
+        if season_key and isinstance(detail.get(season_key), dict):
+            detail[season_key] = self._with_episode_still_urls(
+                detail[season_key],
+                season_number=season_number,
+            )
+        return detail
 
     def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, Any]:
         payload = self._request(f"/tv/{tmdb_id}/season/{season_number}")
-        episodes: list[dict[str, Any]] = []
-        still_base = ""
-        for episode in payload.get("episodes") or []:
-            row = dict(episode)
-            still_path = str(row.get("still_path") or "").strip()
-            if still_path and not still_base:
-                still_base = self._image_base("backdrop")
-            row["still_url"] = f"{still_base}{still_path}" if still_path else ""
-            row["season_number"] = season_number
-            episodes.append(row)
-        payload["episodes"] = episodes
-        return payload
+        return self._with_episode_still_urls(payload, season_number=season_number)

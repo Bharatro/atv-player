@@ -510,7 +510,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         ),
         episodes=[_episode_from_raw(item) for item in raw_episodes],
         posters=[following.poster] if following.poster else [],
-        backdrops=[following.backdrop] if following.backdrop else [],
+        backdrops=list(getattr(record, "backdrops", []) or []) or ([following.backdrop] if following.backdrop else []),
         refreshed_at=now,
     )
     return following, snapshot

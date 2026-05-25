@@ -108,3 +108,44 @@ def test_tmdb_client_get_tv_season_detail_requests_language_and_season() -> None
     assert detail["episodes"][0]["name"] == "星门初启"
     assert seen["path"] == "/3/tv/42/season/1"
     assert seen["query"]["language"] == "zh-CN"
+
+
+def test_tmdb_client_get_tv_detail_with_season_builds_episode_still_urls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/3/configuration":
+            return httpx.Response(
+                200,
+                json={
+                    "images": {
+                        "secure_base_url": "https://image.tmdb.org/t/p/",
+                        "poster_sizes": ["w185", "w500"],
+                        "backdrop_sizes": ["w300", "w1280"],
+                    }
+                },
+            )
+        if request.url.path == "/3/tv/272432":
+            return httpx.Response(
+                200,
+                json={
+                    "id": 272432,
+                    "name": "低智商犯罪",
+                    "season/1": {
+                        "episodes": [
+                            {
+                                "episode_number": 1,
+                                "name": "第一集",
+                                "still_path": "/episode.jpg",
+                            }
+                        ]
+                    },
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    client = TMDBClient(api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    detail = client.get_tv_detail_with_season("272432", season_number=1)
+
+    episode = detail["season/1"]["episodes"][0]
+    assert episode["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
+    assert episode["season_number"] == 1
