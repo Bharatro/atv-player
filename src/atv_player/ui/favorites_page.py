@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+import threading
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 from atv_player.models import FavoriteCardItem, FavoriteRecord
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_grid_page import _FlowLayout
+from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 
 
@@ -121,6 +123,7 @@ class FavoriteCardButton(QPushButton):
 
 class FavoritesPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(object)
+    poster_loaded = Signal(object, object)
     unauthorized = Signal()
 
     def __init__(self, controller) -> None:
@@ -189,6 +192,7 @@ class FavoritesPage(QWidget, AsyncGuardMixin):
         self.next_page_button.clicked.connect(self.next_page)
         self.search_edit.returnPressed.connect(self._apply_search)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
+        self._connect_async_signal(self.poster_loaded, self._handle_poster_loaded)
         self._sync_action_state()
         self._update_pagination_controls()
 
@@ -220,10 +224,35 @@ class FavoritesPage(QWidget, AsyncGuardMixin):
         for favorite in items:
             card = FavoriteCardButton(favorite, self.cards_container)
             card.clicked.connect(self._sync_action_state)
-            card.double_clicked.connect(self.open_detail_requested.emit)
+            card.clicked.connect(
+                lambda _checked=False, current=favorite.record: self.open_detail_requested.emit(current)
+            )
             self.cards_layout.addWidget(card)
             self.card_widgets.append(card)
+            self._start_card_poster_load(card)
         self._sync_action_state()
+
+    def _start_card_poster_load(self, card: FavoriteCardButton) -> None:
+        poster_source = card.item.record.vod_pic or ""
+        image_url = normalize_poster_url(poster_source)
+        if not image_url:
+            return
+        target_size = QSize(card.poster_label.width(), card.poster_label.height())
+
+        def load() -> None:
+            image = load_local_poster_image(poster_source, target_size)
+            if image is None:
+                image = load_remote_poster_image(image_url, target_size)
+            if image is not None and self._can_deliver_async_result():
+                self.poster_loaded.emit(card, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_poster_loaded(self, card: FavoriteCardButton, image) -> None:
+        if card not in self.card_widgets:
+            return
+        card.poster_label.setText("")
+        card.poster_label.setPixmap(QPixmap.fromImage(image))
 
     def _selected_records(self) -> list[FavoriteRecord]:
         return [card.item.record for card in self.card_widgets if card.isChecked()]
