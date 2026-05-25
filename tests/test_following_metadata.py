@@ -10,7 +10,8 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord
-from atv_player.metadata.models import MetadataRecord
+from atv_player.metadata.models import MetadataMatch, MetadataRecord
+from atv_player.metadata.providers.tmdb import TMDBProvider
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
 
 
@@ -60,6 +61,36 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
         raw={"channel": "动漫,4"},
     )
 
+    class TMDBClient:
+        def image_base(self, kind: str) -> str:
+            del kind
+            return "https://image.tmdb.org/t/p/original"
+
+        def get_tv_detail(self, tmdb_id: str | int) -> dict:
+            assert str(tmdb_id) == "315088"
+            return {
+                "id": 315088,
+                "name": "盗妖行",
+                "first_air_date": "2026-01-01",
+                "vote_average": 7.66,
+                "poster_url": "tmdb-poster",
+                "backdrop_url": "tmdb-backdrop",
+                "genres": [{"name": "动画"}],
+                "aggregate_credits": {},
+                "alternative_titles": {"results": []},
+                "external_ids": {},
+            }
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict:
+            assert str(tmdb_id) == "315088"
+            assert season_number == 1
+            return {
+                "season_number": 1,
+                "episodes": [{"episode_number": 1, "name": "第一集", "still_url": "still"}],
+            }
+
+    tmdb_provider = TMDBProvider(TMDBClient())
+
     class SearchService:
         def __init__(self) -> None:
             self.detail_provider_ids: list[tuple[str, str]] = []
@@ -98,20 +129,13 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
                     title="盗妖行",
                     overview="爱奇艺简介",
                 )
-            return MetadataRecord(
-                provider="tmdb",
-                provider_id="tv:315088:season:1",
-                title="盗妖行",
-                poster="tmdb-poster",
-                backdrop="tmdb-backdrop",
-                rating="7.5",
-                tmdb_id="315088",
-                detail_fields=[
-                    {
-                        "label": "episodes",
-                        "value": [{"episode_number": 1, "name": "第一集", "still_url": "still"}],
-                    }
-                ],
+            return tmdb_provider.get_detail(
+                MetadataMatch(
+                    provider="tmdb",
+                    provider_id="tv:315088:season:1",
+                    title="盗妖行",
+                    year="2026",
+                )
             )
 
     service = SearchService()
@@ -132,7 +156,7 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
     assert record.media_kind == "anime"
     assert record.poster == "tmdb-poster"
     assert record.backdrop == "tmdb-backdrop"
-    assert record.rating == "7.5"
+    assert record.rating == "7.7"
     assert record.latest_episode == 1
     assert record.total_episodes == 1
     assert snapshot.overview == "爱奇艺简介"
