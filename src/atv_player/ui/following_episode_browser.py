@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
 )
 
-from atv_player.following_models import FollowingEpisode
+from atv_player.following_models import FollowingEpisode, FollowingSeason
 from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
@@ -46,32 +46,58 @@ class EpisodeSeasonGroup:
     season_number: int
     display_title: str
     episodes: list[FollowingEpisode]
-
-    @property
-    def episode_count(self) -> int:
-        return len(self.episodes)
+    episode_count: int = 0
 
 
 def build_episode_season_groups(
     episodes: list[FollowingEpisode],
     *,
+    seasons: list[FollowingSeason] | None = None,
     fallback_season: int,
 ) -> list[EpisodeSeasonGroup]:
-    groups: dict[int, list[FollowingEpisode]] = {}
+    grouped_episodes: dict[int, list[FollowingEpisode]] = {}
     default_season = fallback_season if fallback_season > 0 else 1
     for episode in episodes:
         season_number = episode.season_number if episode.season_number > 0 else default_season
-        groups.setdefault(season_number, []).append(episode)
-    if not groups:
-        groups[default_season] = []
-    return [
-        EpisodeSeasonGroup(
-            season_number=season_number,
-            display_title=f"第 {season_number} 季",
-            episodes=sorted(items, key=lambda item: item.episode_number),
+        grouped_episodes.setdefault(season_number, []).append(episode)
+
+    groups: list[EpisodeSeasonGroup] = []
+    seen: set[int] = set()
+    for season in sorted(seasons or [], key=lambda item: item.season_number):
+        season_number = season.season_number if season.season_number > 0 else 0
+        loaded_episodes = sorted(grouped_episodes.get(season_number, []), key=lambda item: item.episode_number)
+        groups.append(
+            EpisodeSeasonGroup(
+                season_number=season_number,
+                display_title=season.title.strip() or (f"第 {season_number} 季" if season_number > 0 else "特别篇"),
+                episodes=loaded_episodes,
+                episode_count=max(season.episode_count, len(loaded_episodes)),
+            )
         )
-        for season_number, items in sorted(groups.items())
-    ]
+        seen.add(season_number)
+
+    for season_number, items in sorted(grouped_episodes.items()):
+        if season_number in seen:
+            continue
+        groups.append(
+            EpisodeSeasonGroup(
+                season_number=season_number,
+                display_title=f"第 {season_number} 季" if season_number > 0 else "特别篇",
+                episodes=sorted(items, key=lambda item: item.episode_number),
+                episode_count=len(items),
+            )
+        )
+
+    if not groups:
+        groups.append(
+            EpisodeSeasonGroup(
+                season_number=default_season,
+                display_title=f"第 {default_season} 季",
+                episodes=[],
+                episode_count=0,
+            )
+        )
+    return groups
 
 
 def format_episode_title(episode: FollowingEpisode) -> str:
@@ -319,6 +345,7 @@ class EpisodeItemDelegate(QStyledItemDelegate):
 class FollowingEpisodeBrowser(QWidget):
     episode_activated = Signal(object)
     display_mode_changed = Signal(str)
+    season_changed = Signal(int)
 
     _TAB_TO_MODE = {
         0: EpisodeDisplayMode.COMPACT,
@@ -409,13 +436,14 @@ class FollowingEpisodeBrowser(QWidget):
         *,
         groups: list[EpisodeSeasonGroup],
         current_episode: int,
+        selected_season_number: int = 0,
     ) -> None:
         self._groups = list(groups)
         self._current_episode = max(0, int(current_episode))
         self._season_state = {}
         self.season_model.set_groups(self._groups)
         if self._groups:
-            initial_row = self._initial_season_row()
+            initial_row = self._initial_season_row(selected_season_number)
             self._set_current_season_row(initial_row)
         else:
             self.episode_model.set_episodes([], current_episode=self._current_episode)
@@ -447,6 +475,7 @@ class FollowingEpisodeBrowser(QWidget):
         group = self.season_model.group_at(current.row())
         if group is not None:
             self._apply_group(group, restore_state=True)
+            self.season_changed.emit(group.season_number)
 
     def _handle_episode_activated(self, index: QModelIndex) -> None:
         if not index.isValid():
@@ -489,7 +518,11 @@ class FollowingEpisodeBrowser(QWidget):
             QListView.ScrollHint.PositionAtCenter,
         )
 
-    def _initial_season_row(self) -> int:
+    def _initial_season_row(self, selected_season_number: int) -> int:
+        if selected_season_number > 0:
+            for row, group in enumerate(self._groups):
+                if group.season_number == selected_season_number:
+                    return row
         if self._current_episode <= 0:
             return 0
         for row, group in enumerate(self._groups):

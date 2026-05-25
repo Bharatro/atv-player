@@ -212,6 +212,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     image_loaded = Signal(object, object)
     check_finished = Signal(int, object, str)
     metadata_refresh_finished = Signal(int, object, str)
+    season_detail_finished = Signal(int, int, object, str)
 
     def __init__(
         self,
@@ -227,6 +228,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._save_config = save_config
         self.current_following_id = 0
         self.current_view = None
+        self._selected_season_number = 0
         self._pending_people: list[dict[str, object]] = []
         self._batch_timer = QTimer(self)
         self._batch_timer.setInterval(1)
@@ -267,7 +269,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self.image_loaded, self._handle_image_loaded)
         self._connect_async_signal(self.check_finished, self._handle_check_finished)
         self._connect_async_signal(self.metadata_refresh_finished, self._handle_metadata_refresh_finished)
+        self._connect_async_signal(self.season_detail_finished, self._handle_season_detail_finished)
         self.episode_browser.episode_activated.connect(self._open_episode_preview)
+        self.episode_browser.season_changed.connect(self._handle_season_changed)
         self.episode_browser.display_mode_changed.connect(
             self._handle_episode_display_mode_changed
         )
@@ -278,6 +282,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._pending_people = []
         self.current_following_id = int(following_id)
         self.current_view = self.controller.load_detail(self.current_following_id, refresh_if_empty=False)
+        self._selected_season_number = self._initial_selected_season(
+            self.current_view.record,
+            self.current_view.snapshot,
+        )
         self._render(self.current_view.record, self.current_view.snapshot)
         if self._snapshot_needs_refresh(self.current_view.snapshot):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
@@ -353,6 +361,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
         self.episodes_section = QFrame(content)
         self.episodes_section.setObjectName("followingDetailEpisodesSection")
+        self.episodes_section.setMinimumHeight(400)
         episodes_section_layout = QVBoxLayout(self.episodes_section)
         episodes_section_layout.setContentsMargins(14, 14, 14, 14)
         episodes_section_layout.setSpacing(10)
@@ -403,11 +412,13 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._render_poster_carousel(record, snapshot)
         groups = build_episode_season_groups(
             snapshot.episodes,
+            seasons=snapshot.seasons,
             fallback_season=record.season_number,
         )
         self.episode_browser.set_content(
             groups=groups,
             current_episode=record.current_episode,
+            selected_season_number=self._selected_season_number,
         )
         self.cast_widgets = []
         _clear_layout(self._cast_layout)
@@ -474,6 +485,30 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         if callable(self._save_config):
             self._save_config()
 
+    def _handle_season_changed(self, season_number: int) -> None:
+        normalized = int(season_number)
+        if normalized == self._selected_season_number or self.current_following_id <= 0:
+            return
+        self._selected_season_number = normalized
+        if self._current_snapshot_matches_selected_season():
+            return
+        load_detail_season = getattr(self.controller, "load_detail_season", None)
+        if not callable(load_detail_season):
+            return
+        self.status_label.setText(f"正在加载第 {normalized} 季分集...")
+
+        def load() -> None:
+            try:
+                view = load_detail_season(self.current_following_id, season_number=normalized)
+                error = ""
+            except Exception as exc:
+                view = None
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.season_detail_finished.emit(self.current_following_id, normalized, view, error)
+
+        threading.Thread(target=load, daemon=True).start()
+
     def _manual_check(self) -> None:
         if self.current_following_id <= 0:
             return
@@ -539,8 +574,22 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.status_label.setText(f"元数据更新失败: {error}")
             return
         self.current_view = view or self.controller.load_detail(following_id, refresh_if_empty=False)
+        self._selected_season_number = self._initial_selected_season(
+            self.current_view.record,
+            self.current_view.snapshot,
+        )
         self._render(self.current_view.record, self.current_view.snapshot)
         self.status_label.setText("元数据已更新")
+
+    def _handle_season_detail_finished(self, following_id: int, season_number: int, view, error: str) -> None:
+        if following_id != self.current_following_id or season_number != self._selected_season_number:
+            return
+        if error:
+            self.status_label.setText(f"分季加载失败: {error}")
+            return
+        self.current_view = view or self.controller.load_detail(following_id, refresh_if_empty=False)
+        self._render(self.current_view.record, self.current_view.snapshot)
+        self.status_label.setText("")
 
     def _open_progress_dialog(self) -> None:
         if self.current_following_id <= 0 or self.current_view is None:
@@ -593,16 +642,50 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
                 snapshot.overview,
                 snapshot.cast,
                 snapshot.crew,
+                snapshot.seasons,
                 snapshot.episodes,
                 snapshot.posters,
                 snapshot.backdrops,
             )
         )
 
-    def _snapshot_people_missing_avatars(self, snapshot: FollowingDetailSnapshot) -> bool:
-        if not snapshot.cast:
+    def _initial_selected_season(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> int:
+        season_numbers = {
+            episode.season_number
+            for episode in snapshot.episodes
+            if episode.season_number > 0
+        }
+        if len(season_numbers) == 1:
+            return next(iter(season_numbers))
+        if record.season_number > 0:
+            return record.season_number
+        if snapshot.seasons:
+            return snapshot.seasons[0].season_number
+        return 0
+
+    def _current_snapshot_matches_selected_season(self) -> bool:
+        if self._selected_season_number <= 0 or self.current_view is None:
             return False
-        return any(str(person.get("name") or "").strip() and not _person_avatar(person) for person in snapshot.cast)
+        snapshot = self.current_view.snapshot
+        if not snapshot.episodes:
+            return False
+        return any(
+            (episode.season_number or self._selected_season_number) == self._selected_season_number
+            for episode in snapshot.episodes
+        )
+
+    def _snapshot_people_missing_avatars(self, snapshot: FollowingDetailSnapshot) -> bool:
+        people = [*list(snapshot.cast or []), *list(snapshot.crew or [])]
+        if not people:
+            return False
+        return any(
+            str(person.get("name") or "").strip() and not _person_avatar(person)
+            for person in people
+        )
 
     def _apply_style(self) -> None:
         tokens = current_tokens()

@@ -30,12 +30,24 @@ class FollowingEpisode:
 
 
 @dataclass(slots=True)
+class FollowingSeason:
+    season_number: int
+    title: str = ""
+    overview: str = ""
+    air_date: str = ""
+    poster: str = ""
+    episode_count: int = 0
+    is_special: bool = False
+
+
+@dataclass(slots=True)
 class FollowingDetailSnapshot:
     following_id: int = 0
     overview: str = ""
     metadata_fields: list[dict[str, str]] = field(default_factory=list)
     cast: list[dict[str, object]] = field(default_factory=list)
     crew: list[dict[str, object]] = field(default_factory=list)
+    seasons: list[FollowingSeason] = field(default_factory=list)
     episodes: list[FollowingEpisode] = field(default_factory=list)
     posters: list[str] = field(default_factory=list)
     backdrops: list[str] = field(default_factory=list)

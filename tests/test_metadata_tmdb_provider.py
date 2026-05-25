@@ -296,6 +296,10 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
         "overview": "剧集简介",
         "first_air_date": "2026-05-04",
         "genres": [{"name": "犯罪"}],
+        "seasons": [
+            {"season_number": 1, "name": "第一季", "episode_count": 24, "poster_path": "/season1.jpg"},
+            {"season_number": 2, "name": "第二季", "episode_count": 20, "poster_path": "/season2.jpg"},
+        ],
         "credits": {},
         "alternative_titles": {"results": []},
         "external_ids": {},
@@ -323,6 +327,8 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
 
     assert record.detail_fields[0]["label"] == "episodes"
     assert record.detail_fields[0]["value"][0]["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
+    assert record.detail_fields[1]["label"] == "seasons"
+    assert record.detail_fields[1]["value"][1]["poster_url"].endswith("/season2.jpg")
     assert client.calls == [("get_tv_detail_with_season", "272432", "1")]
 
 

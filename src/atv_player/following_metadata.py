@@ -12,6 +12,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
     provider_priority_for_media_kind,
 )
 from atv_player.metadata.models import MetadataQuery
@@ -133,6 +134,31 @@ def _episode_from_raw(raw: dict[str, object]) -> FollowingEpisode:
     )
 
 
+def _season_title(season_number: int, title: str) -> str:
+    normalized = title.strip()
+    if normalized:
+        return normalized
+    if season_number <= 0:
+        return "特别篇"
+    return f"第 {season_number} 季"
+
+
+def _season_from_raw(raw: dict[str, object]) -> FollowingSeason:
+    season_number = _to_int(raw.get("season_number"))
+    return FollowingSeason(
+        season_number=season_number,
+        title=_season_title(
+            season_number,
+            str(raw.get("name") or raw.get("title") or "").strip(),
+        ),
+        overview=str(raw.get("overview") or raw.get("summary") or "").strip(),
+        air_date=str(raw.get("air_date") or raw.get("date") or "").strip(),
+        poster=str(raw.get("poster_url") or raw.get("poster") or raw.get("poster_path") or "").strip(),
+        episode_count=_to_int(raw.get("episode_count")),
+        is_special=season_number <= 0,
+    )
+
+
 def _air_date(raw_value: object):
     text = str(raw_value or "").strip()
     if not text:
@@ -184,6 +210,18 @@ def _episode_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> l
     return []
 
 
+def _season_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> list[dict[str, object]]:
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != "seasons":
+            continue
+        value = field.get("value")
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
 def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object]]) -> int:
     for field in detail_fields:
         if not isinstance(field, dict):
@@ -202,6 +240,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     provider = str(getattr(candidate, "provider", "") or "").strip()
     provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
     external_key, external_value = _provider_external_id(provider, provider_id)
+    raw_seasons = [item for item in raw.get("seasons") or [] if isinstance(item, dict)]
     raw_episodes = [item for item in raw.get("episodes") or [] if isinstance(item, dict)]
     latest, total = compute_episode_counts(raw_episodes, now=now)
     media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""))
@@ -221,6 +260,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
         next_check_after=now,
     )
     snapshot = FollowingDetailSnapshot(
+        seasons=[_season_from_raw(item) for item in raw_seasons],
         episodes=[_episode_from_raw(item) for item in raw_episodes],
         refreshed_at=now,
     )
@@ -517,6 +557,7 @@ def merge_following_snapshot(
                 metadata_fields=snapshot.metadata_fields or detail.metadata_fields,
                 cast=snapshot.cast or detail.cast,
                 crew=snapshot.crew or detail.crew,
+                seasons=snapshot.seasons or detail.seasons,
                 episodes=detail.episodes or snapshot.episodes,
                 posters=snapshot.posters or detail.posters,
                 backdrops=snapshot.backdrops or detail.backdrops,
@@ -528,6 +569,7 @@ def merge_following_snapshot(
             metadata_fields=snapshot.metadata_fields or detail.metadata_fields,
             cast=snapshot.cast or detail.cast,
             crew=snapshot.crew or detail.crew,
+            seasons=snapshot.seasons or detail.seasons,
             episodes=detail.episodes if prefer_episodes and detail.episodes else snapshot.episodes or detail.episodes,
             posters=snapshot.posters or detail.posters,
             backdrops=snapshot.backdrops or detail.backdrops,
@@ -539,6 +581,7 @@ def merge_following_snapshot(
         metadata_fields=detail.metadata_fields or snapshot.metadata_fields,
         cast=detail.cast or snapshot.cast,
         crew=detail.crew or snapshot.crew,
+        seasons=detail.seasons or snapshot.seasons,
         episodes=detail.episodes or snapshot.episodes,
         posters=detail.posters or snapshot.posters,
         backdrops=detail.backdrops or snapshot.backdrops,
@@ -560,9 +603,11 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     if douban_id:
         external_ids["douban"] = str(douban_id)
 
-    raw_episodes = _episode_raw_from_detail_fields(list(getattr(record, "detail_fields", []) or []))
+    detail_fields = list(getattr(record, "detail_fields", []) or [])
+    raw_episodes = _episode_raw_from_detail_fields(detail_fields)
+    raw_seasons = _season_raw_from_detail_fields(detail_fields)
     latest, total = compute_episode_counts(raw_episodes, now=now)
-    last_ep_to_air = _last_episode_to_air_from_detail_fields(list(getattr(record, "detail_fields", []) or []))
+    last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
     if last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:
@@ -599,6 +644,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
             list(getattr(record, "directors", []) or []),
             fallback_job="Director",
         ),
+        seasons=[_season_from_raw(item) for item in raw_seasons],
         episodes=[_episode_from_raw(item) for item in raw_episodes],
         posters=[following.poster] if following.poster else [],
         backdrops=list(getattr(record, "backdrops", []) or []) or ([following.backdrop] if following.backdrop else []),
@@ -634,7 +680,7 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         label = str(item.get("label") or "").strip()
-        if label in ("episodes", "last_episode_to_air"):
+        if label in ("episodes", "last_episode_to_air", "seasons"):
             continue
         value = item.get("value")
         if isinstance(value, list):

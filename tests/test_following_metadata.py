@@ -247,6 +247,30 @@ def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_sti
     assert snapshot.episodes[0].still == "still"
 
 
+def test_build_snapshot_from_tmdb_record_includes_season_summaries() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:456:season:1",
+        title="庆余年",
+        tmdb_id="456",
+        detail_fields=[
+            {
+                "label": "seasons",
+                "value": [
+                    {"season_number": 1, "name": "第一季", "episode_count": 46, "poster_url": "poster-1"},
+                    {"season_number": 2, "name": "第二季", "episode_count": 36, "poster_url": "poster-2"},
+                ],
+            }
+        ],
+    )
+
+    _following, snapshot = build_snapshot_from_record(record, now=200, media_kind="live_action")
+
+    assert [season.season_number for season in snapshot.seasons] == [1, 2]
+    assert snapshot.seasons[1].episode_count == 36
+    assert snapshot.seasons[1].poster == "poster-2"
+
+
 def test_build_snapshot_from_record_uses_record_backdrops_list_when_available() -> None:
     record = MetadataRecord(
         provider="tmdb",

@@ -9,10 +9,12 @@ from dataclasses import dataclass, replace
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
+    build_snapshot_from_record,
     build_following_from_metadata_candidate,
     compute_episode_counts,
     following_candidate_from_url,
     load_candidate_detail_record,
+    load_candidate_detail_record_full,
     merge_following_snapshot,
 )
 from atv_player.following_models import (
@@ -184,6 +186,37 @@ class FollowingController:
             record = self._repository.get(following_id) or record
             snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
         return FollowingDetailView(record=record, snapshot=snapshot)
+
+    def load_detail_season(self, following_id: int, *, season_number: int) -> FollowingDetailView:
+        record = self._repository.get(following_id)
+        if record is None:
+            raise KeyError(f"following not found: {following_id}")
+        snapshot = self._repository.get_detail_snapshot(following_id) or FollowingDetailSnapshot(
+            following_id=following_id
+        )
+        candidate = self._tmdb_detail_candidate_for_season(record, season_number=season_number)
+        if candidate is None:
+            return FollowingDetailView(record=record, snapshot=snapshot)
+        detail_record, detail_error = load_candidate_detail_record_full(
+            self._metadata_search_service,
+            candidate,
+        )
+        if detail_record is None:
+            raise RuntimeError(detail_error or "没有找到该季元数据")
+        _detail_following, detail_snapshot = build_snapshot_from_record(
+            detail_record,
+            now=self._now(),
+            media_kind=record.media_kind,
+        )
+        merged_snapshot = merge_following_snapshot(
+            snapshot,
+            detail_snapshot,
+            fill_missing=True,
+            prefer_episodes=True,
+        )
+        merged_snapshot.following_id = following_id
+        self._repository.save_detail_snapshot(following_id, merged_snapshot)
+        return FollowingDetailView(record=record, snapshot=merged_snapshot)
 
     def add_from_player(
         self,
@@ -392,14 +425,8 @@ class FollowingController:
         return candidates[0]
 
     def _tmdb_refresh_candidate_from_record(self, record: FollowingRecord):
-        provider_id = ""
-        if record.provider == "tmdb":
-            provider_id = record.provider_id
-        if not provider_id:
-            provider_id = str(record.external_ids.get("tmdb") or "").strip()
-        normalized, season_number = self._normalize_tmdb_refresh_provider_id(
-            provider_id,
-            media_kind=record.media_kind,
+        normalized, season_number = self._normalized_tmdb_provider_id_and_season(
+            record,
             season_number=record.season_number,
         )
         if not normalized:
@@ -413,6 +440,45 @@ class FollowingController:
             subtitle="电影" if normalized.startswith("movie:") else "剧集",
             raw=raw,
         )
+
+    def _tmdb_detail_candidate_for_season(
+        self,
+        record: FollowingRecord,
+        *,
+        season_number: int,
+    ) -> MetadataScrapeCandidate | None:
+        normalized, normalized_season = self._normalized_tmdb_provider_id_and_season(
+            record,
+            season_number=season_number,
+        )
+        if not normalized or not normalized.startswith("tv:") or normalized_season <= 0:
+            return None
+        return MetadataScrapeCandidate(
+            provider="tmdb",
+            provider_label="TMDB",
+            provider_id=normalized,
+            title=record.title,
+            subtitle="剧集",
+            raw={"season_number": normalized_season},
+        )
+
+    def _normalized_tmdb_provider_id_and_season(
+        self,
+        record: FollowingRecord,
+        *,
+        season_number: int,
+    ) -> tuple[str, int]:
+        provider_id = ""
+        if record.provider == "tmdb":
+            provider_id = record.provider_id
+        if not provider_id:
+            provider_id = str(record.external_ids.get("tmdb") or "").strip()
+        normalized, season_number = self._normalize_tmdb_refresh_provider_id(
+            provider_id,
+            media_kind=record.media_kind,
+            season_number=season_number,
+        )
+        return normalized, season_number
 
     def _normalize_tmdb_refresh_provider_id(
         self,
@@ -450,22 +516,48 @@ class FollowingController:
         merged = merge_following_snapshot(existing, refreshed)
         if not merged.episodes:
             return merged
-        old_stills = {
-            (episode.season_number, episode.episode_number): episode.still
+        existing_by_key = {
+            (episode.season_number, episode.episode_number): episode
             for episode in existing.episodes
-            if episode.still
         }
-        if not old_stills:
-            return merged
-        episodes = [
-            replace(
-                episode,
-                still=episode.still
-                or old_stills.get((episode.season_number, episode.episode_number), "")
-                or old_stills.get((0, episode.episode_number), ""),
+        ordered_keys: list[tuple[int, int]] = []
+        refreshed_by_key: dict[tuple[int, int], FollowingEpisode] = {}
+        for episode in merged.episodes:
+            key = (episode.season_number, episode.episode_number)
+            ordered_keys.append(key)
+            refreshed_by_key[key] = episode
+        for episode in existing.episodes:
+            key = (episode.season_number, episode.episode_number)
+            fallback_key = (0, episode.episode_number)
+            if key in refreshed_by_key or fallback_key in refreshed_by_key:
+                continue
+            ordered_keys.append(key)
+
+        episodes: list[FollowingEpisode] = []
+        for key in ordered_keys:
+            episode = refreshed_by_key.get(key)
+            if episode is None and key[0] != 0:
+                episode = refreshed_by_key.get((0, key[1]))
+            existing_episode = existing_by_key.get(key) or existing_by_key.get((0, key[1]))
+            if episode is None:
+                if existing_episode is not None:
+                    episodes.append(existing_episode)
+                continue
+            if existing_episode is None:
+                episodes.append(episode)
+                continue
+            episodes.append(
+                replace(
+                    episode,
+                    season_number=episode.season_number or existing_episode.season_number,
+                    title=episode.title or existing_episode.title,
+                    overview=episode.overview or existing_episode.overview,
+                    air_date=episode.air_date or existing_episode.air_date,
+                    still=episode.still or existing_episode.still,
+                    runtime=episode.runtime or existing_episode.runtime,
+                    is_special=episode.is_special or existing_episode.is_special,
+                )
             )
-            for episode in merged.episodes
-        ]
         return replace(merged, episodes=episodes)
 
     def _progress_text(self, record: FollowingRecord) -> str:

@@ -9,6 +9,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
     FollowingSourceBinding,
 )
 from atv_player.sqlite_utils import managed_connection
@@ -76,6 +77,31 @@ def _episode_from_dict(value: object) -> FollowingEpisode:
     )
 
 
+def _season_to_dict(season: FollowingSeason) -> dict[str, object]:
+    return {
+        "season_number": season.season_number,
+        "title": season.title,
+        "overview": season.overview,
+        "air_date": season.air_date,
+        "poster": season.poster,
+        "episode_count": season.episode_count,
+        "is_special": season.is_special,
+    }
+
+
+def _season_from_dict(value: object) -> FollowingSeason:
+    data = value if isinstance(value, dict) else {}
+    return FollowingSeason(
+        season_number=int(data.get("season_number") or 0),
+        title=str(data.get("title") or ""),
+        overview=str(data.get("overview") or ""),
+        air_date=str(data.get("air_date") or ""),
+        poster=str(data.get("poster") or ""),
+        episode_count=int(data.get("episode_count") or 0),
+        is_special=bool(data.get("is_special", False)),
+    )
+
+
 class FollowingRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -131,6 +157,7 @@ class FollowingRepository:
                     metadata_fields_json TEXT NOT NULL DEFAULT '[]',
                     cast_json TEXT NOT NULL DEFAULT '[]',
                     crew_json TEXT NOT NULL DEFAULT '[]',
+                    seasons_json TEXT NOT NULL DEFAULT '[]',
                     episodes_json TEXT NOT NULL DEFAULT '[]',
                     posters_json TEXT NOT NULL DEFAULT '[]',
                     backdrops_json TEXT NOT NULL DEFAULT '[]',
@@ -140,6 +167,10 @@ class FollowingRepository:
             )
             try:
                 conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN metadata_fields_json TEXT NOT NULL DEFAULT '[]'")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN seasons_json TEXT NOT NULL DEFAULT '[]'")
             except Exception:
                 pass
 
@@ -241,15 +272,16 @@ class FollowingRepository:
             conn.execute(
                 """
                 INSERT INTO following_detail_snapshots (
-                    following_id, overview, metadata_fields_json, cast_json, crew_json, episodes_json,
+                    following_id, overview, metadata_fields_json, cast_json, crew_json, seasons_json, episodes_json,
                     posters_json, backdrops_json, refreshed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(following_id) DO UPDATE SET
                     overview = excluded.overview,
                     metadata_fields_json = excluded.metadata_fields_json,
                     cast_json = excluded.cast_json,
                     crew_json = excluded.crew_json,
+                    seasons_json = excluded.seasons_json,
                     episodes_json = excluded.episodes_json,
                     posters_json = excluded.posters_json,
                     backdrops_json = excluded.backdrops_json,
@@ -261,6 +293,7 @@ class FollowingRepository:
                     _json_dumps(snapshot.metadata_fields),
                     _json_dumps(snapshot.cast),
                     _json_dumps(snapshot.crew),
+                    _json_dumps([_season_to_dict(season) for season in snapshot.seasons]),
                     _json_dumps([_episode_to_dict(episode) for episode in snapshot.episodes]),
                     _json_dumps(snapshot.posters),
                     _json_dumps(snapshot.backdrops),
@@ -272,7 +305,7 @@ class FollowingRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT following_id, overview, metadata_fields_json, cast_json, crew_json, episodes_json,
+                SELECT following_id, overview, metadata_fields_json, cast_json, crew_json, seasons_json, episodes_json,
                        posters_json, backdrops_json, refreshed_at
                 FROM following_detail_snapshots
                 WHERE following_id = ?
@@ -291,10 +324,11 @@ class FollowingRepository:
             ],
             cast=list(_json_loads(row[3], [])),
             crew=list(_json_loads(row[4], [])),
-            episodes=[_episode_from_dict(item) for item in _json_loads(row[5], [])],
-            posters=[str(item) for item in _json_loads(row[6], [])],
-            backdrops=[str(item) for item in _json_loads(row[7], [])],
-            refreshed_at=int(row[8]),
+            seasons=[_season_from_dict(item) for item in _json_loads(row[5], [])],
+            episodes=[_episode_from_dict(item) for item in _json_loads(row[6], [])],
+            posters=[str(item) for item in _json_loads(row[7], [])],
+            backdrops=[str(item) for item in _json_loads(row[8], [])],
+            refreshed_at=int(row[9]),
         )
 
     def update_progress(

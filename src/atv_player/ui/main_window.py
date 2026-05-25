@@ -1316,6 +1316,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
+        self.config = config
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
@@ -1483,7 +1484,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_detail_button: QPushButton | None = None
         self._following_prompt_search_button: QPushButton | None = None
         self._following_prompt_snooze_button: QPushButton | None = None
-        self.config = config
         self._open_request_id = 0
         self._media_request_id = 0
         self._restore_request_id = 0
@@ -4021,11 +4021,54 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return None
         return source_kind, source_key, f"{source_kind}:{source_key}:{identity}"
 
-    def _player_following_record(self, item: PlayItem):
+    def _player_following_external_ids(self, item: PlayItem) -> dict[str, str]:
+        if self.player_window is None or self.player_window.session is None:
+            return {}
+        vod = self.player_window.session.vod
+        external_ids = {"douban": str(vod.dbid)} if int(vod.dbid or 0) else {}
+        for field in [*list(vod.detail_fields or []), *list(item.detail_fields or [])]:
+            label = str(getattr(field, "label", "") or "").strip().lower()
+            value = str(getattr(field, "value", "") or "").strip()
+            if not value:
+                continue
+            if "tmdb" in label:
+                external_ids["tmdb"] = value
+            elif "bangumi" in label:
+                external_ids["bangumi"] = value
+            elif "豆瓣" in label or "douban" in label:
+                external_ids["douban"] = value
+        return external_ids
+
+    def _player_following_matches_record(self, item: PlayItem, record) -> bool:
         identity = self._player_following_identity(item)
-        if identity is None or not hasattr(self._following_controller, "load_page"):
+        if identity is None:
+            return False
+        source_kind, source_key, provider_id = identity
+        if getattr(record, "provider", "") == "player" and getattr(record, "provider_id", "") == provider_id:
+            return True
+        target_vod_id = provider_id.split(":", 2)[-1]
+        for binding in list(getattr(record, "source_bindings", []) or []):
+            if (
+                getattr(binding, "source_kind", "") == source_kind
+                and getattr(binding, "source_key", "") == source_key
+                and getattr(binding, "vod_id", "") == target_vod_id
+            ):
+                return True
+        current_external_ids = self._player_following_external_ids(item)
+        record_external_ids = {
+            str(key): str(value)
+            for key, value in dict(getattr(record, "external_ids", {}) or {}).items()
+            if str(value or "").strip()
+        }
+        return any(
+            record_external_ids.get(key) == value
+            for key, value in current_external_ids.items()
+            if value
+        )
+
+    def _player_following_record(self, item: PlayItem):
+        if self._player_following_identity(item) is None or not hasattr(self._following_controller, "load_page"):
             return None
-        _source_kind, _source_key, provider_id = identity
         records, _total = self._following_controller.load_page(
             page=1,
             size=1000,
@@ -4034,7 +4077,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         for entry in records:
             record = getattr(entry, "record", entry)
-            if getattr(record, "provider", "") == "player" and getattr(record, "provider_id", "") == provider_id:
+            if self._player_following_matches_record(item, record):
                 return record
         return None
 

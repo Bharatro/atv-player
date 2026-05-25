@@ -160,6 +160,19 @@ def _best_backdrop_urls(payload: dict[str, object], base_url: str, *, limit: int
     return urls
 
 
+def _season_rows(payload: dict[str, object]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for season in payload.get("seasons") or []:
+        if not isinstance(season, dict):
+            continue
+        normalized = dict(season)
+        poster_url = _poster_url_from_payload(normalized)
+        if poster_url:
+            normalized["poster_url"] = poster_url
+        rows.append(normalized)
+    return rows
+
+
 def infer_tmdb_media_type(query: MetadataQuery) -> str:
     media_hints = " ".join(
         str(value or "").strip().lower()
@@ -606,6 +619,7 @@ class TMDBProvider:
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
         if media_type == "tv":
+            detail_fields.append({"label": "seasons", "value": _season_rows(payload)})
             last_ep = payload.get("last_episode_to_air")
             if isinstance(last_ep, dict):
                 detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
@@ -682,6 +696,7 @@ class TMDBProvider:
             season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
+        detail_fields.append({"label": "seasons", "value": _season_rows(payload)})
         last_ep = payload.get("last_episode_to_air")
         if isinstance(last_ep, dict):
             detail_fields.append({"label": "last_episode_to_air", "value": last_ep})

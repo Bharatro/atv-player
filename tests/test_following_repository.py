@@ -5,6 +5,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
 )
 from atv_player.following_repository import FollowingRepository
 
@@ -69,6 +70,7 @@ def test_following_repository_saves_snapshot_progress_and_prompt_state(tmp_path:
             overview="动画简介",
             cast=[{"name": "韩立", "role": "角色"}],
             crew=[{"name": "导演", "job": "Director"}],
+            seasons=[FollowingSeason(season_number=1, title="第一季", episode_count=156)],
             episodes=[FollowingEpisode(episode_number=128, title="新章", overview="剧情", still="still")],
             posters=["poster"],
             backdrops=["backdrop"],
@@ -98,6 +100,7 @@ def test_following_repository_saves_snapshot_progress_and_prompt_state(tmp_path:
     assert record.has_update is True
     assert record.homepage_prompt_pending is True
     assert snapshot is not None
+    assert snapshot.seasons[0].title == "第一季"
     assert snapshot.episodes[0].title == "新章"
     assert [item.id for item in prompts] == [following_id]
 

@@ -6,6 +6,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
 )
 from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
@@ -21,6 +22,7 @@ class FakeController:
         self.manual_checks: list[int] = []
         self.metadata_refreshes: list[int] = []
         self.progress_updates: list[tuple[int, int]] = []
+        self.loaded_seasons: list[int] = []
 
     def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
         del refresh_if_empty
@@ -56,7 +58,8 @@ class FakeController:
                     {"label": "更新状态", "value": "更新至第128集"},
                 ],
                 cast=[{"name": "韩立", "role": "主角", "avatar": "avatar"}],
-                crew=[{"name": "导演", "job": "Director"}],
+                crew=[{"name": "导演", "job": "Director", "avatar": "/director.jpg"}],
+                seasons=[FollowingSeason(season_number=1, title="第一季", episode_count=156)],
                 episodes=[
                     FollowingEpisode(
                         episode_number=128,
@@ -75,6 +78,19 @@ class FakeController:
     def refresh_metadata(self, following_id: int):
         self.metadata_refreshes.append(following_id)
         return self.load_detail(following_id, refresh_if_empty=False)
+
+    def load_detail_season(self, following_id: int, *, season_number: int):
+        self.loaded_seasons.append(season_number)
+        view = self.load_detail(following_id, refresh_if_empty=False)
+        view.snapshot.seasons = [
+            FollowingSeason(season_number=1, title="第一季", episode_count=2),
+            FollowingSeason(season_number=2, title="第二季", episode_count=1),
+        ]
+        if season_number == 2:
+            view.snapshot.episodes = [
+                FollowingEpisode(episode_number=1, season_number=2, title="S2E1")
+            ]
+        return view
 
     def record_playback_progress(self, following_id: int, *, current_episode: int, position_seconds: int) -> None:
         self.progress_updates.append((following_id, current_episode))
@@ -158,6 +174,10 @@ def test_following_detail_page_groups_multiple_seasons_and_switches_current_seas
     class MultiSeasonController(FakeController):
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
             view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.snapshot.seasons = [
+                FollowingSeason(season_number=1, title="第一季", episode_count=2),
+                FollowingSeason(season_number=2, title="第二季", episode_count=1),
+            ]
             view.snapshot.episodes = [
                 FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
                 FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
@@ -180,6 +200,39 @@ def test_following_detail_page_groups_multiple_seasons_and_switches_current_seas
     assert "S2E1" in episode_model.data(
         episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole
     )
+
+
+def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None:
+    class LazySeasonController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.snapshot.seasons = [
+                FollowingSeason(season_number=1, title="第一季", episode_count=2),
+                FollowingSeason(season_number=2, title="第二季", episode_count=1),
+            ]
+            view.snapshot.episodes = [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
+            ]
+            return view
+
+    controller = LazySeasonController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    season_model = page.episode_browser.season_list.model()
+    page.episode_browser.season_list.setCurrentIndex(season_model.index(1, 0))
+
+    qtbot.waitUntil(lambda: controller.loaded_seasons == [2], timeout=1000)
+    qtbot.waitUntil(
+        lambda: page.episode_browser.episode_list.model().rowCount() == 1,
+        timeout=1000,
+    )
+
+    episode_model = page.episode_browser.episode_list.model()
+    assert controller.loaded_seasons == [2]
+    assert "S2E1" in episode_model.data(episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole)
 
 
 def test_following_detail_page_uses_configured_initial_display_mode(qtbot) -> None:
@@ -418,6 +471,50 @@ def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot)
 
     assert controller.metadata_refreshes == [1]
     assert page.cast_widgets[0].person["avatar"] == "/wang.jpg"
+
+
+def test_following_detail_page_auto_refreshes_when_only_crew_missing_avatars(qtbot) -> None:
+    class CrewOnlyMissingAvatarController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refreshed = False
+
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            crew = [{"name": "刘海波", "job": "Director"}]
+            if self.refreshed:
+                crew[0]["avatar"] = "/liuhb.jpg"
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="低智商犯罪",
+                    provider="tmdb",
+                    provider_id="tv:272432:season:1",
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    overview="简介",
+                    cast=[{"name": "王骁", "role": "Zhang Yi'ang", "avatar": "/wang.jpg"}],
+                    crew=crew,
+                ),
+            )
+
+        def refresh_metadata(self, following_id: int):
+            self.metadata_refreshes.append(following_id)
+            self.refreshed = True
+            return self.load_detail(following_id, refresh_if_empty=False)
+
+    controller = CrewOnlyMissingAvatarController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    qtbot.waitUntil(lambda: controller.metadata_refreshes == [1], timeout=1000)
+    qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
+
+    assert controller.metadata_refreshes == [1]
+    assert page.cast_widgets[1].person["avatar"] == "/liuhb.jpg"
 
 
 def test_following_detail_page_detaches_stale_person_cards_after_metadata_refresh(qtbot) -> None:

@@ -568,6 +568,132 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
     assert snapshot.episodes[0].still == "old-still"
 
 
+def test_following_controller_refresh_metadata_keeps_existing_episode_entries_when_refresh_returns_subset(
+    tmp_path: Path,
+) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="低智商犯罪",
+            media_kind="live_action",
+            season_number=1,
+            provider="player",
+            provider_id="player:source:vod-1",
+            external_ids={"tmdb": "272432"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[
+                FollowingEpisode(episode_number=1, season_number=1, title="第一集", still="old-1"),
+                FollowingEpisode(episode_number=2, season_number=1, title="第二集", still="old-2"),
+                FollowingEpisode(episode_number=3, season_number=1, title="第三集", still="old-3"),
+            ],
+        ),
+    )
+
+    class PartialEpisodeRefreshService(FakeTMDBIdRefreshService):
+        def detail_record_full(self, candidate):
+            self.full_detail_provider_ids.append(candidate.provider_id)
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title="低智商犯罪",
+                tmdb_id="272432",
+                detail_fields=[
+                    {
+                        "label": "episodes",
+                        "value": [
+                            {"episode_number": 1, "season_number": 1, "name": "第一集", "still_url": "new-1"},
+                            {"episode_number": 2, "season_number": 1, "name": "第二集", "still_url": ""},
+                        ],
+                    }
+                ],
+            )
+
+    controller = FollowingController(repo, metadata_search_service=PartialEpisodeRefreshService(), now=lambda: 100)
+
+    refreshed = controller.refresh_metadata(record_id)
+
+    snapshot = repo.get_detail_snapshot(record_id)
+    assert snapshot is not None
+    assert [episode.episode_number for episode in snapshot.episodes] == [1, 2, 3]
+    assert snapshot.episodes[0].still == "new-1"
+    assert snapshot.episodes[1].still == "old-2"
+    assert snapshot.episodes[2].still == "old-3"
+    assert [episode.episode_number for episode in refreshed.snapshot.episodes] == [1, 2, 3]
+
+
+def test_following_controller_load_detail_season_replaces_episode_list_for_requested_tmdb_season(
+    tmp_path: Path,
+) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="低智商犯罪",
+            media_kind="live_action",
+            season_number=1,
+            provider="player",
+            provider_id="player:source:vod-1",
+            external_ids={"tmdb": "272432"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="总简介",
+            episodes=[FollowingEpisode(episode_number=1, season_number=1, title="S1E1")],
+        ),
+    )
+
+    class SeasonDetailService(FakeSearchService):
+        def __init__(self) -> None:
+            self.provider_ids: list[str] = []
+
+        def detail_record_full(self, candidate):
+            self.provider_ids.append(candidate.provider_id)
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title="低智商犯罪",
+                overview="总简介",
+                tmdb_id="272432",
+                detail_fields=[
+                    {
+                        "label": "seasons",
+                        "value": [
+                            {"season_number": 1, "name": "第一季", "episode_count": 24},
+                            {"season_number": 2, "name": "第二季", "episode_count": 20},
+                        ],
+                    },
+                    {
+                        "label": "episodes",
+                        "value": [
+                            {"episode_number": 1, "season_number": 2, "name": "S2E1"},
+                            {"episode_number": 2, "season_number": 2, "name": "S2E2"},
+                        ],
+                    },
+                ],
+            )
+
+    service = SeasonDetailService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    detail = controller.load_detail_season(record_id, season_number=2)
+
+    snapshot = repo.get_detail_snapshot(record_id)
+    assert service.provider_ids == ["tv:272432:season:2"]
+    assert [episode.title for episode in detail.snapshot.episodes] == ["S2E1", "S2E2"]
+    assert snapshot is not None
+    assert [season.season_number for season in snapshot.seasons] == [1, 2]
+    assert [episode.season_number for episode in snapshot.episodes] == [2, 2]
+
+
 class FakeFullEpisodeRefreshService:
     def __init__(self, latest: int, total: int) -> None:
         self._latest = latest

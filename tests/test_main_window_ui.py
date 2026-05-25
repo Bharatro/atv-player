@@ -13,6 +13,7 @@ import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.following_controller import FollowingDetailView
+from atv_player.controllers.player_controller import PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord
 from atv_player.models import (
@@ -22,6 +23,7 @@ from atv_player.models import (
     HistoryRecord,
     OpenPlayerRequest,
     PlayItem,
+    PlaybackDetailField,
     PlaybackDetailFieldAction,
     VodItem,
 )
@@ -332,6 +334,95 @@ def test_main_window_registers_following_tab_and_header_button(qtbot) -> None:
     assert window.following_page is not None
     assert window.following_button.toolTip() == "我的追更"
     assert window._tab_key_for_widget(window.following_page) == "following"
+
+
+def test_main_window_passes_config_to_following_detail_page_after_storing_it(qtbot) -> None:
+    config = AppConfig(following_episode_display_mode="full")
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    assert window.config is config
+    assert window.following_detail_page._config is config
+    assert window.following_detail_page.episode_browser.display_mode() == "full"
+
+
+def test_main_window_matches_player_following_by_external_ids(qtbot) -> None:
+    class ExternalIdFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.deleted: list[int] = []
+            self.add_from_player_calls: list[dict[str, object]] = []
+            self._active = True
+
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            super().load_page(page=page, size=size, keyword=keyword, only_updates=only_updates)
+            if not self._active:
+                return [], 0
+            return [
+                SimpleNamespace(
+                    record=FollowingRecord(
+                        id=7,
+                        title="凡人修仙传",
+                        provider="bangumi",
+                        provider_id="subject:526975",
+                        external_ids={"tmdb": "76479", "bangumi": "526975"},
+                    )
+                )
+            ], 1
+
+        def delete(self, following_id: int) -> None:
+            self.deleted.append(following_id)
+            self._active = False
+
+        def add_from_player(self, **kwargs) -> None:
+            self.add_from_player_calls.append(kwargs)
+
+    following = ExternalIdFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        vod_id="vod-1",
+        detail_fields=[PlaybackDetailField(label="TMDB ID", value="76479")],
+    )
+    window.player_window = SimpleNamespace(session=PlayerSession(
+        vod=VodItem(
+            vod_id="vod-1",
+            vod_name="凡人修仙传",
+            detail_fields=[
+                PlaybackDetailField(label="TMDB ID", value="76479"),
+                PlaybackDetailField(label="Bangumi ID", value="526975"),
+            ],
+        ),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="browse",
+        source_key="",
+    ))
+
+    assert window._player_item_is_followed(item) is True
+
+    window._toggle_player_item_following(item)
+
+    assert following.deleted == [7]
+    assert following.add_from_player_calls == []
 
 
 def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
