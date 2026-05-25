@@ -1513,6 +1513,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._pansou_resolve_request_signals.failed,
             self._handle_pansou_resolve_failed,
         )
+        self._player_following_add_request_id = 0
+        self._player_following_add_signals = _AsyncRequestSignals()
+        self._connect_async_signal(
+            self._player_following_add_signals.succeeded,
+            self._handle_player_following_add_succeeded,
+        )
+        self._connect_async_signal(
+            self._player_following_add_signals.failed,
+            self._handle_player_following_add_failed,
+        )
         self._media_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._media_request_signals.succeeded, self._handle_media_load_succeeded)
         self._connect_async_signal(self._media_request_signals.failed, self._handle_media_load_failed)
@@ -4105,15 +4115,30 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 position_seconds = int(video.position_seconds() or 0)
             except Exception:
                 position_seconds = 0
-        self._following_controller.add_from_player(
-            vod=self.player_window.session.vod,
-            item=item,
-            source_kind=source_kind,
-            source_key=source_key,
-            position_seconds=position_seconds,
-            playlist=list(getattr(self.player_window.session, "playlist", []) or []),
-        )
-        self.following_page.load_page()
+        self._player_following_add_request_id += 1
+        request_id = self._player_following_add_request_id
+        following_button = getattr(self.player_window, "following_button", None)
+        if following_button is not None:
+            following_button.setEnabled(False)
+        payload = {
+            "vod": self.player_window.session.vod,
+            "item": item,
+            "source_kind": source_kind,
+            "source_key": source_key,
+            "position_seconds": position_seconds,
+            "playlist": list(getattr(self.player_window.session, "playlist", []) or []),
+        }
+
+        def run() -> None:
+            try:
+                self._following_controller.add_from_player(**payload)
+                if self._can_deliver_async_result():
+                    self._player_following_add_signals.succeeded.emit(request_id, item)
+            except Exception as exc:
+                if self._can_deliver_async_result():
+                    self._player_following_add_signals.failed.emit(request_id, str(exc))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _report_player_item_following_progress(
         self,
@@ -4136,6 +4161,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             current_episode=current_episode,
             position_seconds=position_seconds,
         )
+
+    def _handle_player_following_add_succeeded(self, request_id: int, _item: object) -> None:
+        if request_id != self._player_following_add_request_id:
+            return
+        if self.player_window is not None:
+            following_button = getattr(self.player_window, "following_button", None)
+            if following_button is not None:
+                following_button.setEnabled(True)
+            refresh_following_button = getattr(self.player_window, "_refresh_following_button", None)
+            if callable(refresh_following_button):
+                refresh_following_button()
+        self.following_page.load_page()
+
+    def _handle_player_following_add_failed(self, request_id: int, _message: str) -> None:
+        if request_id != self._player_following_add_request_id:
+            return
+        if self.player_window is not None:
+            following_button = getattr(self.player_window, "following_button", None)
+            if following_button is not None:
+                following_button.setEnabled(True)
+            refresh_following_button = getattr(self.player_window, "_refresh_following_button", None)
+            if callable(refresh_following_button):
+                refresh_following_button()
 
     def _current_player_episode_number(self) -> int:
         if self.player_window is None or self.player_window.session is None:

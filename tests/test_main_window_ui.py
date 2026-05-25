@@ -425,6 +425,57 @@ def test_main_window_matches_player_following_by_external_ids(qtbot) -> None:
     assert following.add_from_player_calls == []
 
 
+def test_main_window_adds_player_following_off_main_thread(qtbot) -> None:
+    class SlowFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.add_from_player_calls: list[dict[str, object]] = []
+            self.add_thread_ids: list[int] = []
+
+        def add_from_player(self, **kwargs) -> None:
+            self.add_thread_ids.append(threading.get_ident())
+            time.sleep(0.2)
+            self.add_from_player_calls.append(kwargs)
+
+    following = SlowFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        vod_id="vod-1",
+    )
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+            playlist=[item],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="browse",
+            source_key="",
+        ),
+        video=SimpleNamespace(position_seconds=lambda: 0),
+    )
+
+    started_at = time.perf_counter()
+    window._toggle_player_item_following(item)
+    elapsed = time.perf_counter() - started_at
+
+    _spin_until(lambda: len(following.add_from_player_calls) == 1)
+
+    assert elapsed < 0.1
+    assert following.add_thread_ids == [following.add_thread_ids[0]]
+    assert following.add_thread_ids[0] != threading.get_ident()
+
+
 def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
     following = FakeFollowingController()
     window = MainWindow(
