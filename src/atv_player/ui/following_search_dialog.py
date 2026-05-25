@@ -1,6 +1,8 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import threading
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -13,18 +15,26 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.theme import build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
-class FollowingSearchDialog(ThemedDialogBase):
+class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     candidate_selected = Signal(object)
+    search_finished = Signal(int, object, str)
+    add_finished = Signal(int, object, str)
 
     def __init__(self, controller, parent=None) -> None:
         super().__init__(title="添加追更", parent=parent)
+        self._init_async_guard()
         self.controller = controller
         self.resize(760, 480)
         self.groups = []
+        self._search_request_id = 0
+        self._add_request_id = 0
+        self._search_in_progress = False
+        self._add_in_progress = False
 
         host = self.content_widget()
         layout = self.content_layout()
@@ -71,23 +81,34 @@ class FollowingSearchDialog(ThemedDialogBase):
         self.result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
         self.add_button.clicked.connect(self._add_selected_candidate)
         self.close_button.clicked.connect(self.reject)
+        self._connect_async_signal(self.search_finished, self._handle_search_finished)
+        self._connect_async_signal(self.add_finished, self._handle_add_finished)
         self._apply_theme()
         self._sync_action_state()
 
     def run_search(self) -> None:
+        if self._search_in_progress or self._add_in_progress:
+            return
         keyword = self.search_edit.text().strip()
         if not keyword:
             self.status_label.setText("请输入标题")
             self._clear_results()
             return
-        self.status_label.setText("搜索中...")
-        try:
-            groups = self.controller.search_media(keyword)
-        except Exception as exc:
-            self.status_label.setText(f"搜索失败: {exc}")
-            self._clear_results()
-            return
-        self._render_groups(groups)
+        self._search_request_id += 1
+        request_id = self._search_request_id
+        self._set_search_loading(True)
+
+        def run() -> None:
+            try:
+                groups = self.controller.search_media(keyword)
+                error = ""
+            except Exception as exc:
+                groups = []
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.search_finished.emit(request_id, groups, error)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _clear_results(self) -> None:
         self.groups = []
@@ -147,19 +168,79 @@ class FollowingSearchDialog(ThemedDialogBase):
         return item.data(Qt.ItemDataRole.UserRole)
 
     def _add_selected_candidate(self) -> None:
+        if self._search_in_progress or self._add_in_progress:
+            return
         candidate = self._selected_candidate()
         if candidate is None:
             self.status_label.setText("请选择一个结果")
             return
-        try:
-            self.controller.add_candidate(candidate, current_episode=int(self.current_episode_spin.value()))
-        except TypeError:
-            self.controller.add_candidate(candidate)
-        self.candidate_selected.emit(candidate)
-        self.accept()
+        self._add_request_id += 1
+        request_id = self._add_request_id
+        current_episode = int(self.current_episode_spin.value())
+        self._set_add_loading(True)
+
+        def run() -> None:
+            try:
+                try:
+                    self.controller.add_candidate(candidate, current_episode=current_episode)
+                except TypeError:
+                    self.controller.add_candidate(candidate)
+                error = ""
+            except Exception as exc:
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.add_finished.emit(request_id, candidate, error)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _sync_action_state(self) -> None:
-        self.add_button.setEnabled(self._selected_candidate() is not None)
+        self.add_button.setEnabled(
+            not self._search_in_progress
+            and not self._add_in_progress
+            and self._selected_candidate() is not None
+        )
+
+    def _set_search_loading(self, loading: bool) -> None:
+        self._search_in_progress = bool(loading)
+        self._apply_busy_state()
+        if loading:
+            self.status_label.setText("搜索中...")
+
+    def _set_add_loading(self, loading: bool) -> None:
+        self._add_in_progress = bool(loading)
+        self._apply_busy_state()
+        if loading:
+            self.status_label.setText("加入追更中...")
+
+    def _apply_busy_state(self) -> None:
+        busy = self._search_in_progress or self._add_in_progress
+        self.search_edit.setEnabled(not busy)
+        self.current_episode_spin.setEnabled(not busy)
+        self.search_button.setEnabled(not busy)
+        self.group_list.setEnabled(not busy)
+        self.result_list.setEnabled(not busy)
+        self.close_button.setEnabled(not self._add_in_progress)
+        self._sync_action_state()
+
+    def _handle_search_finished(self, request_id: int, groups, error: str) -> None:
+        if request_id != self._search_request_id:
+            return
+        self._set_search_loading(False)
+        if error:
+            self.status_label.setText(f"搜索失败: {error}")
+            self._clear_results()
+            return
+        self._render_groups(groups)
+
+    def _handle_add_finished(self, request_id: int, candidate, error: str) -> None:
+        if request_id != self._add_request_id:
+            return
+        self._set_add_loading(False)
+        if error:
+            self.status_label.setText(f"加入失败: {error}")
+            return
+        self.candidate_selected.emit(candidate)
+        self.accept()
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
