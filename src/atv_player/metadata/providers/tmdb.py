@@ -53,6 +53,13 @@ def _tmdb_person_image(path: object) -> str:
     return str(path or "").strip()
 
 
+def _tmdb_person_url(person_id: object) -> str:
+    text = str(person_id or "").strip()
+    if not text:
+        return ""
+    return f"https://www.themoviedb.org/person/{text}"
+
+
 def _poster_url_from_payload(payload: dict[str, object]) -> str:
     url = str(payload.get("poster_url") or "").strip()
     if url:
@@ -82,19 +89,27 @@ def _tmdb_crew_job(item: dict[str, object]) -> str:
 
 
 def _cast_detail(item: dict[str, object]) -> dict[str, object]:
-    return {
+    detail = {
         "name": str(item.get("name") or "").strip(),
         "role": _tmdb_cast_role(item),
         "avatar": _tmdb_person_image(item.get("profile_path")),
     }
+    url = _tmdb_person_url(item.get("id"))
+    if url:
+        detail["url"] = url
+    return detail
 
 
 def _crew_detail(item: dict[str, object]) -> dict[str, object]:
-    return {
+    detail = {
         "name": str(item.get("name") or "").strip(),
         "job": _tmdb_crew_job(item),
         "avatar": _tmdb_person_image(item.get("profile_path")),
     }
+    url = _tmdb_person_url(item.get("id"))
+    if url:
+        detail["url"] = url
+    return detail
 
 
 def _backdrop_score(img: dict[str, object]) -> float:

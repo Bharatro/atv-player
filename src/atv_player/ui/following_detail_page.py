@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -198,20 +198,25 @@ class FollowingPersonCard(QFrame):
     ) -> None:
         super().__init__(parent)
         self.person = person
-        self.setMinimumSize(150, 198)
+        self._person_url = _person_link(person)
+        self.setMinimumSize(166, 292)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if self._person_url:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        self.avatar_label = QLabel("头像", self)
+        self.avatar_label = QLabel(_person_avatar_initial(person), self)
         self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.avatar_label.setFixedSize(96, 96)
-        self.avatar_label.setStyleSheet(_image_placeholder_qss())
+        self.avatar_label.setFixedSize(144, 216)
+        self.avatar_label.setProperty("person_avatar", True)
+        self.avatar_label.setStyleSheet(_person_avatar_fallback_qss())
         self.name_label = QLabel(str(person.get("name") or ""), self)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(True)
+        self.name_label.setStyleSheet(_person_inner_label_qss())
         role = (
             person.get("role")
             or person.get("character")
@@ -222,6 +227,7 @@ class FollowingPersonCard(QFrame):
         self.role_label = QLabel(str(role), self)
         self.role_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.role_label.setWordWrap(True)
+        self.role_label.setStyleSheet(_person_inner_label_qss())
         self.role_label.setVisible(bool(str(role).strip()))
 
         layout.addWidget(self.avatar_label, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -229,6 +235,13 @@ class FollowingPersonCard(QFrame):
         layout.addWidget(self.role_label)
         layout.addStretch(1)
         self.setStyleSheet(_frame_card_qss())
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._person_url:
+            QDesktopServices.openUrl(QUrl(self._person_url))
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class FollowingDetailPage(QWidget, AsyncGuardMixin):
@@ -304,13 +317,20 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.poster_label.setMaximumWidth(360)
         self.poster_label.setStyleSheet(_image_placeholder_qss())
         self.poster_carousel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.poster_carousel_label.setMinimumSize(360, 260)
-        self.poster_carousel_label.setStyleSheet(_image_placeholder_qss())
+        self.poster_carousel_label.setMinimumSize(720, 405)
+        self.poster_carousel_label.setStyleSheet(_carousel_image_qss())
         self.title_label.setWordWrap(True)
         self.title_label.setObjectName("followingDetailTitle")
         self.meta_label.setWordWrap(True)
         self.overview_label.setWordWrap(True)
         self.overview_label.setMinimumHeight(64)
+        selectable_flags = (
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.title_label.setTextInteractionFlags(selectable_flags)
+        self.meta_label.setTextInteractionFlags(selectable_flags)
+        self.overview_label.setTextInteractionFlags(selectable_flags)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self.back_button)
@@ -338,8 +358,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.poster_carousel_panel = QFrame(content)
         self.poster_carousel_panel.setObjectName("followingDetailPosterCarousel")
         poster_layout = QVBoxLayout(self.poster_carousel_panel)
-        poster_layout.setContentsMargins(18, 18, 18, 18)
-        poster_layout.setSpacing(10)
+        poster_layout.setContentsMargins(0, 0, 0, 0)
+        poster_layout.setSpacing(0)
         poster_layout.addWidget(self.poster_carousel_label)
 
         self.top_section = QWidget(content)
@@ -364,8 +384,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.cast_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cast_scroll.setWidget(self._cast_container)
-        self.cast_scroll.setMinimumHeight(240)
-        self.cast_scroll.setMaximumHeight(300)
+        self.cast_scroll.setMinimumHeight(334)
+        self.cast_scroll.setMaximumHeight(360)
 
         self.episodes_section = QFrame(content)
         self.episodes_section.setObjectName("followingDetailEpisodesSection")
@@ -466,8 +486,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             [
                 *snapshot.backdrops,
                 record.backdrop,
-                *snapshot.posters,
-                record.poster,
             ]
         )
         self.poster_carousel_sources = sources
@@ -602,6 +620,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _handle_image_loaded(self, label: QLabel, image) -> None:
         label.setText("")
+        if label.property("person_avatar"):
+            label.setStyleSheet(_person_inner_label_qss())
         label.setPixmap(QPixmap.fromImage(image))
 
     def _snapshot_needs_refresh(self, snapshot: FollowingDetailSnapshot) -> bool:
@@ -690,8 +710,16 @@ def _person_avatar(person: dict[str, object]) -> str:
         if not value:
             continue
         if value.startswith("/"):
-            return f"https://image.tmdb.org/t/p/w185{value}"
+            return f"https://media.themoviedb.org/t/p/w300_and_h450_face{value}"
         return value
+    return ""
+
+
+def _person_link(person: dict[str, object]) -> str:
+    for key in ("url", "link", "homepage"):
+        value = str(person.get(key) or "").strip()
+        if value:
+            return value
     return ""
 
 
@@ -750,6 +778,45 @@ def _image_placeholder_qss() -> str:
         f"background: {tokens.panel_alt_bg};"
         f"color: {tokens.text_secondary};"
     )
+
+
+def _carousel_image_qss() -> str:
+    tokens = current_tokens()
+    return (
+        "border: 0;"
+        "border-radius: 12px;"
+        "background: transparent;"
+        f"color: {tokens.text_secondary};"
+    )
+
+
+def _person_inner_label_qss() -> str:
+    tokens = current_tokens()
+    return (
+        "border: 0;"
+        "border-radius: 0;"
+        "background: transparent;"
+        f"color: {tokens.text_secondary};"
+    )
+
+
+def _person_avatar_fallback_qss() -> str:
+    tokens = current_tokens()
+    return (
+        "border: 0;"
+        "border-radius: 10px;"
+        f"background: {tokens.panel_alt_bg};"
+        f"color: {tokens.text_secondary};"
+        "font-size: 24px;"
+        "font-weight: 600;"
+    )
+
+
+def _person_avatar_initial(person: dict[str, object]) -> str:
+    name = str(person.get("name") or "").strip()
+    if not name:
+        return ""
+    return name[:1].upper()
 
 
 def _episode_still_qss() -> str:

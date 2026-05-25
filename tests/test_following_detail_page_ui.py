@@ -1,10 +1,19 @@
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
+
 from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
 )
-from atv_player.ui.following_detail_page import FollowingDetailPage, FollowingEpisodeCard
+from atv_player.ui.following_detail_page import (
+    FollowingDetailPage,
+    FollowingEpisodeCard,
+    FollowingPersonCard,
+    QDesktopServices,
+    _person_avatar,
+)
 
 
 class FakeController:
@@ -138,6 +147,80 @@ def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None
     assert page.cast_section.objectName() == "followingDetailCastSection"
     assert page.episodes_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
     assert page.cast_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
+
+
+def test_following_detail_title_and_metadata_text_are_selectable(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    selectable = Qt.TextInteractionFlag.TextSelectableByMouse
+    assert page.title_label.textInteractionFlags() & selectable
+    assert page.meta_label.textInteractionFlags() & selectable
+    assert page.overview_label.textInteractionFlags() & selectable
+
+
+def test_following_person_card_inner_labels_have_no_borders(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    card = page.cast_widgets[0]
+    assert card.avatar_label.width() == 144
+    assert card.avatar_label.height() == 216
+    assert card.minimumHeight() >= 292
+    assert page.cast_scroll.minimumHeight() >= 334
+    assert page.cast_scroll.maximumHeight() >= 360
+    assert "border: 0" in card.avatar_label.styleSheet()
+    assert "border: 0" in card.name_label.styleSheet()
+    assert "border: 0" in card.role_label.styleSheet()
+
+
+def test_following_person_card_uses_name_initial_when_avatar_missing(qtbot) -> None:
+    card = FollowingPersonCard({"name": "王少雄", "job": "Screenplay"})
+    qtbot.addWidget(card)
+
+    assert card.avatar_label.text() == "王"
+    assert "border: 0" in card.avatar_label.styleSheet()
+
+
+def test_following_person_avatar_uses_tmdb_face_image_size() -> None:
+    assert (
+        _person_avatar({"avatar": "/sLnMwjp8kX423aCXScG1IOacS1r.jpg"})
+        == "https://media.themoviedb.org/t/p/w300_and_h450_face/sLnMwjp8kX423aCXScG1IOacS1r.jpg"
+    )
+
+
+def test_following_person_card_clears_fallback_background_after_avatar_load(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+    card = page.cast_widgets[0]
+
+    page._handle_image_loaded(card.avatar_label, QImage(32, 32, QImage.Format.Format_RGB32))
+
+    assert card.avatar_label.text() == ""
+    assert "background: transparent" in card.avatar_label.styleSheet()
+
+
+def test_following_person_card_opens_tmdb_person_link_on_click(qtbot, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+    card = FollowingPersonCard(
+        {
+            "name": "王骁",
+            "role": "Zhang Yi'ang",
+            "url": "https://www.themoviedb.org/person/2027615",
+        }
+    )
+    qtbot.addWidget(card)
+
+    assert card.toolTip() == ""
+    qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
+
+    assert opened == ["https://www.themoviedb.org/person/2027615"]
 
 
 def test_following_episode_card_keeps_title_and_date_tight(qtbot) -> None:

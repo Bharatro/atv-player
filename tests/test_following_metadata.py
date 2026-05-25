@@ -246,6 +246,36 @@ def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_sti
     assert snapshot.episodes[0].still == "still"
 
 
+def test_build_snapshot_from_record_uses_record_backdrops_list_when_available() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:7:season:1",
+        title="深空彼岸",
+        poster="poster",
+        backdrop="default-backdrop",
+        backdrops=["default-backdrop", "alt-backdrop-1", "alt-backdrop-2"],
+        tmdb_id="7",
+    )
+
+    _, snapshot = build_snapshot_from_record(record, now=300, media_kind="live_action")
+
+    assert snapshot.backdrops == ["default-backdrop", "alt-backdrop-1", "alt-backdrop-2"]
+
+
+def test_build_snapshot_from_record_falls_back_to_single_backdrop_when_record_list_empty() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:7",
+        title="深空彼岸",
+        backdrop="only-backdrop",
+        tmdb_id="7",
+    )
+
+    _, snapshot = build_snapshot_from_record(record, now=300, media_kind="live_action")
+
+    assert snapshot.backdrops == ["only-backdrop"]
+
+
 def test_compute_episode_counts_ignores_specials_and_zero_episode_numbers() -> None:
     latest, total = compute_episode_counts(
         [

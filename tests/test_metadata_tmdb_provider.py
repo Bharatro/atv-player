@@ -337,6 +337,7 @@ def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:
         "aggregate_credits": {
             "cast": [
                 {
+                    "id": 2027615,
                     "name": "史泽鲲",
                     "profile_path": "/actor.jpg",
                     "roles": [{"character": "王林 (voice)"}],
@@ -344,6 +345,7 @@ def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:
             ],
             "crew": [
                 {
+                    "id": 1234,
                     "name": "导演",
                     "profile_path": "/director.jpg",
                     "jobs": [{"job": "Director"}],
@@ -358,8 +360,96 @@ def test_tmdb_provider_get_detail_keeps_cast_roles_and_profile_images() -> None:
     record = provider.get_detail(MetadataMatch(provider="tmdb", provider_id="tv:42", title="仙逆"))
 
     assert record.cast_details == [
-        {"name": "史泽鲲", "role": "王林 (voice)", "avatar": "/actor.jpg"}
+        {
+            "name": "史泽鲲",
+            "role": "王林 (voice)",
+            "avatar": "/actor.jpg",
+            "url": "https://www.themoviedb.org/person/2027615",
+        }
     ]
     assert record.crew_details == [
-        {"name": "导演", "job": "Director", "avatar": "/director.jpg"}
+        {
+            "name": "导演",
+            "job": "Director",
+            "avatar": "/director.jpg",
+            "url": "https://www.themoviedb.org/person/1234",
+        }
     ]
+
+
+def test_tmdb_provider_get_detail_sorts_backdrops_with_default_first_and_caps_at_eight() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "深空彼岸",
+        "backdrop_url": "https://image.tmdb.org/t/p/original/default.jpg",
+        "backdrop_path": "/default.jpg",
+        "images": {
+            "backdrops": [
+                {"file_path": "/low.jpg", "vote_average": 3, "vote_count": 5, "width": 1280, "height": 720},
+                {"file_path": "/high.jpg", "vote_average": 9, "vote_count": 200, "width": 3840, "height": 2160},
+                {"file_path": "/mid.jpg", "vote_average": 6, "vote_count": 80, "width": 1920, "height": 1080},
+                {"file_path": "/portrait.jpg", "vote_average": 7, "vote_count": 60, "width": 1080, "height": 1920},
+                *[
+                    {"file_path": f"/extra{i}.jpg", "vote_average": 1, "vote_count": 1, "width": 1280, "height": 720}
+                    for i in range(10)
+                ],
+            ]
+        },
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(MetadataMatch(provider="tmdb", provider_id="tv:42", title="深空彼岸"))
+
+    expected_top4 = [
+        "https://image.tmdb.org/t/p/original/default.jpg",
+        "https://image.tmdb.org/t/p/original/high.jpg",
+        "https://image.tmdb.org/t/p/original/portrait.jpg",
+        "https://image.tmdb.org/t/p/original/mid.jpg",
+    ]
+    assert record.backdrops[:4] == expected_top4
+    assert "https://image.tmdb.org/t/p/original/low.jpg" in record.backdrops
+    assert len(record.backdrops) == 8
+    assert all(url.startswith("https://image.tmdb.org/t/p/original/") for url in record.backdrops)
+
+
+def test_tmdb_provider_get_detail_penalizes_non_16_9_when_votes_are_equal() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "深空彼岸",
+        "images": {
+            "backdrops": [
+                {"file_path": "/portrait.jpg", "vote_average": 7, "vote_count": 60, "width": 1080, "height": 1920},
+                {"file_path": "/landscape.jpg", "vote_average": 7, "vote_count": 60, "width": 1080, "height": 608},
+            ]
+        },
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(MetadataMatch(provider="tmdb", provider_id="tv:42", title="深空彼岸"))
+
+    assert record.backdrops[0] == "https://image.tmdb.org/t/p/original/landscape.jpg"
+    assert record.backdrops[1] == "https://image.tmdb.org/t/p/original/portrait.jpg"
+
+
+def test_tmdb_provider_get_detail_returns_empty_backdrops_when_no_images_present() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 42,
+        "name": "深空彼岸",
+        "aggregate_credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail(MetadataMatch(provider="tmdb", provider_id="tv:42", title="深空彼岸"))
+
+    assert record.backdrops == []
