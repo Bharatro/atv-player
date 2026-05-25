@@ -262,6 +262,8 @@ def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_sti
     following, snapshot = build_snapshot_from_record(record, now=200, media_kind="live_action")
 
     assert following.external_ids == {"tmdb": "456", "douban": "129"}
+    assert following.provider_id == "tv:456"
+    assert following.season_number == 1
     assert following.backdrop == "backdrop"
     assert snapshot.cast[0]["name"] == "张若昀"
     assert snapshot.cast[0]["role"] == "范闲"
@@ -293,6 +295,20 @@ def test_build_snapshot_from_tmdb_record_includes_season_summaries() -> None:
     assert [season.season_number for season in snapshot.seasons] == [1, 2]
     assert snapshot.seasons[1].episode_count == 36
     assert snapshot.seasons[1].poster == "poster-2"
+
+
+def test_build_snapshot_from_tmdb_record_infers_season_number_from_provider_id() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:76479:season:1",
+        title="黑袍纠察队",
+        tmdb_id="76479",
+    )
+
+    following, _snapshot = build_snapshot_from_record(record, now=200, media_kind="live_action")
+
+    assert following.provider_id == "tv:76479"
+    assert following.season_number == 1
 
 
 def test_build_snapshot_from_record_uses_record_backdrops_list_when_available() -> None:

@@ -286,7 +286,8 @@ def test_following_controller_adds_candidate_with_detail_snapshot(tmp_path: Path
 
     assert record.poster == "poster"
     assert record.backdrop == "backdrop"
-    assert record.provider_id == "tv:456:season:1"
+    assert record.provider_id == "tv:456"
+    assert record.season_number == 1
     assert record.latest_episode == 2
     assert record.total_episodes == 2
     assert service.detail_provider_ids == ["tv:456:season:1"]
@@ -518,7 +519,7 @@ def test_following_controller_refreshes_metadata_with_tmdb_details_for_bangumi_f
     ]
     assert loaded is not None
     assert loaded.provider == "tmdb"
-    assert loaded.provider_id == "tv:236534:season:1"
+    assert loaded.provider_id == "tv:236534"
     assert loaded.rating == "7.6"
     assert loaded.poster == "tmdb-poster"
     assert loaded.backdrop == "tmdb-backdrop"
@@ -692,6 +693,52 @@ def test_following_controller_load_detail_season_replaces_episode_list_for_reque
     assert snapshot is not None
     assert [season.season_number for season in snapshot.seasons] == [1, 2]
     assert [episode.season_number for episode in snapshot.episodes] == [2, 2]
+
+
+def test_following_controller_load_detail_season_overrides_existing_tmdb_provider_season(
+    tmp_path: Path,
+) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="黑袍纠察队",
+            media_kind="live_action",
+            season_number=5,
+            provider="tmdb",
+            provider_id="tv:76479:season:1",
+            external_ids={"tmdb": "76479"},
+        )
+    )
+
+    class SeasonOverrideService(FakeSearchService):
+        def __init__(self) -> None:
+            self.provider_ids: list[str] = []
+
+        def detail_record_full(self, candidate):
+            self.provider_ids.append(candidate.provider_id)
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title="黑袍纠察队",
+                tmdb_id="76479",
+                detail_fields=[
+                    {
+                        "label": "episodes",
+                        "value": [
+                            {"episode_number": 1, "season_number": 5, "name": "S5E1"},
+                        ],
+                    }
+                ],
+            )
+
+    service = SeasonOverrideService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    detail = controller.load_detail_season(record_id, season_number=5)
+
+    assert service.provider_ids == ["tv:76479:season:5"]
+    assert [episode.season_number for episode in detail.snapshot.episodes] == [5]
 
 
 class FakeFullEpisodeRefreshService:

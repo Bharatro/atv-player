@@ -119,6 +119,22 @@ def _to_int(value: object) -> int:
         return 0
 
 
+def _season_number_from_provider_id(provider_id: object) -> int:
+    match = re.search(r":season:(\d+)$", str(provider_id or "").strip())
+    if match is None:
+        return 0
+    return _to_int(match.group(1))
+
+
+def _canonical_following_provider_id(provider: object, provider_id: object) -> str:
+    text = str(provider_id or "").strip()
+    if str(provider or "").strip() != "tmdb":
+        return text
+    if not text.startswith("tv:"):
+        return text
+    return text.split(":season:", 1)[0]
+
+
 def _episode_from_raw(raw: dict[str, object]) -> FollowingEpisode:
     number = _to_int(raw.get("episode_number") or raw.get("sort") or raw.get("ep"))
     title = str(raw.get("name_cn") or raw.get("name") or raw.get("long_title") or raw.get("title") or "").strip()
@@ -243,13 +259,15 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     raw_seasons = [item for item in raw.get("seasons") or [] if isinstance(item, dict)]
     raw_episodes = [item for item in raw.get("episodes") or [] if isinstance(item, dict)]
     latest, total = compute_episode_counts(raw_episodes, now=now)
+    season_number = _to_int(raw.get("season_number")) or _season_number_from_provider_id(provider_id)
     media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""))
     record = FollowingRecord(
         id=0,
         title=str(getattr(candidate, "title", "") or "").strip(),
         media_kind=media_kind,
+        season_number=season_number,
         provider=provider,
-        provider_id=provider_id,
+        provider_id=_canonical_following_provider_id(provider, provider_id),
         provider_priority=following_provider_priority(media_kind),
         external_ids={external_key: str(external_value)} if external_value else {},
         latest_episode=latest,
@@ -606,6 +624,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     detail_fields = list(getattr(record, "detail_fields", []) or [])
     raw_episodes = _episode_raw_from_detail_fields(detail_fields)
     raw_seasons = _season_raw_from_detail_fields(detail_fields)
+    season_number = _season_number_from_provider_id(provider_id)
     latest, total = compute_episode_counts(raw_episodes, now=now)
     last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
     if last_ep_to_air > 0 and last_ep_to_air > latest:
@@ -618,11 +637,12 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         title=str(getattr(record, "title", "") or "").strip(),
         original_title=str(getattr(record, "original_title", "") or "").strip(),
         media_kind=normalized_kind,
+        season_number=season_number,
         poster=str(getattr(record, "poster", "") or "").strip(),
         backdrop=str(getattr(record, "backdrop", "") or "").strip(),
         rating=str(getattr(record, "rating", "") or "").strip(),
         provider=provider,
-        provider_id=provider_id,
+        provider_id=_canonical_following_provider_id(provider, provider_id),
         provider_priority=following_provider_priority(normalized_kind),
         external_ids=external_ids,
         latest_episode=latest,

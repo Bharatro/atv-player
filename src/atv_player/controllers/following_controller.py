@@ -496,7 +496,8 @@ class FollowingController:
         if text.startswith("tv:"):
             parts = text.split(":")
             if len(parts) >= 4 and parts[2] == "season":
-                return text, self._to_int(parts[3]) or 1
+                resolved_season = season_number if season_number > 0 else self._to_int(parts[3]) or 1
+                return f"tv:{parts[1]}:season:{resolved_season}", resolved_season
             if season_number <= 0:
                 return "", 0
             return f"{text}:season:{season_number}", season_number

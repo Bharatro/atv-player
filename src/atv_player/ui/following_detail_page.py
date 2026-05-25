@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shiboken6
+import re
 import threading
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
@@ -31,6 +32,9 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
+
+
+_SEASON_PROVIDER_ID_RE = re.compile(r":season:(\d+)$")
 
 
 class FollowingEpisodePreviewDialog(ThemedDialogBase):
@@ -281,7 +285,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._batch_timer.stop()
         self._pending_people = []
         self.current_following_id = int(following_id)
-        self.current_view = self.controller.load_detail(self.current_following_id, refresh_if_empty=False)
+        self.current_view = self._load_detail_view(self.current_following_id)
         self._selected_season_number = self._initial_selected_season(
             self.current_view.record,
             self.current_view.snapshot,
@@ -289,6 +293,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._render(self.current_view.record, self.current_view.snapshot)
         if self._snapshot_needs_refresh(self.current_view.snapshot):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
+        elif self._should_load_selected_season():
+            QTimer.singleShot(0, self._load_selected_season_if_needed)
         elif self._snapshot_people_missing_avatars(self.current_view.snapshot):
             QTimer.singleShot(0, self._refresh_metadata)
 
@@ -487,27 +493,12 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _handle_season_changed(self, season_number: int) -> None:
         normalized = int(season_number)
-        if normalized == self._selected_season_number or self.current_following_id <= 0:
+        if self.current_following_id <= 0:
+            return
+        if normalized == self._selected_season_number and self._current_snapshot_matches_selected_season():
             return
         self._selected_season_number = normalized
-        if self._current_snapshot_matches_selected_season():
-            return
-        load_detail_season = getattr(self.controller, "load_detail_season", None)
-        if not callable(load_detail_season):
-            return
-        self.status_label.setText(f"正在加载第 {normalized} 季分集...")
-
-        def load() -> None:
-            try:
-                view = load_detail_season(self.current_following_id, season_number=normalized)
-                error = ""
-            except Exception as exc:
-                view = None
-                error = str(exc)
-            if self._can_deliver_async_result():
-                self.season_detail_finished.emit(self.current_following_id, normalized, view, error)
-
-        threading.Thread(target=load, daemon=True).start()
+        self._request_season_load(normalized)
 
     def _manual_check(self) -> None:
         if self.current_following_id <= 0:
@@ -557,7 +548,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         if following_id != self.current_following_id:
             return
         self.manual_check_button.setEnabled(True)
-        self.current_view = self.controller.load_detail(following_id, refresh_if_empty=False)
+        self.current_view = self._load_detail_view(following_id)
         self._render(self.current_view.record, self.current_view.snapshot)
         if error:
             self.status_label.setText(f"检查失败: {error}")
@@ -573,12 +564,16 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         if error:
             self.status_label.setText(f"元数据更新失败: {error}")
             return
-        self.current_view = view or self.controller.load_detail(following_id, refresh_if_empty=False)
+        self.current_view = view or self._load_detail_view(following_id)
         self._selected_season_number = self._initial_selected_season(
             self.current_view.record,
             self.current_view.snapshot,
         )
         self._render(self.current_view.record, self.current_view.snapshot)
+        if self._should_load_selected_season():
+            self.status_label.setText("正在加载当前季分集...")
+            QTimer.singleShot(0, self._load_selected_season_if_needed)
+            return
         self.status_label.setText("元数据已更新")
 
     def _handle_season_detail_finished(self, following_id: int, season_number: int, view, error: str) -> None:
@@ -663,6 +658,12 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             return next(iter(season_numbers))
         if record.season_number > 0:
             return record.season_number
+        provider_id_season = _season_number_from_provider_id(record.provider_id)
+        if provider_id_season > 0:
+            return provider_id_season
+        positive_summary_seasons = [season.season_number for season in snapshot.seasons if season.season_number > 0]
+        if positive_summary_seasons:
+            return positive_summary_seasons[0]
         if snapshot.seasons:
             return snapshot.seasons[0].season_number
         return 0
@@ -677,6 +678,45 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             (episode.season_number or self._selected_season_number) == self._selected_season_number
             for episode in snapshot.episodes
         )
+
+    def _should_load_selected_season(self) -> bool:
+        if self.current_view is None or self._selected_season_number <= 0:
+            return False
+        snapshot = self.current_view.snapshot
+        if not snapshot.seasons:
+            return False
+        return not self._current_snapshot_matches_selected_season()
+
+    def _load_selected_season_if_needed(self) -> None:
+        if self._selected_season_number <= 0:
+            return
+        self._request_season_load(self._selected_season_number)
+
+    def _request_season_load(self, season_number: int) -> None:
+        load_detail_season = getattr(self.controller, "load_detail_season", None)
+        if not callable(load_detail_season):
+            return
+        self.status_label.setText(f"正在加载第 {season_number} 季分集...")
+
+        def load() -> None:
+            try:
+                view = load_detail_season(self.current_following_id, season_number=season_number)
+                error = ""
+            except Exception as exc:
+                view = None
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.season_detail_finished.emit(self.current_following_id, season_number, view, error)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _load_detail_view(self, following_id: int):
+        try:
+            return self.controller.load_detail(following_id, refresh_if_empty=False)
+        except TypeError as exc:
+            if "refresh_if_empty" not in str(exc):
+                raise
+            return self.controller.load_detail(following_id)
 
     def _snapshot_people_missing_avatars(self, snapshot: FollowingDetailSnapshot) -> bool:
         people = [*list(snapshot.cast or []), *list(snapshot.crew or [])]
@@ -769,6 +809,16 @@ def _unique_sources(sources: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _season_number_from_provider_id(provider_id: object) -> int:
+    match = _SEASON_PROVIDER_ID_RE.search(str(provider_id or "").strip())
+    if match is None:
+        return 0
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _person_avatar(person: dict[str, object]) -> str:

@@ -141,3 +141,27 @@ def test_following_repository_filters_updates_and_snoozes_prompt(tmp_path: Path)
     assert total == 1
     assert updated[0].title == "有更新"
     assert repo.load_homepage_prompt_records(now=998) == []
+
+
+def test_following_repository_normalizes_tmdb_identity_and_migrates_existing_season_key(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    legacy_id = repo.upsert(
+        _record(
+            title="黑袍纠察队",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:76479:season:1",
+            season_number=0,
+            external_ids={"tmdb": "76479"},
+        )
+    )
+
+    reopened = FollowingRepository(tmp_path / "app.db")
+    loaded = reopened.get(legacy_id)
+    by_identity = reopened.get_by_identity("tmdb", "tv:76479:season:5")
+
+    assert loaded is not None
+    assert loaded.provider_id == "tv:76479"
+    assert loaded.season_number == 1
+    assert by_identity is not None
+    assert by_identity.id == legacy_id

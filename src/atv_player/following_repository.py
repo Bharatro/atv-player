@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,42 @@ from atv_player.following_models import (
     FollowingSourceBinding,
 )
 from atv_player.sqlite_utils import managed_connection
+
+
+def _tmdb_series_provider_id(provider_id: object) -> str:
+    text = str(provider_id or "").strip()
+    if not text.startswith("tv:"):
+        return text
+    return text.split(":season:", 1)[0]
+
+
+def _tmdb_season_number_from_provider_id(provider_id: object) -> int:
+    text = str(provider_id or "").strip()
+    if ":season:" not in text:
+        return 0
+    try:
+        return int(text.rsplit(":season:", 1)[1])
+    except (TypeError, ValueError):
+        return 0
+
+
+def _canonical_provider_id(provider: object, provider_id: object) -> str:
+    text = str(provider_id or "").strip()
+    return _tmdb_series_provider_id(text) if str(provider or "").strip() == "tmdb" else text
+
+
+def _normalize_record_identity(record: FollowingRecord) -> FollowingRecord:
+    canonical_provider_id = _canonical_provider_id(record.provider, record.provider_id)
+    if canonical_provider_id == record.provider_id and not (
+        record.provider == "tmdb" and record.season_number <= 0 and _tmdb_season_number_from_provider_id(record.provider_id) > 0
+    ):
+        return record
+    inferred_season = record.season_number or _tmdb_season_number_from_provider_id(record.provider_id)
+    return replace(
+        record,
+        provider_id=canonical_provider_id,
+        season_number=inferred_season,
+    )
 
 
 def _json_loads(value: object, fallback: Any) -> Any:
@@ -173,8 +210,10 @@ class FollowingRepository:
                 conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN seasons_json TEXT NOT NULL DEFAULT '[]'")
             except Exception:
                 pass
+            self._migrate_tmdb_series_provider_ids(conn)
 
     def upsert(self, record: FollowingRecord) -> int:
+        record = _normalize_record_identity(record)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -230,6 +269,7 @@ class FollowingRepository:
         return self._record_from_row(row) if row is not None else None
 
     def get_by_identity(self, provider: str, provider_id: str) -> FollowingRecord | None:
+        provider_id = _canonical_provider_id(provider, provider_id)
         with self._connect() as conn:
             row = conn.execute(
                 f"{self._select_sql()} WHERE provider = ? AND provider_id = ?",
@@ -414,6 +454,7 @@ class FollowingRepository:
             )
 
     def update_metadata(self, following_id: int, record: FollowingRecord) -> None:
+        record = _normalize_record_identity(record)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -439,6 +480,124 @@ class FollowingRepository:
                     following_id,
                 ),
             )
+
+    def _migrate_tmdb_series_provider_ids(self, conn) -> None:
+        rows = conn.execute(
+            f"""
+            {self._select_sql()}
+            WHERE provider = 'tmdb' AND provider_id LIKE 'tv:%'
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+            """
+        ).fetchall()
+        if not rows:
+            return
+        grouped: dict[str, list[FollowingRecord]] = {}
+        for row in rows:
+            record = self._record_from_row(row)
+            grouped.setdefault(_tmdb_series_provider_id(record.provider_id), []).append(record)
+        for canonical_provider_id, records in grouped.items():
+            if not canonical_provider_id:
+                continue
+            primary = records[0]
+            duplicates = records[1:]
+            merged = _normalize_record_identity(primary)
+            merged = replace(
+                merged,
+                external_ids=self._merge_string_maps(record.external_ids for record in records),
+                provider_priority=self._merge_string_lists(record.provider_priority for record in records),
+                source_bindings=self._merge_source_bindings(record.source_bindings for record in records),
+                latest_episode=max(record.latest_episode for record in records),
+                previous_latest_episode=max(record.previous_latest_episode for record in records),
+                total_episodes=max(record.total_episodes for record in records),
+                has_update=any(record.has_update for record in records),
+                new_episode_count=max(record.new_episode_count for record in records),
+                homepage_prompt_pending=any(record.homepage_prompt_pending for record in records),
+                season_number=max(record.season_number or _tmdb_season_number_from_provider_id(record.provider_id) for record in records),
+            )
+            if not merged.last_error:
+                merged = replace(
+                    merged,
+                    last_error=next((record.last_error for record in records if record.last_error), ""),
+                )
+            if duplicates:
+                primary_snapshot_exists = (
+                    conn.execute(
+                        "SELECT 1 FROM following_detail_snapshots WHERE following_id = ?",
+                        (primary.id,),
+                    ).fetchone()
+                    is not None
+                )
+                if not primary_snapshot_exists:
+                    for duplicate in duplicates:
+                        duplicate_snapshot_exists = (
+                            conn.execute(
+                                "SELECT 1 FROM following_detail_snapshots WHERE following_id = ?",
+                                (duplicate.id,),
+                            ).fetchone()
+                            is not None
+                        )
+                        if duplicate_snapshot_exists:
+                            conn.execute(
+                                "UPDATE following_detail_snapshots SET following_id = ? WHERE following_id = ?",
+                                (primary.id, duplicate.id),
+                            )
+                            break
+                for duplicate in duplicates:
+                    conn.execute("DELETE FROM following_detail_snapshots WHERE following_id = ?", (duplicate.id,))
+                    conn.execute("DELETE FROM following WHERE id = ?", (duplicate.id,))
+            conn.execute(
+                """
+                UPDATE following
+                SET title = ?, original_title = ?, media_kind = ?, season_number = ?,
+                    poster = ?, backdrop = ?, rating = ?, provider = ?, provider_id = ?,
+                    provider_priority_json = ?, external_ids_json = ?, source_bindings_json = ?,
+                    current_episode = ?, position_seconds = ?, watched_latest_episode = ?, latest_episode = ?,
+                    previous_latest_episode = ?, total_episodes = ?, has_update = ?, new_episode_count = ?,
+                    homepage_prompt_pending = ?, prompt_snoozed_until = ?, created_at = ?, updated_at = ?,
+                    last_played_at = ?, last_checked_at = ?, next_check_after = ?, last_error = ?
+                WHERE id = ?
+                """,
+                (*self._record_params(merged), primary.id),
+            )
+
+    @staticmethod
+    def _merge_string_maps(maps) -> dict[str, str]:
+        merged: dict[str, str] = {}
+        for mapping in maps:
+            merged.update({str(key): str(value) for key, value in dict(mapping).items() if str(value)})
+        return merged
+
+    @staticmethod
+    def _merge_string_lists(lists) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for values in lists:
+            for value in values:
+                text = str(value or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                merged.append(text)
+        return merged
+
+    @staticmethod
+    def _merge_source_bindings(binding_lists) -> list[FollowingSourceBinding]:
+        merged: list[FollowingSourceBinding] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        for bindings in binding_lists:
+            for binding in bindings:
+                key = (
+                    binding.source_kind,
+                    binding.source_key,
+                    binding.vod_id,
+                    binding.provider,
+                    binding.provider_id,
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(binding)
+        return merged
 
     def load_due_records(self, *, now: int, limit: int) -> list[FollowingRecord]:
         with self._connect() as conn:

@@ -235,6 +235,70 @@ def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None
     assert "S2E1" in episode_model.data(episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole)
 
 
+def test_following_detail_page_loads_initial_selected_season_when_snapshot_has_only_season_summaries(qtbot) -> None:
+    class SummaryOnlyController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.record.season_number = 1
+            view.snapshot.seasons = [
+                FollowingSeason(season_number=1, title="第一季", episode_count=2),
+                FollowingSeason(season_number=2, title="第二季", episode_count=1),
+            ]
+            view.snapshot.episodes = []
+            return view
+
+        def load_detail_season(self, following_id: int, *, season_number: int):
+            self.loaded_seasons.append(season_number)
+            view = self.load_detail(following_id, refresh_if_empty=False)
+            if season_number == 1:
+                view.snapshot.episodes = [
+                    FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                    FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
+                ]
+            return view
+
+    controller = SummaryOnlyController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    qtbot.waitUntil(lambda: controller.loaded_seasons == [1], timeout=1000)
+    qtbot.waitUntil(
+        lambda: page.episode_browser.episode_list.model().rowCount() == 2,
+        timeout=1000,
+    )
+
+    episode_model = page.episode_browser.episode_list.model()
+    assert controller.loaded_seasons == [1]
+    assert "S1E1" in episode_model.data(episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole)
+
+
+def test_following_detail_page_prefers_provider_id_season_over_specials_on_initial_load(qtbot) -> None:
+    class SpecialsFirstController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.record.provider = "tmdb"
+            view.record.provider_id = "tv:76479:season:1"
+            view.record.season_number = 0
+            view.snapshot.seasons = [
+                FollowingSeason(season_number=0, title="特别篇", episode_count=0),
+                FollowingSeason(season_number=1, title="第一季", episode_count=8),
+            ]
+            view.snapshot.episodes = [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+            ]
+            return view
+
+    page = FollowingDetailPage(SpecialsFirstController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert page.episode_browser.current_season_number() == 1
+    assert page.episode_browser.episode_list.model().rowCount() == 1
+
+
 def test_following_detail_page_uses_configured_initial_display_mode(qtbot) -> None:
     page = FollowingDetailPage(
         FakeController(),
