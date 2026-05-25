@@ -1445,7 +1445,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             source_label_resolver=self._favorite_record_source_label,
         )
         self.following_page = FollowingPage(self._following_controller)
-        self.following_detail_page = FollowingDetailPage(self._following_controller)
+        self.following_detail_page = FollowingDetailPage(
+            self._following_controller,
+            config=self.config,
+            save_config=self._save_config,
+        )
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
