@@ -4076,10 +4076,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return max(0, int(getattr(self.player_window, "current_index", 0) or 0) + 1)
 
     def open_following_detail(self, following_id: int) -> None:
+        following_id = int(following_id)
         self._following_controller.clear_homepage_prompt(following_id)
-        self.following_detail_page.load_record(following_id)
         self.nav_tabs.setCurrentWidget(self.following_detail_page)
         self._close_following_prompt_dialog()
+        QTimer.singleShot(0, lambda: self.following_detail_page.load_record(following_id))
 
     def _return_to_following_page(self) -> None:
         self.following_page.load_page()

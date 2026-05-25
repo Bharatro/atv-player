@@ -350,6 +350,42 @@ def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
     assert following.load_calls == [(1, 20, "", False)]
 
 
+def test_main_window_switches_to_following_detail_before_loading_record(qtbot) -> None:
+    window_ref: dict[str, MainWindow] = {}
+
+    class OrderTrackingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.detail_load_saw_detail_page: list[bool] = []
+
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            window = window_ref["window"]
+            self.detail_load_saw_detail_page.append(
+                window.nav_tabs.currentWidget() is window.following_detail_page
+            )
+            return super().load_detail(following_id)
+
+    following = OrderTrackingFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    window_ref["window"] = window
+    qtbot.addWidget(window)
+
+    window.nav_tabs.setCurrentWidget(window.following_page)
+    window.open_following_detail(1)
+
+    assert window.nav_tabs.currentWidget() is window.following_detail_page
+    assert following.detail_load_saw_detail_page == []
+    qtbot.waitUntil(lambda: following.detail_load_saw_detail_page == [True], timeout=1000)
+    assert following.detail_load_saw_detail_page == [True]
+
+
 def test_main_window_homepage_prompt_actions(qtbot) -> None:
     following = FakeFollowingController()
     window = MainWindow(
