@@ -510,3 +510,70 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
     assert snapshot is not None
     assert snapshot.cast[1]["avatar"] == "/tian.jpg"
     assert snapshot.episodes[0].still == "old-still"
+
+
+class FakeFullEpisodeRefreshService:
+    def __init__(self, latest: int, total: int) -> None:
+        self._latest = latest
+        self._total = total
+        self.search_calls = 0
+
+    def search(self, query, provider_filter=""):
+        del query, provider_filter
+        self.search_calls += 1
+        return []
+
+    def detail_record_full(self, candidate):
+        episodes = [
+            {"episode_number": index, "name": f"第{index}集", "type": 0, "air_date": ""}
+            for index in range(1, self._latest + 1)
+        ]
+        episodes.extend(
+            {"episode_number": index, "name": f"第{index}集", "type": 0, "air_date": "2099-01-01"}
+            for index in range(self._latest + 1, self._total + 1)
+        )
+        return MetadataRecord(
+            provider="tmdb",
+            provider_id=candidate.provider_id,
+            title="新元数据剧集",
+            poster="new-poster",
+            backdrop="new-backdrop",
+            overview="新简介",
+            tmdb_id="999",
+            detail_fields=[{"label": "episodes", "value": episodes}],
+        )
+
+
+def test_following_controller_refresh_metadata_corrects_wrong_episode_counts(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="错误集数剧集",
+            media_kind="live_action",
+            provider="player",
+            provider_id="player:source:vod-1",
+            external_ids={"tmdb": "999"},
+            current_episode=12,
+            latest_episode=12,
+            previous_latest_episode=12,
+            total_episodes=12,
+            watched_latest_episode=True,
+            has_update=False,
+            new_episode_count=0,
+            homepage_prompt_pending=False,
+        )
+    )
+    service = FakeFullEpisodeRefreshService(latest=24, total=30)
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    controller.refresh_metadata(record_id)
+
+    loaded = repo.get(record_id)
+    assert loaded is not None
+    assert loaded.latest_episode == 24
+    assert loaded.total_episodes == 30
+    assert loaded.current_episode == 12
+    assert loaded.watched_latest_episode is False
+    assert loaded.has_update is True
+    assert loaded.new_episode_count == 12

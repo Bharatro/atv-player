@@ -106,6 +106,9 @@ class FollowingController:
         ]
         return cards, total
 
+    def search_items(self, keyword: str, page: int) -> tuple[list[FollowingCardItem], int]:
+        return self.load_page(page=page, size=20, keyword=keyword, only_updates=False)
+
     def load_detail(self, following_id: int, *, refresh_if_empty: bool = True) -> FollowingDetailView:
         record = self._repository.get(following_id)
         if record is None:
@@ -241,14 +244,30 @@ class FollowingController:
         )
         refreshed_record.current_episode = record.current_episode
         refreshed_record.position_seconds = record.position_seconds
-        refreshed_record.latest_episode = record.latest_episode
+        new_latest = max(refreshed_record.latest_episode, record.latest_episode)
+        new_total = max(refreshed_record.total_episodes, record.total_episodes)
+        refreshed_record.latest_episode = new_latest
         refreshed_record.previous_latest_episode = record.previous_latest_episode
-        refreshed_record.total_episodes = record.total_episodes
-        refreshed_record.has_update = record.has_update
-        refreshed_record.new_episode_count = record.new_episode_count
-        refreshed_record.homepage_prompt_pending = record.homepage_prompt_pending
-        refreshed_record.watched_latest_episode = record.watched_latest_episode
+        refreshed_record.total_episodes = new_total
+        has_update = new_latest > 0 and new_latest > max(record.current_episode, 0)
+        new_episode_count = max(new_latest - max(record.current_episode, 0), 0) if has_update else 0
+        homepage_prompt_pending = record.homepage_prompt_pending and has_update
+        refreshed_record.has_update = has_update
+        refreshed_record.new_episode_count = new_episode_count
+        refreshed_record.homepage_prompt_pending = homepage_prompt_pending
+        refreshed_record.watched_latest_episode = new_latest > 0 and record.current_episode >= new_latest
         self._repository.update_metadata(following_id, refreshed_record)
+        self._repository.update_check_state(
+            following_id,
+            latest_episode=new_latest,
+            total_episodes=new_total,
+            checked_at=record.last_checked_at,
+            next_check_after=record.next_check_after,
+            has_update=has_update,
+            new_episode_count=new_episode_count,
+            homepage_prompt_pending=homepage_prompt_pending,
+            last_error=record.last_error,
+        )
         if existing_snapshot is not None:
             snapshot = self._merge_refreshed_snapshot(existing_snapshot, snapshot)
         snapshot.following_id = following_id

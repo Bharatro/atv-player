@@ -339,16 +339,21 @@ class FollowingRepository:
         last_error: str,
     ) -> None:
         with self._connect() as conn:
-            row = conn.execute("SELECT latest_episode FROM following WHERE id = ?", (following_id,)).fetchone()
+            row = conn.execute(
+                "SELECT latest_episode, current_episode FROM following WHERE id = ?",
+                (following_id,),
+            ).fetchone()
             if row is None:
                 return
             previous = int(row[0] or 0)
+            current_episode = int(row[1] or 0)
+            watched_latest = latest_episode > 0 and current_episode >= latest_episode
             conn.execute(
                 """
                 UPDATE following
                 SET previous_latest_episode = ?, latest_episode = ?, total_episodes = ?,
                     last_checked_at = ?, next_check_after = ?, has_update = ?, new_episode_count = ?,
-                    homepage_prompt_pending = ?, last_error = ?
+                    homepage_prompt_pending = ?, watched_latest_episode = ?, last_error = ?
                 WHERE id = ?
                 """,
                 (
@@ -360,6 +365,7 @@ class FollowingRepository:
                     1 if has_update else 0,
                     new_episode_count,
                     1 if homepage_prompt_pending else 0,
+                    1 if watched_latest else 0,
                     last_error,
                     following_id,
                 ),
