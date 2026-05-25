@@ -5,7 +5,9 @@ import time
 from dataclasses import dataclass
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
-from atv_player.following_metadata import build_following_from_candidate
+from atv_player.following_metadata import (
+    build_following_from_metadata_candidate,
+)
 from atv_player.following_models import (
     FollowingCardItem,
     FollowingDetailSnapshot,
@@ -35,7 +37,12 @@ class FollowingController:
         return self._metadata_search_service.search(query)
 
     def add_candidate(self, candidate) -> FollowingRecord:
-        record, snapshot = build_following_from_candidate(candidate, now=self._now())
+        now = self._now()
+        record, snapshot = build_following_from_metadata_candidate(
+            candidate,
+            metadata_search_service=self._metadata_search_service,
+            now=now,
+        )
         record_id = self._repository.upsert(record)
         saved = self._repository.get(record_id)
         if saved is None:
@@ -67,6 +74,10 @@ class FollowingController:
         snapshot = self._repository.get_detail_snapshot(following_id) or FollowingDetailSnapshot(
             following_id=following_id
         )
+        if self._snapshot_needs_refresh(snapshot) and self._update_service is not None:
+            self._update_service.check_record(following_id)
+            record = self._repository.get(following_id) or record
+            snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
         return FollowingDetailView(record=record, snapshot=snapshot)
 
     def add_from_player(
@@ -158,4 +169,25 @@ class FollowingController:
         self._repository.delete(following_id)
 
     def _progress_text(self, record: FollowingRecord) -> str:
-        return f"看到 {record.current_episode} · 最新 {record.latest_episode} / 总 {record.total_episodes}"
+        parts = []
+        if record.current_episode > 0:
+            parts.append(f"看到 {record.current_episode}")
+        if record.latest_episode > 0 and record.total_episodes > 0:
+            parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
+        elif record.latest_episode > 0:
+            parts.append(f"最新 {record.latest_episode}")
+        elif record.total_episodes > 0:
+            parts.append(f"总 {record.total_episodes}")
+        return " · ".join(parts) if parts else "进度未知"
+
+    def _snapshot_needs_refresh(self, snapshot: FollowingDetailSnapshot) -> bool:
+        return not any(
+            (
+                snapshot.overview,
+                snapshot.cast,
+                snapshot.crew,
+                snapshot.episodes,
+                snapshot.posters,
+                snapshot.backdrops,
+            )
+        )

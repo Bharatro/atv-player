@@ -339,11 +339,19 @@ def _episode_title(episode: FollowingEpisode) -> str:
 
 
 def _meta_text(record: FollowingRecord) -> str:
+    episode_parts = []
+    if record.current_episode > 0:
+        episode_parts.append(f"看到 {record.current_episode}")
+    if record.latest_episode > 0 and record.total_episodes > 0:
+        episode_parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
+    elif record.latest_episode > 0:
+        episode_parts.append(f"最新 {record.latest_episode}")
+    elif record.total_episodes > 0:
+        episode_parts.append(f"总 {record.total_episodes}")
     parts = [
         f"评分 {record.rating}" if record.rating else "",
         record.provider,
-        f"看到 {record.current_episode}",
-        f"最新 {record.latest_episode} / 总 {record.total_episodes}",
+        *episode_parts,
         "有更新" if record.has_update else "暂无更新",
     ]
     return " · ".join(part for part in parts if part)

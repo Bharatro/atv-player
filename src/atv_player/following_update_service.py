@@ -59,7 +59,7 @@ class FollowingUpdateService(QObject):
 
     def _check_one(self, record: FollowingRecord, *, now: int) -> FollowingUpdateResult:
         last_error = ""
-        for provider in record.provider_priority or [record.provider]:
+        for provider in self._provider_order(record):
             if not provider:
                 continue
             try:
@@ -71,18 +71,21 @@ class FollowingUpdateService(QObject):
                 {
                     "episode_number": episode.episode_number,
                     "type": 1 if episode.is_special else 0,
+                    "air_date": episode.air_date,
                 }
                 for episode in snapshot.episodes
             ]
-            latest, total = compute_episode_counts(raw_episodes)
+            latest, total = compute_episode_counts(raw_episodes, now=now)
             latest = latest or refreshed_record.latest_episode or record.latest_episode
             total = total or refreshed_record.total_episodes or record.total_episodes
-            has_update = latest > record.latest_episode or record.has_update
-            new_count = max(latest - record.latest_episode, record.new_episode_count if record.has_update else 0)
+            has_update = latest > max(record.current_episode, 0)
+            new_count = max(latest - max(record.current_episode, 0), 0) if has_update else 0
             caught_up = record.watched_latest_episode or (
                 record.latest_episode > 0 and record.current_episode >= record.latest_episode
             )
             homepage_prompt = bool(has_update and caught_up and record.prompt_snoozed_until <= now)
+            if self._has_metadata_update(refreshed_record):
+                self._repository.update_metadata(record.id, refreshed_record)
             self._repository.update_check_state(
                 record.id,
                 latest_episode=latest,
@@ -117,3 +120,35 @@ class FollowingUpdateService(QObject):
             last_error=last_error,
         )
         return FollowingUpdateResult(record_id=record.id, checked=False, error=last_error)
+
+    def _provider_order(self, record: FollowingRecord) -> list[str]:
+        providers: list[str] = []
+        for provider in [*list(record.provider_priority or []), record.provider]:
+            if provider and provider not in providers:
+                providers.append(provider)
+        media_kind = str(record.media_kind or "").strip().lower()
+        should_try_bangumi_first = (
+            record.provider == "bangumi"
+            or "bangumi" in record.external_ids
+            or any(marker in media_kind for marker in ("anime", "动漫", "动画", "番剧", "国创"))
+            or (media_kind != "movie" and "bangumi" in providers)
+        )
+        if should_try_bangumi_first:
+            providers = ["bangumi", *[provider for provider in providers if provider != "bangumi"]]
+        return providers or [record.provider]
+
+    def _has_metadata_update(self, record: FollowingRecord) -> bool:
+        return any(
+            (
+                record.title,
+                record.original_title,
+                record.media_kind,
+                record.poster,
+                record.backdrop,
+                record.rating,
+                record.provider,
+                record.provider_id,
+                record.provider_priority,
+                record.external_ids,
+            )
+        )

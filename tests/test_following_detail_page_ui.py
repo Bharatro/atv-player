@@ -70,3 +70,21 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert search_play == [1]
     assert controller.manual_checks == [1]
     assert controller.mark_latest == [1]
+
+
+def test_following_detail_page_omits_unknown_episode_counts(qtbot) -> None:
+    class UnknownCountsController(FakeController):
+        def load_detail(self, following_id: int):
+            view = super().load_detail(following_id)
+            view.record.latest_episode = 0
+            view.record.total_episodes = 0
+            return view
+
+    page = FollowingDetailPage(UnknownCountsController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert "最新 0" not in page.meta_label.text()
+    assert "总 0" not in page.meta_label.text()
+    assert "看到 127" in page.meta_label.text()

@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+from dataclasses import replace
 from pathlib import Path
 
 from atv_player.following_models import (
@@ -14,15 +15,27 @@ class FakeMetadataGateway:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.failures: set[str] = set()
+        self.responses: dict[str, tuple[FollowingRecord, FollowingDetailSnapshot]] = {}
 
     def refresh(self, record: FollowingRecord, provider: str):
         self.calls.append((record.title, provider))
         if provider in self.failures:
             raise RuntimeError(f"{provider} failed")
+        if provider in self.responses:
+            return self.responses[provider]
         return (
-            record,
+            replace(
+                record,
+                provider_id="subject:1:detail",
+                poster="poster",
+                backdrop="backdrop",
+                rating="8.0",
+                latest_episode=2,
+                total_episodes=2,
+            ),
             FollowingDetailSnapshot(
                 following_id=record.id,
+                overview="简介",
                 episodes=[
                     FollowingEpisode(episode_number=1, title="第一集"),
                     FollowingEpisode(episode_number=2, title="第二集"),
@@ -68,6 +81,9 @@ def test_update_service_sets_homepage_prompt_when_caught_up(tmp_path: Path) -> N
     assert record.latest_episode == 2
     assert record.has_update is True
     assert record.homepage_prompt_pending is True
+    assert record.poster == "poster"
+    assert record.provider_id == "subject:1:detail"
+    assert repo.get_detail_snapshot(record_id).overview == "简介"
 
 
 def test_update_service_does_not_prompt_when_user_is_behind(tmp_path: Path) -> None:
@@ -97,3 +113,65 @@ def test_update_service_falls_back_to_next_provider_and_keeps_errors(tmp_path: P
     assert record is not None
     assert record.last_error == ""
     assert record.latest_episode == 2
+
+
+def test_update_service_prefers_bangumi_for_following_updates_and_clears_stale_update(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="盗妖行",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:315088:season:1",
+            provider_priority=["tmdb", "douban", "bangumi"],
+            external_ids={"tmdb": "315088"},
+            current_episode=29,
+            latest_episode=60,
+            previous_latest_episode=29,
+            total_episodes=60,
+            has_update=True,
+            new_episode_count=31,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["bangumi"] = (
+        _record(
+            id=record_id,
+            title="盗妖行",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:315088",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "315088"},
+            current_episode=29,
+            latest_episode=29,
+            total_episodes=60,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[
+                FollowingEpisode(
+                    episode_number=episode_number,
+                    air_date="2026-05-21" if episode_number <= 29 else "2026-05-26",
+                )
+                for episode_number in range(1, 61)
+            ],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_due_records(limit=10)
+
+    record = repo.get(record_id)
+    assert gateway.calls[0] == ("盗妖行", "bangumi")
+    assert results[0].latest_episode == 29
+    assert results[0].has_update is False
+    assert record is not None
+    assert record.provider == "bangumi"
+    assert record.latest_episode == 29
+    assert record.total_episodes == 60
+    assert record.has_update is False
+    assert record.new_episode_count == 0
+    assert record.homepage_prompt_pending is False

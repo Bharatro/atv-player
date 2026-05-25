@@ -348,6 +348,33 @@ class FollowingRepository:
                 ),
             )
 
+    def update_metadata(self, following_id: int, record: FollowingRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE following
+                SET title = ?, original_title = ?, media_kind = ?, season_number = ?,
+                    poster = ?, backdrop = ?, rating = ?, provider = ?, provider_id = ?,
+                    provider_priority_json = ?, external_ids_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    record.title,
+                    record.original_title,
+                    record.media_kind,
+                    record.season_number,
+                    record.poster,
+                    record.backdrop,
+                    record.rating,
+                    record.provider,
+                    record.provider_id,
+                    _json_dumps(record.provider_priority),
+                    _json_dumps(record.external_ids),
+                    record.updated_at,
+                    following_id,
+                ),
+            )
+
     def load_due_records(self, *, now: int, limit: int) -> list[FollowingRecord]:
         with self._connect() as conn:
             rows = conn.execute(

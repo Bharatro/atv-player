@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import replace
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from atv_player.following_models import (
     FollowingDetailSnapshot,
@@ -11,6 +14,14 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
 )
 from atv_player.metadata.models import MetadataQuery
+from atv_player.models import VodItem
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+_FIELD_PROVIDER_PRIORITY = {
+    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
+    "backdrop": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
+    "rating": ["official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
+}
 
 
 def following_provider_priority(media_kind: str) -> list[str]:
@@ -24,6 +35,20 @@ def _provider_external_id(provider: str, provider_id: str) -> tuple[str, str]:
         match = re.match(r"^(?:tv|movie):([^:]+)", provider_id)
         return ("tmdb", match.group(1)) if match else ("tmdb", provider_id)
     return provider, provider_id
+
+
+def normalize_following_candidate(candidate):
+    provider = str(getattr(candidate, "provider", "") or "").strip()
+    provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+    if provider != "tmdb" or not provider_id.startswith("tv:") or ":season:" in provider_id:
+        return candidate
+    raw = dict(getattr(candidate, "raw", {}) or {})
+    season_number = _to_int(raw.get("season_number")) or 1
+    return replace(
+        candidate,
+        provider_id=f"{provider_id}:season:{season_number}",
+        raw={**raw, "season_number": season_number},
+    )
 
 
 def _to_int(value: object) -> int:
@@ -48,10 +73,28 @@ def _episode_from_raw(raw: dict[str, object]) -> FollowingEpisode:
     )
 
 
-def compute_episode_counts(raw_episodes: list[dict[str, object]]) -> tuple[int, int]:
+def _air_date(raw_value: object):
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def compute_episode_counts(raw_episodes: list[dict[str, object]], *, now: int | None = None) -> tuple[int, int]:
     episodes = [_episode_from_raw(item) for item in raw_episodes if isinstance(item, dict)]
     normal_numbers = [episode.episode_number for episode in episodes if episode.episode_number > 0 and not episode.is_special]
-    return (max(normal_numbers) if normal_numbers else 0, len(set(normal_numbers)))
+    today = datetime.fromtimestamp(now if now is not None else int(time.time()), BEIJING_TZ).date()
+    aired_numbers = [
+        episode.episode_number
+        for episode in episodes
+        if episode.episode_number > 0
+        and not episode.is_special
+        and (_air_date(episode.air_date) is None or _air_date(episode.air_date) <= today)
+    ]
+    return (max(aired_numbers) if aired_numbers else 0, len(set(normal_numbers)))
 
 
 def _media_kind_from_provider(provider: str, subtitle: object = "") -> str:
@@ -59,6 +102,14 @@ def _media_kind_from_provider(provider: str, subtitle: object = "") -> str:
     if provider == "bangumi" or any(marker in subtitle_text for marker in ("动漫", "动画", "anime")):
         return "anime"
     return "live_action"
+
+
+def _media_kind_category(media_kind: str) -> str:
+    return {
+        "anime": "动漫",
+        "movie": "电影",
+        "live_action": "剧集",
+    }.get(media_kind, "")
 
 
 def _episode_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -79,7 +130,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
     external_key, external_value = _provider_external_id(provider, provider_id)
     raw_episodes = [item for item in raw.get("episodes") or [] if isinstance(item, dict)]
-    latest, total = compute_episode_counts(raw_episodes)
+    latest, total = compute_episode_counts(raw_episodes, now=now)
     media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""))
     record = FollowingRecord(
         id=0,
@@ -103,6 +154,218 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     return record, snapshot
 
 
+def build_following_from_metadata_candidate(
+    candidate,
+    *,
+    metadata_search_service,
+    now: int,
+    media_kind: str = "",
+    include_related: bool = True,
+) -> tuple[FollowingRecord, FollowingDetailSnapshot]:
+    candidate = hydrate_following_candidate(metadata_search_service, candidate)
+    record, snapshot = build_following_from_candidate(candidate, now=now)
+    field_sources = _initial_field_sources(record)
+    detail_record, detail_error = load_candidate_detail_record(metadata_search_service, candidate)
+    if detail_record is None:
+        if detail_error:
+            record.last_error = f"详情拉取失败: {detail_error}"
+    else:
+        detail_following, detail_snapshot = build_snapshot_from_record(
+            detail_record,
+            now=now,
+            media_kind=media_kind or record.media_kind,
+        )
+        record = merge_following_record(record, detail_following, field_sources=field_sources)
+        snapshot = merge_following_snapshot(snapshot, detail_snapshot)
+    if not include_related:
+        return record, snapshot
+    for related in iter_related_following_candidates(
+        metadata_search_service,
+        candidate,
+        record=record,
+    ):
+        related = hydrate_following_candidate(metadata_search_service, related)
+        related_detail, _detail_error = load_candidate_detail_record(metadata_search_service, related)
+        if related_detail is None:
+            continue
+        related_following, related_snapshot = build_snapshot_from_record(
+            related_detail,
+            now=now,
+            media_kind=record.media_kind,
+        )
+        record = merge_following_record(
+            record,
+            related_following,
+            preserve_identity=True,
+            fill_episode_counts=True,
+            field_sources=field_sources,
+        )
+        snapshot = merge_following_snapshot(snapshot, related_snapshot, fill_missing=True)
+    return record, snapshot
+
+
+def hydrate_following_candidate(metadata_search_service, candidate):
+    candidate = normalize_following_candidate(candidate)
+    provider = str(getattr(candidate, "provider", "") or "").strip()
+    if provider == "tmdb":
+        hydrate = getattr(metadata_search_service, "_hydrate_tmdb_episode_candidate", None)
+        if callable(hydrate):
+            candidate = hydrate(
+                VodItem(vod_id="", vod_name=str(getattr(candidate, "title", "") or "")),
+                candidate,
+            )
+    if provider == "bangumi":
+        hydrate = getattr(metadata_search_service, "_hydrate_bangumi_episode_candidate", None)
+        if callable(hydrate):
+            candidate = hydrate(candidate)
+    if provider == "bilibili":
+        hydrate = getattr(metadata_search_service, "_hydrate_bilibili_episode_candidate", None)
+        if callable(hydrate):
+            candidate = hydrate(candidate)
+    return normalize_following_candidate(candidate)
+
+
+def load_candidate_detail_record(metadata_search_service, candidate):
+    detail_record = getattr(metadata_search_service, "detail_record", None)
+    if not callable(detail_record):
+        return None, ""
+    try:
+        return detail_record(candidate), ""
+    except Exception as exc:
+        return None, str(exc)
+
+
+def iter_related_following_candidates(metadata_search_service, candidate, *, record: FollowingRecord):
+    search = getattr(metadata_search_service, "search", None)
+    if not callable(search):
+        return
+    media_kind = record.media_kind or _media_kind_from_provider(
+        str(getattr(candidate, "provider", "") or "").strip(),
+        getattr(candidate, "subtitle", ""),
+    )
+    query = MetadataQuery(
+        title=str(record.title or getattr(candidate, "title", "") or "").strip(),
+        year=str(getattr(candidate, "year", "") or "").strip(),
+        category_name=_media_kind_category(media_kind) or str(getattr(candidate, "subtitle", "") or "").strip(),
+    )
+    if not query.title:
+        return
+    selected_key = _candidate_key(candidate)
+    try:
+        groups = search(query)
+    except Exception:
+        return
+    for group in groups:
+        for item in list(getattr(group, "items", []) or [])[:1]:
+            if _candidate_key(item) == selected_key:
+                continue
+            yield item
+
+
+def _candidate_key(candidate) -> tuple[str, str]:
+    return (
+        str(getattr(candidate, "provider", "") or "").strip(),
+        str(getattr(candidate, "provider_id", "") or "").strip(),
+    )
+
+
+def _initial_field_sources(record: FollowingRecord) -> dict[str, str]:
+    return {
+        "poster": record.provider if record.poster else "",
+        "backdrop": record.provider if record.backdrop else "",
+        "rating": record.provider if record.rating else "",
+    }
+
+
+def _provider_rank(field_name: str, provider: str) -> int:
+    order = _FIELD_PROVIDER_PRIORITY.get(field_name, [])
+    return order.index(provider) if provider in order else len(order) + 100
+
+
+def _should_replace_field(field_name: str, current_provider: str, next_provider: str) -> bool:
+    if not current_provider:
+        return True
+    return _provider_rank(field_name, next_provider) <= _provider_rank(field_name, current_provider)
+
+
+def _merge_visual_field(
+    field_name: str,
+    current_value: str,
+    next_value: str,
+    next_provider: str,
+    field_sources: dict[str, str] | None,
+) -> str:
+    if not next_value:
+        return current_value
+    if field_sources is None:
+        return next_value or current_value
+    if current_value and not _should_replace_field(field_name, field_sources.get(field_name, ""), next_provider):
+        return current_value
+    field_sources[field_name] = next_provider
+    return next_value
+
+
+def merge_following_record(
+    record: FollowingRecord,
+    detail: FollowingRecord,
+    *,
+    preserve_identity: bool = False,
+    fill_episode_counts: bool = False,
+    field_sources: dict[str, str] | None = None,
+) -> FollowingRecord:
+    external_ids = dict(record.external_ids)
+    external_ids.update(detail.external_ids)
+    latest_episode = record.latest_episode or detail.latest_episode if fill_episode_counts else detail.latest_episode or record.latest_episode
+    total_episodes = max(record.total_episodes, detail.total_episodes) if fill_episode_counts else detail.total_episodes or record.total_episodes
+    return replace(
+        record,
+        title=record.title if preserve_identity else detail.title or record.title,
+        original_title=record.original_title or detail.original_title if preserve_identity else detail.original_title or record.original_title,
+        media_kind=record.media_kind or detail.media_kind if preserve_identity else detail.media_kind or record.media_kind,
+        season_number=detail.season_number or record.season_number,
+        poster=_merge_visual_field("poster", record.poster, detail.poster, detail.provider, field_sources),
+        backdrop=_merge_visual_field("backdrop", record.backdrop, detail.backdrop, detail.provider, field_sources),
+        rating=_merge_visual_field("rating", record.rating, detail.rating, detail.provider, field_sources),
+        provider=record.provider if preserve_identity else detail.provider or record.provider,
+        provider_id=record.provider_id if preserve_identity else detail.provider_id or record.provider_id,
+        provider_priority=record.provider_priority if preserve_identity else detail.provider_priority or record.provider_priority,
+        external_ids=external_ids,
+        latest_episode=latest_episode,
+        previous_latest_episode=latest_episode or detail.previous_latest_episode or record.previous_latest_episode,
+        total_episodes=total_episodes,
+        updated_at=detail.updated_at or record.updated_at,
+    )
+
+
+def merge_following_snapshot(
+    snapshot: FollowingDetailSnapshot,
+    detail: FollowingDetailSnapshot,
+    *,
+    fill_missing: bool = False,
+) -> FollowingDetailSnapshot:
+    if fill_missing:
+        return replace(
+            snapshot,
+            overview=snapshot.overview or detail.overview,
+            cast=snapshot.cast or detail.cast,
+            crew=snapshot.crew or detail.crew,
+            episodes=snapshot.episodes or detail.episodes,
+            posters=snapshot.posters or detail.posters,
+            backdrops=snapshot.backdrops or detail.backdrops,
+            refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
+        )
+    return replace(
+        snapshot,
+        overview=detail.overview or snapshot.overview,
+        cast=detail.cast or snapshot.cast,
+        crew=detail.crew or snapshot.crew,
+        episodes=detail.episodes or snapshot.episodes,
+        posters=detail.posters or snapshot.posters,
+        backdrops=detail.backdrops or snapshot.backdrops,
+        refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
+    )
+
+
 def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tuple[FollowingRecord, FollowingDetailSnapshot]:
     provider = str(getattr(record, "provider", "") or "").strip()
     provider_id = str(getattr(record, "provider_id", "") or "").strip()
@@ -118,7 +381,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         external_ids["douban"] = str(douban_id)
 
     raw_episodes = _episode_raw_from_detail_fields(list(getattr(record, "detail_fields", []) or []))
-    latest, total = compute_episode_counts(raw_episodes)
+    latest, total = compute_episode_counts(raw_episodes, now=now)
     normalized_kind = media_kind or _media_kind_from_provider(provider)
     following = FollowingRecord(
         id=0,
@@ -156,8 +419,9 @@ class FollowingMetadataGateway:
         self._metadata_search_service = metadata_search_service
 
     def refresh(self, record: FollowingRecord, provider: str):
+        category_name = "动漫" if provider == "bangumi" else ""
         groups = self._metadata_search_service.search(
-            MetadataQuery(title=record.title),
+            MetadataQuery(title=record.title, category_name=category_name),
             provider_filter=provider,
         )
         candidates = [item for group in groups for item in group.items]
@@ -168,4 +432,10 @@ class FollowingMetadataGateway:
         candidate = preferred or (candidates[0] if candidates else None)
         if candidate is None:
             raise RuntimeError(f"{provider} returned no following candidate")
-        return build_following_from_candidate(candidate, now=int(time.time()))
+        return build_following_from_metadata_candidate(
+            candidate,
+            metadata_search_service=self._metadata_search_service,
+            now=int(time.time()),
+            media_kind=record.media_kind,
+            include_related=False,
+        )

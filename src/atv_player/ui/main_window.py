@@ -1238,7 +1238,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
     _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
     _FAVORITES_ICON_PATH = _ICONS_DIR / "favorite.svg"
-    _FOLLOWING_ICON_PATH = _ICONS_DIR / "refresh.svg"
+    _FOLLOWING_ICON_PATH = _ICONS_DIR / "following.svg"
     _HISTORY_ICON_PATH = _ICONS_DIR / "history.svg"
     _PLUGIN_MANAGER_ICON_PATH = _ICONS_DIR / "plugin.svg"
     _LIVE_SOURCE_MANAGER_ICON_PATH = _ICONS_DIR / "live-source.svg"

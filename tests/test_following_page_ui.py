@@ -1,3 +1,6 @@
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage
+
 from atv_player.following_models import FollowingCardItem, FollowingRecord
 from atv_player.ui.following_page import FollowingPage
 
@@ -43,11 +46,33 @@ def test_following_page_renders_update_card_and_emits_detail(qtbot) -> None:
     page.open_detail_requested.connect(opened.append)
 
     page.ensure_loaded()
-    page.card_widgets[0].double_clicked.emit(page.records[0].record.id)
+    qtbot.mouseClick(page.card_widgets[0], Qt.MouseButton.LeftButton)
 
     assert page.records[0].display_title == "凡人修仙传"
     assert page.records[0].updated_hint is True
+    assert "共 1 条" in page.status_label.text()
+    assert "1 条有更新" in page.status_label.text()
+    assert "color:" in page.card_widgets[0].title_label.styleSheet()
+    assert "color:" in page.card_widgets[0].progress_label.styleSheet()
+    assert "color:" in page.card_widgets[0].update_label.styleSheet()
+    assert page.card_widgets[0].poster_label.height() >= 220
+    assert page.card_widgets[0].height() >= 320
+    assert page.card_widgets[0].layout().stretch(page.card_widgets[0].layout().count() - 1) == 0
     assert opened == [1]
+
+
+def test_following_page_centers_content_like_favorites_page(qtbot) -> None:
+    page = FollowingPage(FakeFollowingController())
+    qtbot.addWidget(page)
+
+    layout = page.layout()
+    content_widget = layout.itemAt(1).widget()
+
+    assert layout.count() == 3
+    assert layout.itemAt(0).spacerItem() is not None
+    assert content_widget is not None
+    assert content_widget.maximumWidth() == 1800
+    assert layout.itemAt(2).spacerItem() is not None
 
 
 def test_following_page_filters_updates_and_runs_manual_check(qtbot) -> None:
@@ -61,3 +86,48 @@ def test_following_page_filters_updates_and_runs_manual_check(qtbot) -> None:
 
     assert controller.only_updates_seen[-1] is True
     assert controller.check_all_calls == 1
+    assert page.status_label.text().startswith("已检查更新")
+
+
+def test_following_page_shows_empty_status(qtbot) -> None:
+    class EmptyController(FakeFollowingController):
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            del page, size, keyword, only_updates
+            return [], 0
+
+    page = FollowingPage(EmptyController())
+    qtbot.addWidget(page)
+
+    page.ensure_loaded()
+
+    assert page.card_widgets == []
+    assert page.status_label.text() == "没有追更记录"
+
+
+def test_following_page_loads_card_poster(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "poster.png"
+    image = QImage(24, 24, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ff0000"))
+    assert image.save(str(poster_path))
+
+    class PosterController(FakeFollowingController):
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            items, total = super().load_page(
+                page=page,
+                size=size,
+                keyword=keyword,
+                only_updates=only_updates,
+            )
+            items[0].record.poster = str(poster_path)
+            return items, total
+
+    page = FollowingPage(PosterController())
+    qtbot.addWidget(page)
+
+    page.ensure_loaded()
+
+    qtbot.waitUntil(
+        lambda: page.card_widgets[0].poster_label.pixmap() is not None
+        and not page.card_widgets[0].poster_label.pixmap().isNull(),
+        timeout=1000,
+    )

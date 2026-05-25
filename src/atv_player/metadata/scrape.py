@@ -487,6 +487,12 @@ class MetadataScrapeService:
                 self._cache.delete_detail(provider_name, provider_id)
 
     def apply(self, vod: VodItem, candidate: MetadataScrapeCandidate) -> VodItem:
+        record = self.detail_record(candidate)
+        updated = replace(vod)
+        replace_metadata_record(updated, record)
+        return updated
+
+    def detail_record(self, candidate: MetadataScrapeCandidate):
         provider = self._providers_by_name[candidate.provider]
         record = self._cache.load_detail(candidate.provider, candidate.provider_id, ttl_seconds=7 * 24 * 3600)
         if record is None:
@@ -501,6 +507,4 @@ class MetadataScrapeService:
             if record is None:
                 raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
             self._cache.save_detail(candidate.provider, candidate.provider_id, record)
-        updated = replace(vod)
-        replace_metadata_record(updated, record)
-        return updated
+        return record

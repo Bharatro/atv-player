@@ -1070,7 +1070,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_layout.addWidget(self._poster_row_widget)
         self.favorite_button = self._create_icon_button("favorite.svg", "加入收藏")
         self.favorite_button.clicked.connect(self._toggle_current_favorite)
-        self.following_button = self._create_icon_button("refresh.svg", "加入追更")
+        self.following_button = self._create_icon_button("following.svg", "加入追更")
         self.following_button.clicked.connect(self._toggle_current_following)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
@@ -2331,10 +2331,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _set_following_button_icon(self, active: bool) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
         color = self._FOLLOWING_ACTIVE_ICON_COLOR if active else tokens.text_secondary
-        self.following_button.setProperty("icon_name", "refresh.svg")
+        self.following_button.setProperty("icon_name", "following.svg")
         self.following_button.setIcon(
             tint_icon(
-                load_icon(self._icons_dir / "refresh.svg"),
+                load_icon(self._icons_dir / "following.svg"),
                 color,
                 size=self.following_button.iconSize(),
             )

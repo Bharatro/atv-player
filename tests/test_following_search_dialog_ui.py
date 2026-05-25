@@ -1,0 +1,47 @@
+from types import SimpleNamespace
+
+from PySide6.QtWidgets import QDialog
+
+from atv_player.ui.following_search_dialog import FollowingSearchDialog
+
+
+def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(qtbot) -> None:
+    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+
+    class Controller:
+        def __init__(self) -> None:
+            self.added = []
+
+        def search_media(self, keyword: str):
+            assert keyword == "凡人"
+            return [
+                SimpleNamespace(
+                    provider="bangumi",
+                    provider_label="Bangumi",
+                    items=[candidate],
+                    error_text="",
+                )
+            ]
+
+        def add_candidate(self, selected) -> None:
+            self.added.append(selected)
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+
+    assert dialog.title_bar().title_label.text() == "添加追更"
+    assert dialog.title_bar().maximize_button.isHidden() is True
+
+    dialog.search_edit.setText("凡人")
+    dialog.run_search()
+
+    assert dialog.group_list.count() == 1
+    assert dialog.result_list.count() == 1
+    assert "找到 1 个结果" in dialog.status_label.text()
+
+    dialog.result_list.setCurrentRow(0)
+    dialog.add_button.click()
+
+    assert controller.added == [candidate]
+    assert dialog.result() == QDialog.DialogCode.Accepted

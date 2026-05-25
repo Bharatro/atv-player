@@ -1,8 +1,10 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+import threading
+
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.following_search_dialog import FollowingSearchDialog
 from atv_player.ui.poster_grid_page import _FlowLayout
+from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 
 
@@ -28,7 +31,7 @@ class FollowingCardButton(QPushButton):
         super().__init__(parent)
         self.item = item
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(230, 260)
+        self.setMinimumSize(220, 320)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setProperty("updated_hint", item.updated_hint)
 
@@ -38,8 +41,7 @@ class FollowingCardButton(QPushButton):
 
         self.poster_label = QLabel("封面", self)
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.poster_label.setFixedSize(190, 120)
-        self.poster_label.setStyleSheet("border-radius: 8px; background: rgba(255,255,255,0.08);")
+        self.poster_label.setFixedSize(196, 220)
         layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.title_label = QLabel(item.display_title, self)
@@ -51,18 +53,46 @@ class FollowingCardButton(QPushButton):
         for label in (self.title_label, self.progress_label, self.update_label, self.error_label):
             label.setWordWrap(True)
             layout.addWidget(label)
-        layout.addStretch(1)
+        self._apply_label_styles()
         self._apply_style()
 
     def _apply_style(self) -> None:
-        border = "#f2a67f" if self.item.updated_hint else "#d8cabc"
+        tokens = current_tokens()
+        border = tokens.accent_hover if self.item.updated_hint else tokens.border_subtle
         self.setStyleSheet(
             "QPushButton {"
             f"border: 1px solid {border};"
             "border-radius: 12px;"
-            "background: rgba(255, 253, 250, 0.95);"
+            f"background: {tokens.panel_bg};"
             "text-align: left;"
             "}"
+        )
+
+    def _apply_label_styles(self) -> None:
+        tokens = current_tokens()
+        self.poster_label.setStyleSheet(
+            "border: none;"
+            "border-radius: 8px;"
+            f"background: {tokens.panel_alt_bg};"
+            f"color: {tokens.text_secondary};"
+        )
+        self.title_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.text_primary};"
+            "font-weight: 700;"
+        )
+        self.progress_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.text_secondary};"
+        )
+        self.update_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.accent_hover if self.item.updated_hint else tokens.text_secondary};"
+            "font-weight: 700;"
+        )
+        self.error_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.accent};"
         )
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -73,6 +103,7 @@ class FollowingCardButton(QPushButton):
 
 class FollowingPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(int)
+    poster_loaded = Signal(object, object)
 
     def __init__(self, controller) -> None:
         super().__init__()
@@ -92,6 +123,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.add_button = QPushButton("添加追更")
         self.check_updates_button = QPushButton("检查更新")
         self.only_updates_checkbox = QCheckBox("只看有更新")
+        self.status_label = QLabel("没有追更记录")
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
         self.page_label = QLabel("第 1 / 1 页")
@@ -119,10 +151,20 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         bottom_row.addWidget(self.next_page_button)
         bottom_row.addWidget(self.page_size_combo)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(top_row)
-        layout.addWidget(self.cards_scroll, 1)
-        layout.addLayout(bottom_row)
+        content_container = QWidget()
+        content_container.setMaximumWidth(1800)
+        content_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addLayout(top_row)
+        content_layout.addWidget(self.status_label)
+        content_layout.addWidget(self.cards_scroll, 1)
+        content_layout.addLayout(bottom_row)
+
+        layout = QHBoxLayout(self)
+        layout.addStretch(1)
+        layout.addWidget(content_container, 100)
+        layout.addStretch(1)
 
         self.search_edit.returnPressed.connect(self._apply_search)
         self.only_updates_checkbox.toggled.connect(lambda _checked: self._apply_search())
@@ -131,6 +173,8 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
+        self._connect_async_signal(self.poster_loaded, self._handle_poster_loaded)
+        self._apply_status_style()
         self._update_pagination_controls()
 
     def ensure_loaded(self) -> None:
@@ -149,6 +193,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         )
         self.total_items = total
         self._render_cards(records)
+        self._update_status_label()
         self._update_pagination_controls()
 
     def previous_page(self) -> None:
@@ -174,8 +219,34 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         for item in self.records:
             card = FollowingCardButton(item, self.cards_container)
             card.double_clicked.connect(self.open_detail_requested.emit)
+            card.clicked.connect(
+                lambda _checked=False, current_id=item.record.id: self.open_detail_requested.emit(int(current_id))
+            )
             self.cards_layout.addWidget(card)
             self.card_widgets.append(card)
+            self._start_card_poster_load(card)
+
+    def _start_card_poster_load(self, card: FollowingCardButton) -> None:
+        poster_source = card.item.record.poster or ""
+        image_url = normalize_poster_url(poster_source)
+        if not image_url:
+            return
+        target_size = QSize(card.poster_label.width(), card.poster_label.height())
+
+        def load() -> None:
+            image = load_local_poster_image(poster_source, target_size)
+            if image is None:
+                image = load_remote_poster_image(image_url, target_size)
+            if image is not None and self._can_deliver_async_result():
+                self.poster_loaded.emit(card, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_poster_loaded(self, card: FollowingCardButton, image) -> None:
+        if card not in self.card_widgets:
+            return
+        card.poster_label.setText("")
+        card.poster_label.setPixmap(QPixmap.fromImage(image))
 
     def _apply_search(self) -> None:
         self.current_page = 1
@@ -197,6 +268,29 @@ class FollowingPage(QWidget, AsyncGuardMixin):
     def _check_updates(self) -> None:
         self.controller.check_all_due()
         self.load_page()
+        self._update_status_label(prefix="已检查更新")
+
+    def _apply_status_style(self) -> None:
+        tokens = current_tokens()
+        self.status_label.setStyleSheet(
+            "background: transparent;"
+            f"color: {tokens.text_secondary};"
+        )
+
+    def _update_status_label(self, *, prefix: str = "") -> None:
+        if self.total_items <= 0:
+            message = "没有有更新的追更" if self.only_updates_checkbox.isChecked() else "没有追更记录"
+        else:
+            visible_count = len(self.records)
+            updated_count = sum(
+                1
+                for item in self.records
+                if bool(getattr(item, "updated_hint", False) or getattr(item.record, "has_update", False))
+            )
+            message = f"共 {self.total_items} 条，当前显示 {visible_count} 条，{updated_count} 条有更新"
+        if prefix:
+            message = f"{prefix} · {message}"
+        self.status_label.setText(message)
 
     def _total_pages(self) -> int:
         if self.total_items <= 0:
