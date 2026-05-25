@@ -2292,6 +2292,71 @@ def test_main_window_favorites_page_resolves_saved_plugin_source_name(qtbot) -> 
     assert window.favorites_page.card_widgets[0].source_label.text() == "插件1"
 
 
+def test_main_window_history_context_favorite_adds_item_to_favorites(qtbot) -> None:
+    favorites = FakeFavoritesController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {
+                "id": "1",
+                "title": "插件1",
+                "controller": FakeSpiderController("插件1"),
+                "search_enabled": True,
+            }
+        ],
+        favorites_controller=favorites,
+    )
+    qtbot.addWidget(window)
+
+    window._handle_history_context_favorite(
+        HistoryRecord(
+            id=1,
+            key="vod-1",
+            vod_name="测试影片",
+            vod_pic="poster.jpg",
+            vod_remarks="完结",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=10,
+            source_kind="spider_plugin",
+            source_plugin_id=1,
+            source_plugin_name="插件1",
+            source_key="1",
+        )
+    )
+
+    assert len(favorites.add_calls) == 1
+    payload = favorites.add_calls[0]
+    assert {
+        "source_kind": payload["source_kind"],
+        "source_key": payload["source_key"],
+        "source_name": payload["source_name"],
+        "vod_id": payload["vod_id"],
+        "vod_name_snapshot": payload["vod_name_snapshot"],
+        "latest_vod_name": payload["latest_vod_name"],
+        "vod_pic": payload["vod_pic"],
+        "vod_remarks": payload["vod_remarks"],
+        "title_changed": payload["title_changed"],
+    } == {
+        "source_kind": "plugin",
+        "source_key": "1",
+        "source_name": "插件1",
+        "vod_id": "vod-1",
+        "vod_name_snapshot": "测试影片",
+        "latest_vod_name": "测试影片",
+        "vod_pic": "poster.jpg",
+        "vod_remarks": "完结",
+        "title_changed": False,
+    }
+
+
 def test_main_window_disabling_active_plugin_falls_back_to_first_visible_tab(qtbot, monkeypatch) -> None:
     manager = WidthAwarePluginManager()
     window = MainWindow(

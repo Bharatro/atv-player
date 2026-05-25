@@ -1651,6 +1651,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.favorites_page.global_search_requested.connect(self._handle_favorite_global_search)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
+        self.history_page.global_search_requested.connect(self._handle_favorite_global_search)
+        self.global_history_page.global_search_requested.connect(self._handle_favorite_global_search)
+        self.history_page.favorite_requested.connect(self._handle_history_context_favorite)
+        self.global_history_page.favorite_requested.connect(self._handle_history_context_favorite)
         self.browse_page.set_favorite_handlers(
             is_favorited=lambda item: self._favorites_controller.is_favorited(
                 source_kind="browse",
@@ -3803,6 +3807,45 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _favorite_record_source_label(self, record: FavoriteRecord) -> str:
         return self._favorite_source_name(record.source_kind, record.source_key)
+
+    def _history_record_favorite_source(self, record: HistoryRecord) -> tuple[str, str, str]:
+        if record.source_kind == "spider_plugin":
+            source_key = record.source_key or str(record.source_plugin_id or "")
+            source_name = self._favorite_source_name("plugin", source_key)
+            if source_name == "插件":
+                source_name = record.source_name or record.source_plugin_name or source_name
+            return "plugin", source_key, source_name
+        if record.source_kind == "remote":
+            return "browse", "", "文件浏览"
+        source_key = record.source_key or ""
+        return record.source_kind or "browse", source_key, self._favorite_source_name(record.source_kind or "browse", source_key)
+
+    def _history_record_favorite_payload(self, record: HistoryRecord) -> dict[str, object] | None:
+        vod_id = str(record.key or "").strip()
+        if not vod_id:
+            return None
+        source_kind, source_key, source_name = self._history_record_favorite_source(record)
+        title = str(record.vod_name or "").strip()
+        now = int(time.time())
+        return {
+            "source_kind": source_kind,
+            "source_key": source_key,
+            "source_name": source_name,
+            "vod_id": vod_id,
+            "vod_name_snapshot": title,
+            "latest_vod_name": title,
+            "vod_pic": str(record.vod_pic or ""),
+            "vod_remarks": str(record.vod_remarks or ""),
+            "title_changed": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def _handle_history_context_favorite(self, record: HistoryRecord) -> None:
+        payload = self._history_record_favorite_payload(record)
+        if payload is None:
+            return
+        self._favorites_controller.add_favorite(payload)
 
     def _favorite_record_for_identity(self, source_kind: str, source_key: str, vod_id: str) -> FavoriteRecord:
         return FavoriteRecord(

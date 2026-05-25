@@ -1974,6 +1974,67 @@ def test_history_page_delete_selected_passes_records_to_controller(qtbot) -> Non
     assert controller.deleted_records[0][0].key == "detail-1"
 
 
+def test_history_page_row_context_menu_matches_video_cards(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+
+    menu = page._build_row_context_menu(0)
+
+    assert [action.text() for action in menu.actions()] == ["打开播放", "全局搜索", "加入收藏", "删除记录"]
+
+
+def test_history_page_row_context_actions_open_search_and_delete(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.deleted_records: list[list[HistoryRecord]] = []
+
+        def load_page(self, page: int, size: int):
+            return [], 0
+
+        def delete_many(self, records: list[HistoryRecord]) -> None:
+            self.deleted_records.append(records)
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.records = [
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="spider_plugin",
+            source_plugin_id=3,
+            source_plugin_name="红果短剧",
+        )
+    ]
+    opened = []
+    searched = []
+    page.open_detail_requested.connect(opened.append)
+    page.global_search_requested.connect(searched.append)
+    favorited = []
+    page.favorite_requested.connect(favorited.append)
+
+    page._handle_row_context_action(0, "open")
+    page._handle_row_context_action(0, "search")
+    page._handle_row_context_action(0, "favorite")
+    page._handle_row_context_action(0, "delete")
+
+    qtbot.waitUntil(lambda: len(controller.deleted_records) == 1, timeout=1000)
+    assert [record.key for record in opened] == ["detail-1"]
+    assert searched == ["Movie"]
+    assert [record.key for record in favorited] == ["detail-1"]
+    assert controller.deleted_records[0][0].key == "detail-1"
+
+
 def test_history_page_clear_all_passes_current_page_records_to_controller(qtbot) -> None:
     class Controller:
         def __init__(self) -> None:

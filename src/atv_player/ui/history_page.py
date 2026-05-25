@@ -4,7 +4,7 @@ from datetime import datetime
 import inspect
 import threading
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -40,6 +41,8 @@ class _HistoryMutationSignals(QObject):
 
 class HistoryPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(object)
+    global_search_requested = Signal(str)
+    favorite_requested = Signal(object)
     unauthorized = Signal()
 
     def __init__(self, controller) -> None:
@@ -59,6 +62,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         configure_table_columns(self.table, stretch_column=0)
         self.records: list[HistoryRecord] = []
         self.current_page = 1
@@ -159,6 +163,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.clear_button.clicked.connect(self.clear_all)
         self.refresh_button.clicked.connect(self.load_history)
         self.table.cellDoubleClicked.connect(self._open_selected)
+        self.table.customContextMenuRequested.connect(self._handle_table_context_menu_requested)
         self.table.itemSelectionChanged.connect(self._sync_action_state)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
@@ -272,6 +277,11 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         if not rows:
             return
         records = [self.records[row] for row in rows]
+        self._delete_records(records)
+
+    def _delete_records(self, records: list[HistoryRecord]) -> None:
+        if not records:
+            return
         next_page = (
             self.current_page - 1 if len(records) == len(self.records) and self.current_page > 1 else self.current_page
         )
@@ -325,6 +335,47 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         if not (0 <= row < len(self.records)):
             return
         self.open_detail_requested.emit(self.records[row])
+
+    def _build_row_context_menu(self, row: int) -> QMenu:
+        del row
+        menu = QMenu(self)
+        open_action = menu.addAction("打开播放")
+        open_action.setData("open")
+        search_action = menu.addAction("全局搜索")
+        search_action.setData("search")
+        favorite_action = menu.addAction("加入收藏")
+        favorite_action.setData("favorite")
+        delete_action = menu.addAction("删除记录")
+        delete_action.setData("delete")
+        return menu
+
+    def _handle_table_context_menu_requested(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if not (0 <= row < len(self.records)):
+            return
+        menu = self._build_row_context_menu(row)
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        self._handle_row_context_action(row, str(chosen.data() or ""))
+
+    def _handle_row_context_action(self, row: int, action_id: str) -> None:
+        if not (0 <= row < len(self.records)):
+            return
+        record = self.records[row]
+        if action_id == "open":
+            self.open_detail_requested.emit(record)
+            return
+        if action_id == "search":
+            keyword = str(record.vod_name or "").strip()
+            if keyword:
+                self.global_search_requested.emit(keyword)
+            return
+        if action_id == "favorite":
+            self.favorite_requested.emit(record)
+            return
+        if action_id == "delete":
+            self._delete_records([record])
 
     def _on_search_text_changed(self) -> None:
         self._search_timer.start()
