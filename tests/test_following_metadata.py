@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from atv_player.following_metadata import (
     build_following_from_candidate,
     build_snapshot_from_record,

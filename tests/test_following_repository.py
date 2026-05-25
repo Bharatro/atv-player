@@ -1,6 +1,11 @@
+# ruff: noqa: E501
 from pathlib import Path
 
-from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord
+from atv_player.following_models import (
+    FollowingDetailSnapshot,
+    FollowingEpisode,
+    FollowingRecord,
+)
 from atv_player.following_repository import FollowingRepository
 
 

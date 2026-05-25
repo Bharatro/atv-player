@@ -1,7 +1,12 @@
+# ruff: noqa: E501
 from pathlib import Path
 
 from atv_player.controllers.following_controller import FollowingController
-from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord
+from atv_player.following_models import (
+    FollowingDetailSnapshot,
+    FollowingEpisode,
+    FollowingRecord,
+)
 from atv_player.following_repository import FollowingRepository
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
 from atv_player.models import PlayItem, VodItem

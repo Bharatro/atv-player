@@ -1,7 +1,8 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.following_metadata import build_following_from_candidate

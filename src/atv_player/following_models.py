@@ -1,7 +1,7 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
 
 ANIME_PROVIDER_PRIORITY = ["bangumi", "tmdb", "douban"]
 LIVE_ACTION_PROVIDER_PRIORITY = ["tmdb", "douban", "bangumi"]
