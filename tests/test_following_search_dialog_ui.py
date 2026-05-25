@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 import threading
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog
 
 from atv_player.controllers.following_controller import FollowingController
@@ -178,3 +180,45 @@ def test_following_search_dialog_adds_candidate_off_main_thread(qtbot) -> None:
 
     assert add_threads == [add_threads[0]]
     assert add_threads[0] != main_thread
+
+
+def test_following_search_dialog_pressing_return_in_search_edit_runs_search_without_closing(qtbot) -> None:
+    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    search_calls: list[str] = []
+
+    class Controller:
+        def search_media(self, keyword: str):
+            search_calls.append(keyword)
+            return [
+                SimpleNamespace(
+                    provider="bangumi",
+                    provider_label="Bangumi",
+                    items=[candidate],
+                    error_text="",
+                )
+            ]
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.search_edit.setFocus()
+    dialog.search_edit.setText("凡人")
+
+    QTest.keyClick(dialog.search_edit, Qt.Key.Key_Return)
+
+    qtbot.waitUntil(lambda: search_calls == ["凡人"])
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+
+    assert dialog.result() == 0
+
+
+def test_following_search_dialog_action_buttons_are_not_default_submit_targets(qtbot) -> None:
+    dialog = FollowingSearchDialog(object())
+    qtbot.addWidget(dialog)
+
+    assert dialog.search_button.autoDefault() is False
+    assert dialog.search_button.isDefault() is False
+    assert dialog.add_button.autoDefault() is False
+    assert dialog.add_button.isDefault() is False
+    assert dialog.close_button.autoDefault() is False
+    assert dialog.close_button.isDefault() is False
