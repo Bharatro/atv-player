@@ -154,9 +154,13 @@ def test_following_episode_card_keeps_title_and_date_tight(qtbot) -> None:
     card.show()
     qtbot.wait(0)
 
+    assert "border: 0" in card.still_label.styleSheet()
+    assert card.minimumHeight() <= 270
     assert card.title_meta_layout.spacing() <= 2
     assert card.title_label.height() <= card.title_label.sizeHint().height() + 2
     assert card.meta_label.height() <= card.meta_label.sizeHint().height() + 2
+    assert card.title_label.geometry().top() - card.still_label.geometry().bottom() - 1 <= 4
+    assert card.overview_label.geometry().top() - card.meta_label.geometry().bottom() - 1 <= 4
 
 
 def test_following_detail_page_omits_unknown_episode_counts(qtbot) -> None:
@@ -229,3 +233,33 @@ def test_following_detail_page_renders_completed_progress_text(qtbot) -> None:
 
     assert "已看完 · 24集 · 已完结" in page.meta_label.text()
     assert "最新 24 / 总 24" not in page.meta_label.text()
+
+
+def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot) -> None:
+    class NoAvatarController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="低智商犯罪",
+                    provider="tmdb",
+                    provider_id="tv:272432:season:1",
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    overview="简介",
+                    cast=[
+                        {"name": "王骁", "role": "Zhang Yi'ang"},
+                        {"name": "田曦薇", "role": "Li Qian"},
+                    ],
+                    crew=[{"name": "刘海波", "job": "Director"}],
+                ),
+            )
+
+    controller = NoAvatarController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert controller.metadata_refreshes == [1]

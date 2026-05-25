@@ -41,8 +41,8 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
         layout = self.content_layout()
         self.still_label = QLabel("分集封面", self)
         self.still_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.still_label.setFixedHeight(180)
-        self.still_label.setMinimumWidth(320)
+        self.still_label.setFixedHeight(360)
+        self.still_label.setMinimumWidth(640)
         self.still_label.setStyleSheet(_image_placeholder_qss())
         self.title_label = QLabel(title, self)
         self.title_label.setWordWrap(True)
@@ -150,17 +150,17 @@ class FollowingEpisodeCard(QPushButton):
         super().__init__(parent)
         self.episode = episode
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(240, 310)
+        self.setMinimumSize(240, 270)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(4)
 
         self.still_label = QLabel("分集封面", self)
         self.still_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.still_label.setFixedSize(210, 140)
-        self.still_label.setStyleSheet(_image_placeholder_qss())
+        self.still_label.setFixedSize(220, 124)
+        self.still_label.setStyleSheet(_episode_still_qss())
         self.title_label = QLabel(_episode_title(episode), self)
         self.title_label.setWordWrap(True)
         self.title_label.setSizePolicy(
@@ -179,7 +179,7 @@ class FollowingEpisodeCard(QPushButton):
         self.title_meta_layout.addWidget(self.meta_label)
         self.overview_label = QLabel(episode.overview or "暂无剧情概要", self)
         self.overview_label.setWordWrap(True)
-        self.overview_label.setMaximumHeight(60)
+        self.overview_label.setMaximumHeight(54)
 
         layout.addWidget(self.still_label, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addLayout(self.title_meta_layout)
@@ -350,7 +350,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.episodes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.episodes_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.episodes_scroll.setWidget(self._episodes_container)
-        self.episodes_scroll.setFixedHeight(340)
+        self.episodes_scroll.setFixedHeight(294)
 
         self.cast_scroll = QScrollArea()
         self.cast_scroll.setWidgetResizable(True)
@@ -735,6 +735,16 @@ def _image_placeholder_qss() -> str:
     return (
         f"border: 1px solid {tokens.border_subtle};"
         "border-radius: 12px;"
+        f"background: {tokens.panel_alt_bg};"
+        f"color: {tokens.text_secondary};"
+    )
+
+
+def _episode_still_qss() -> str:
+    tokens = current_tokens()
+    return (
+        "border: 0;"
+        "border-radius: 0;"
         f"background: {tokens.panel_alt_bg};"
         f"color: {tokens.text_secondary};"
     )
