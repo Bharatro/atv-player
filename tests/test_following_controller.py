@@ -320,12 +320,14 @@ def test_following_controller_builds_card_and_detail_models(tmp_path: Path) -> N
         FollowingRecord(
             id=0,
             title="凡人修仙传",
+            season_number=5,
             provider="bangumi",
             provider_id="subject:1",
             provider_priority=["bangumi"],
-            current_episode=127,
-            latest_episode=128,
-            total_episodes=156,
+            current_season_number=2,
+            current_episode=3,
+            latest_episode=8,
+            total_episodes=8,
             has_update=True,
             new_episode_count=1,
         )
@@ -344,9 +346,53 @@ def test_following_controller_builds_card_and_detail_models(tmp_path: Path) -> N
     detail = controller.load_detail(following_id)
 
     assert total == 1
-    assert cards[0].progress_text == "看到 127 · 最新 128 / 总 156"
+    assert cards[0].progress_text == "看到 S2E3 · 最新 S5E8 / 总 8"
     assert cards[0].updated_hint is True
     assert detail.snapshot.overview == "简介"
+
+
+def test_following_controller_records_season_progress(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="黑袍纠察队",
+            media_kind="live_action",
+            season_number=5,
+            provider="tmdb",
+            provider_id="tv:76479",
+            provider_priority=["tmdb"],
+            current_season_number=4,
+            current_episode=8,
+            latest_episode=8,
+            total_episodes=8,
+            has_update=True,
+            new_episode_count=1,
+            homepage_prompt_pending=True,
+        )
+    )
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        update_service=FakeUpdateService(),
+        now=lambda: 100,
+    )
+
+    controller.record_playback_progress(
+        following_id,
+        current_season_number=5,
+        current_episode=8,
+        position_seconds=15,
+    )
+
+    loaded = repo.get(following_id)
+    assert loaded is not None
+    assert loaded.current_season_number == 5
+    assert loaded.current_episode == 8
+    assert loaded.position_seconds == 15
+    assert loaded.watched_latest_episode is True
+    assert loaded.has_update is False
+    assert loaded.new_episode_count == 0
 
 
 def test_following_controller_refreshes_empty_detail_on_open(tmp_path: Path) -> None:
@@ -388,7 +434,7 @@ def test_following_controller_omits_unknown_episode_counts_from_card(tmp_path: P
 
     cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
 
-    assert cards[0].progress_text == "看到 127"
+    assert cards[0].progress_text == "看到 S1E127"
     assert "最新 0" not in cards[0].progress_text
     assert "总 0" not in cards[0].progress_text
 

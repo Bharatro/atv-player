@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
 )
 
-from atv_player.following_models import FollowingEpisode, FollowingSeason
+from atv_player.following_models import FollowingEpisode, FollowingSeason, resolve_progress_season
 from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
@@ -139,6 +139,8 @@ class EpisodeListModel(QAbstractListModel):
         super().__init__(parent)
         self._episodes: list[FollowingEpisode] = []
         self._current_episode = 0
+        self._current_season_number = 0
+        self._visible_season_number = 0
         self.display_mode = display_mode
         self._thumbnail_store: EpisodeThumbnailStore | None = None
 
@@ -154,7 +156,20 @@ class EpisodeListModel(QAbstractListModel):
         if role == EPISODE_ROLE:
             return episode
         if role == WATCHED_ROLE:
-            return episode.episode_number <= self._current_episode
+            current_season_number = resolve_progress_season(
+                self._current_season_number,
+                self._current_episode,
+                fallback_season=self._visible_season_number,
+            )
+            visible_season_number = resolve_progress_season(
+                self._visible_season_number,
+                episode.episode_number,
+                fallback_season=self._visible_season_number,
+            )
+            return (
+                visible_season_number == current_season_number
+                and episode.episode_number <= self._current_episode
+            )
         if role == DISPLAY_MODE_ROLE:
             return self.display_mode
         if role == AIR_DATE_ROLE:
@@ -167,10 +182,19 @@ class EpisodeListModel(QAbstractListModel):
             return bool(episode.is_special)
         return None
 
-    def set_episodes(self, episodes: list[FollowingEpisode], *, current_episode: int) -> None:
+    def set_episodes(
+        self,
+        episodes: list[FollowingEpisode],
+        *,
+        current_episode: int,
+        current_season_number: int = 0,
+        visible_season_number: int = 0,
+    ) -> None:
         self.beginResetModel()
         self._episodes = list(episodes)
         self._current_episode = max(0, int(current_episode))
+        self._current_season_number = max(0, int(current_season_number))
+        self._visible_season_number = max(0, int(visible_season_number))
         self.endResetModel()
 
     def set_display_mode(self, display_mode: str) -> None:
@@ -358,6 +382,7 @@ class FollowingEpisodeBrowser(QWidget):
         super().__init__(parent)
         self._groups: list[EpisodeSeasonGroup] = []
         self._current_episode = 0
+        self._current_season_number = 0
         self._season_state: dict[int, tuple[int, int]] = {}
         self._season_change_in_progress = False
 
@@ -436,17 +461,24 @@ class FollowingEpisodeBrowser(QWidget):
         *,
         groups: list[EpisodeSeasonGroup],
         current_episode: int,
+        current_season_number: int = 0,
         selected_season_number: int = 0,
     ) -> None:
         self._groups = list(groups)
         self._current_episode = max(0, int(current_episode))
+        self._current_season_number = max(0, int(current_season_number))
         self._season_state = {}
         self.season_model.set_groups(self._groups)
         if self._groups:
             initial_row = self._initial_season_row(selected_season_number)
             self._set_current_season_row(initial_row)
         else:
-            self.episode_model.set_episodes([], current_episode=self._current_episode)
+            self.episode_model.set_episodes(
+                [],
+                current_episode=self._current_episode,
+                current_season_number=self._current_season_number,
+                visible_season_number=0,
+            )
 
     def current_season_number(self) -> int:
         index = self.season_list.currentIndex()
@@ -456,7 +488,12 @@ class FollowingEpisodeBrowser(QWidget):
     def _set_current_season_row(self, row: int) -> None:
         group = self.season_model.group_at(row)
         if group is None:
-            self.episode_model.set_episodes([], current_episode=self._current_episode)
+            self.episode_model.set_episodes(
+                [],
+                current_episode=self._current_episode,
+                current_season_number=self._current_season_number,
+                visible_season_number=0,
+            )
             return
         index = self.season_model.index(row, 0)
         self._season_change_in_progress = True
@@ -499,6 +536,8 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_model.set_episodes(
             group.episodes,
             current_episode=self._current_episode,
+            current_season_number=self._current_season_number,
+            visible_season_number=group.season_number,
         )
         if not group.episodes:
             return
@@ -508,7 +547,21 @@ class FollowingEpisodeBrowser(QWidget):
                 self.episode_list.setCurrentIndex(self.episode_model.index(row, 0))
             self.episode_list.verticalScrollBar().setValue(max(0, scroll_value))
             return
-        target_row = self.episode_model.row_for_episode_number(self._current_episode)
+        visible_season_number = resolve_progress_season(
+            group.season_number,
+            self._current_episode,
+            fallback_season=group.season_number,
+        )
+        current_season_number = resolve_progress_season(
+            self._current_season_number,
+            self._current_episode,
+            fallback_season=visible_season_number,
+        )
+        target_row = (
+            self.episode_model.row_for_episode_number(self._current_episode)
+            if visible_season_number == current_season_number
+            else -1
+        )
         if target_row < 0:
             target_row = 0
         target_index = self.episode_model.index(target_row, 0)
@@ -522,6 +575,10 @@ class FollowingEpisodeBrowser(QWidget):
         if selected_season_number > 0:
             for row, group in enumerate(self._groups):
                 if group.season_number == selected_season_number:
+                    return row
+        if self._current_season_number > 0:
+            for row, group in enumerate(self._groups):
+                if group.season_number == self._current_season_number:
                     return row
         if self._current_episode <= 0:
             return 0

@@ -69,6 +69,7 @@ class FollowingRecord:
     provider_priority: list[str] = field(default_factory=list)
     external_ids: dict[str, str] = field(default_factory=dict)
     source_bindings: list[FollowingSourceBinding] = field(default_factory=list)
+    current_season_number: int = 0
     current_episode: int = 0
     position_seconds: int = 0
     watched_latest_episode: bool = False
@@ -107,6 +108,94 @@ class FollowingUpdateResult:
     has_update: bool = False
     homepage_prompt_pending: bool = False
     error: str = ""
+
+
+def resolve_progress_season(
+    season_number: int,
+    episode_number: int,
+    *,
+    fallback_season: int = 0,
+) -> int:
+    normalized_season = max(0, int(season_number or 0))
+    if normalized_season > 0:
+        return normalized_season
+    normalized_fallback = max(0, int(fallback_season or 0))
+    if normalized_fallback > 0 and episode_number > 0:
+        return normalized_fallback
+    return 1 if episode_number > 0 else normalized_fallback
+
+
+def compare_progress(
+    current_season_number: int,
+    current_episode: int,
+    target_season_number: int,
+    target_episode: int,
+    *,
+    current_fallback_season: int = 0,
+    target_fallback_season: int = 0,
+) -> int:
+    current_pair = (
+        resolve_progress_season(
+            current_season_number,
+            current_episode,
+            fallback_season=current_fallback_season,
+        ),
+        max(0, int(current_episode or 0)),
+    )
+    target_pair = (
+        resolve_progress_season(
+            target_season_number,
+            target_episode,
+            fallback_season=target_fallback_season,
+        ),
+        max(0, int(target_episode or 0)),
+    )
+    if current_pair < target_pair:
+        return -1
+    if current_pair > target_pair:
+        return 1
+    return 0
+
+
+def progress_at_or_beyond(
+    current_season_number: int,
+    current_episode: int,
+    latest_season_number: int,
+    latest_episode: int,
+    *,
+    current_fallback_season: int = 0,
+    latest_fallback_season: int = 0,
+) -> bool:
+    if max(0, int(latest_episode or 0)) <= 0:
+        return False
+    return compare_progress(
+        current_season_number,
+        current_episode,
+        latest_season_number,
+        latest_episode,
+        current_fallback_season=current_fallback_season,
+        target_fallback_season=latest_fallback_season,
+    ) >= 0
+
+
+def format_progress_episode(
+    prefix: str,
+    season_number: int,
+    episode_number: int,
+    *,
+    fallback_season: int = 0,
+) -> str:
+    normalized_episode = max(0, int(episode_number or 0))
+    if normalized_episode <= 0:
+        return ""
+    resolved_season = resolve_progress_season(
+        season_number,
+        normalized_episode,
+        fallback_season=fallback_season,
+    )
+    if resolved_season > 0:
+        return f"{prefix} S{resolved_season}E{normalized_episode}"
+    return f"{prefix} {normalized_episode}"
 
 
 def provider_priority_for_media_kind(media_kind: str) -> list[str]:

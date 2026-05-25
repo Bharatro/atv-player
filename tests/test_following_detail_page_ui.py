@@ -21,7 +21,7 @@ class FakeController:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
         self.metadata_refreshes: list[int] = []
-        self.progress_updates: list[tuple[int, int]] = []
+        self.progress_updates: list[tuple[int, int, int]] = []
         self.loaded_seasons: list[int] = []
 
     def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
@@ -35,6 +35,8 @@ class FakeController:
                 rating="8.2",
                 provider="bangumi",
                 provider_id="subject:1",
+                season_number=1,
+                current_season_number=1,
                 current_episode=127,
                 latest_episode=128,
                 total_episodes=156,
@@ -92,8 +94,16 @@ class FakeController:
             ]
         return view
 
-    def record_playback_progress(self, following_id: int, *, current_episode: int, position_seconds: int) -> None:
-        self.progress_updates.append((following_id, current_episode))
+    def record_playback_progress(
+        self,
+        following_id: int,
+        *,
+        current_season_number: int,
+        current_episode: int,
+        position_seconds: int,
+    ) -> None:
+        del position_seconds
+        self.progress_updates.append((following_id, current_season_number, current_episode))
 
 
 def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> None:
@@ -120,6 +130,7 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     original_exec = FollowingProgressDialog.exec
 
     def fake_exec(self_dialog):
+        self_dialog.accepted_season_number = 1
         self_dialog.accepted_episode = 128
         return 1
 
@@ -129,7 +140,8 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     page.unfollow_button.click()
 
     assert page.title_label.text() == "凡人修仙传"
-    assert "最新 128 / 总 156" in page.meta_label.text()
+    assert "看到 S1E127" in page.meta_label.text()
+    assert "最新 S1E128 / 总 156" in page.meta_label.text()
     assert "类型: 喜剧 / 悬疑 / 犯罪" in page.overview_label.text()
     assert "导演: 刘海波" in page.overview_label.text()
     assert "演员: 王骁,田曦薇,王传君,朱云峰" in page.overview_label.text()
@@ -149,7 +161,7 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert unfollow == [1]
     assert controller.manual_checks == [1]
     assert controller.metadata_refreshes == [1]
-    assert controller.progress_updates == [(1, 128)]
+    assert controller.progress_updates == [(1, 1, 128)]
 
 
 def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:
@@ -435,7 +447,7 @@ def test_following_detail_page_omits_unknown_episode_counts(qtbot) -> None:
 
     assert "最新 0" not in page.meta_label.text()
     assert "总 0" not in page.meta_label.text()
-    assert "看到 127" in page.meta_label.text()
+    assert "看到 S1E127" in page.meta_label.text()
 
 
 def test_following_detail_page_shows_manual_check_error(qtbot) -> None:
@@ -488,7 +500,7 @@ def test_following_detail_page_renders_completed_progress_text(qtbot) -> None:
 
     page.load_record(1)
 
-    assert "已看完 · 24集 · 已完结" in page.meta_label.text()
+    assert "已看完 · S1共 24 集 · 已完结" in page.meta_label.text()
     assert "最新 24 / 总 24" not in page.meta_label.text()
 
 

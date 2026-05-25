@@ -18,12 +18,15 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import (
+    format_progress_episode,
     FollowingCardItem,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
     FollowingSourceBinding,
+    progress_at_or_beyond,
     provider_priority_for_media_kind,
+    resolve_progress_season,
 )
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.scrape import MetadataScrapeCandidate
@@ -114,7 +117,20 @@ class FollowingController:
                 current_episode=current_episode,
             )
         if current_episode > 0:
-            watched_latest = record.latest_episode > 0 and current_episode >= record.latest_episode
+            current_season_number = resolve_progress_season(
+                record.current_season_number or record.season_number,
+                current_episode,
+                fallback_season=record.season_number,
+            )
+            watched_latest = progress_at_or_beyond(
+                current_season_number,
+                current_episode,
+                record.season_number,
+                record.latest_episode,
+                current_fallback_season=record.season_number,
+                latest_fallback_season=record.season_number,
+            )
+            record.current_season_number = current_season_number
             record.current_episode = current_episode
             record.watched_latest_episode = watched_latest
             if watched_latest:
@@ -137,11 +153,28 @@ class FollowingController:
         current_episode: int,
     ) -> FollowingRecord:
         target_episode = current_episode if current_episode > 0 else existing.current_episode
+        target_season_number = (
+            resolve_progress_season(
+                record.season_number,
+                current_episode,
+                fallback_season=record.season_number,
+            )
+            if current_episode > 0
+            else existing.current_season_number
+        )
         keep_position = existing.current_episode > 0 and target_episode == existing.current_episode
-        watched_latest = record.latest_episode > 0 and target_episode >= record.latest_episode
+        watched_latest = progress_at_or_beyond(
+            target_season_number,
+            target_episode,
+            record.season_number,
+            record.latest_episode,
+            current_fallback_season=record.season_number,
+            latest_fallback_season=record.season_number,
+        )
         return replace(
             record,
             source_bindings=list(existing.source_bindings or record.source_bindings),
+            current_season_number=target_season_number,
             current_episode=target_episode,
             position_seconds=existing.position_seconds if keep_position else 0,
             watched_latest_episode=watched_latest,
@@ -267,12 +300,20 @@ class FollowingController:
                     provider_id=provider_id,
                 )
             ],
+            current_season_number=resolve_progress_season(season_number, episode_number, fallback_season=season_number),
             current_episode=episode_number,
             position_seconds=position_seconds,
             latest_episode=latest_episode,
             previous_latest_episode=latest_episode,
             total_episodes=total_episodes,
-            watched_latest_episode=bool(latest_episode > 0 and episode_number >= latest_episode),
+            watched_latest_episode=progress_at_or_beyond(
+                season_number,
+                episode_number,
+                season_number,
+                latest_episode,
+                current_fallback_season=season_number,
+                latest_fallback_season=season_number,
+            ),
             created_at=now,
             updated_at=now,
             last_played_at=now,
@@ -298,15 +339,37 @@ class FollowingController:
             return
         self._repository.update_progress(
             following_id,
+            current_season_number=resolve_progress_season(
+                record.season_number,
+                record.latest_episode,
+                fallback_season=record.season_number,
+            ),
             current_episode=record.latest_episode,
             position_seconds=0,
             last_played_at=self._now(),
         )
         self._repository.clear_homepage_prompt(following_id)
 
-    def record_playback_progress(self, following_id: int, *, current_episode: int, position_seconds: int) -> None:
+    def record_playback_progress(
+        self,
+        following_id: int,
+        *,
+        current_season_number: int = 0,
+        current_episode: int,
+        position_seconds: int,
+    ) -> None:
+        if current_season_number <= 0:
+            record = self._repository.get(following_id)
+            current_season_number = (
+                resolve_progress_season(
+                    getattr(record, "current_season_number", 0) if record is not None else 0,
+                    current_episode,
+                    fallback_season=getattr(record, "season_number", 0) if record is not None else 0,
+                )
+            )
         self._repository.update_progress(
             following_id,
+            current_season_number=current_season_number,
             current_episode=current_episode,
             position_seconds=position_seconds,
             last_played_at=self._now(),
@@ -346,19 +409,42 @@ class FollowingController:
             use_full_detail=True,
         )
         refreshed_record.current_episode = record.current_episode
+        refreshed_record.current_season_number = record.current_season_number
         refreshed_record.position_seconds = record.position_seconds
         new_latest = max(refreshed_record.latest_episode, record.latest_episode)
         new_total = max(refreshed_record.total_episodes, record.total_episodes)
         refreshed_record.latest_episode = new_latest
         refreshed_record.previous_latest_episode = record.previous_latest_episode
         refreshed_record.total_episodes = new_total
-        has_update = new_latest > 0 and new_latest > max(record.current_episode, 0)
-        new_episode_count = max(new_latest - max(record.current_episode, 0), 0) if has_update else 0
+        latest_season_number = refreshed_record.season_number or record.season_number
+        has_update = not progress_at_or_beyond(
+            record.current_season_number,
+            record.current_episode,
+            latest_season_number,
+            new_latest,
+            current_fallback_season=record.season_number,
+            latest_fallback_season=latest_season_number,
+        )
+        if has_update and latest_season_number == resolve_progress_season(
+            record.current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number,
+        ):
+            new_episode_count = max(new_latest - max(record.current_episode, 0), 0)
+        else:
+            new_episode_count = new_latest if has_update else 0
         homepage_prompt_pending = record.homepage_prompt_pending and has_update
         refreshed_record.has_update = has_update
         refreshed_record.new_episode_count = new_episode_count
         refreshed_record.homepage_prompt_pending = homepage_prompt_pending
-        refreshed_record.watched_latest_episode = new_latest > 0 and record.current_episode >= new_latest
+        refreshed_record.watched_latest_episode = progress_at_or_beyond(
+            record.current_season_number,
+            record.current_episode,
+            latest_season_number,
+            new_latest,
+            current_fallback_season=record.season_number,
+            latest_fallback_season=latest_season_number,
+        )
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
             following_id,
@@ -563,18 +649,56 @@ class FollowingController:
 
     def _progress_text(self, record: FollowingRecord) -> str:
         parts = []
+        current_season_number = resolve_progress_season(
+            record.current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number,
+        )
+        latest_season_number = resolve_progress_season(
+            record.season_number,
+            record.latest_episode,
+            fallback_season=record.season_number,
+        )
         if (
             record.total_episodes > 0
             and record.latest_episode >= record.total_episodes
-            and record.current_episode >= record.total_episodes
+            and progress_at_or_beyond(
+                current_season_number,
+                record.current_episode,
+                latest_season_number,
+                record.total_episodes,
+                current_fallback_season=record.season_number,
+                latest_fallback_season=latest_season_number,
+            )
         ):
+            if latest_season_number > 0:
+                return f"已看完 · S{latest_season_number}共 {record.total_episodes} 集 · 已完结"
             return f"已看完 · {record.total_episodes}集 · 已完结"
-        elif record.current_episode > 0:
-            parts.append(f"看到 {record.current_episode}")
+        current_text = format_progress_episode(
+            "看到",
+            current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number,
+        )
+        if current_text:
+            parts.append(current_text)
         if record.latest_episode > 0 and record.total_episodes > 0:
-            parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
+            latest_text = format_progress_episode(
+                "最新",
+                latest_season_number,
+                record.latest_episode,
+                fallback_season=record.season_number,
+            )
+            parts.append(f"{latest_text} / 总 {record.total_episodes}")
         elif record.latest_episode > 0:
-            parts.append(f"最新 {record.latest_episode}")
+            parts.append(
+                format_progress_episode(
+                    "最新",
+                    latest_season_number,
+                    record.latest_episode,
+                    fallback_season=record.season_number,
+                )
+            )
         elif record.total_episodes > 0:
             parts.append(f"总 {record.total_episodes}")
         return " · ".join(parts) if parts else "进度未知"

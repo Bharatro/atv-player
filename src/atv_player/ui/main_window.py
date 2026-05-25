@@ -4127,8 +4127,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record is None or not hasattr(self._following_controller, "record_playback_progress"):
             return
         current_episode = max(int(getattr(record, "current_episode", 0) or 0), self._current_player_episode_number())
+        current_season_number = int(
+            getattr(record, "current_season_number", 0) or getattr(record, "season_number", 0) or 1
+        )
         self._following_controller.record_playback_progress(
             record.id,
+            current_season_number=current_season_number,
             current_episode=current_episode,
             position_seconds=position_seconds,
         )

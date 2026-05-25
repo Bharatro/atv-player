@@ -8,6 +8,7 @@ from atv_player.ui.following_episode_browser import (
     EpisodeThumbnailStore,
     FollowingEpisodeBrowser,
     SeasonListModel,
+    WATCHED_ROLE,
     build_episode_season_groups,
 )
 
@@ -141,3 +142,27 @@ def test_following_episode_browser_restores_selection_when_switching_back_to_sea
     browser.season_list.setCurrentIndex(season_model.index(1, 0))
 
     assert browser.episode_list.currentIndex().row() == 0
+
+
+def test_following_episode_browser_marks_watched_only_in_current_season(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_display_mode=EpisodeDisplayMode.POSTER)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=1, season_number=2, title="S2E1"),
+            ],
+            fallback_season=0,
+        ),
+        current_episode=1,
+        current_season_number=2,
+        selected_season_number=1,
+    )
+
+    assert browser.episode_model.data(browser.episode_model.index(0, 0), WATCHED_ROLE) is False
+
+    season_model = browser.season_list.model()
+    browser.season_list.setCurrentIndex(season_model.index(1, 0))
+
+    assert browser.episode_model.data(browser.episode_model.index(0, 0), WATCHED_ROLE) is True

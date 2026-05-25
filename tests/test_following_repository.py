@@ -25,6 +25,7 @@ def _record(**overrides):
         provider_priority=["bangumi", "tmdb", "douban"],
         external_ids={"bangumi": "123", "tmdb": "456"},
         source_bindings=[],
+        current_season_number=1,
         current_episode=127,
         position_seconds=300,
         watched_latest_episode=True,
@@ -77,7 +78,13 @@ def test_following_repository_saves_snapshot_progress_and_prompt_state(tmp_path:
             refreshed_at=110,
         ),
     )
-    repo.update_progress(following_id, current_episode=128, position_seconds=42, last_played_at=120)
+    repo.update_progress(
+        following_id,
+        current_season_number=1,
+        current_episode=128,
+        position_seconds=42,
+        last_played_at=120,
+    )
     repo.update_check_state(
         following_id,
         latest_episode=128,
@@ -118,7 +125,13 @@ def test_following_repository_update_progress_clears_update_when_latest_watched(
         )
     )
 
-    repo.update_progress(following_id, current_episode=24, position_seconds=0, last_played_at=200)
+    repo.update_progress(
+        following_id,
+        current_season_number=1,
+        current_episode=24,
+        position_seconds=0,
+        last_played_at=200,
+    )
 
     record = repo.get(following_id)
     assert record is not None
@@ -165,3 +178,45 @@ def test_following_repository_normalizes_tmdb_identity_and_migrates_existing_sea
     assert loaded.season_number == 1
     assert by_identity is not None
     assert by_identity.id == legacy_id
+
+
+def test_following_repository_persists_current_season_progress(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        _record(
+            provider="tmdb",
+            provider_id="tv:76479",
+            season_number=5,
+            current_season_number=4,
+            current_episode=8,
+            latest_episode=8,
+            total_episodes=8,
+            watched_latest_episode=False,
+            has_update=True,
+            new_episode_count=1,
+            homepage_prompt_pending=True,
+        )
+    )
+
+    loaded = repo.get(following_id)
+    assert loaded is not None
+    assert loaded.current_season_number == 4
+    assert loaded.watched_latest_episode is False
+
+    repo.update_progress(
+        following_id,
+        current_season_number=5,
+        current_episode=8,
+        position_seconds=18,
+        last_played_at=300,
+    )
+
+    loaded = repo.get(following_id)
+    assert loaded is not None
+    assert loaded.current_season_number == 5
+    assert loaded.current_episode == 8
+    assert loaded.position_seconds == 18
+    assert loaded.watched_latest_episode is True
+    assert loaded.has_update is False
+    assert loaded.new_episode_count == 0
+    assert loaded.homepage_prompt_pending is False

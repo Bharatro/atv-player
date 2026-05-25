@@ -57,6 +57,7 @@ def _record(**overrides):
         latest_episode=1,
         previous_latest_episode=1,
         total_episodes=1,
+        current_season_number=1,
         current_episode=1,
         watched_latest_episode=True,
         next_check_after=0,
@@ -296,6 +297,59 @@ def test_update_service_prefers_tmdb_record_latest_over_season_local_episode_num
     assert record.homepage_prompt_pending is True
 
 
+def test_update_service_detects_cross_season_tmdb_updates(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="黑袍纠察队",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:76479",
+            provider_priority=["tmdb", "douban", "bangumi"],
+            external_ids={"tmdb": "76479"},
+            season_number=4,
+            current_season_number=4,
+            current_episode=8,
+            latest_episode=8,
+            previous_latest_episode=8,
+            total_episodes=8,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="黑袍纠察队",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:76479",
+            provider_priority=["tmdb", "douban", "bangumi"],
+            external_ids={"tmdb": "76479"},
+            season_number=5,
+            latest_episode=1,
+            total_episodes=8,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[FollowingEpisode(episode_number=1, season_number=5, air_date="2026-05-09")],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_due_records(limit=10)
+
+    record = repo.get(record_id)
+    assert results[0].latest_episode == 1
+    assert results[0].has_update is True
+    assert record is not None
+    assert record.season_number == 5
+    assert record.has_update is True
+    assert record.new_episode_count == 1
+    assert record.homepage_prompt_pending is True
+
+
 def test_update_service_tmdb_check_keeps_existing_metadata_identity(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(
@@ -343,7 +397,7 @@ def test_update_service_tmdb_check_keeps_existing_metadata_identity(tmp_path: Pa
     snapshot = repo.get_detail_snapshot(record_id)
     assert record is not None
     assert record.provider == "tmdb"
-    assert record.provider_id == "tv:30983:season:1"
+    assert record.provider_id == "tv:30983"
     assert record.external_ids == {"tmdb": "30983"}
     assert record.poster == "old-poster"
     assert record.backdrop == "old-backdrop"

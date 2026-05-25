@@ -9,7 +9,12 @@ from zoneinfo import ZoneInfo
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from atv_player.following_metadata import compute_episode_counts
-from atv_player.following_models import FollowingRecord, FollowingUpdateResult
+from atv_player.following_models import (
+    FollowingRecord,
+    FollowingUpdateResult,
+    progress_at_or_beyond,
+    resolve_progress_season,
+)
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 NORMAL_INTERVAL_SECONDS = 6 * 3600
@@ -86,10 +91,40 @@ class FollowingUpdateService(QObject):
                 or total_from_snapshot
                 or record.total_episodes
             )
-            has_update = latest > max(record.current_episode, 0)
-            new_count = max(latest - max(record.current_episode, 0), 0) if has_update else 0
-            caught_up = record.watched_latest_episode or (
-                record.latest_episode > 0 and record.current_episode >= record.latest_episode
+            snapshot_seasons = [
+                episode.season_number
+                for episode in snapshot.episodes
+                if episode.season_number > 0 and not episode.is_special
+            ]
+            latest_season_number = (
+                refreshed_record.season_number
+                or (max(snapshot_seasons) if snapshot_seasons else 0)
+                or record.season_number
+            )
+            current_season_number = resolve_progress_season(
+                record.current_season_number,
+                record.current_episode,
+                fallback_season=record.season_number,
+            )
+            has_update = not progress_at_or_beyond(
+                current_season_number,
+                record.current_episode,
+                latest_season_number,
+                latest,
+                current_fallback_season=record.season_number,
+                latest_fallback_season=latest_season_number,
+            )
+            if has_update and latest_season_number == current_season_number:
+                new_count = max(latest - max(record.current_episode, 0), 0)
+            else:
+                new_count = latest if has_update else 0
+            caught_up = record.watched_latest_episode or progress_at_or_beyond(
+                current_season_number,
+                record.current_episode,
+                record.season_number,
+                record.latest_episode,
+                current_fallback_season=record.season_number,
+                latest_fallback_season=record.season_number,
             )
             homepage_prompt = bool(has_update and caught_up and record.prompt_snoozed_until <= now)
             if self._has_metadata_update(refreshed_record):

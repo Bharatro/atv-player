@@ -12,6 +12,8 @@ from atv_player.following_models import (
     FollowingRecord,
     FollowingSeason,
     FollowingSourceBinding,
+    progress_at_or_beyond,
+    resolve_progress_season,
 )
 from atv_player.sqlite_utils import managed_connection
 
@@ -166,6 +168,7 @@ class FollowingRepository:
                     provider_priority_json TEXT NOT NULL DEFAULT '[]',
                     external_ids_json TEXT NOT NULL DEFAULT '{}',
                     source_bindings_json TEXT NOT NULL DEFAULT '[]',
+                    current_season_number INTEGER NOT NULL DEFAULT 0,
                     current_episode INTEGER NOT NULL DEFAULT 0,
                     position_seconds INTEGER NOT NULL DEFAULT 0,
                     watched_latest_episode INTEGER NOT NULL DEFAULT 0,
@@ -207,9 +210,24 @@ class FollowingRepository:
             except Exception:
                 pass
             try:
+                conn.execute("ALTER TABLE following ADD COLUMN current_season_number INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            try:
                 conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN seasons_json TEXT NOT NULL DEFAULT '[]'")
             except Exception:
                 pass
+            conn.execute(
+                """
+                UPDATE following
+                SET current_season_number = CASE
+                    WHEN current_episode > 0 AND season_number > 0 THEN season_number
+                    WHEN current_episode > 0 THEN 1
+                    ELSE 0
+                END
+                WHERE current_season_number = 0
+                """
+            )
             self._migrate_tmdb_series_provider_ids(conn)
 
     def upsert(self, record: FollowingRecord) -> int:
@@ -220,12 +238,12 @@ class FollowingRepository:
                 INSERT INTO following (
                     title, original_title, media_kind, season_number, poster, backdrop, rating,
                     provider, provider_id, provider_priority_json, external_ids_json, source_bindings_json,
-                    current_episode, position_seconds, watched_latest_episode, latest_episode,
+                    current_season_number, current_episode, position_seconds, watched_latest_episode, latest_episode,
                     previous_latest_episode, total_episodes, has_update, new_episode_count,
                     homepage_prompt_pending, prompt_snoozed_until, created_at, updated_at,
                     last_played_at, last_checked_at, next_check_after, last_error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider, provider_id) DO UPDATE SET
                     title = excluded.title,
                     original_title = excluded.original_title,
@@ -237,6 +255,7 @@ class FollowingRepository:
                     provider_priority_json = excluded.provider_priority_json,
                     external_ids_json = excluded.external_ids_json,
                     source_bindings_json = excluded.source_bindings_json,
+                    current_season_number = excluded.current_season_number,
                     current_episode = excluded.current_episode,
                     position_seconds = excluded.position_seconds,
                     watched_latest_episode = excluded.watched_latest_episode,
@@ -375,20 +394,38 @@ class FollowingRepository:
         self,
         following_id: int,
         *,
+        current_season_number: int = 0,
         current_episode: int,
         position_seconds: int,
         last_played_at: int,
     ) -> None:
         with self._connect() as conn:
-            row = conn.execute("SELECT latest_episode FROM following WHERE id = ?", (following_id,)).fetchone()
+            row = conn.execute(
+                "SELECT season_number, latest_episode FROM following WHERE id = ?",
+                (following_id,),
+            ).fetchone()
             if row is None:
                 return
-            latest_episode = int(row[0] or 0)
-            watched_latest = latest_episode > 0 and current_episode >= latest_episode
+            latest_season_number = resolve_progress_season(
+                int(row[0] or 0),
+                int(row[1] or 0),
+            )
+            latest_episode = int(row[1] or 0)
+            normalized_current_season = resolve_progress_season(
+                current_season_number,
+                current_episode,
+                fallback_season=latest_season_number,
+            )
+            watched_latest = progress_at_or_beyond(
+                normalized_current_season,
+                current_episode,
+                latest_season_number,
+                latest_episode,
+            )
             conn.execute(
                 """
                 UPDATE following
-                SET current_episode = ?, position_seconds = ?, last_played_at = ?,
+                SET current_season_number = ?, current_episode = ?, position_seconds = ?, last_played_at = ?,
                     watched_latest_episode = ?,
                     has_update = CASE WHEN ? THEN 0 ELSE has_update END,
                     new_episode_count = CASE WHEN ? THEN 0 ELSE new_episode_count END,
@@ -396,6 +433,7 @@ class FollowingRepository:
                 WHERE id = ?
                 """,
                 (
+                    normalized_current_season,
                     current_episode,
                     position_seconds,
                     last_played_at,
@@ -422,14 +460,23 @@ class FollowingRepository:
     ) -> None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT latest_episode, current_episode FROM following WHERE id = ?",
+                "SELECT season_number, latest_episode, current_season_number, current_episode FROM following WHERE id = ?",
                 (following_id,),
             ).fetchone()
             if row is None:
                 return
-            previous = int(row[0] or 0)
-            current_episode = int(row[1] or 0)
-            watched_latest = latest_episode > 0 and current_episode >= latest_episode
+            previous_season_number = int(row[0] or 0)
+            previous = int(row[1] or 0)
+            current_season_number = int(row[2] or 0)
+            current_episode = int(row[3] or 0)
+            watched_latest = progress_at_or_beyond(
+                current_season_number,
+                current_episode,
+                previous_season_number,
+                latest_episode,
+                current_fallback_season=previous_season_number,
+                latest_fallback_season=previous_season_number,
+            )
             conn.execute(
                 """
                 UPDATE following
@@ -551,7 +598,7 @@ class FollowingRepository:
                 SET title = ?, original_title = ?, media_kind = ?, season_number = ?,
                     poster = ?, backdrop = ?, rating = ?, provider = ?, provider_id = ?,
                     provider_priority_json = ?, external_ids_json = ?, source_bindings_json = ?,
-                    current_episode = ?, position_seconds = ?, watched_latest_episode = ?, latest_episode = ?,
+                    current_season_number = ?, current_episode = ?, position_seconds = ?, watched_latest_episode = ?, latest_episode = ?,
                     previous_latest_episode = ?, total_episodes = ?, has_update = ?, new_episode_count = ?,
                     homepage_prompt_pending = ?, prompt_snoozed_until = ?, created_at = ?, updated_at = ?,
                     last_played_at = ?, last_checked_at = ?, next_check_after = ?, last_error = ?
@@ -649,6 +696,7 @@ class FollowingRepository:
             _json_dumps(record.provider_priority),
             _json_dumps(record.external_ids),
             _json_dumps([_binding_to_dict(binding) for binding in record.source_bindings]),
+            record.current_season_number,
             record.current_episode,
             record.position_seconds,
             1 if record.watched_latest_episode else 0,
@@ -682,32 +730,32 @@ class FollowingRepository:
             provider_priority=[str(item) for item in _json_loads(row[10], [])],
             external_ids={str(key): str(value) for key, value in dict(_json_loads(row[11], {})).items()},
             source_bindings=[_binding_from_dict(item) for item in _json_loads(row[12], [])],
-            current_episode=int(row[13]),
-            position_seconds=int(row[14]),
-            watched_latest_episode=bool(row[15]),
-            latest_episode=int(row[16]),
-            previous_latest_episode=int(row[17]),
-            total_episodes=int(row[18]),
-            has_update=bool(row[19]),
-            new_episode_count=int(row[20]),
-            homepage_prompt_pending=bool(row[21]),
-            prompt_snoozed_until=int(row[22]),
-            created_at=int(row[23]),
-            updated_at=int(row[24]),
-            last_played_at=int(row[25]),
-            last_checked_at=int(row[26]),
-            next_check_after=int(row[27]),
-            last_error=str(row[28]),
+            current_season_number=int(row[13]),
+            current_episode=int(row[14]),
+            position_seconds=int(row[15]),
+            watched_latest_episode=bool(row[16]),
+            latest_episode=int(row[17]),
+            previous_latest_episode=int(row[18]),
+            total_episodes=int(row[19]),
+            has_update=bool(row[20]),
+            new_episode_count=int(row[21]),
+            homepage_prompt_pending=bool(row[22]),
+            prompt_snoozed_until=int(row[23]),
+            created_at=int(row[24]),
+            updated_at=int(row[25]),
+            last_played_at=int(row[26]),
+            last_checked_at=int(row[27]),
+            next_check_after=int(row[28]),
+            last_error=str(row[29]),
         )
 
     def _select_sql(self) -> str:
         return """
             SELECT id, title, original_title, media_kind, season_number, poster, backdrop,
                    rating, provider, provider_id, provider_priority_json, external_ids_json,
-                   source_bindings_json, current_episode, position_seconds, watched_latest_episode,
-                   latest_episode, previous_latest_episode, total_episodes, has_update,
-                   new_episode_count, homepage_prompt_pending, prompt_snoozed_until,
-                   created_at, updated_at, last_played_at, last_checked_at, next_check_after,
-                   last_error
+                   source_bindings_json, current_season_number, current_episode, position_seconds,
+                   watched_latest_episode, latest_episode, previous_latest_episode, total_episodes,
+                   has_update, new_episode_count, homepage_prompt_pending, prompt_snoozed_until,
+                   created_at, updated_at, last_played_at, last_checked_at, next_check_after, last_error
             FROM following
         """

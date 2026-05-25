@@ -22,6 +22,10 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
+    format_progress_episode,
+    progress_at_or_beyond,
+    resolve_progress_season,
 )
 from atv_player.models import AppConfig
 from atv_player.ui.following_episode_browser import (
@@ -96,24 +100,41 @@ class FollowingProgressDialog(ThemedDialogBase):
     def __init__(
         self,
         *,
+        current_season_number: int,
         current_episode: int,
+        latest_season_number: int,
         latest_episode: int,
         total_episodes: int,
+        seasons: list[FollowingSeason],
+        episodes: list[FollowingEpisode],
         parent: QWidget | None = None
     ) -> None:
         super().__init__(title="设置追更进度", parent=parent)
+        self._episode_counts = self._build_episode_counts(
+            seasons=seasons,
+            episodes=episodes,
+            fallback_season=max(current_season_number, latest_season_number, 1),
+        )
+        self._latest_season_number = latest_season_number
         self._latest_episode = latest_episode
         self._total_episodes = total_episodes
+        self.accepted_season_number = current_season_number
         self.accepted_episode = current_episode
 
         layout = self.content_layout()
         layout.setSpacing(14)
 
         info_parts = []
-        if latest_episode > 0 and total_episodes > 0:
-            info_parts.append(f"最新 {latest_episode} / 总 {total_episodes}")
-        elif latest_episode > 0:
-            info_parts.append(f"最新 {latest_episode}")
+        latest_text = format_progress_episode(
+            "最新",
+            latest_season_number,
+            latest_episode,
+            fallback_season=latest_season_number,
+        )
+        if latest_text and total_episodes > 0:
+            info_parts.append(f"{latest_text} / 总 {total_episodes}")
+        elif latest_text:
+            info_parts.append(latest_text)
         elif total_episodes > 0:
             info_parts.append(f"总 {total_episodes}")
         if info_parts:
@@ -121,18 +142,33 @@ class FollowingProgressDialog(ThemedDialogBase):
             layout.addWidget(info_label)
 
         row = QHBoxLayout()
+        row.addWidget(QLabel("第", self))
+        self.season_spin = QSpinBox(self)
+        self.season_spin.setRange(self._season_minimum(), self._season_maximum())
+        self.season_spin.setValue(max(self._season_minimum(), current_season_number or self._season_minimum()))
+        self.season_spin.setSpecialValueText("特别篇")
+        row.addWidget(self.season_spin)
+        row.addWidget(QLabel("季", self))
         row.addWidget(QLabel("看到第", self))
         self.episode_spin = QSpinBox(self)
-        self.episode_spin.setRange(0, 9999)
-        self.episode_spin.setValue(max(0, current_episode))
         self.episode_spin.setSpecialValueText("未看")
         row.addWidget(self.episode_spin)
         row.addWidget(QLabel("集", self))
         row.addStretch(1)
         layout.addLayout(row)
 
+        self.season_spin.valueChanged.connect(self._handle_season_changed)
+        self._update_episode_range(current_season_number, preferred_episode=current_episode)
+
+        latest_pair_text = (
+            "设为最新 "
+            f"({format_progress_episode('', latest_season_number, latest_episode, fallback_season=latest_season_number).strip()})"
+            if latest_episode > 0
+            else ""
+        )
+
         if latest_episode > 0:
-            mark_btn = QPushButton(f"设为最新 ({latest_episode})", self)
+            mark_btn = QPushButton(latest_pair_text, self)
             mark_btn.clicked.connect(self._set_to_latest)
             layout.addWidget(mark_btn)
 
@@ -146,10 +182,50 @@ class FollowingProgressDialog(ThemedDialogBase):
         btn_row.addWidget(ok_btn)
         layout.addLayout(btn_row)
 
+    def _build_episode_counts(
+        self,
+        *,
+        seasons: list[FollowingSeason],
+        episodes: list[FollowingEpisode],
+        fallback_season: int,
+    ) -> dict[int, int]:
+        groups = build_episode_season_groups(
+            episodes,
+            seasons=seasons,
+            fallback_season=fallback_season,
+        )
+        counts = {group.season_number: group.episode_count for group in groups}
+        return counts or {fallback_season or 1: 0}
+
+    def _season_minimum(self) -> int:
+        return min(self._episode_counts) if self._episode_counts else 0
+
+    def _season_maximum(self) -> int:
+        return max(self._episode_counts) if self._episode_counts else 1
+
+    def _episode_limit_for_season(self, season_number: int) -> int:
+        count = int(self._episode_counts.get(int(season_number), 0) or 0)
+        if int(season_number) == self._latest_season_number:
+            count = max(count, self._latest_episode)
+        return max(0, count)
+
+    def _update_episode_range(self, season_number: int, *, preferred_episode: int | None = None) -> None:
+        maximum = self._episode_limit_for_season(season_number)
+        self.episode_spin.setRange(0, maximum or 9999)
+        target_episode = max(0, int(preferred_episode if preferred_episode is not None else self.episode_spin.value() or 0))
+        if maximum > 0:
+            target_episode = min(target_episode, maximum)
+        self.episode_spin.setValue(target_episode)
+
+    def _handle_season_changed(self, value: int) -> None:
+        self._update_episode_range(int(value))
+
     def _set_to_latest(self) -> None:
+        self.season_spin.setValue(self._latest_season_number or self.season_spin.value())
         self.episode_spin.setValue(self._latest_episode)
 
     def _accept(self) -> None:
+        self.accepted_season_number = int(self.season_spin.value())
         self.accepted_episode = int(self.episode_spin.value())
         self.accept()
 
@@ -423,6 +499,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         )
         self.episode_browser.set_content(
             groups=groups,
+            current_season_number=record.current_season_number,
             current_episode=record.current_episode,
             selected_season_number=self._selected_season_number,
         )
@@ -590,16 +667,31 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         if self.current_following_id <= 0 or self.current_view is None:
             return
         record = self.current_view.record
+        current_season_number = resolve_progress_season(
+            record.current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number or self._selected_season_number,
+        )
+        latest_season_number = resolve_progress_season(
+            record.season_number,
+            record.latest_episode,
+            fallback_season=record.season_number,
+        )
         dialog = FollowingProgressDialog(
+            current_season_number=current_season_number,
             current_episode=record.current_episode,
+            latest_season_number=latest_season_number,
             latest_episode=record.latest_episode,
             total_episodes=record.total_episodes,
+            seasons=list(self.current_view.snapshot.seasons or []),
+            episodes=list(self.current_view.snapshot.episodes or []),
             parent=self,
         )
         if dialog.exec() != 1:
             return
         self.controller.record_playback_progress(
             self.current_following_id,
+            current_season_number=dialog.accepted_season_number,
             current_episode=dialog.accepted_episode,
             position_seconds=0,
         )
@@ -842,22 +934,62 @@ def _person_link(person: dict[str, object]) -> str:
 
 def _meta_text(record: FollowingRecord) -> str:
     episode_parts = []
+    current_season_number = resolve_progress_season(
+        record.current_season_number,
+        record.current_episode,
+        fallback_season=record.season_number,
+    )
+    latest_season_number = resolve_progress_season(
+        record.season_number,
+        record.latest_episode,
+        fallback_season=record.season_number,
+    )
     completed = False
     if (
         record.total_episodes > 0
         and record.latest_episode >= record.total_episodes
-        and record.current_episode >= record.total_episodes
+        and progress_at_or_beyond(
+            current_season_number,
+            record.current_episode,
+            latest_season_number,
+            record.total_episodes,
+            current_fallback_season=record.season_number,
+            latest_fallback_season=latest_season_number,
+        )
     ):
         completed = True
-        episode_parts.extend(["已看完", f"{record.total_episodes}集", "已完结"])
-    elif record.current_episode > 0:
-        episode_parts.append(f"看到 {record.current_episode}")
+        if latest_season_number > 0:
+            episode_parts.extend(["已看完", f"S{latest_season_number}共 {record.total_episodes} 集", "已完结"])
+        else:
+            episode_parts.extend(["已看完", f"{record.total_episodes}集", "已完结"])
+    else:
+        current_text = format_progress_episode(
+            "看到",
+            current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number,
+        )
+        if current_text:
+            episode_parts.append(current_text)
     if completed:
         pass
     elif record.latest_episode > 0 and record.total_episodes > 0:
-        episode_parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
+        latest_text = format_progress_episode(
+            "最新",
+            latest_season_number,
+            record.latest_episode,
+            fallback_season=record.season_number,
+        )
+        episode_parts.append(f"{latest_text} / 总 {record.total_episodes}")
     elif record.latest_episode > 0:
-        episode_parts.append(f"最新 {record.latest_episode}")
+        episode_parts.append(
+            format_progress_episode(
+                "最新",
+                latest_season_number,
+                record.latest_episode,
+                fallback_season=record.season_number,
+            )
+        )
     elif record.total_episodes > 0:
         episode_parts.append(f"总 {record.total_episodes}")
     parts = [
