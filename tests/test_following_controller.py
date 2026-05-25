@@ -10,7 +10,7 @@ from atv_player.following_models import (
 from atv_player.following_repository import FollowingRepository
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import PlaybackDetailField, PlayItem, VodItem
 
 
 class FakeSearchService:
@@ -116,6 +116,19 @@ def test_following_controller_searches_and_adds_candidate(tmp_path: Path) -> Non
     assert record.title == "凡人修仙传"
     assert repo.get(record.id) is not None
     assert repo.get_detail_snapshot(record.id).episodes[0].title == "第一话"
+
+
+def test_following_controller_adds_candidate_with_manual_current_episode(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    record = controller.add_candidate(controller.search_media("凡人修仙传")[0].items[0], current_episode=1)
+
+    loaded = repo.get(record.id)
+    assert loaded is not None
+    assert loaded.current_episode == 1
+    assert loaded.watched_latest_episode is True
+    assert loaded.has_update is False
 
 
 def test_following_controller_adds_candidate_with_detail_snapshot(tmp_path: Path) -> None:
@@ -227,13 +240,88 @@ def test_following_controller_omits_unknown_episode_counts_from_card(tmp_path: P
 def test_following_controller_adds_from_player_and_updates_progress(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
-    vod = VodItem(vod_id="vod-1", vod_name="凡人修仙传", vod_pic="poster", dbid=123)
-    item = PlayItem(title="第127集", url="u", media_title="凡人修仙传", vod_id="vod-1")
+    vod = VodItem(
+        vod_id="vod-1",
+        vod_name="凡人修仙传",
+        vod_pic="poster",
+        vod_content="简介",
+        vod_actor="韩立, 南宫婉",
+        vod_director="王裕仁",
+        dbid=123,
+        detail_fields=[PlaybackDetailField("TMDB ID", "456")],
+    )
+    playlist = [
+        PlayItem(title="第127集", url="u", media_title="凡人修仙传", vod_id="vod-1", episode_display_title="风起"),
+        PlayItem(title="第128集", url="u2", media_title="凡人修仙传", vod_id="vod-1", episode_display_title="新章"),
+    ]
+    item = playlist[0]
 
-    record = controller.add_from_player(vod=vod, item=item, source_kind="browse", source_key="", position_seconds=321)
+    record = controller.add_from_player(
+        vod=vod,
+        item=item,
+        source_kind="browse",
+        source_key="",
+        position_seconds=321,
+        playlist=playlist,
+    )
     controller.record_playback_progress(record.id, current_episode=128, position_seconds=15)
 
     loaded = repo.get(record.id)
+    snapshot = repo.get_detail_snapshot(record.id)
     assert loaded.current_episode == 128
     assert loaded.position_seconds == 15
+    assert loaded.total_episodes == 2
+    assert loaded.external_ids == {"douban": "123", "tmdb": "456"}
     assert loaded.source_bindings[0].vod_id == "vod-1"
+    assert snapshot is not None
+    assert snapshot.overview == "简介"
+    assert snapshot.cast[0]["name"] == "韩立"
+    assert snapshot.crew[0]["name"] == "王裕仁"
+    assert snapshot.episodes[0].title == "风起"
+
+
+def test_following_controller_uses_playlist_count_for_latest_and_metadata_count_for_total(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+    metadata_episodes = [
+        {
+            "episode_number": episode_number,
+            "name": f"TMDB {episode_number}",
+            "overview": f"剧情 {episode_number}",
+        }
+        for episode_number in range(1, 93)
+    ]
+    vod = VodItem(
+        vod_id="vod-1",
+        vod_name="牧神记",
+        detail_fields=[
+            PlaybackDetailField("TMDB ID", "236534"),
+            PlaybackDetailField("episodes", repr(metadata_episodes)),
+        ],
+    )
+    playlist = [
+        PlayItem(title="第26集", url=f"u{index}", media_title="牧神记", vod_id="vod-1")
+        for index in range(84)
+    ]
+    for index, item in enumerate(playlist):
+        item.index = index
+
+    record = controller.add_from_player(
+        vod=vod,
+        item=playlist[-1],
+        source_kind="browse",
+        source_key="",
+        position_seconds=0,
+        playlist=playlist,
+    )
+
+    loaded = repo.get(record.id)
+    snapshot = repo.get_detail_snapshot(record.id)
+    assert loaded is not None
+    assert loaded.current_episode == 84
+    assert loaded.latest_episode == 84
+    assert loaded.total_episodes == 92
+    assert loaded.external_ids["tmdb"] == "236534"
+    assert snapshot is not None
+    assert len(snapshot.episodes) == 92
+    assert snapshot.episodes[-1].title == "TMDB 92"

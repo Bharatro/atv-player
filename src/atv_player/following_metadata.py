@@ -5,6 +5,7 @@ import re
 import time
 from dataclasses import replace
 from datetime import datetime
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from atv_player.following_models import (
@@ -14,6 +15,7 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
 )
 from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import VodItem
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -35,6 +37,64 @@ def _provider_external_id(provider: str, provider_id: str) -> tuple[str, str]:
         match = re.match(r"^(?:tv|movie):([^:]+)", provider_id)
         return ("tmdb", match.group(1)) if match else ("tmdb", provider_id)
     return provider, provider_id
+
+
+def following_candidate_from_url(url: str, *, available_providers: set[str] | None = None) -> MetadataScrapeCandidate | None:
+    text = str(url or "").strip()
+    if not text:
+        return None
+    parsed = urlparse(text if "://" in text else f"https://{text}")
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.strip("/")
+    available = available_providers or set()
+
+    def allowed(provider: str) -> bool:
+        return not available or provider in available
+
+    if host in {"bgm.tv", "bangumi.tv", "chii.in"}:
+        match = re.match(r"^subject/(\d+)", path)
+        if match and allowed("bangumi"):
+            return MetadataScrapeCandidate(
+                provider="bangumi",
+                provider_label="Bangumi",
+                provider_id=f"subject:{match.group(1)}",
+                title="",
+                subtitle="动漫",
+            )
+    if host in {"movie.douban.com", "www.movie.douban.com"}:
+        match = re.match(r"^subject/(\d+)", path)
+        provider = next((item for item in ("official_douban", "local_douban", "douban") if allowed(item)), "")
+        if match and provider:
+            label = {"official_douban": "豆瓣官方", "local_douban": "本地豆瓣", "douban": "豆瓣"}.get(provider, "豆瓣")
+            return MetadataScrapeCandidate(
+                provider=provider,
+                provider_label=label,
+                provider_id=match.group(1),
+                title="",
+                subtitle="豆瓣",
+            )
+    if host in {"www.themoviedb.org", "themoviedb.org"}:
+        tv_match = re.match(r"^tv/(\d+)(?:/season/(\d+))?", path)
+        movie_match = re.match(r"^movie/(\d+)", path)
+        if tv_match and allowed("tmdb"):
+            season = tv_match.group(2) or "1"
+            return MetadataScrapeCandidate(
+                provider="tmdb",
+                provider_label="TMDB",
+                provider_id=f"tv:{tv_match.group(1)}:season:{season}",
+                title="",
+                subtitle="剧集",
+                raw={"season_number": _to_int(season) or 1},
+            )
+        if movie_match and allowed("tmdb"):
+            return MetadataScrapeCandidate(
+                provider="tmdb",
+                provider_label="TMDB",
+                provider_id=f"movie:{movie_match.group(1)}",
+                title="",
+                subtitle="电影",
+            )
+    return None
 
 
 def normalize_following_candidate(candidate):
@@ -60,14 +120,14 @@ def _to_int(value: object) -> int:
 
 def _episode_from_raw(raw: dict[str, object]) -> FollowingEpisode:
     number = _to_int(raw.get("episode_number") or raw.get("sort") or raw.get("ep"))
-    title = str(raw.get("name_cn") or raw.get("name") or raw.get("title") or "").strip()
+    title = str(raw.get("name_cn") or raw.get("name") or raw.get("long_title") or raw.get("title") or "").strip()
     return FollowingEpisode(
         episode_number=number,
         season_number=_to_int(raw.get("season_number")),
         title=title,
         overview=str(raw.get("overview") or raw.get("desc") or raw.get("summary") or "").strip(),
-        air_date=str(raw.get("air_date") or raw.get("date") or "").strip(),
-        still=str(raw.get("still_url") or raw.get("still") or raw.get("image") or "").strip(),
+        air_date=str(raw.get("air_date") or raw.get("airdate") or raw.get("date") or "").strip(),
+        still=str(raw.get("still_url") or raw.get("still") or raw.get("cover") or raw.get("image") or "").strip(),
         runtime=_to_int(raw.get("runtime") or raw.get("duration")),
         is_special=number <= 0 or _to_int(raw.get("type")) != 0,
     )
@@ -200,7 +260,12 @@ def build_following_from_metadata_candidate(
             fill_episode_counts=True,
             field_sources=field_sources,
         )
-        snapshot = merge_following_snapshot(snapshot, related_snapshot, fill_missing=True)
+        snapshot = merge_following_snapshot(
+            snapshot,
+            related_snapshot,
+            fill_missing=True,
+            prefer_episodes=related_following.provider == "tmdb",
+        )
     return record, snapshot
 
 
@@ -342,6 +407,7 @@ def merge_following_snapshot(
     detail: FollowingDetailSnapshot,
     *,
     fill_missing: bool = False,
+    prefer_episodes: bool = False,
 ) -> FollowingDetailSnapshot:
     if fill_missing:
         return replace(
@@ -349,7 +415,7 @@ def merge_following_snapshot(
             overview=snapshot.overview or detail.overview,
             cast=snapshot.cast or detail.cast,
             crew=snapshot.crew or detail.crew,
-            episodes=snapshot.episodes or detail.episodes,
+            episodes=detail.episodes if prefer_episodes and detail.episodes else snapshot.episodes or detail.episodes,
             posters=snapshot.posters or detail.posters,
             backdrops=snapshot.backdrops or detail.backdrops,
             refreshed_at=detail.refreshed_at or snapshot.refreshed_at,

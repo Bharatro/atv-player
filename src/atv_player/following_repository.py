@@ -295,13 +295,18 @@ class FollowingRepository:
                 """
                 UPDATE following
                 SET current_episode = ?, position_seconds = ?, last_played_at = ?,
-                    watched_latest_episode = ?, homepage_prompt_pending = CASE WHEN ? THEN 0 ELSE homepage_prompt_pending END
+                    watched_latest_episode = ?,
+                    has_update = CASE WHEN ? THEN 0 ELSE has_update END,
+                    new_episode_count = CASE WHEN ? THEN 0 ELSE new_episode_count END,
+                    homepage_prompt_pending = CASE WHEN ? THEN 0 ELSE homepage_prompt_pending END
                 WHERE id = ?
                 """,
                 (
                     current_episode,
                     position_seconds,
                     last_played_at,
+                    1 if watched_latest else 0,
+                    1 if watched_latest else 0,
                     1 if watched_latest else 0,
                     1 if watched_latest else 0,
                     following_id,

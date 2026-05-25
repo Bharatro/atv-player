@@ -5,6 +5,7 @@ from atv_player.following_metadata import (
     build_following_from_metadata_candidate,
     build_snapshot_from_record,
     compute_episode_counts,
+    following_candidate_from_url,
     following_provider_priority,
 )
 from atv_player.following_models import FollowingRecord
@@ -15,6 +16,15 @@ from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGr
 def test_following_provider_priority_prefers_bangumi_for_anime() -> None:
     assert following_provider_priority("anime") == ["bangumi", "tmdb", "douban"]
     assert following_provider_priority("live_action") == ["tmdb", "douban", "bangumi"]
+
+
+def test_following_candidate_from_supported_urls() -> None:
+    assert following_candidate_from_url("https://bgm.tv/subject/521431").provider_id == "subject:521431"
+    assert following_candidate_from_url("https://movie.douban.com/subject/37090537/").provider_id == "37090537"
+    assert (
+        following_candidate_from_url("https://www.themoviedb.org/tv/256783/season/2").provider_id
+        == "tv:256783:season:2"
+    )
 
 
 def test_build_following_from_bangumi_candidate_preserves_ids_and_counts() -> None:
@@ -126,6 +136,78 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
     assert record.total_episodes == 1
     assert snapshot.overview == "爱奇艺简介"
     assert snapshot.episodes[0].title == "第一集"
+
+
+def test_build_following_from_bangumi_candidate_prefers_tmdb_episode_details() -> None:
+    selected = MetadataScrapeCandidate(
+        provider="bangumi",
+        provider_label="Bangumi",
+        provider_id="subject:123",
+        title="仙剑奇侠传三",
+        year="2026",
+        subtitle="动漫",
+        raw={"episodes": [{"sort": 1, "type": 0, "name_cn": "Bangumi标题"}]},
+    )
+
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            del query, provider_filter
+            return [
+                MetadataScrapeGroup("bangumi", "Bangumi", [selected]),
+                MetadataScrapeGroup(
+                    "tmdb",
+                    "TMDB",
+                    [
+                        MetadataScrapeCandidate(
+                            provider="tmdb",
+                            provider_label="TMDB",
+                            provider_id="tv:233295:season:1",
+                            title="仙剑奇侠传三",
+                        )
+                    ],
+                ),
+            ]
+
+        def detail_record(self, candidate):
+            if candidate.provider == "bangumi":
+                return MetadataRecord(
+                    provider="bangumi",
+                    provider_id="subject:123",
+                    title="仙剑奇侠传三",
+                    overview="Bangumi简介",
+                )
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:233295:season:1",
+                title="仙剑奇侠传三",
+                tmdb_id="233295",
+                detail_fields=[
+                    {
+                        "label": "episodes",
+                        "value": [
+                            {
+                                "episode_number": 1,
+                                "name": "TMDB标题",
+                                "overview": "TMDB分集简介",
+                                "still_url": "tmdb-still",
+                            }
+                        ],
+                    }
+                ],
+            )
+
+    record, snapshot = build_following_from_metadata_candidate(
+        selected,
+        metadata_search_service=SearchService(),
+        now=100,
+    )
+
+    assert record.provider == "bangumi"
+    assert record.external_ids == {"bangumi": "123", "tmdb": "233295"}
+    assert snapshot.overview == "Bangumi简介"
+    assert snapshot.episodes[0].title == "TMDB标题"
+    assert snapshot.episodes[0].overview == "TMDB分集简介"
+    assert snapshot.episodes[0].still == "tmdb-still"
 
 
 def test_build_snapshot_from_tmdb_record_includes_backdrops_cast_and_episode_stills() -> None:

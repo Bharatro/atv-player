@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import threading
+
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -8,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QTabBar,
     QVBoxLayout,
     QWidget,
@@ -19,6 +23,7 @@ from atv_player.following_models import (
     FollowingRecord,
 )
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
@@ -128,6 +133,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     back_requested = Signal()
     search_play_requested = Signal(int)
     unfollow_requested = Signal(int)
+    image_loaded = Signal(object, object)
+    check_finished = Signal(int, object, str)
 
     def __init__(self, controller) -> None:
         super().__init__()
@@ -144,8 +151,13 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.title_label = QLabel()
         self.meta_label = QLabel()
         self.overview_label = QLabel()
+        self.status_label = QLabel()
         self.search_play_button = QPushButton("搜索播放")
         self.manual_check_button = QPushButton("手动检查")
+        self.current_episode_spin = QSpinBox()
+        self.current_episode_spin.setRange(0, 9999)
+        self.current_episode_spin.setSpecialValueText("未设置")
+        self.save_progress_button = QPushButton("保存进度")
         self.mark_latest_button = QPushButton("标记追到最新")
         self.unfollow_button = QPushButton("取消追更")
         self.season_tabs = QTabBar()
@@ -161,12 +173,16 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
         self._build_layout()
         self._connect_actions()
+        self._connect_async_signal(self.image_loaded, self._handle_image_loaded)
+        self._connect_async_signal(self.check_finished, self._handle_check_finished)
         self._apply_style()
 
     def load_record(self, following_id: int) -> None:
         self.current_following_id = int(following_id)
-        self.current_view = self.controller.load_detail(self.current_following_id)
+        self.current_view = self.controller.load_detail(self.current_following_id, refresh_if_empty=False)
         self._render(self.current_view.record, self.current_view.snapshot)
+        if self._snapshot_needs_refresh(self.current_view.snapshot):
+            self.status_label.setText("详情暂无完整数据，可手动检查更新")
 
     def _build_layout(self) -> None:
         self.backdrop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -186,6 +202,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         action_row.addStretch(1)
         action_row.addWidget(self.search_play_button)
         action_row.addWidget(self.manual_check_button)
+        action_row.addWidget(QLabel("看到", self))
+        action_row.addWidget(self.current_episode_spin)
+        action_row.addWidget(self.save_progress_button)
         action_row.addWidget(self.mark_latest_button)
         action_row.addWidget(self.unfollow_button)
 
@@ -204,35 +223,53 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.episodes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.episodes_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.episodes_scroll.setWidget(self._episodes_container)
+        self.episodes_scroll.setFixedHeight(260)
 
         self.cast_scroll = QScrollArea()
         self.cast_scroll.setWidgetResizable(True)
         self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.cast_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cast_scroll.setWidget(self._cast_container)
+        self.cast_scroll.setFixedHeight(220)
+
+        content = QWidget(self)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(18, 18, 18, 18)
+        content_layout.setSpacing(14)
+        content_layout.addLayout(action_row)
+        content_layout.addWidget(self.status_label)
+        content_layout.addWidget(self.backdrop_label)
+        content_layout.addLayout(hero_row)
+        content_layout.addWidget(QLabel("分集剧情", content))
+        content_layout.addWidget(self.season_tabs)
+        content_layout.addWidget(self.episodes_scroll)
+        content_layout.addWidget(QLabel("演职员", content))
+        content_layout.addWidget(self.cast_scroll)
+        content_layout.addStretch(1)
+
+        self.page_scroll = QScrollArea(self)
+        self.page_scroll.setWidgetResizable(True)
+        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.page_scroll.setWidget(content)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(14)
-        layout.addLayout(action_row)
-        layout.addWidget(self.backdrop_label)
-        layout.addLayout(hero_row)
-        layout.addWidget(QLabel("分集剧情", self))
-        layout.addWidget(self.season_tabs)
-        layout.addWidget(self.episodes_scroll, 1)
-        layout.addWidget(QLabel("演职员", self))
-        layout.addWidget(self.cast_scroll)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.page_scroll)
 
     def _connect_actions(self) -> None:
         self.back_button.clicked.connect(self.back_requested.emit)
         self.search_play_button.clicked.connect(self._emit_search_play)
         self.manual_check_button.clicked.connect(self._manual_check)
+        self.save_progress_button.clicked.connect(self._save_current_episode)
         self.mark_latest_button.clicked.connect(self._mark_watched_latest)
         self.unfollow_button.clicked.connect(self._emit_unfollow)
 
     def _render(
         self, record: FollowingRecord, snapshot: FollowingDetailSnapshot
     ) -> None:
+        self.status_label.setText("")
+        self.current_episode_spin.setValue(max(0, int(record.current_episode or 0)))
         self.title_label.setText(record.title)
         self.meta_label.setText(_meta_text(record))
         self.overview_label.setText(snapshot.overview or "暂无简介")
@@ -240,6 +277,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         has_backdrop = bool(record.backdrop or snapshot.backdrops)
         backdrop_text = "海报背景" if has_backdrop else "暂无海报"
         self.backdrop_label.setText(backdrop_text)
+        self._start_image_load(self.poster_label, record.poster or (snapshot.posters[0] if snapshot.posters else ""))
+        self._start_image_load(self.backdrop_label, record.backdrop or (snapshot.backdrops[0] if snapshot.backdrops else ""))
         self._render_seasons(snapshot.episodes, record.season_number)
         self._render_episodes(snapshot.episodes)
         self._render_people(snapshot.cast, snapshot.crew)
@@ -266,6 +305,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             card = FollowingEpisodeCard(episode, self._episodes_container)
             self._episodes_layout.addWidget(card)
             self.episode_widgets.append(card)
+            self._start_image_load(card.still_label, episode.still)
         self._episodes_layout.addStretch(1)
 
     def _render_people(
@@ -288,14 +328,88 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     def _manual_check(self) -> None:
         if self.current_following_id <= 0:
             return
-        self.controller.check_one(self.current_following_id)
-        self.load_record(self.current_following_id)
+        self._start_background_check("正在检查更新...")
+
+    def _start_background_check(self, message: str) -> None:
+        following_id = self.current_following_id
+        if following_id <= 0 or not self.manual_check_button.isEnabled():
+            return
+        self.status_label.setText("正在检查更新...")
+        self.manual_check_button.setEnabled(False)
+        self.status_label.setText(message)
+
+        def check() -> None:
+            try:
+                result = self.controller.check_one(following_id)
+                error = ""
+            except Exception as exc:
+                result = None
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.check_finished.emit(following_id, result, error)
+
+        threading.Thread(target=check, daemon=True).start()
+
+    def _handle_check_finished(self, following_id: int, result, error: str) -> None:
+        if following_id != self.current_following_id:
+            return
+        self.manual_check_button.setEnabled(True)
+        self.current_view = self.controller.load_detail(following_id, refresh_if_empty=False)
+        self._render(self.current_view.record, self.current_view.snapshot)
+        if error:
+            self.status_label.setText(f"检查失败: {error}")
+        elif result is not None and getattr(result, "checked", False) is False:
+            self.status_label.setText(str(getattr(result, "error", "") or "检查失败"))
+        else:
+            self.status_label.setText("已完成手动检查")
 
     def _mark_watched_latest(self) -> None:
         if self.current_following_id <= 0:
             return
         self.controller.mark_watched_latest(self.current_following_id)
         self.load_record(self.current_following_id)
+
+    def _save_current_episode(self) -> None:
+        if self.current_following_id <= 0:
+            return
+        self.controller.record_playback_progress(
+            self.current_following_id,
+            current_episode=int(self.current_episode_spin.value()),
+            position_seconds=0,
+        )
+        self.load_record(self.current_following_id)
+        self.status_label.setText("已保存追更进度")
+
+    def _start_image_load(self, label: QLabel, source: str) -> None:
+        image_url = normalize_poster_url(source)
+        if not image_url:
+            return
+        target_size = QSize(max(1, label.width()), max(1, label.height()))
+
+        def load() -> None:
+            image = load_local_poster_image(source, target_size)
+            if image is None:
+                image = load_remote_poster_image(image_url, target_size)
+            if image is not None and self._can_deliver_async_result():
+                self.image_loaded.emit(label, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_image_loaded(self, label: QLabel, image) -> None:
+        label.setText("")
+        label.setPixmap(QPixmap.fromImage(image))
+
+    def _snapshot_needs_refresh(self, snapshot: FollowingDetailSnapshot) -> bool:
+        return not any(
+            (
+                snapshot.overview,
+                snapshot.cast,
+                snapshot.crew,
+                snapshot.episodes,
+                snapshot.posters,
+                snapshot.backdrops,
+            )
+        )
 
     def _apply_style(self) -> None:
         tokens = current_tokens()
@@ -317,8 +431,18 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             QPushButton:hover {{
                 border-color: {tokens.accent};
             }}
+            QSpinBox {{
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 10px;
+                background: {tokens.button_bg};
+                color: {tokens.text_primary};
+                padding: 6px 10px;
+            }}
             QScrollArea {{
                 border: 0;
+                background: transparent;
+            }}
+            QLabel {{
                 background: transparent;
             }}
             """
@@ -340,9 +464,19 @@ def _episode_title(episode: FollowingEpisode) -> str:
 
 def _meta_text(record: FollowingRecord) -> str:
     episode_parts = []
-    if record.current_episode > 0:
+    completed = False
+    if (
+        record.total_episodes > 0
+        and record.latest_episode >= record.total_episodes
+        and record.current_episode >= record.total_episodes
+    ):
+        completed = True
+        episode_parts.extend(["已看完", f"{record.total_episodes}集", "已完结"])
+    elif record.current_episode > 0:
         episode_parts.append(f"看到 {record.current_episode}")
-    if record.latest_episode > 0 and record.total_episodes > 0:
+    if completed:
+        pass
+    elif record.latest_episode > 0 and record.total_episodes > 0:
         episode_parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
     elif record.latest_episode > 0:
         episode_parts.append(f"最新 {record.latest_episode}")

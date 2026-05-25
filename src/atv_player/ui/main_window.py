@@ -1687,9 +1687,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.favorites_page.global_search_requested.connect(self._handle_favorite_global_search)
         self.following_page.open_detail_requested.connect(self.open_following_detail)
         self.following_detail_page.back_requested.connect(
-            lambda: self.nav_tabs.setCurrentWidget(self.following_page)
+            self._return_to_following_page
         )
         self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
+        self.following_detail_page.unfollow_requested.connect(self._unfollow_from_detail)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.history_page.global_search_requested.connect(self._handle_favorite_global_search)
@@ -2526,7 +2527,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         if widget is self.following_page:
             if hasattr(self.following_page.controller, "load_page"):
-                self.following_page.load_page()
+                self.following_page.ensure_loaded()
             return
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
@@ -4024,6 +4025,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         record = self._player_following_record(item)
         if record is not None and hasattr(self._following_controller, "delete"):
             self._following_controller.delete(record.id)
+            self.following_page.load_page()
             return
         if (
             self.player_window is None
@@ -4046,7 +4048,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             source_kind=source_kind,
             source_key=source_key,
             position_seconds=position_seconds,
+            playlist=list(getattr(self.player_window.session, "playlist", []) or []),
         )
+        self.following_page.load_page()
 
     def _report_player_item_following_progress(
         self,
@@ -4076,6 +4080,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.following_detail_page.load_record(following_id)
         self.nav_tabs.setCurrentWidget(self.following_detail_page)
         self._close_following_prompt_dialog()
+
+    def _return_to_following_page(self) -> None:
+        self.following_page.load_page()
+        self.nav_tabs.setCurrentWidget(self.following_page)
+
+    def _unfollow_from_detail(self, following_id: int) -> None:
+        self._following_controller.delete(following_id)
+        self.following_page.load_page()
+        self.nav_tabs.setCurrentWidget(self.following_page)
 
     def search_play_for_following(self, following_id: int) -> None:
         view = self._following_controller.load_detail(following_id)

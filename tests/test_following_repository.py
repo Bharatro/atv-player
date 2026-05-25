@@ -102,6 +102,29 @@ def test_following_repository_saves_snapshot_progress_and_prompt_state(tmp_path:
     assert [item.id for item in prompts] == [following_id]
 
 
+def test_following_repository_update_progress_clears_update_when_latest_watched(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        _record(
+            current_episode=23,
+            latest_episode=24,
+            has_update=True,
+            new_episode_count=1,
+            homepage_prompt_pending=True,
+            watched_latest_episode=False,
+        )
+    )
+
+    repo.update_progress(following_id, current_episode=24, position_seconds=0, last_played_at=200)
+
+    record = repo.get(following_id)
+    assert record is not None
+    assert record.watched_latest_episode is True
+    assert record.has_update is False
+    assert record.new_episode_count == 0
+    assert record.homepage_prompt_pending is False
+
+
 def test_following_repository_filters_updates_and_snoozes_prompt(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     updated_id = repo.upsert(

@@ -1,16 +1,21 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import re
 import time
+import ast
 from dataclasses import dataclass
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.following_metadata import (
     build_following_from_metadata_candidate,
+    compute_episode_counts,
+    following_candidate_from_url,
 )
 from atv_player.following_models import (
     FollowingCardItem,
     FollowingDetailSnapshot,
+    FollowingEpisode,
     FollowingRecord,
     FollowingSourceBinding,
     provider_priority_for_media_kind,
@@ -33,16 +38,45 @@ class FollowingController:
         self._now = now or (lambda: int(time.time()))
 
     def search_media(self, keyword: str):
+        url_candidate = self.candidate_from_url(keyword)
+        if url_candidate is not None:
+            from atv_player.metadata.scrape import MetadataScrapeGroup
+
+            return [
+                MetadataScrapeGroup(
+                    provider=url_candidate.provider,
+                    provider_label=url_candidate.provider_label,
+                    items=[url_candidate],
+                )
+            ]
         query = MetadataQuery(title=keyword.strip())
         return self._metadata_search_service.search(query)
 
-    def add_candidate(self, candidate) -> FollowingRecord:
+    def candidate_from_url(self, url: str):
+        provider_options = getattr(self._metadata_search_service, "provider_options", None)
+        available = set()
+        if callable(provider_options):
+            try:
+                available = {str(provider) for provider, _label in provider_options()}
+            except Exception:
+                available = set()
+        return following_candidate_from_url(url, available_providers=available)
+
+    def add_candidate(self, candidate, *, current_episode: int = 0) -> FollowingRecord:
         now = self._now()
         record, snapshot = build_following_from_metadata_candidate(
             candidate,
             metadata_search_service=self._metadata_search_service,
             now=now,
         )
+        if current_episode > 0:
+            watched_latest = record.latest_episode > 0 and current_episode >= record.latest_episode
+            record.current_episode = current_episode
+            record.watched_latest_episode = watched_latest
+            if watched_latest:
+                record.has_update = False
+                record.new_episode_count = 0
+                record.homepage_prompt_pending = False
         record_id = self._repository.upsert(record)
         saved = self._repository.get(record_id)
         if saved is None:
@@ -67,14 +101,14 @@ class FollowingController:
         ]
         return cards, total
 
-    def load_detail(self, following_id: int) -> FollowingDetailView:
+    def load_detail(self, following_id: int, *, refresh_if_empty: bool = True) -> FollowingDetailView:
         record = self._repository.get(following_id)
         if record is None:
             raise KeyError(f"following not found: {following_id}")
         snapshot = self._repository.get_detail_snapshot(following_id) or FollowingDetailSnapshot(
             following_id=following_id
         )
-        if self._snapshot_needs_refresh(snapshot) and self._update_service is not None:
+        if refresh_if_empty and self._snapshot_needs_refresh(snapshot) and self._update_service is not None:
             self._update_service.check_record(following_id)
             record = self._repository.get(following_id) or record
             snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
@@ -88,21 +122,30 @@ class FollowingController:
         source_kind: str,
         source_key: str,
         position_seconds: int,
+        playlist: list[PlayItem] | None = None,
     ) -> FollowingRecord:
         now = self._now()
-        episode_number = infer_playlist_episode_number(item, [item]) or 0
+        playlist_items = list(playlist or [item])
+        playlist_numbers = self._playlist_episode_numbers(playlist_items)
+        episode_number = self._playlist_position(item, playlist_items) or infer_playlist_episode_number(item, playlist_items) or 0
         provider_id = f"{source_kind}:{source_key}:{vod.vod_id or item.vod_id or item.media_title or item.title}"
-        external_ids = {"douban": str(vod.dbid)} if int(vod.dbid or 0) else {}
+        external_ids = self._external_ids_from_vod(vod, item)
+        metadata_raw_episodes = self._metadata_raw_episodes_from_vod(vod)
+        metadata_latest, metadata_total = compute_episode_counts(metadata_raw_episodes, now=now)
+        playlist_latest = max(playlist_numbers) if playlist_numbers else 0
+        latest_episode = max(playlist_latest, min(metadata_latest, playlist_latest) if playlist_latest else metadata_latest)
+        total_episodes = max(metadata_total, self._metadata_total_episodes_from_vod(vod), len(playlist_numbers))
+        media_kind = str(vod.category_name or vod.type_name or item.category_name or item.type_name or "").strip()
         record = FollowingRecord(
             id=0,
             title=str(vod.vod_name or item.media_title or item.title or "").strip(),
             original_title=str(item.original_title or "").strip(),
-            media_kind=str(vod.category_name or vod.type_name or item.category_name or item.type_name or "").strip(),
+            media_kind=media_kind,
             poster=str(vod.vod_pic or item.video_cover_override or "").strip(),
             rating=str(vod.vod_remarks or "").strip(),
             provider="player",
             provider_id=provider_id,
-            provider_priority=provider_priority_for_media_kind("anime" if "动漫" in vod.category_name else "live_action"),
+            provider_priority=provider_priority_for_media_kind("anime" if "动漫" in media_kind or "动画" in media_kind else "live_action"),
             external_ids=external_ids,
             source_bindings=[
                 FollowingSourceBinding(
@@ -115,15 +158,27 @@ class FollowingController:
             ],
             current_episode=episode_number,
             position_seconds=position_seconds,
+            latest_episode=latest_episode,
+            previous_latest_episode=latest_episode,
+            total_episodes=total_episodes,
+            watched_latest_episode=bool(latest_episode > 0 and episode_number >= latest_episode),
             created_at=now,
             updated_at=now,
             last_played_at=now,
             next_check_after=now,
         )
+        if record.watched_latest_episode:
+            record.has_update = False
+            record.new_episode_count = 0
+            record.homepage_prompt_pending = False
         record_id = self._repository.upsert(record)
         saved = self._repository.get(record_id)
         if saved is None:
             raise RuntimeError("追更保存失败")
+        snapshot = self._snapshot_from_vod(vod, playlist_items, metadata_raw_episodes=metadata_raw_episodes, refreshed_at=now)
+        if self._snapshot_has_data(snapshot):
+            snapshot.following_id = record_id
+            self._repository.save_detail_snapshot(record_id, snapshot)
         return saved
 
     def mark_watched_latest(self, following_id: int) -> None:
@@ -170,7 +225,13 @@ class FollowingController:
 
     def _progress_text(self, record: FollowingRecord) -> str:
         parts = []
-        if record.current_episode > 0:
+        if (
+            record.total_episodes > 0
+            and record.latest_episode >= record.total_episodes
+            and record.current_episode >= record.total_episodes
+        ):
+            return f"已看完 · {record.total_episodes}集 · 已完结"
+        elif record.current_episode > 0:
             parts.append(f"看到 {record.current_episode}")
         if record.latest_episode > 0 and record.total_episodes > 0:
             parts.append(f"最新 {record.latest_episode} / 总 {record.total_episodes}")
@@ -191,3 +252,123 @@ class FollowingController:
                 snapshot.backdrops,
             )
         )
+
+    def _snapshot_from_vod(
+        self,
+        vod: VodItem,
+        playlist: list[PlayItem],
+        *,
+        metadata_raw_episodes: list[dict[str, object]] | None = None,
+        refreshed_at: int,
+    ) -> FollowingDetailSnapshot:
+        metadata_episodes = [self._episode_from_raw(item) for item in metadata_raw_episodes or []]
+        return FollowingDetailSnapshot(
+            overview=str(vod.vod_content or "").strip(),
+            cast=[{"name": name} for name in self._split_people(vod.vod_actor)],
+            crew=[{"name": name, "job": "Director"} for name in self._split_people(vod.vod_director)],
+            episodes=metadata_episodes or [
+                FollowingEpisode(
+                    episode_number=number,
+                    title=str(
+                        playlist_item.episode_display_title
+                        or playlist_item.media_title
+                        or playlist_item.original_title
+                        or playlist_item.title
+                        or ""
+                    ).strip(),
+                    still=str(playlist_item.video_cover_override or "").strip(),
+                )
+                for number, playlist_item in zip(self._playlist_episode_numbers(playlist), playlist, strict=False)
+            ],
+            posters=[source for source in [str(vod.vod_pic or "").strip(), *list(vod.poster_candidates or [])] if source],
+            refreshed_at=refreshed_at,
+        )
+
+    def _snapshot_has_data(self, snapshot: FollowingDetailSnapshot) -> bool:
+        return not self._snapshot_needs_refresh(snapshot)
+
+    def _split_people(self, value: object) -> list[str]:
+        return [part.strip() for part in re.split(r"[,/、]", str(value or "")) if part.strip()]
+
+    def _playlist_episode_numbers(self, playlist: list[PlayItem]) -> list[int]:
+        if len(playlist) > 1:
+            return list(range(1, len(playlist) + 1))
+        return [
+            number
+            for playlist_item in playlist
+            if (number := infer_playlist_episode_number(playlist_item, playlist) or 0) > 0
+        ]
+
+    def _playlist_position(self, item: PlayItem, playlist: list[PlayItem]) -> int:
+        if len(playlist) <= 1:
+            return 0
+        for index, playlist_item in enumerate(playlist, start=1):
+            if playlist_item is item:
+                return index
+        for index, playlist_item in enumerate(playlist, start=1):
+            if playlist_item.url == item.url and playlist_item.title == item.title:
+                return index
+        item_index = int(getattr(item, "index", 0) or 0)
+        return item_index + 1 if 0 <= item_index < len(playlist) else 0
+
+    def _metadata_raw_episodes_from_vod(self, vod: VodItem) -> list[dict[str, object]]:
+        for field in list(vod.detail_fields or []):
+            if str(getattr(field, "label", "") or "").strip().lower() != "episodes":
+                continue
+            value = getattr(field, "value", "")
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            text = str(value or "").strip()
+            if not text:
+                continue
+            try:
+                parsed = ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                continue
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+        return []
+
+    def _metadata_total_episodes_from_vod(self, vod: VodItem) -> int:
+        for field in list(vod.detail_fields or []):
+            label = str(getattr(field, "label", "") or "").strip().lower()
+            if label not in {"话数", "集数", "总集数", "episodes_total", "total episodes"}:
+                continue
+            match = re.search(r"\d+", str(getattr(field, "value", "") or ""))
+            if match:
+                return int(match.group(0))
+        return 0
+
+    def _episode_from_raw(self, raw: dict[str, object]) -> FollowingEpisode:
+        number = self._to_int(raw.get("episode_number") or raw.get("sort") or raw.get("ep"))
+        return FollowingEpisode(
+            episode_number=number,
+            season_number=self._to_int(raw.get("season_number")),
+            title=str(raw.get("name_cn") or raw.get("name") or raw.get("long_title") or raw.get("title") or "").strip(),
+            overview=str(raw.get("overview") or raw.get("desc") or raw.get("summary") or "").strip(),
+            air_date=str(raw.get("air_date") or raw.get("airdate") or raw.get("date") or "").strip(),
+            still=str(raw.get("still_url") or raw.get("still") or raw.get("cover") or raw.get("image") or "").strip(),
+            runtime=self._to_int(raw.get("runtime") or raw.get("duration")),
+            is_special=number <= 0 or self._to_int(raw.get("type")) != 0,
+        )
+
+    def _to_int(self, value: object) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _external_ids_from_vod(self, vod: VodItem, item: PlayItem) -> dict[str, str]:
+        external_ids = {"douban": str(vod.dbid)} if int(vod.dbid or 0) else {}
+        for field in [*list(vod.detail_fields or []), *list(item.detail_fields or [])]:
+            label = str(getattr(field, "label", "") or "").strip().lower()
+            value = str(getattr(field, "value", "") or "").strip()
+            if not value:
+                continue
+            if "tmdb" in label:
+                external_ids["tmdb"] = value
+            elif "bangumi" in label:
+                external_ids["bangumi"] = value
+            elif "豆瓣" in label or "douban" in label:
+                external_ids["douban"] = value
+        return external_ids

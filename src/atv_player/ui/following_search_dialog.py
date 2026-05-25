@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSpinBox,
 )
 
 from atv_player.ui.theme import build_pill_button_qss, build_search_line_edit_qss, current_tokens
@@ -33,10 +34,15 @@ class FollowingSearchDialog(ThemedDialogBase):
         search_row.setVerticalSpacing(6)
         search_row.addWidget(QLabel("标题", host), 0, 0)
         self.search_edit = QLineEdit(host)
-        self.search_edit.setPlaceholderText("搜索标题")
+        self.search_edit.setPlaceholderText("搜索标题或粘贴 Bangumi / 豆瓣 / TMDB 链接")
         search_row.addWidget(self.search_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(QLabel("当前集数", host), 0, 1)
+        self.current_episode_spin = QSpinBox(host)
+        self.current_episode_spin.setRange(0, 9999)
+        self.current_episode_spin.setSpecialValueText("未设置")
+        search_row.addWidget(self.current_episode_spin, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         self.search_button = QPushButton("搜索", host)
-        search_row.addWidget(self.search_button, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(self.search_button, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
         search_row.setColumnStretch(0, 1)
         layout.addLayout(search_row)
 
@@ -132,7 +138,8 @@ class FollowingSearchDialog(ThemedDialogBase):
         title = str(getattr(candidate, "title", "") or "")
         year = str(getattr(candidate, "year", "") or "")
         subtitle = str(getattr(candidate, "subtitle", "") or "")
-        return " · ".join(part for part in (title, year, subtitle) if part) or "未命名条目"
+        provider_id = str(getattr(candidate, "provider_id", "") or "")
+        return " · ".join(part for part in (title, year, subtitle, provider_id) if part) or "未命名条目"
 
     def _selected_candidate(self):
         item = self.result_list.currentItem()
@@ -145,7 +152,10 @@ class FollowingSearchDialog(ThemedDialogBase):
         if candidate is None:
             self.status_label.setText("请选择一个结果")
             return
-        self.controller.add_candidate(candidate)
+        try:
+            self.controller.add_candidate(candidate, current_episode=int(self.current_episode_spin.value()))
+        except TypeError:
+            self.controller.add_candidate(candidate)
         self.candidate_selected.emit(candidate)
         self.accept()
 
@@ -155,6 +165,23 @@ class FollowingSearchDialog(ThemedDialogBase):
     def _apply_theme(self) -> None:
         tokens = current_tokens()
         self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=14, min_height=40))
+        self.current_episode_spin.setFixedHeight(40)
+        self.current_episode_spin.setStyleSheet(
+            f"""
+            QSpinBox {{
+                min-height: 40px;
+                padding: 0 10px;
+                border: 1px solid {tokens.input_border};
+                border-radius: 14px;
+                background: {tokens.input_bg};
+                color: {tokens.text_primary};
+            }}
+            QSpinBox:focus {{
+                border: 1px solid {tokens.accent};
+            }}
+            """
+        )
+        self.search_button.setFixedHeight(40)
         button_qss = build_pill_button_qss(tokens, checked_accent=True)
         for button in (self.search_button, self.add_button, self.close_button):
             button.setStyleSheet(button_qss)
