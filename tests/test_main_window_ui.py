@@ -289,6 +289,48 @@ def test_main_window_loads_favorites_when_tab_is_selected(qtbot) -> None:
     assert favorites.load_calls == [(1, 20, "")]
 
 
+def test_main_window_restored_favorites_tab_loads_once_while_startup_plugins_arrive(qtbot) -> None:
+    favorites = FakeFavoritesController()
+
+    def plugin_loader_task():
+        yield {
+            "id": "plugin-1",
+            "title": "插件一",
+            "controller": FakeSpiderController("插件一"),
+            "search_enabled": False,
+            "sort_order": 0,
+        }
+        yield {
+            "id": "plugin-2",
+            "title": "插件二",
+            "controller": FakeSpiderController("插件二"),
+            "search_enabled": False,
+            "sort_order": 1,
+        }
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(last_selected_tab="favorites"),
+        favorites_controller=favorites,
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    window.show()
+    qtbot.waitUntil(lambda: window._startup_plugin_load_state == "idle")
+
+    assert favorites.load_calls == [(1, 20, "")]
+
+
 def test_main_window_favorites_tab_renders_new_context_menu_favorite(qtbot) -> None:
     class MemoryFavoritesController(FakeFavoritesController):
         def load_page(self, *, page: int, size: int, keyword: str):

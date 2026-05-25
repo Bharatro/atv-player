@@ -2467,7 +2467,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         if widget is self.favorites_page:
             if hasattr(self.favorites_page.controller, "load_page"):
-                self.favorites_page.load_page()
+                self.favorites_page.ensure_loaded()
             return
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
