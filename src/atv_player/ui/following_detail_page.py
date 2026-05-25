@@ -28,8 +28,6 @@ from atv_player.ui.poster_loader import load_local_poster_image, load_remote_pos
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
-_BATCH_SIZE = 20
-
 
 class FollowingEpisodePreviewDialog(ThemedDialogBase):
     _image_loaded = Signal(QLabel, object)
@@ -149,13 +147,12 @@ class FollowingProgressDialog(ThemedDialogBase):
 
 
 class FollowingEpisodeCard(QPushButton):
-    _shared_card_qss: str = ""
-
     def __init__(
         self, episode: FollowingEpisode, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
         self.episode = episode
+        self.setObjectName("episodeCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumSize(240, 270)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
@@ -167,7 +164,7 @@ class FollowingEpisodeCard(QPushButton):
         self.still_label = QLabel("分集封面", self)
         self.still_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.still_label.setFixedSize(220, 124)
-        self.still_label.setStyleSheet(_episode_still_qss())
+        self.still_label.setObjectName("episodeStill")
         self.title_label = QLabel(_episode_title(episode), self)
         self.title_label.setWordWrap(True)
         self.title_label.setSizePolicy(
@@ -191,9 +188,6 @@ class FollowingEpisodeCard(QPushButton):
         layout.addWidget(self.still_label, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addLayout(self.title_meta_layout)
         layout.addWidget(self.overview_label, 1)
-        if not FollowingEpisodeCard._shared_card_qss:
-            FollowingEpisodeCard._shared_card_qss = _card_qss()
-        self.setStyleSheet(FollowingEpisodeCard._shared_card_qss)
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -202,15 +196,12 @@ class FollowingEpisodeCard(QPushButton):
 
 
 class FollowingPersonCard(QFrame):
-    _shared_frame_qss: str = ""
-    _shared_avatar_qss: str = ""
-    _shared_inner_qss: str = ""
-
     def __init__(
         self, person: dict[str, object], parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
         self.person = person
+        self.setObjectName("personCard")
         self._person_url = _person_link(person)
         self.setMinimumSize(166, 292)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -225,15 +216,11 @@ class FollowingPersonCard(QFrame):
         self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.avatar_label.setFixedSize(144, 216)
         self.avatar_label.setProperty("person_avatar", True)
-        if not FollowingPersonCard._shared_avatar_qss:
-            FollowingPersonCard._shared_avatar_qss = _person_avatar_fallback_qss()
-        self.avatar_label.setStyleSheet(FollowingPersonCard._shared_avatar_qss)
+        self.avatar_label.setObjectName("personAvatar")
         self.name_label = QLabel(str(person.get("name") or ""), self)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(True)
-        if not FollowingPersonCard._shared_inner_qss:
-            FollowingPersonCard._shared_inner_qss = _person_inner_label_qss()
-        self.name_label.setStyleSheet(FollowingPersonCard._shared_inner_qss)
+        self.name_label.setObjectName("personName")
         role = (
             person.get("role")
             or person.get("character")
@@ -244,16 +231,13 @@ class FollowingPersonCard(QFrame):
         self.role_label = QLabel(str(role), self)
         self.role_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.role_label.setWordWrap(True)
-        self.role_label.setStyleSheet(FollowingPersonCard._shared_inner_qss)
+        self.role_label.setObjectName("personRole")
         self.role_label.setVisible(bool(str(role).strip()))
 
         layout.addWidget(self.avatar_label, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.name_label)
         layout.addWidget(self.role_label)
         layout.addStretch(1)
-        if not FollowingPersonCard._shared_frame_qss:
-            FollowingPersonCard._shared_frame_qss = _frame_card_qss()
-        self.setStyleSheet(FollowingPersonCard._shared_frame_qss)
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._person_url:
@@ -278,15 +262,14 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.current_following_id = 0
         self.current_view = None
         self.episode_widgets: list[FollowingEpisodeCard] = []
-        self.cast_widgets: list[FollowingPersonCard] = []
-        self._auto_metadata_avatar_refresh_ids: set[int] = set()
-
         self._pending_episodes: list[FollowingEpisode] = []
         self._pending_people: list[dict[str, object]] = []
         self._batch_timer = QTimer(self)
-        self._batch_timer.setInterval(0)
+        self._batch_timer.setInterval(1)
         self._batch_timer.setSingleShot(True)
         self._batch_timer.timeout.connect(self._render_next_batch)
+        self.cast_widgets: list[FollowingPersonCard] = []
+        self._auto_metadata_avatar_refresh_ids: set[int] = set()
 
         self.back_button = QPushButton("返回")
         self.backdrop_label = QLabel("海报背景")
@@ -325,7 +308,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._apply_style()
 
     def load_record(self, following_id: int) -> None:
-        self._cancel_pending_batch()
+        self._batch_timer.stop()
+        self._pending_episodes = []
+        self._pending_people = []
         self.current_following_id = int(following_id)
         self.current_view = self.controller.load_detail(self.current_following_id, refresh_if_empty=False)
         self._render(self.current_view.record, self.current_view.snapshot)
@@ -337,11 +322,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         ):
             self._auto_metadata_avatar_refresh_ids.add(self.current_following_id)
             self._refresh_metadata()
-
-    def _cancel_pending_batch(self) -> None:
-        self._batch_timer.stop()
-        self._pending_episodes = []
-        self._pending_people = []
 
     def _build_layout(self) -> None:
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -471,7 +451,13 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.overview_label.setText(_format_detail_text(snapshot))
         self._render_poster_carousel(record, snapshot)
         self._render_seasons(snapshot.episodes, record.season_number)
-        self._start_batch_render(snapshot.episodes, snapshot.cast, snapshot.crew)
+        self.episode_widgets = []
+        self.cast_widgets = []
+        _clear_layout(self._episodes_layout)
+        _clear_layout(self._cast_layout)
+        self._pending_episodes = list(snapshot.episodes)
+        self._pending_people = [*snapshot.cast, *snapshot.crew]
+        self._render_next_batch()
 
     def _render_seasons(
         self, episodes: list[FollowingEpisode], fallback_season: int
@@ -488,69 +474,28 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         for season in seasons:
             self.season_tabs.addTab(f"第 {season} 季")
 
-    def _start_batch_render(
-        self,
-        episodes: list[FollowingEpisode],
-        cast: list[dict[str, object]],
-        crew: list[dict[str, object]],
-    ) -> None:
-        self._cancel_pending_batch()
-        self.episode_widgets = []
-        self.cast_widgets = []
-        _clear_layout(self._episodes_layout)
-        _clear_layout(self._cast_layout)
-        self._pending_episodes = list(episodes)
-        self._pending_people = [*cast, *crew]
-        self._render_next_batch()
-
     def _render_next_batch(self) -> None:
-        rendered = 0
-        while self._pending_episodes and rendered < _BATCH_SIZE:
+        batch = 20
+        n = 0
+        while self._pending_episodes and n < batch:
             episode = self._pending_episodes.pop(0)
             card = FollowingEpisodeCard(episode, self._episodes_container)
             self._episodes_layout.addWidget(card)
             self.episode_widgets.append(card)
             self._start_image_load(card.still_label, episode.still)
-            rendered += 1
-
-        while self._pending_people and rendered < _BATCH_SIZE:
+            n += 1
+        while self._pending_people and n < batch:
             person = self._pending_people.pop(0)
             card = FollowingPersonCard(person, self._cast_container)
             self._cast_layout.addWidget(card)
             self.cast_widgets.append(card)
             self._start_image_load(card.avatar_label, _person_avatar(person))
-            rendered += 1
-
-        self._episodes_container.updateGeometry()
-        self._cast_container.updateGeometry()
-
+            n += 1
         if self._pending_episodes or self._pending_people:
             self._batch_timer.start()
         else:
             self._episodes_layout.addStretch(1)
             self._cast_layout.addStretch(1)
-
-    def _render_episodes_sync(self, episodes: list[FollowingEpisode]) -> None:
-        self.episode_widgets = []
-        _clear_layout(self._episodes_layout)
-        for episode in episodes:
-            card = FollowingEpisodeCard(episode, self._episodes_container)
-            self._episodes_layout.addWidget(card)
-            self.episode_widgets.append(card)
-            self._start_image_load(card.still_label, episode.still)
-        self._episodes_layout.addStretch(1)
-
-    def _render_people_sync(
-        self, cast: list[dict[str, object]], crew: list[dict[str, object]]
-    ) -> None:
-        self.cast_widgets = []
-        _clear_layout(self._cast_layout)
-        for person in [*cast, *crew]:
-            card = FollowingPersonCard(person, self._cast_container)
-            self._cast_layout.addWidget(card)
-            self.cast_widgets.append(card)
-            self._start_image_load(card.avatar_label, _person_avatar(person))
-        self._cast_layout.addStretch(1)
 
     def _render_poster_carousel(
         self, record: FollowingRecord, snapshot: FollowingDetailSnapshot
@@ -727,6 +672,41 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
                 font-size: 26px;
                 font-weight: 700;
             }}
+            QPushButton#episodeCard {{
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 14px;
+                background: {tokens.panel_bg};
+                text-align: left;
+                padding: 0;
+            }}
+            QPushButton#episodeCard:hover {{
+                border-color: {tokens.accent};
+            }}
+            QLabel#episodeStill {{
+                border: 0;
+                border-radius: 0;
+                background: {tokens.panel_alt_bg};
+                color: {tokens.text_secondary};
+            }}
+            QFrame#personCard {{
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 14px;
+                background: {tokens.panel_bg};
+            }}
+            QLabel#personAvatar {{
+                border: 0;
+                border-radius: 10px;
+                background: {tokens.panel_alt_bg};
+                color: {tokens.text_secondary};
+                font-size: 24px;
+                font-weight: 600;
+            }}
+            QLabel#personName, QLabel#personRole {{
+                border: 0;
+                border-radius: 0;
+                background: transparent;
+                color: {tokens.text_secondary};
+            }}
             QPushButton {{
                 border: 1px solid {tokens.border_subtle};
                 border-radius: 12px;
@@ -896,37 +876,3 @@ def _person_avatar_initial(person: dict[str, object]) -> str:
     return name[:1].upper()
 
 
-def _episode_still_qss() -> str:
-    tokens = current_tokens()
-    return (
-        "border: 0;"
-        "border-radius: 0;"
-        f"background: {tokens.panel_alt_bg};"
-        f"color: {tokens.text_secondary};"
-    )
-
-
-def _card_qss() -> str:
-    tokens = current_tokens()
-    return (
-        "QPushButton {"
-        f"border: 1px solid {tokens.border_subtle};"
-        "border-radius: 14px;"
-        f"background: {tokens.panel_bg};"
-        "text-align: left;"
-        "}"
-        "QPushButton:hover {"
-        f"border-color: {tokens.accent};"
-        "}"
-    )
-
-
-def _frame_card_qss() -> str:
-    tokens = current_tokens()
-    return (
-        "QFrame {"
-        f"border: 1px solid {tokens.border_subtle};"
-        "border-radius: 14px;"
-        f"background: {tokens.panel_bg};"
-        "}"
-    )
