@@ -115,14 +115,24 @@ The header should stay compact enough not to crowd out the episode list, but lar
 
 Episode cards always use the rich/full presentation:
 
+- still image on the left in single-column mode
 - title
+- rating/score badge when available
 - air date
+- runtime when available
 - watched marker
 - special marker
-- still image
 - overview text
 
 Changing between `单列 / 双列 / 三列` must only change layout density. It must not remove fields from the episode card.
+
+Density behavior:
+
+- `单列`: keep the approved reference layout, with still image on the left and full text stack on the right
+- `双列`: keep the same fields, but compress spacing and clamp overview to fewer lines
+- `三列`: keep the same fields, but use the tightest spacing and shortest overview clamp
+
+The key rule is that `双列 / 三列` remain the same information design, not fallback variants of the old compact mode.
 
 ### Cast/Crew Section
 
