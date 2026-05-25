@@ -420,6 +420,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         container = QWidget(self.filter_panel)
         layout = _FlowLayout(container, spacing=8)
         merged_options = list(options)
+        print(merged_options)
         if not any(option.value == "" for option in merged_options) and not any(option.name == "全部" for option in merged_options):
             merged_options = [CategoryFilterOption(name="默认", value=""), *merged_options]
         if selected_value not in {option.value for option in merged_options}:

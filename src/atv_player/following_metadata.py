@@ -22,7 +22,7 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 _FIELD_PROVIDER_PRIORITY = {
     "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
     "backdrop": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
-    "rating": ["official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
+    "rating": ["tmdb", "official_douban", "bangumi", "local_douban", "douban", "plugin", "iqiyi"],
 }
 
 

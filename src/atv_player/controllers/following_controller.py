@@ -229,7 +229,7 @@ class FollowingController:
             raise KeyError(f"following not found: {following_id}")
         existing_snapshot = self._repository.get_detail_snapshot(following_id)
         candidate = self._tmdb_refresh_candidate_from_record(record)
-        include_related = candidate is None
+        include_related = True
         if candidate is None:
             candidate = self._metadata_refresh_candidate(record)
         if candidate is None:
