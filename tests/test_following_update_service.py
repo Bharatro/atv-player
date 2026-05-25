@@ -115,7 +115,7 @@ def test_update_service_falls_back_to_next_provider_and_keeps_errors(tmp_path: P
     assert record.latest_episode == 2
 
 
-def test_update_service_prefers_bangumi_for_following_updates_and_clears_stale_update(tmp_path: Path) -> None:
+def test_update_service_falls_back_to_bangumi_after_tmdb_failure_and_clears_stale_update(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(
         _record(
@@ -135,6 +135,8 @@ def test_update_service_prefers_bangumi_for_following_updates_and_clears_stale_u
         )
     )
     gateway = FakeMetadataGateway()
+    gateway.failures.add("tmdb")
+    gateway.failures.add("douban")
     gateway.responses["bangumi"] = (
         _record(
             id=record_id,
@@ -165,7 +167,7 @@ def test_update_service_prefers_bangumi_for_following_updates_and_clears_stale_u
     results = service.check_due_records(limit=10)
 
     record = repo.get(record_id)
-    assert gateway.calls[0] == ("盗妖行", "bangumi")
+    assert gateway.calls[:3] == [("盗妖行", "tmdb"), ("盗妖行", "douban"), ("盗妖行", "bangumi")]
     assert results[0].latest_episode == 29
     assert results[0].has_update is False
     assert record is not None
@@ -175,3 +177,179 @@ def test_update_service_prefers_bangumi_for_following_updates_and_clears_stale_u
     assert record.has_update is False
     assert record.new_episode_count == 0
     assert record.homepage_prompt_pending is False
+
+
+def test_update_service_prefers_tmdb_first_when_tmdb_id_exists(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:1",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "1", "tmdb": "30983"},
+            current_episode=1200,
+            latest_episode=1200,
+            previous_latest_episode=1200,
+            total_episodes=1200,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            provider_priority=["tmdb", "bangumi", "douban"],
+            external_ids={"tmdb": "30983"},
+            latest_episode=1201,
+            total_episodes=1201,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[FollowingEpisode(episode_number=1201, air_date="2026-05-09")],
+            refreshed_at=1779638400,
+        ),
+    )
+    gateway.responses["bangumi"] = (
+        _record(
+            id=record_id,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:1",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "1"},
+            latest_episode=1200,
+            total_episodes=1200,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[FollowingEpisode(episode_number=1200, air_date="2026-05-02")],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_due_records(limit=10)
+
+    record = repo.get(record_id)
+    assert gateway.calls[0] == ("名侦探柯南", "tmdb")
+    assert results[0].latest_episode == 1201
+    assert record is not None
+    assert record.latest_episode == 1201
+
+
+def test_update_service_prefers_tmdb_record_latest_over_season_local_episode_numbers(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            provider_priority=["tmdb", "bangumi", "douban"],
+            external_ids={"tmdb": "30983"},
+            current_episode=1200,
+            latest_episode=1200,
+            previous_latest_episode=1200,
+            total_episodes=1200,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            provider_priority=["tmdb", "bangumi", "douban"],
+            external_ids={"tmdb": "30983"},
+            latest_episode=1201,
+            total_episodes=1201,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[
+                FollowingEpisode(episode_number=1, air_date="2026-05-02"),
+                FollowingEpisode(episode_number=2, air_date="2026-05-09"),
+            ],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_due_records(limit=10)
+
+    record = repo.get(record_id)
+    assert results[0].latest_episode == 1201
+    assert results[0].has_update is True
+    assert record is not None
+    assert record.latest_episode == 1201
+    assert record.new_episode_count == 1
+    assert record.homepage_prompt_pending is True
+
+
+def test_update_service_tmdb_check_keeps_existing_metadata_identity(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            provider_priority=["tmdb", "bangumi", "douban"],
+            external_ids={"tmdb": "30983"},
+            poster="old-poster",
+            backdrop="old-backdrop",
+            rating="9.0",
+            current_episode=1200,
+            latest_episode=1200,
+            previous_latest_episode=1200,
+            total_episodes=1200,
+            watched_latest_episode=True,
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="旧简介",
+            episodes=[FollowingEpisode(episode_number=1, title="旧分集")],
+        ),
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        FollowingRecord(
+            id=0,
+            title="",
+            latest_episode=1201,
+            previous_latest_episode=1201,
+            total_episodes=1201,
+        ),
+        FollowingDetailSnapshot(),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    snapshot = repo.get_detail_snapshot(record_id)
+    assert record is not None
+    assert record.provider == "tmdb"
+    assert record.provider_id == "tv:30983:season:1"
+    assert record.external_ids == {"tmdb": "30983"}
+    assert record.poster == "old-poster"
+    assert record.backdrop == "old-backdrop"
+    assert record.rating == "9.0"
+    assert record.latest_episode == 1201
+    assert record.total_episodes == 1201
+    assert snapshot is not None
+    assert snapshot.overview == "旧简介"
+    assert snapshot.episodes[0].title == "旧分集"

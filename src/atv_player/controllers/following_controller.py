@@ -7,6 +7,7 @@ import ast
 from dataclasses import dataclass, replace
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
     build_following_from_metadata_candidate,
     compute_episode_counts,
@@ -144,11 +145,18 @@ class FollowingController:
         latest_episode = max(playlist_latest, min(metadata_latest, playlist_latest) if playlist_latest else metadata_latest)
         total_episodes = max(metadata_total, self._metadata_total_episodes_from_vod(vod), len(playlist_numbers))
         media_kind = str(vod.category_name or vod.type_name or item.category_name or item.type_name or "").strip()
+        season_number = (
+            extract_season_number(vod.vod_name)
+            or extract_season_number(item.media_title)
+            or extract_season_number(item.original_title)
+            or 0
+        )
         record = FollowingRecord(
             id=0,
             title=str(vod.vod_name or item.media_title or item.title or "").strip(),
             original_title=str(item.original_title or "").strip(),
             media_kind=media_kind,
+            season_number=season_number,
             poster=str(vod.vod_pic or item.video_cover_override or "").strip(),
             rating=str(vod.vod_remarks or "").strip(),
             provider="player",
@@ -291,6 +299,16 @@ class FollowingController:
         candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
         if not candidates:
             return None
+        tmdb_external_id = str(record.external_ids.get("tmdb") or "").strip()
+        if tmdb_external_id:
+            for candidate in candidates:
+                if str(getattr(candidate, "provider", "") or "") != "tmdb":
+                    continue
+                if tmdb_external_id in str(getattr(candidate, "provider_id", "") or ""):
+                    return candidate
+        for candidate in candidates:
+            if str(getattr(candidate, "provider", "") or "") == "tmdb":
+                return candidate
         identity = (record.provider, record.provider_id)
         for candidate in candidates:
             if (
@@ -304,7 +322,7 @@ class FollowingController:
                     continue
                 if str(external_id) in str(getattr(candidate, "provider_id", "") or ""):
                     return candidate
-        provider_order = [record.provider, *list(record.provider_priority or []), "tmdb", "bangumi", "douban"]
+        provider_order = ["tmdb", record.provider, *list(record.provider_priority or []), "bangumi", "douban"]
         for provider in provider_order:
             for candidate in candidates:
                 if str(getattr(candidate, "provider", "") or "") == provider:
@@ -351,14 +369,16 @@ class FollowingController:
             parts = text.split(":")
             if len(parts) >= 4 and parts[2] == "season":
                 return text, self._to_int(parts[3]) or 1
-            season = season_number if season_number > 0 else 1
-            return f"{text}:season:{season}", season
+            if season_number <= 0:
+                return "", 0
+            return f"{text}:season:{season_number}", season_number
         if not text.isdigit():
             return "", 0
         if normalized_kind == "movie" or "电影" in normalized_kind:
             return f"movie:{text}", 0
-        season = season_number if season_number > 0 else 1
-        return f"tv:{text}:season:{season}", season
+        if season_number <= 0:
+            return "", 0
+        return f"tv:{text}:season:{season_number}", season_number
 
     def _merge_refreshed_snapshot(
         self,

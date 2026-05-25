@@ -109,6 +109,7 @@ class FakeFollowingMetadataRefreshService:
                 title="仙逆",
                 overview="Bangumi简介",
                 rating="8.4",
+                aliases=["仙逆动画"],
             )
         return MetadataRecord(
             provider="tmdb",
@@ -116,6 +117,7 @@ class FakeFollowingMetadataRefreshService:
             title="仙逆",
             poster="tmdb-poster",
             backdrop="tmdb-backdrop",
+            overview="TMDB简介",
             rating="7.6",
             tmdb_id="236534",
             actors=["史泽鲲"],
@@ -459,17 +461,18 @@ def test_following_controller_refreshes_metadata_with_tmdb_details_for_bangumi_f
     loaded = repo.get(record_id)
     snapshot = repo.get_detail_snapshot(record_id)
     assert service.detail_provider_ids == [
-        ("bangumi", "subject:1"),
         ("tmdb", "tv:236534:season:1"),
+        ("bangumi", "subject:1"),
     ]
     assert loaded is not None
-    assert loaded.provider == "bangumi"
-    assert loaded.provider_id == "subject:1"
-    assert loaded.rating == "8.4"
+    assert loaded.provider == "tmdb"
+    assert loaded.provider_id == "tv:236534:season:1"
+    assert loaded.rating == "7.6"
     assert loaded.poster == "tmdb-poster"
     assert loaded.backdrop == "tmdb-backdrop"
     assert loaded.latest_episode == 84
     assert loaded.total_episodes == 92
+    assert refreshed.snapshot.overview == "TMDB简介"
     assert refreshed.snapshot.episodes[0].title == "TMDB第1集"
     assert snapshot is not None
     assert snapshot.episodes[0].overview == "TMDB剧情"
@@ -484,6 +487,7 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
             id=0,
             title="低智商犯罪",
             media_kind="live_action",
+            season_number=1,
             provider="player",
             provider_id="player:source:vod-1",
             external_ids={"tmdb": "272432"},
@@ -504,7 +508,7 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
     refreshed = controller.refresh_metadata(record_id)
 
     snapshot = repo.get_detail_snapshot(record_id)
-    assert service.search_calls == 0
+    assert service.search_calls == 1
     assert service.full_detail_provider_ids == ["tv:272432:season:1"]
     assert refreshed.snapshot.cast[0]["avatar"] == "/wang.jpg"
     assert snapshot is not None
@@ -551,6 +555,7 @@ def test_following_controller_refresh_metadata_corrects_wrong_episode_counts(tmp
             id=0,
             title="错误集数剧集",
             media_kind="live_action",
+            season_number=1,
             provider="player",
             provider_id="player:source:vod-1",
             external_ids={"tmdb": "999"},
@@ -577,3 +582,50 @@ def test_following_controller_refresh_metadata_corrects_wrong_episode_counts(tmp
     assert loaded.watched_latest_episode is False
     assert loaded.has_update is True
     assert loaded.new_episode_count == 12
+
+
+def test_following_controller_add_from_player_captures_season_number_from_title(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+    vod = VodItem(
+        vod_id="vod-1",
+        vod_name="黑袍纠察队 第五季",
+        detail_fields=[PlaybackDetailField("TMDB ID", "76479")],
+    )
+    item = PlayItem(title="第1集", url="u", media_title="黑袍纠察队 第五季", vod_id="vod-1")
+
+    record = controller.add_from_player(
+        vod=vod,
+        item=item,
+        source_kind="browse",
+        source_key="",
+        position_seconds=0,
+        playlist=[item],
+    )
+
+    loaded = repo.get(record.id)
+    assert loaded is not None
+    assert loaded.season_number == 5
+
+
+def test_following_controller_refresh_metadata_skips_tmdb_when_season_unknown(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="未知季剧集",
+            media_kind="live_action",
+            provider="player",
+            provider_id="player:source:vod-1",
+            external_ids={"tmdb": "272432"},
+        )
+    )
+    service = FakeTMDBIdRefreshService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    try:
+        controller.refresh_metadata(record_id)
+    except RuntimeError:
+        pass
+
+    assert service.full_detail_provider_ids == []

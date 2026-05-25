@@ -7,8 +7,9 @@ from atv_player.following_metadata import (
     compute_episode_counts,
     following_candidate_from_url,
     following_provider_priority,
+    merge_following_snapshot,
 )
-from atv_player.following_models import FollowingRecord
+from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
 
@@ -276,6 +277,33 @@ def test_build_snapshot_from_record_falls_back_to_single_backdrop_when_record_li
     assert snapshot.backdrops == ["only-backdrop"]
 
 
+def test_build_snapshot_from_record_uses_last_episode_to_air_for_latest_and_total() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:30983:season:1",
+        title="名侦探柯南",
+        tmdb_id="30983",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": 1, "name": "第1集"},
+                    {"episode_number": 2, "name": "第2集"},
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {"episode_number": 1201, "air_date": "2026-05-09"},
+            },
+        ],
+    )
+
+    following, _snapshot = build_snapshot_from_record(record, now=300, media_kind="live_action")
+
+    assert following.latest_episode == 1201
+    assert following.total_episodes == 1201
+
+
 def test_compute_episode_counts_ignores_specials_and_zero_episode_numbers() -> None:
     latest, total = compute_episode_counts(
         [
@@ -307,10 +335,12 @@ def test_compute_episode_counts_uses_air_date_for_latest_and_all_episodes_for_to
 def test_following_metadata_gateway_refreshes_tmdb_tv_as_first_season_detail() -> None:
     class SearchService:
         def __init__(self) -> None:
+            self.search_calls = 0
             self.detail_provider_ids: list[str] = []
 
         def search(self, query, provider_filter=""):
             del query
+            self.search_calls += 1
             assert provider_filter == "tmdb"
             return [
                 MetadataScrapeGroup(
@@ -327,7 +357,7 @@ def test_following_metadata_gateway_refreshes_tmdb_tv_as_first_season_detail() -
                 )
             ]
 
-        def detail_record(self, candidate):
+        def detail_record_full(self, candidate):
             self.detail_provider_ids.append(candidate.provider_id)
             return MetadataRecord(
                 provider="tmdb",
@@ -349,12 +379,34 @@ def test_following_metadata_gateway_refreshes_tmdb_tv_as_first_season_detail() -
             title="盗妖行",
             provider="tmdb",
             provider_id="tv:315088",
+            season_number=1,
         ),
         "tmdb",
     )
 
+    assert service.search_calls == 0
     assert service.detail_provider_ids == ["tv:315088:season:1"]
-    assert record.provider_id == "tv:315088:season:1"
-    assert record.poster == "poster"
     assert record.latest_episode == 1
-    assert snapshot.episodes[0].title == "第一集"
+    assert record.total_episodes == 1
+    assert record.provider_id == ""
+    assert record.poster == ""
+    assert snapshot.episodes == []
+
+
+def test_merge_following_snapshot_prefer_episodes_keeps_original_overview_and_cast() -> None:
+    snapshot = FollowingDetailSnapshot(
+        overview="原始简介",
+        cast=[{"name": "原演员"}],
+        episodes=[],
+    )
+    detail = FollowingDetailSnapshot(
+        overview="不相关剧集简介",
+        cast=[{"name": "不相关演员"}],
+        episodes=[FollowingEpisode(episode_number=1, title="TMDB分集")],
+    )
+
+    merged = merge_following_snapshot(snapshot, detail, fill_missing=True, prefer_episodes=True)
+
+    assert merged.overview == "原始简介"
+    assert merged.cast == [{"name": "原演员"}]
+    assert merged.episodes[0].title == "TMDB分集"

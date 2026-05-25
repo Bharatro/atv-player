@@ -75,9 +75,17 @@ class FollowingUpdateService(QObject):
                 }
                 for episode in snapshot.episodes
             ]
-            latest, total = compute_episode_counts(raw_episodes, now=now)
-            latest = latest or refreshed_record.latest_episode or record.latest_episode
-            total = total or refreshed_record.total_episodes or record.total_episodes
+            latest_from_snapshot, total_from_snapshot = compute_episode_counts(raw_episodes, now=now)
+            latest = (
+                refreshed_record.latest_episode
+                or latest_from_snapshot
+                or record.latest_episode
+            )
+            total = (
+                refreshed_record.total_episodes
+                or total_from_snapshot
+                or record.total_episodes
+            )
             has_update = latest > max(record.current_episode, 0)
             new_count = max(latest - max(record.current_episode, 0), 0) if has_update else 0
             caught_up = record.watched_latest_episode or (
@@ -126,6 +134,8 @@ class FollowingUpdateService(QObject):
         for provider in [*list(record.provider_priority or []), record.provider]:
             if provider and provider not in providers:
                 providers.append(provider)
+        if record.provider == "tmdb" or record.external_ids.get("tmdb"):
+            return ["tmdb", *[provider for provider in providers if provider != "tmdb"]]
         media_kind = str(record.media_kind or "").strip().lower()
         should_try_bangumi_first = (
             record.provider == "bangumi"

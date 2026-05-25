@@ -605,6 +605,13 @@ class TMDBProvider:
             season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
+        if media_type == "tv":
+            last_ep = payload.get("last_episode_to_air")
+            if isinstance(last_ep, dict):
+                detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
+            last_air = str(payload.get("last_air_date") or "").strip()
+            if last_air:
+                detail_fields.append({"label": "last_air_date", "value": last_air})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []
@@ -675,6 +682,12 @@ class TMDBProvider:
             season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
+        last_ep = payload.get("last_episode_to_air")
+        if isinstance(last_ep, dict):
+            detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
+        last_air = str(payload.get("last_air_date") or "").strip()
+        if last_air:
+            detail_fields.append({"label": "last_air_date", "value": last_air})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []

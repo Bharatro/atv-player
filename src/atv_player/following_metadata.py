@@ -184,6 +184,19 @@ def _episode_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> l
     return []
 
 
+def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object]]) -> int:
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != "last_episode_to_air":
+            continue
+        value = field.get("value")
+        if not isinstance(value, dict):
+            continue
+        return _to_int(value.get("episode_number"))
+    return 0
+
+
 def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRecord, FollowingDetailSnapshot]:
     raw = dict(getattr(candidate, "raw", {}) or {})
     provider = str(getattr(candidate, "provider", "") or "").strip()
@@ -314,6 +327,79 @@ def load_candidate_detail_record_full(metadata_search_service, candidate):
         return None, str(exc)
 
 
+def _normalize_tmdb_refresh_provider_id(provider_id: str, *, media_kind: str, season_number: int) -> str:
+    text = str(provider_id or "").strip()
+    if not text:
+        return ""
+    normalized_kind = str(media_kind or "").strip().lower()
+    if text.startswith("movie:"):
+        return text
+    default_season = season_number if season_number > 0 else 1
+    if text.startswith("tv:"):
+        parts = text.split(":")
+        if len(parts) >= 4 and parts[2] == "season":
+            return text
+        return f"{text}:season:{default_season}"
+    if not text.isdigit():
+        return ""
+    if normalized_kind == "movie" or "电影" in normalized_kind:
+        return f"movie:{text}"
+    return f"tv:{text}:season:{default_season}"
+
+
+def _tmdb_refresh_candidate_from_record(record: FollowingRecord):
+    provider_id = ""
+    if record.provider == "tmdb":
+        provider_id = record.provider_id
+    if not provider_id:
+        provider_id = str(record.external_ids.get("tmdb") or "").strip()
+    normalized = _normalize_tmdb_refresh_provider_id(
+        provider_id,
+        media_kind=record.media_kind,
+        season_number=record.season_number,
+    )
+    if not normalized:
+        return None
+    season_number = 0
+    if normalized.startswith("tv:"):
+        parts = normalized.split(":")
+        if len(parts) >= 4 and parts[2] == "season":
+            season_number = _to_int(parts[3]) or 1
+    raw = {"season_number": season_number} if season_number > 0 else {}
+    return MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id=normalized,
+        title=record.title,
+        subtitle="电影" if normalized.startswith("movie:") else "剧集",
+        raw=raw,
+    )
+
+
+def _refresh_tmdb_counts_only(metadata_search_service, record: FollowingRecord, *, now: int):
+    candidate = _tmdb_refresh_candidate_from_record(record)
+    if candidate is None:
+        return None
+    detail_record, detail_error = load_candidate_detail_record_full(metadata_search_service, candidate)
+    if detail_record is None:
+        raise RuntimeError(detail_error or "tmdb returned no following detail")
+    refreshed_record, _snapshot = build_snapshot_from_record(
+        detail_record,
+        now=now,
+        media_kind=record.media_kind,
+    )
+    return (
+        FollowingRecord(
+            id=0,
+            title="",
+            latest_episode=refreshed_record.latest_episode,
+            previous_latest_episode=refreshed_record.latest_episode,
+            total_episodes=refreshed_record.total_episodes,
+        ),
+        FollowingDetailSnapshot(),
+    )
+
+
 def iter_related_following_candidates(metadata_search_service, candidate, *, record: FollowingRecord):
     search = getattr(metadata_search_service, "search", None)
     if not callable(search):
@@ -427,13 +513,13 @@ def merge_following_snapshot(
         if prefer_episodes:
             return replace(
                 snapshot,
-                overview=detail.overview or snapshot.overview,
-                metadata_fields=detail.metadata_fields or snapshot.metadata_fields,
-                cast=detail.cast or snapshot.cast,
-                crew=detail.crew or snapshot.crew,
+                overview=snapshot.overview or detail.overview,
+                metadata_fields=snapshot.metadata_fields or detail.metadata_fields,
+                cast=snapshot.cast or detail.cast,
+                crew=snapshot.crew or detail.crew,
                 episodes=detail.episodes or snapshot.episodes,
-                posters=detail.posters or snapshot.posters,
-                backdrops=detail.backdrops or snapshot.backdrops,
+                posters=snapshot.posters or detail.posters,
+                backdrops=snapshot.backdrops or detail.backdrops,
                 refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
             )
         return replace(
@@ -476,6 +562,11 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
 
     raw_episodes = _episode_raw_from_detail_fields(list(getattr(record, "detail_fields", []) or []))
     latest, total = compute_episode_counts(raw_episodes, now=now)
+    last_ep_to_air = _last_episode_to_air_from_detail_fields(list(getattr(record, "detail_fields", []) or []))
+    if last_ep_to_air > 0 and last_ep_to_air > latest:
+        latest = last_ep_to_air
+    if last_ep_to_air > 0 and last_ep_to_air > total:
+        total = last_ep_to_air
     normalized_kind = media_kind or _media_kind_from_provider(provider)
     following = FollowingRecord(
         id=0,
@@ -543,7 +634,7 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         label = str(item.get("label") or "").strip()
-        if label == "episodes":
+        if label in ("episodes", "last_episode_to_air"):
             continue
         value = item.get("value")
         if isinstance(value, list):
@@ -589,6 +680,14 @@ class FollowingMetadataGateway:
         self._metadata_search_service = metadata_search_service
 
     def refresh(self, record: FollowingRecord, provider: str):
+        if provider == "tmdb":
+            tmdb_result = _refresh_tmdb_counts_only(
+                self._metadata_search_service,
+                record,
+                now=int(time.time()),
+            )
+            if tmdb_result is not None:
+                return tmdb_result
         category_name = "动漫" if provider == "bangumi" else ""
         groups = self._metadata_search_service.search(
             MetadataQuery(title=record.title, category_name=category_name),
