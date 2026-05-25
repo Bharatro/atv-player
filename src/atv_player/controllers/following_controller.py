@@ -104,6 +104,13 @@ class FollowingController:
             metadata_search_service=self._metadata_search_service,
             now=now,
         )
+        existing = self._repository.get_by_identity(record.provider, record.provider_id)
+        if existing is not None:
+            record = self._merge_existing_candidate_state(
+                record,
+                existing,
+                current_episode=current_episode,
+            )
         if current_episode > 0:
             watched_latest = record.latest_episode > 0 and current_episode >= record.latest_episode
             record.current_episode = current_episode
@@ -119,6 +126,32 @@ class FollowingController:
         snapshot.following_id = record_id
         self._repository.save_detail_snapshot(record_id, snapshot)
         return saved
+
+    def _merge_existing_candidate_state(
+        self,
+        record: FollowingRecord,
+        existing: FollowingRecord,
+        *,
+        current_episode: int,
+    ) -> FollowingRecord:
+        target_episode = current_episode if current_episode > 0 else existing.current_episode
+        keep_position = existing.current_episode > 0 and target_episode == existing.current_episode
+        watched_latest = record.latest_episode > 0 and target_episode >= record.latest_episode
+        return replace(
+            record,
+            source_bindings=list(existing.source_bindings or record.source_bindings),
+            current_episode=target_episode,
+            position_seconds=existing.position_seconds if keep_position else 0,
+            watched_latest_episode=watched_latest,
+            has_update=False if watched_latest else existing.has_update,
+            new_episode_count=0 if watched_latest else existing.new_episode_count,
+            homepage_prompt_pending=False if watched_latest else existing.homepage_prompt_pending,
+            prompt_snoozed_until=existing.prompt_snoozed_until,
+            created_at=existing.created_at or record.created_at,
+            last_played_at=existing.last_played_at if keep_position else 0,
+            last_checked_at=existing.last_checked_at,
+            next_check_after=existing.next_check_after or record.next_check_after,
+        )
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         records, total = self._repository.load_page(page=page, size=size, keyword=keyword, only_updates=only_updates)

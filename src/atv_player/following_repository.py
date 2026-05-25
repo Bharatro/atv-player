@@ -198,6 +198,14 @@ class FollowingRepository:
             row = conn.execute(f"{self._select_sql()} WHERE id = ?", (record_id,)).fetchone()
         return self._record_from_row(row) if row is not None else None
 
+    def get_by_identity(self, provider: str, provider_id: str) -> FollowingRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"{self._select_sql()} WHERE provider = ? AND provider_id = ?",
+                (provider, provider_id),
+            ).fetchone()
+        return self._record_from_row(row) if row is not None else None
+
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool) -> tuple[list[FollowingRecord], int]:
         clauses: list[str] = []
         params: list[object] = []
