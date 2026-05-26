@@ -5918,6 +5918,7 @@ def test_player_window_clicking_detail_poster_opens_large_preview(qtbot, tmp_pat
     assert window._poster_preview_dialog is not None
     assert window._poster_preview_dialog.windowTitle() == "封面预览"
     assert window._poster_preview_dialog.isVisible() is True
+    assert window._poster_preview_dialog.title_bar().maximize_button.isHidden() is True
     margins = window._poster_preview_dialog.content_layout().contentsMargins()
     assert margins.left() <= 4
     assert margins.top() <= 4
@@ -21556,6 +21557,13 @@ def test_player_window_title_bar_close_button_quits_application(qtbot, monkeypat
     assert quit_calls["count"] == 1
     assert emitted["count"] == 0
     assert config.last_active_window == "player"
+
+
+def test_player_window_hides_title_bar_maximize_button(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.title_bar().maximize_button.isHidden() is True
 
 
 def visible_shortcut_help_dialogs() -> list[QDialog]:

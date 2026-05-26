@@ -558,6 +558,25 @@ def test_main_window_homepage_prompt_actions(qtbot) -> None:
     assert following.cleared == [1]
 
 
+def test_main_window_closing_homepage_prompt_dismisses_current_reminder(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    window.show_following_homepage_prompts()
+    assert window._following_prompt_dialog is not None
+
+    window._following_prompt_dialog.close()
+
+    assert following.cleared == [1]
+
+
 def test_main_window_loads_favorites_when_tab_is_selected(qtbot) -> None:
     favorites = FakeFavoritesController()
     window = MainWindow(

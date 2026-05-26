@@ -1485,6 +1485,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_detail_button: QPushButton | None = None
         self._following_prompt_search_button: QPushButton | None = None
         self._following_prompt_snooze_button: QPushButton | None = None
+        self._following_prompt_close_handled = False
         self._open_request_id = 0
         self._media_request_id = 0
         self._restore_request_id = 0
@@ -4186,7 +4187,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         following_id = int(following_id)
         self._following_controller.clear_homepage_prompt(following_id)
         self.nav_tabs.setCurrentWidget(self.following_detail_page)
-        self._close_following_prompt_dialog()
+        self._close_following_prompt_dialog(already_handled=True)
         QTimer.singleShot(0, lambda: self.following_detail_page.load_record(following_id))
 
     def _return_to_following_page(self) -> None:
@@ -4203,23 +4204,33 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_controller.clear_homepage_prompt(following_id)
         self.global_search_edit.setText(view.record.title)
         self.nav_tabs.setCurrentWidget(self.douban_page)
-        self._close_following_prompt_dialog()
+        self._close_following_prompt_dialog(already_handled=True)
         self._start_global_search()
 
     def _snooze_following_prompt(self, following_id: int) -> None:
         self._following_controller.snooze_prompt(following_id)
-        self._close_following_prompt_dialog()
+        self._close_following_prompt_dialog(already_handled=True)
 
-    def _close_following_prompt_dialog(self) -> None:
+    def _dismiss_following_prompt(self, following_id: int) -> None:
+        if not self._following_prompt_close_handled:
+            self._following_controller.clear_homepage_prompt(following_id)
+        self._following_prompt_close_handled = False
+        self._following_prompt_dialog = None
+
+    def _close_following_prompt_dialog(self, *, already_handled: bool = False) -> None:
         if self._following_prompt_dialog is not None:
+            self._following_prompt_close_handled = already_handled
             self._following_prompt_dialog.close()
         self._following_prompt_dialog = None
 
     def show_following_homepage_prompts(self) -> None:
+        if self._following_prompt_dialog is not None:
+            return
         records = list(self._following_controller.load_homepage_prompts())
         if not records:
             return
         record = records[0]
+        self._following_prompt_close_handled = False
         dialog = ThemedDialogBase(title="追更更新", parent=self, resizable=False)
         layout = dialog.content_layout()
         title_label = QLabel(record.title, dialog)
@@ -4246,6 +4257,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_snooze_button.clicked.connect(
             lambda: self._snooze_following_prompt(record.id)
         )
+
+        def handle_finished(_result, following_id=record.id):
+            self._dismiss_following_prompt(following_id)
+
+        dialog.finished.connect(handle_finished)
         self._following_prompt_dialog = dialog
         dialog.show()
 

@@ -386,7 +386,7 @@ class ClickableLabel(QLabel):
 
 class PosterPreviewDialog(ThemedDialogBase):
     def __init__(self, pixmap: QPixmap, *, parent: QWidget | None = None) -> None:
-        super().__init__(title="封面预览", parent=parent, allow_maximize=True, resizable=True)
+        super().__init__(title="封面预览", parent=parent, allow_maximize=False, resizable=True)
         self._source_pixmap = pixmap
         self.content_layout().setContentsMargins(4, 4, 4, 4)
         self.content_layout().setSpacing(0)
@@ -650,7 +650,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         super().__init__(
             title="alist-tvbox 播放器",
             allow_minimize=True,
-            allow_maximize=True,
+            allow_maximize=False,
             resizable=True,
         )
         self._init_async_guard()

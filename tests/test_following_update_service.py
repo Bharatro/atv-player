@@ -87,6 +87,23 @@ def test_update_service_sets_homepage_prompt_when_caught_up(tmp_path: Path) -> N
     assert repo.get_detail_snapshot(record_id).overview == "简介"
 
 
+def test_update_service_does_not_reprompt_after_homepage_prompt_is_cleared(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record())
+    now = 200
+    service = FollowingUpdateService(repo, metadata_gateway=FakeMetadataGateway(), now=lambda: now)
+
+    service.check_record(record_id)
+    repo.clear_homepage_prompt(record_id)
+    now = 300
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.has_update is True
+    assert record.homepage_prompt_pending is False
+
+
 def test_update_service_does_not_prompt_when_user_is_behind(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(_record(current_episode=0, watched_latest_episode=False))
