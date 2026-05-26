@@ -688,7 +688,6 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
-        snapshot = self._ensure_metadata_bundle(refreshed_record, snapshot)
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
             following_id,
@@ -705,7 +704,8 @@ class FollowingController:
             snapshot = self._merge_refreshed_snapshot(existing_snapshot, snapshot)
         snapshot.following_id = following_id
         self._repository.save_detail_snapshot(following_id, snapshot)
-        return self.load_detail(following_id, refresh_if_empty=False)
+        updated_record = self._repository.get(following_id) or refreshed_record
+        return FollowingDetailView(record=updated_record, snapshot=snapshot)
 
     def check_all_due(self):
         if self._update_service is None:
@@ -760,6 +760,8 @@ class FollowingController:
             season_number=record.season_number,
         )
         if not normalized:
+            return None
+        if normalized.startswith("tv:") and season_number <= 0:
             return None
         raw = {"season_number": season_number} if season_number > 0 and normalized.startswith("tv:") else {}
         return MetadataScrapeCandidate(
@@ -826,17 +828,19 @@ class FollowingController:
         if text.startswith("tv:"):
             parts = text.split(":")
             if len(parts) >= 4 and parts[2] == "season":
-                resolved_season = season_number if season_number > 0 else self._to_int(parts[3]) or 1
+                resolved_season = season_number if season_number > 0 else self._to_int(parts[3])
+                if resolved_season <= 0:
+                    return f"tv:{parts[1]}", 0
                 return f"tv:{parts[1]}:season:{resolved_season}", resolved_season
             if season_number <= 0:
-                season_number = 1
+                return text, 0
             return f"{text}:season:{season_number}", season_number
         if not text.isdigit():
             return "", 0
         if normalized_kind == "movie" or "电影" in normalized_kind:
             return f"movie:{text}", 0
         if season_number <= 0:
-            season_number = 1
+            return f"tv:{text}", 0
         return f"tv:{text}:season:{season_number}", season_number
 
     def _ensure_metadata_bundle(
