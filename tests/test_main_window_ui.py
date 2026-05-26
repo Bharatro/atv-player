@@ -2698,6 +2698,38 @@ def test_main_window_player_favorite_uses_plugin_display_name(qtbot) -> None:
     assert payload["source_name"] == "插件1"
 
 
+def test_main_window_player_favorite_payload_includes_tmdb_identity_from_detail_fields(qtbot) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=FakeFavoritesController(),
+    )
+    qtbot.addWidget(window)
+    window.player_window = SimpleNamespace(
+        session=SimpleNamespace(
+            vod=VodItem(
+                vod_id="vod-1",
+                vod_name="黑袍纠察队",
+                vod_pic="poster.jpg",
+                vod_remarks="完结",
+                type_name="电视剧",
+                detail_fields=[PlaybackDetailField(label="TMDB ID", value="76479")],
+            ),
+            source_kind="browse",
+            source_key="",
+        )
+    )
+
+    payload = window._current_player_favorite_payload(PlayItem(title="第1集", url="https://media.example/1.m3u8"))
+
+    assert payload is not None
+    assert payload["tmdb_provider_id"] == "tv:76479"
+    assert payload["tmdb_id"] == "76479"
+    assert payload["tmdb_media_type"] == "tv"
+
+
 def test_main_window_favorites_page_resolves_saved_plugin_source_name(qtbot) -> None:
     class Controller:
         def load_page(self, *, page: int, size: int, keyword: str):
