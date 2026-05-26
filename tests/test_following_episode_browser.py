@@ -291,6 +291,63 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
     assert "第二季简介" in browser.season_detail_overview_label.text()
 
 
+def test_following_episode_browser_opens_large_preview_from_season_poster_click(
+    qtbot, monkeypatch
+) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1")],
+            seasons=[
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    poster="poster-2",
+                    episode_count=8,
+                )
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=2,
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "atv_player.ui.following_episode_browser.FollowingSeasonPosterPreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.windowTitle()) or 1,
+    )
+
+    browser._open_current_season_poster_preview()
+
+    assert opened == ["第二季"]
+
+
+def test_following_episode_browser_skips_poster_preview_when_no_poster_available(
+    qtbot, monkeypatch
+) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1")],
+            seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=8)],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=2,
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "atv_player.ui.following_episode_browser.FollowingSeasonPosterPreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.windowTitle()) or 1,
+    )
+
+    browser._open_current_season_poster_preview()
+
+    assert opened == []
+
+
 def test_following_episode_browser_exposes_selected_season_summary(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
