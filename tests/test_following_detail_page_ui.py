@@ -360,7 +360,13 @@ def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) 
             view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
             view.snapshot.seasons = [
                 FollowingSeason(season_number=1, title="第一季", overview="第一季简介", episode_count=2),
-                FollowingSeason(season_number=2, title="第二季", overview="第二季简介", episode_count=1),
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    overview="第二季简介",
+                    air_date="2026-05-13",
+                    episode_count=1,
+                ),
             ]
             view.snapshot.episodes = [
                 FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
@@ -376,6 +382,8 @@ def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) 
     page.episode_browser.season_list.setCurrentIndex(season_model.index(1, 0))
 
     assert page.episode_browser.season_detail_title_label.text() == "第二季"
+    assert page.episode_browser.season_detail_air_date_label.text() == "2026-05-13"
+    assert page.episode_browser.season_detail_episode_count_label.text() == "共 1 集"
     assert "第二季简介" in page.episode_browser.season_detail_overview_label.text()
 
 

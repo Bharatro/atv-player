@@ -251,6 +251,7 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
                     title="第二季",
                     overview="第二季简介",
                     poster="poster-2",
+                    air_date="2026-05-13",
                     episode_count=6,
                 ),
             ],
@@ -264,6 +265,8 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
     browser.season_list.setCurrentIndex(season_model.index(1, 0))
 
     assert browser.season_detail_title_label.text() == "第二季"
+    assert browser.season_detail_air_date_label.text() == "2026-05-13"
+    assert browser.season_detail_episode_count_label.text() == "共 6 集"
     assert "第二季简介" in browser.season_detail_overview_label.text()
 
 
