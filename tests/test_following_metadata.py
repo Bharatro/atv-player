@@ -389,6 +389,43 @@ def test_build_snapshot_from_record_uses_last_episode_air_date_for_recent_update
     assert {"label": "last_air_date", "value": "2026-03-31"} not in snapshot.metadata_fields
 
 
+def test_build_snapshot_from_record_keeps_next_episode_to_air_as_typed_episode() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:233295:season:1",
+        title="仙剑奇侠传叁",
+        tmdb_id="233295",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": 23, "season_number": 1, "name": "第 23 集"},
+                ],
+            },
+            {
+                "label": "next_episode_to_air",
+                "value": {
+                    "episode_number": 24,
+                    "season_number": 1,
+                    "name": "第 24 集",
+                    "air_date": "2026-05-26",
+                    "overview": "",
+                    "runtime": None,
+                    "still_path": None,
+                },
+            },
+        ],
+    )
+
+    _following, snapshot = build_snapshot_from_record(record, now=300, media_kind="live_action")
+
+    assert snapshot.next_episode is not None
+    assert snapshot.next_episode.season_number == 1
+    assert snapshot.next_episode.episode_number == 24
+    assert snapshot.next_episode.title == "第 24 集"
+    assert snapshot.next_episode.air_date == "2026-05-26"
+
+
 def test_compute_episode_counts_ignores_specials_and_zero_episode_numbers() -> None:
     latest, total = compute_episode_counts(
         [

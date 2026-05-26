@@ -637,6 +637,9 @@ class TMDBProvider:
             last_ep = payload.get("last_episode_to_air")
             if isinstance(last_ep, dict):
                 detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
+            next_ep = payload.get("next_episode_to_air")
+            if isinstance(next_ep, dict):
+                detail_fields.append({"label": "next_episode_to_air", "value": next_ep})
             last_air = str(payload.get("last_air_date") or "").strip()
             if last_air:
                 detail_fields.append({"label": "last_air_date", "value": last_air})
@@ -714,6 +717,9 @@ class TMDBProvider:
         last_ep = payload.get("last_episode_to_air")
         if isinstance(last_ep, dict):
             detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
+        next_ep = payload.get("next_episode_to_air")
+        if isinstance(next_ep, dict):
+            detail_fields.append({"label": "next_episode_to_air", "value": next_ep})
         last_air = str(payload.get("last_air_date") or "").strip()
         if last_air:
             detail_fields.append({"label": "last_air_date", "value": last_air})

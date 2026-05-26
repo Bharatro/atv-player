@@ -435,6 +435,43 @@ def test_following_episode_preview_dialog_omits_runtime_separator_when_runtime_m
     assert dialog.meta_label.text() == "2026-05-13"
 
 
+def test_following_episode_preview_dialog_includes_status_text(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=3,
+            title="第三集",
+            air_date="2026-05-13",
+            runtime=24,
+        ),
+        status_text="已更新",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-13 · 24m · 已更新"
+    assert dialog.mark_watched_button.text() == "标记本集已看"
+
+
+def test_following_detail_page_preview_dialog_marks_episode_as_watched(qtbot, monkeypatch) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    def fake_exec(self_dialog):
+        self_dialog.mark_watched_requested = True
+        return 1
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingEpisodePreviewDialog.exec",
+        fake_exec,
+    )
+
+    model = page.episode_browser.episode_list.model()
+    page.episode_browser._handle_episode_activated(model.index(0, 0))
+
+    assert page.controller.progress_updates[-1] == (1, 1, 128)
+    assert page.status_label.text() == "已标记本集为已看"
+
+
 def test_following_detail_title_and_metadata_text_are_selectable(qtbot) -> None:
     page = FollowingDetailPage(FakeController())
     qtbot.addWidget(page)
