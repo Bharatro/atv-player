@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
+from urllib.parse import parse_qs, urlparse
 
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.matching import normalize_match_title
@@ -41,6 +42,24 @@ _TITLE_NOISE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _FOREIGN_SCRIPT_PATTERN = re.compile(r"[\u3040-\u30ff\u0400-\u04ff\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]")
+_INTERNAL_STRUCTURED_DETAIL_LABELS = {
+    "episodes",
+    "seasons",
+    "last_episode_to_air",
+    "next_episode_to_air",
+    "last_air_date",
+}
+_OFFICIAL_LINK_HOST_LABELS = {
+    "v.qq.com": "腾讯视频",
+    "m.v.qq.com": "腾讯视频",
+    "v.youku.com": "优酷",
+    "m.youku.com": "优酷",
+    "www.iqiyi.com": "爱奇艺",
+    "m.iqiyi.com": "爱奇艺",
+    "www.bilibili.com": "B站",
+    "www.mgtv.com": "芒果TV",
+    "tv.sohu.com": "搜狐视频",
+}
 
 
 def _provider_rank(field_name: str, provider: str) -> int:
@@ -143,6 +162,9 @@ def choose_preferred_title(current_title: object, candidate_title: object) -> st
 
 def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> PlaybackDetailField | None:
     label = _clean_detail_text(item.get("label"))
+    value_parts = item.get("value_parts")
+    if isinstance(value_parts, list) and all(isinstance(part, PlaybackDetailValuePart) for part in value_parts):
+        return PlaybackDetailField(label=label, value_parts=value_parts) if label and value_parts else None
     value = _clean_detail_text(item.get("value"))
     if not label or not value:
         return None
@@ -161,9 +183,71 @@ def _build_detail_field(record: MetadataRecord, item: dict[str, object]) -> Play
     return PlaybackDetailField(label=label, value=value)
 
 
-def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
+def _official_link_label_from_url(url: object, fallback: object = "") -> str:
+    fallback_text = _clean_detail_text(fallback)
+    text = str(url or "").strip()
+    parsed = urlparse(text)
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host_without_www = host[4:]
+    else:
+        host_without_www = host
+    return _OFFICIAL_LINK_HOST_LABELS.get(host) or _OFFICIAL_LINK_HOST_LABELS.get(host_without_www) or fallback_text
+
+
+def _canonical_official_link_url(url: object) -> str:
+    text = str(url or "").strip()
+    if not text.startswith(("http://", "https://")):
+        return ""
+    parsed = urlparse(text)
+    if parsed.netloc.lower() in {"v.qq.com", "m.v.qq.com"} and parsed.path.endswith("/search_redirect.html"):
+        redirected = parse_qs(parsed.query).get("url", [""])[0].strip()
+        if redirected.startswith(("http://", "https://")):
+            return redirected
+    return text
+
+
+def _official_link_detail_field(url: object, label: object = "") -> PlaybackDetailField | None:
+    link = _canonical_official_link_url(url)
+    if not link:
+        return None
+    display_label = _official_link_label_from_url(link, label) or link
+    return PlaybackDetailField(
+        label="官方链接",
+        value_parts=[
+            PlaybackDetailValuePart(
+                label=display_label,
+                action=PlaybackDetailFieldAction(type="link", value=link),
+            )
+        ],
+    )
+
+
+def _watch_provider_value_parts(value: object) -> list[PlaybackDetailValuePart]:
+    if not isinstance(value, list):
+        return []
+    parts: list[PlaybackDetailValuePart] = []
+    seen_urls: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        label = _clean_detail_text(item.get("label") or item.get("provider") or "")
+        if not url or not label or url in seen_urls:
+            continue
+        parts.append(
+            PlaybackDetailValuePart(
+                label=label,
+                action=PlaybackDetailFieldAction(type="link", value=url),
+            )
+        )
+        seen_urls.add(url)
+    return parts
+
+
+def _record_detail_fields(record: MetadataRecord) -> list[dict[str, object]]:
     ordered_labels: list[str] = []
-    values: dict[str, str] = {}
+    values: dict[str, object] = {}
 
     def put(label: str, value: str) -> None:
         normalized_label = _clean_detail_text(label)
@@ -176,6 +260,14 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
             ordered_labels.append(normalized_label)
         values[normalized_label] = normalized_value
 
+    def put_value_parts(label: str, value_parts: list[PlaybackDetailValuePart]) -> None:
+        normalized_label = _clean_detail_text(label)
+        if not normalized_label or not value_parts:
+            return
+        if normalized_label not in values:
+            ordered_labels.append(normalized_label)
+        values[normalized_label] = list(value_parts)
+
     if record.aliases:
         put("别名", " / ".join(alias for alias in record.aliases if alias))
     if record.imdb_id:
@@ -183,8 +275,25 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, str]]:
     if record.tmdb_id:
         put("TMDB ID", record.tmdb_id)
     for item in record.detail_fields:
-        put(str(item.get("label") or ""), str(item.get("value") or ""))
-    return [{"label": label, "value": values[label]} for label in ordered_labels]
+        label = _clean_detail_text(item.get("label"))
+        normalized_label = label.lower()
+        if record.provider == "tmdb" and normalized_label in _INTERNAL_STRUCTURED_DETAIL_LABELS:
+            continue
+        if record.provider == "tmdb" and normalized_label == "watch_providers":
+            put_value_parts("官方链接", _watch_provider_value_parts(item.get("value")))
+            continue
+        if label == "播放链接":
+            official_link = _official_link_detail_field(item.get("value"))
+            if official_link is not None:
+                put_value_parts("官方链接", official_link.value_parts)
+                continue
+        put(label, str(item.get("value") or ""))
+    return [
+        {"label": label, "value_parts": value}
+        if isinstance(value := values[label], list)
+        else {"label": label, "value": value}
+        for label in ordered_labels
+    ]
 
 
 def _clean_detail_text(value: object) -> str:
@@ -254,9 +363,21 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         _set_field_source(vod, "douban_id", record.provider)
     detail_fields = _record_detail_fields(record)
     if detail_fields:
+        has_new_official_link = any(
+            str(item.get("label") or "").strip() == "官方链接" for item in detail_fields
+        )
         merged: list[PlaybackDetailField] = []
         seen_labels: set[str] = set()
         for field in vod.detail_fields:
+            if field.label.strip() == "播放链接":
+                if not has_new_official_link:
+                    official_link = _official_link_detail_field(field.value)
+                    if official_link is not None:
+                        merged.append(official_link)
+                        seen_labels.add("官方链接")
+                        has_new_official_link = True
+                seen_labels.add(field.label)
+                continue
             replacement = next((item for item in detail_fields if item.get("label") == field.label), None)
             if replacement is not None:
                 replacement_field = _build_detail_field(record, replacement)

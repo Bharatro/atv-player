@@ -12,6 +12,7 @@ from atv_player.controllers.player_controller import PlayerController, PlayerSes
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
+from atv_player.metadata.merge import merge_metadata_record
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup, MetadataScrapeService
 from atv_player.models import (
@@ -8420,6 +8421,42 @@ def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> N
     assert "font-weight:600" in html
     assert f"color:{accent}" in html
     assert "text-decoration: underline" not in html
+
+
+def test_player_window_renders_official_link_without_raw_playback_link_label(qtbot) -> None:
+    vod = VodItem(
+        vod_id="movie-1",
+        vod_name="主角",
+        detail_fields=[PlaybackDetailField(label="播放链接", value="https://v.qq.com/x/cover/mzc003ubb5py7hr.html")],
+    )
+    merge_metadata_record(
+        vod,
+        MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:241166",
+            aliases=["我成为BL剧的主角了"],
+            imdb_id="tt30768610",
+            tmdb_id="241166",
+        ),
+        provider_priority=["tmdb"],
+    )
+    session = PlayerSession(
+        vod=vod,
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    plain_text = window.metadata_view.toPlainText()
+    html = window.metadata_view.toHtml()
+    assert "官方链接: 腾讯视频" in plain_text
+    assert "播放链接:" not in plain_text
+    assert "https://v.qq.com/x/cover/mzc003ubb5py7hr.html" in html
 
 
 def test_player_window_opens_external_metadata_link(qtbot, monkeypatch) -> None:

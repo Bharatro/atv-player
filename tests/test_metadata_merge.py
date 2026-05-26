@@ -138,6 +138,105 @@ def test_merge_metadata_attaches_exact_tmdb_link_target_from_provider_id() -> No
     )
 
 
+def test_merge_metadata_converts_tmdb_watch_providers_to_visible_official_links() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="雨霖铃",
+        detail_fields=[PlaybackDetailField(label="播放链接", value="https://v.qq.com/search_redirect.html")],
+    )
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:254486",
+        tmdb_id="254486",
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "label": "优酷",
+                        "provider": "youku",
+                        "url": "https://v.youku.com/v_show/id_XNjUzNDA5NDEwNA==.html",
+                    }
+                ],
+            },
+            {"label": "seasons", "value": [{"season_number": 1, "episode_count": 37}]},
+            {"label": "last_episode_to_air", "value": {"episode_number": 27}},
+            {"label": "next_episode_to_air", "value": {"episode_number": 28}},
+            {"label": "last_air_date", "value": "2026-05-23"},
+        ],
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("TMDB ID", "254486"),
+        ("官方链接", "优酷"),
+    ]
+    official_link = vod.detail_fields[1].value_parts[0]
+    assert official_link.action == PlaybackDetailFieldAction(
+        type="link",
+        value="https://v.youku.com/v_show/id_XNjUzNDA5NDEwNA==.html",
+    )
+
+
+def test_merge_metadata_converts_existing_playback_link_to_official_link() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="主角",
+        detail_fields=[PlaybackDetailField(label="播放链接", value="https://v.qq.com/x/cover/mzc003ubb5py7hr.html")],
+    )
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:241166",
+        aliases=["我成为BL剧的主角了"],
+        imdb_id="tt30768610",
+        tmdb_id="241166",
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("官方链接", "腾讯视频"),
+        ("别名", "我成为BL剧的主角了"),
+        ("IMDb ID", "tt30768610"),
+        ("TMDB ID", "241166"),
+    ]
+    official_link = vod.detail_fields[0].value_parts[0]
+    assert official_link.action == PlaybackDetailFieldAction(
+        type="link",
+        value="https://v.qq.com/x/cover/mzc003ubb5py7hr.html",
+    )
+
+
+def test_merge_metadata_uses_redirect_target_for_official_link_label() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="低智商犯罪",
+        detail_fields=[
+            PlaybackDetailField(
+                label="播放链接",
+                value=(
+                    "https://v.qq.com/search_redirect.html?"
+                    "url=https%3A%2F%2Fwww.iqiyi.com%2Fa_25vgx15887l.html"
+                ),
+            )
+        ],
+    )
+    record = MetadataRecord(provider="tmdb", provider_id="tv:272432", tmdb_id="272432")
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("官方链接", "爱奇艺"),
+        ("TMDB ID", "272432"),
+    ]
+    official_link = vod.detail_fields[0].value_parts[0]
+    assert official_link.action == PlaybackDetailFieldAction(
+        type="link",
+        value="https://www.iqiyi.com/a_25vgx15887l.html",
+    )
+
+
 def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:
     vod = VodItem(vod_id="v1", vod_name="旧标题", vod_pic="https://img.tmdb/poster.jpg")
     vod.metadata_field_sources["poster"] = "tmdb"

@@ -61,6 +61,9 @@ class IqiyiMetadataProvider:
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         payload = dict(match.raw)
         detail_fields: list[dict[str, object]] = []
+        page_url = str(match.provider_id or payload.get("pageUrl") or "").strip()
+        if page_url.startswith(("http://", "https://")):
+            detail_fields.append({"label": "播放链接", "value": page_url})
         for key in ("releaseTime", "updateTime", "timeLength"):
             item = payload.get(key)
             if not isinstance(item, dict):
