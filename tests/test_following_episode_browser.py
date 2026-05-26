@@ -146,6 +146,64 @@ def test_following_episode_browser_emits_grid_columns_changed(qtbot) -> None:
     assert changed == [2]
 
 
+def test_following_episode_browser_exposes_three_workspace_panes(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    assert browser.season_list.parent() is browser.browser_frame
+    assert browser.season_detail_panel.parent() is browser.browser_frame
+    assert browser.episode_list_panel.parent() is browser.browser_frame
+
+
+def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    changed: list[int] = []
+    browser.grid_columns_changed.connect(changed.append)
+
+    browser.grid_cycle_button.click()
+    browser.grid_cycle_button.click()
+    browser.grid_cycle_button.click()
+
+    assert changed == [2, 3, 1]
+    assert browser.grid_columns() == 1
+
+
+def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1", overview="剧情")],
+            seasons=[
+                FollowingSeason(
+                    season_number=1,
+                    title="第一季",
+                    overview="第一季简介",
+                    poster="poster-1",
+                    episode_count=8,
+                ),
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    overview="第二季简介",
+                    poster="poster-2",
+                    episode_count=6,
+                ),
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=1,
+    )
+
+    season_model = browser.season_list.model()
+    browser.season_list.setCurrentIndex(season_model.index(1, 0))
+
+    assert browser.season_detail_title_label.text() == "第二季"
+    assert "第二季简介" in browser.season_detail_overview_label.text()
+
+
 def test_following_episode_browser_exposes_selected_season_summary(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
