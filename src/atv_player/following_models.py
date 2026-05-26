@@ -111,6 +111,7 @@ class FollowingUpdateResult:
     total_episodes: int = 0
     has_update: bool = False
     homepage_prompt_pending: bool = False
+    completion_state: str = "completed"
     error: str = ""
 
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
+    resolve_following_completion_state,
     FollowingRecord,
     FollowingUpdateResult,
     progress_at_or_beyond,
@@ -143,6 +144,11 @@ class FollowingUpdateService(QObject):
             if snapshot.episodes or snapshot.overview:
                 snapshot.following_id = record.id
                 self._repository.save_detail_snapshot(record.id, snapshot)
+            completion_state = resolve_following_completion_state(
+                episodes=snapshot.episodes,
+                next_episode=snapshot.next_episode,
+                today=datetime.fromtimestamp(now, BEIJING_TZ).date(),
+            )
             return FollowingUpdateResult(
                 record_id=record.id,
                 checked=True,
@@ -150,6 +156,7 @@ class FollowingUpdateService(QObject):
                 total_episodes=total,
                 has_update=has_update,
                 homepage_prompt_pending=homepage_prompt,
+                completion_state=completion_state,
             )
         self._repository.update_check_state(
             record.id,

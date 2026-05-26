@@ -21,12 +21,14 @@ from atv_player.following_models import (
     compare_progress,
     format_progress_episode,
     FollowingCardItem,
+    FollowingCompletionState,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
     FollowingSourceBinding,
     progress_at_or_beyond,
     provider_priority_for_media_kind,
+    resolve_following_completion_state,
     resolve_progress_season,
 )
 from atv_player.metadata.discovery import DiscoveryItem, DiscoveryQuery, DiscoveryResult, RecommendationSeed
@@ -377,13 +379,25 @@ class FollowingController:
                 display_title=record.title,
                 subtitle=record.provider or record.media_kind,
                 progress_text=self._progress_text(record),
-                update_text=f"有 {record.new_episode_count} 集更新" if record.has_update else "暂无更新",
+                update_text=self._update_text(record),
                 updated_hint=record.has_update,
                 error_text=record.last_error,
             )
             for record in records
         ]
         return cards, total
+
+    def _update_text(self, record: FollowingRecord) -> str:
+        if record.has_update:
+            return f"有 {record.new_episode_count} 集更新"
+        return "已完结" if self._completion_state(record) == FollowingCompletionState.COMPLETED else "连载中"
+
+    def _completion_state(self, record: FollowingRecord) -> str:
+        snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
+        return resolve_following_completion_state(
+            episodes=snapshot.episodes,
+            next_episode=snapshot.next_episode,
+        )
 
     def search_items(self, keyword: str, page: int) -> tuple[list[FollowingCardItem], int]:
         return self.load_page(page=page, size=20, keyword=keyword, only_updates=False)

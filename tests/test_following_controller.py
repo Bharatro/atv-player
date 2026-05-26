@@ -384,6 +384,42 @@ def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp
     assert candidate.subtitle == "剧集"
 
 
+def test_following_controller_load_page_uses_completed_text_for_idle_record(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:1",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "1"},
+            current_season_number=1,
+            current_episode=24,
+            latest_episode=24,
+            previous_latest_episode=24,
+            total_episodes=24,
+            watched_latest_episode=True,
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            episodes=[FollowingEpisode(episode_number=24, air_date="2026-05-19")],
+            refreshed_at=1779638400,
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 1779638400)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert cards[0].update_text == "已完结"
+
+
 def test_following_controller_keyword_search_uses_tmdb_only_and_sorts_tv_before_movie(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     service = FakeTMDBFollowingSearchService()
