@@ -5,6 +5,7 @@ from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingEpisodeState,
     FollowingRecord,
     FollowingSeason,
 )
@@ -486,6 +487,90 @@ def test_following_episode_preview_dialog_includes_status_text(qtbot) -> None:
 
     assert dialog.meta_label.text() == "2026-05-13 · 24m · 已更新"
     assert dialog.mark_watched_button.text() == "标记本集已看"
+    assert dialog.mark_watched_button.isHidden() is False
+
+
+def test_following_episode_preview_dialog_hides_mark_watched_button_for_non_released_status(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=4,
+            title="第四集",
+            air_date="2026-05-20",
+            runtime=24,
+        ),
+        status_text="未更新",
+        can_mark_watched=False,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-20 · 24m · 未更新"
+    assert dialog.mark_watched_button.isHidden() is True
+
+
+def test_following_detail_page_preview_dialog_shows_mark_watched_only_for_released_episode(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+    episode = page.current_view.snapshot.episodes[0]
+
+    assert page.episode_browser.status_for_episode(episode) == FollowingEpisodeState.RELEASED
+
+    released_dialog = FollowingEpisodePreviewDialog(
+        episode,
+        status_text=page.episode_browser.status_text_for_episode(episode),
+        can_mark_watched=page.episode_browser.status_for_episode(episode) == FollowingEpisodeState.RELEASED,
+    )
+    qtbot.addWidget(released_dialog)
+    assert released_dialog.mark_watched_button.isHidden() is False
+
+    pending_dialog = FollowingEpisodePreviewDialog(
+        episode,
+        status_text="未更新",
+        can_mark_watched=FollowingEpisodeState.PENDING == FollowingEpisodeState.RELEASED,
+    )
+    qtbot.addWidget(pending_dialog)
+    assert pending_dialog.mark_watched_button.isHidden() is True
+
+
+def test_following_detail_page_passes_non_released_episodes_as_not_markable(qtbot, monkeypatch) -> None:
+    class PendingEpisodeController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.record.current_episode = 127
+            view.record.latest_episode = 127
+            view.snapshot.episodes = [
+                FollowingEpisode(
+                    episode_number=128,
+                    title="下一集",
+                    overview="未更新分集",
+                )
+            ]
+            return view
+
+    captured: list[bool] = []
+
+    def fake_init(self_dialog, episode, *, status_text="", can_mark_watched=True, parent=None):
+        del episode, status_text, parent
+        captured.append(can_mark_watched)
+        self_dialog.mark_watched_requested = False
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingEpisodePreviewDialog.__init__",
+        fake_init,
+    )
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingEpisodePreviewDialog.exec",
+        lambda self_dialog: 0,
+    )
+
+    page = FollowingDetailPage(PendingEpisodeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    model = page.episode_browser.episode_list.model()
+    page.episode_browser._handle_episode_activated(model.index(0, 0))
+
+    assert captured == [False]
 
 
 def test_following_detail_page_preview_dialog_marks_episode_as_watched(qtbot, monkeypatch) -> None:

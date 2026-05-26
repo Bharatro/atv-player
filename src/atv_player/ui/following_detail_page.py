@@ -587,7 +587,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         dialog = FollowingEpisodePreviewDialog(
             episode,
             status_text=self.episode_browser.status_text_for_episode(episode),
-            can_mark_watched=status != FollowingEpisodeState.WATCHED,
+            can_mark_watched=status == FollowingEpisodeState.RELEASED,
             parent=self,
         )
         if dialog.exec() != 1 or not dialog.mark_watched_requested:
