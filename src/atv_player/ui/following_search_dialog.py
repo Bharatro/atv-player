@@ -39,16 +39,29 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             getattr(controller, "has_discovery_tabs", lambda: True)()
         )
         self._active_tab = "search"
+        self._tab_state: dict[str, dict[str, object]] = {}
 
         host = self.content_widget()
         layout = self.content_layout()
 
-        self.tab_bar = FlatComboBox(host)
-        self.tab_bar.addItem("推荐", "recommendation")
-        self.tab_bar.addItem("热门", "trending")
-        self.tab_bar.addItem("筛选", "discover")
-        self.tab_bar.addItem("搜索", "search")
-        layout.addWidget(self.tab_bar)
+        self.tab_buttons: list[QPushButton] = []
+        self._tab_buttons_by_key: dict[str, QPushButton] = {}
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(8)
+        for label, key in (
+            ("推荐", "recommendation"),
+            ("热门", "trending"),
+            ("筛选", "discover"),
+            ("搜索", "search"),
+        ):
+            button = QPushButton(label, host)
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.clicked.connect(lambda _checked=False, current_key=key: self._activate_tab(current_key))
+            tab_row.addWidget(button)
+            self.tab_buttons.append(button)
+            self._tab_buttons_by_key[key] = button
+        layout.addLayout(tab_row)
 
         search_row = QGridLayout()
         search_row.setHorizontalSpacing(6)
@@ -90,7 +103,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         actions.addWidget(self.close_button)
         layout.addLayout(actions)
 
-        self.tab_bar.currentIndexChanged.connect(self._handle_tab_changed)
         self.search_button.clicked.connect(self.run_search)
         self.search_edit.returnPressed.connect(self.run_search)
         self.result_list.currentRowChanged.connect(self._handle_result_selection_changed)
@@ -104,7 +116,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         if self._discovery_mode:
             self._activate_tab("recommendation")
         else:
-            self.tab_bar.hide()
+            for button in self.tab_buttons:
+                button.hide()
             self.filter_media_combo.hide()
 
     def run_search(self) -> None:
@@ -142,30 +155,39 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.result_list.clear()
         self._sync_action_state()
 
-    def _handle_tab_changed(self, _index: int) -> None:
-        if not self._discovery_mode:
-            return
-        self._activate_tab(str(self.tab_bar.currentData() or "recommendation"))
-
     def _activate_tab(self, tab_key: str) -> None:
         normalized_tab = str(tab_key or "").strip() or "recommendation"
         self._active_tab = normalized_tab
         self._search_request_id += 1
         self._set_search_loading(False)
-        if self.tab_bar.currentData() != normalized_tab:
-            for index in range(self.tab_bar.count()):
-                if self.tab_bar.itemData(index) == normalized_tab:
-                    self.tab_bar.setCurrentIndex(index)
-                    break
+        button = self._tab_buttons_by_key.get(normalized_tab)
+        if button is not None:
+            button.setChecked(True)
         search_visible = normalized_tab == "search"
         self.search_edit.setVisible(search_visible)
         self.search_button.setVisible(search_visible)
         self.filter_media_combo.setVisible(normalized_tab in {"trending", "discover"})
+        state = self._tab_state.get(normalized_tab, {})
+        cached_items = list(state.get("items", []) or [])
+        if cached_items:
+            self._render_discovery_result(
+                type(
+                    "CachedResult",
+                    (),
+                    {
+                        "items": cached_items,
+                        "source_label": state.get("source_label", ""),
+                        "fallback_reason": state.get("fallback_reason", ""),
+                    },
+                )()
+            )
         if normalized_tab == "search":
             self.status_label.setText("输入标题或粘贴链接搜索可追更媒体")
-            self._clear_results()
+            if not cached_items:
+                self._clear_results()
             return
-        self._load_active_tab()
+        if not state.get("loaded", False):
+            self._load_active_tab()
 
     def _load_active_tab(self) -> None:
         self._search_request_id += 1
@@ -185,7 +207,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                 result = None
                 error = str(exc)
             if self._can_deliver_async_result():
-                self.search_finished.emit(request_id, result, error)
+                self.search_finished.emit(request_id, (self._active_tab, result), error)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -302,12 +324,23 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self._set_search_loading(False)
         if error:
             self.status_label.setText(f"搜索失败: {error}")
-            self._clear_results()
             return
         if self._discovery_mode:
-            self._render_discovery_result(groups)
+            tab_key, result = groups
+            self._tab_state[tab_key] = {
+                "items": list(getattr(result, "items", []) or []),
+                "source_label": str(getattr(result, "source_label", "") or ""),
+                "fallback_reason": str(getattr(result, "fallback_reason", "") or ""),
+                "loaded": True,
+            }
+            if tab_key != self._active_tab:
+                return
+            self._render_discovery_result(result)
             return
         self._render_groups(groups)
+
+    def active_tab_button(self) -> QPushButton | None:
+        return self._tab_buttons_by_key.get(self._active_tab)
 
     def _handle_add_finished(self, request_id: int, candidate, error: str) -> None:
         if request_id != self._add_request_id:
@@ -323,8 +356,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         tokens = current_tokens()
         self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=14, min_height=40))
         self.search_button.setFixedHeight(40)
-        self.tab_bar.setFixedHeight(40)
         self.filter_media_combo.setFixedHeight(40)
+        for button in self.tab_buttons:
+            button.setFixedHeight(40)
         button_qss = f"""
         QPushButton {{
             background-color: {tokens.button_bg};
@@ -332,6 +366,11 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             border-radius: 12px;
             color: {tokens.text_primary};
             padding: 6px 14px;
+        }}
+        QPushButton:checked {{
+            background-color: {tokens.accent};
+            border-color: {tokens.accent};
+            color: {tokens.button_primary_text};
         }}
         QPushButton:hover {{
             border-color: {tokens.accent_hover};
@@ -342,7 +381,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             color: {tokens.button_disabled_text};
         }}
         """
-        for button in (self.search_button, self.add_button, self.close_button):
+        for button in (*self.tab_buttons, self.search_button, self.add_button, self.close_button):
             button.setStyleSheet(button_qss)
         list_qss = f"""
         QListWidget {{

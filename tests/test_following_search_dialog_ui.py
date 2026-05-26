@@ -272,7 +272,8 @@ def test_following_search_dialog_defaults_to_recommendation_tab_and_loads_result
 
     qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
 
-    assert dialog.tab_bar.currentData() == "recommendation"
+    assert dialog.active_tab_button() is not None
+    assert dialog.active_tab_button().text() == "推荐"
     assert "推荐" in dialog.status_label.text()
     assert dialog.search_edit.isHidden() is True
 
@@ -314,3 +315,110 @@ def test_following_search_dialog_switching_to_search_preserves_url_direct_path(q
 
     assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "名侦探柯南"
     assert any(call[0] == "search" for call in controller.calls)
+
+
+def test_following_search_dialog_uses_four_tab_buttons_instead_of_combo(qtbot) -> None:
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            return DiscoveryResult(items=[], total=0, source_label=tab_key)
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+
+    assert hasattr(dialog, "tab_bar") is False
+    assert [button.text() for button in dialog.tab_buttons] == ["推荐", "热门", "筛选", "搜索"]
+    assert dialog.active_tab_button().text() == "推荐"
+
+
+def test_following_search_dialog_can_switch_to_search_while_recommendation_request_is_in_flight(qtbot) -> None:
+    candidate = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:30983",
+        tmdb_id="30983",
+        media_type="tv",
+        title="名侦探柯南",
+        year="1996",
+        source_label="搜索",
+    )
+    release_recommendation = threading.Event()
+
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "recommendation":
+                release_recommendation.wait(timeout=2)
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
+            assert tab_key == "search"
+            return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._activate_tab("search")
+    dialog.search_edit.setText("柯南")
+    dialog.run_search()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+    assert dialog.active_tab_button().text() == "搜索"
+    release_recommendation.set()
+
+
+def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_results_immediately(qtbot) -> None:
+    recommendation = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:100",
+        tmdb_id="100",
+        media_type="tv",
+        title="Gen V",
+        year="2023",
+        source_label="推荐",
+    )
+    search_item = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:30983",
+        tmdb_id="30983",
+        media_type="tv",
+        title="名侦探柯南",
+        year="1996",
+        source_label="搜索",
+    )
+
+    class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            self.calls.append(tab_key)
+            if tab_key == "search":
+                return DiscoveryResult(items=[search_item], total=1, source_label="搜索")
+            return DiscoveryResult(items=[recommendation], total=1, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+    assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
+
+    dialog._activate_tab("search")
+    dialog.search_edit.setText("柯南")
+    dialog.run_search()
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+    qtbot.waitUntil(
+        lambda: dialog.result_list.itemWidget(dialog.result_list.item(0)) is not None
+        and dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "名侦探柯南"
+    )
+
+    dialog._activate_tab("recommendation")
+
+    assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
