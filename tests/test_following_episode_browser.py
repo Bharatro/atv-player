@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 
-from atv_player.following_models import FollowingEpisode
+from atv_player.following_models import FollowingEpisode, FollowingSeason
 from atv_player.ui.following_episode_browser import (
     EpisodeDisplayMode,
     EpisodeListModel,
@@ -144,6 +144,55 @@ def test_following_episode_browser_emits_grid_columns_changed(qtbot) -> None:
 
     assert browser.grid_columns() == 2
     assert changed == [2]
+
+
+def test_following_episode_browser_exposes_selected_season_summary(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    groups = build_episode_season_groups(
+        [FollowingEpisode(episode_number=1, season_number=2, title="S2E1", overview="剧情", still="still")],
+        seasons=[
+            FollowingSeason(
+                season_number=2,
+                title="第二季",
+                overview="本季简介",
+                poster="poster",
+                episode_count=8,
+            )
+        ],
+        fallback_season=0,
+    )
+
+    browser.set_content(
+        groups=groups,
+        current_episode=0,
+        current_season_number=0,
+        selected_season_number=2,
+    )
+
+    summary = browser.current_season_summary()
+    assert summary.title == "第二季"
+    assert summary.overview == "本季简介"
+    assert summary.poster == "poster"
+    assert summary.episode_count == 8
+
+
+def test_following_episode_browser_keeps_episode_overview_in_multi_column_modes(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=1, title="冒险开始", overview="完整剧情", still="still")],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+
+    browser.set_grid_columns(3)
+
+    card = browser.episode_cards[0]
+    assert "完整剧情" in card.overview_label.text()
+    assert card.overview_label.maximumHeight() > 0
 
 
 def test_following_episode_browser_restores_selection_when_switching_back_to_season(qtbot) -> None:

@@ -4,12 +4,16 @@ from dataclasses import dataclass
 import threading
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
+    QLabel,
     QListView,
+    QScrollArea,
+    QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -46,6 +50,19 @@ class EpisodeSeasonGroup:
     display_title: str
     episodes: list[FollowingEpisode]
     episode_count: int = 0
+    overview: str = ""
+    poster: str = ""
+    air_date: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class EpisodeSeasonSummary:
+    season_number: int
+    title: str
+    overview: str
+    poster: str
+    air_date: str
+    episode_count: int
 
 
 def build_episode_season_groups(
@@ -71,6 +88,9 @@ def build_episode_season_groups(
                 display_title=season.title.strip() or (f"第 {season_number} 季" if season_number > 0 else "特别篇"),
                 episodes=loaded_episodes,
                 episode_count=max(season.episode_count, len(loaded_episodes)),
+                overview=season.overview,
+                poster=season.poster,
+                air_date=season.air_date,
             )
         )
         seen.add(season_number)
@@ -84,6 +104,9 @@ def build_episode_season_groups(
                 display_title=f"第 {season_number} 季" if season_number > 0 else "特别篇",
                 episodes=sorted(items, key=lambda item: item.episode_number),
                 episode_count=len(items),
+                overview="",
+                poster="",
+                air_date="",
             )
         )
 
@@ -94,6 +117,9 @@ def build_episode_season_groups(
                 display_title=f"第 {default_season} 季",
                 episodes=[],
                 episode_count=0,
+                overview="",
+                poster="",
+                air_date="",
             )
         )
     return groups
@@ -365,6 +391,81 @@ class EpisodeItemDelegate(QStyledItemDelegate):
         painter.drawImage(rect, image)
 
 
+class FollowingEpisodeCard(QFrame):
+    activated = Signal(object)
+
+    def __init__(
+        self,
+        episode: FollowingEpisode,
+        *,
+        summary_columns: int,
+        thumbnail_store: EpisodeThumbnailStore,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.episode = episode
+        self.summary_columns = summary_columns
+        self._thumbnail_store = thumbnail_store
+        self._thumbnail_source = str(episode.still or "").strip()
+        self.setObjectName("followingEpisodeCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(164 if summary_columns == 1 else 148 if summary_columns == 2 else 138)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        self.still_label = QLabel("封面", self)
+        self.still_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.still_label.setFixedSize(148 if summary_columns == 1 else 116, 84 if summary_columns == 1 else 68)
+        self.still_label.setStyleSheet("border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;")
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+        self.title_label = QLabel(format_episode_title(episode), self)
+        self.title_label.setWordWrap(True)
+        self.meta_label = QLabel(_episode_meta_text(episode), self)
+        self.meta_label.setWordWrap(True)
+        self.overview_label = QLabel(episode.overview or "", self)
+        self.overview_label.setWordWrap(True)
+        self.overview_label.setMaximumHeight(_overview_max_height(summary_columns))
+
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.meta_label)
+        text_layout.addWidget(self.overview_label)
+        text_layout.addStretch(1)
+
+        layout.addWidget(self.still_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(text_layout, 1)
+
+        self.refresh_thumbnail()
+
+    def refresh_for_columns(self, columns: int) -> None:
+        self.summary_columns = columns
+        self.setMinimumHeight(164 if columns == 1 else 148 if columns == 2 else 138)
+        self.still_label.setFixedSize(148 if columns == 1 else 116, 84 if columns == 1 else 68)
+        self.overview_label.setMaximumHeight(_overview_max_height(columns))
+
+    def refresh_thumbnail(self) -> None:
+        if not self._thumbnail_source:
+            return
+        image = self._thumbnail_store.image_for(self._thumbnail_source)
+        if image is None:
+            self._thumbnail_store.request(self._thumbnail_source, target_size=self.still_label.size())
+            return
+        self.still_label.setText("")
+        self.still_label.setPixmap(QPixmap.fromImage(image))
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.episode)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class FollowingEpisodeBrowser(QWidget):
     episode_activated = Signal(object)
     grid_columns_changed = Signal(int)
@@ -375,9 +476,12 @@ class FollowingEpisodeBrowser(QWidget):
         self._groups: list[EpisodeSeasonGroup] = []
         self._current_episode = 0
         self._current_season_number = 0
+        self._current_group: EpisodeSeasonGroup | None = None
+        self._current_season_summary = EpisodeSeasonSummary(0, "", "", "", "", 0)
         self._season_state: dict[int, tuple[int, int]] = {}
         self._season_change_in_progress = False
         self._grid_columns = self._normalize_grid_columns(initial_grid_columns)
+        self.episode_cards: list[FollowingEpisodeCard] = []
 
         self.season_list = QListView(self)
         self.season_list.setObjectName("followingEpisodeSeasonList")
@@ -396,10 +500,31 @@ class FollowingEpisodeBrowser(QWidget):
         )
         self.thumbnail_store = EpisodeThumbnailStore(self)
         self.episode_model.attach_thumbnail_store(self.thumbnail_store)
+        self.thumbnail_store.thumbnail_ready.connect(self._handle_card_thumbnail_ready)
         self.season_list.setModel(self.season_model)
         self.episode_list.setModel(self.episode_model)
         self.episode_list.setItemDelegate(EpisodeItemDelegate(self.thumbnail_store, self.episode_list))
         self.episode_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.episode_list.setHidden(True)
+
+        self.episode_grid_container = QWidget(self)
+        self.episode_grid_layout = QGridLayout(self.episode_grid_container)
+        self.episode_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.episode_grid_layout.setHorizontalSpacing(10)
+        self.episode_grid_layout.setVerticalSpacing(10)
+        self.episode_grid_layout.setColumnStretch(0, 1)
+
+        self.episode_scroll = QScrollArea(self)
+        self.episode_scroll.setWidgetResizable(True)
+        self.episode_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.episode_scroll.setWidget(self.episode_grid_container)
+
+        self.content_panel = QWidget(self)
+        content_layout = QVBoxLayout(self.content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_layout.addWidget(self.episode_scroll)
+        content_layout.addWidget(self.episode_list)
 
         self.browser_frame = QFrame(self)
         self.browser_frame.setObjectName("followingEpisodeBrowser")
@@ -407,7 +532,7 @@ class FollowingEpisodeBrowser(QWidget):
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.setSpacing(12)
         frame_layout.addWidget(self.season_list, 1)
-        frame_layout.addWidget(self.episode_list, 4)
+        frame_layout.addWidget(self.content_panel, 4)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -428,7 +553,11 @@ class FollowingEpisodeBrowser(QWidget):
         if normalized == self._grid_columns:
             return
         self._grid_columns = normalized
+        self._relayout_episode_cards()
         self.grid_columns_changed.emit(normalized)
+
+    def current_season_summary(self) -> EpisodeSeasonSummary:
+        return self._current_season_summary
 
     def set_content(
         self,
@@ -509,6 +638,9 @@ class FollowingEpisodeBrowser(QWidget):
             current_season_number=self._current_season_number,
             visible_season_number=group.season_number,
         )
+        self._current_group = group
+        self._current_season_summary = self._build_season_summary(group)
+        self._rebuild_episode_cards(group.episodes)
         if not group.episodes:
             return
         if restore_state and group.season_number in self._season_state:
@@ -565,3 +697,74 @@ class FollowingEpisodeBrowser(QWidget):
         except (TypeError, ValueError):
             return 1
         return normalized if normalized in {1, 2, 3} else 1
+
+    def _build_season_summary(self, group: EpisodeSeasonGroup) -> EpisodeSeasonSummary:
+        return EpisodeSeasonSummary(
+            season_number=group.season_number,
+            title=group.display_title,
+            overview=str(group.overview or "").strip(),
+            poster=str(group.poster or "").strip(),
+            air_date=str(group.air_date or "").strip(),
+            episode_count=max(0, int(group.episode_count or 0)),
+        )
+
+    def _rebuild_episode_cards(self, episodes: list[FollowingEpisode]) -> None:
+        _clear_layout(self.episode_grid_layout)
+        self.episode_cards = []
+        if not episodes:
+            return
+        for index, episode in enumerate(episodes):
+            card = FollowingEpisodeCard(
+                episode,
+                summary_columns=self._grid_columns,
+                thumbnail_store=self.thumbnail_store,
+                parent=self.episode_grid_container,
+            )
+            card.activated.connect(self.episode_activated.emit)
+            row = index // self._grid_columns
+            column = index % self._grid_columns
+            self.episode_grid_layout.addWidget(card, row, column)
+            self.episode_cards.append(card)
+        for column in range(self._grid_columns):
+            self.episode_grid_layout.setColumnStretch(column, 1)
+
+    def _relayout_episode_cards(self) -> None:
+        episodes = list(self._current_group.episodes) if self._current_group is not None else []
+        self._rebuild_episode_cards(episodes)
+
+    def _handle_card_thumbnail_ready(self, source: str) -> None:
+        normalized = str(source or "").strip()
+        for card in self.episode_cards:
+            if card._thumbnail_source == normalized:
+                card.refresh_thumbnail()
+
+
+def _episode_meta_text(episode: FollowingEpisode) -> str:
+    parts = []
+    if episode.air_date:
+        parts.append(episode.air_date)
+    if episode.runtime > 0:
+        parts.append(f"{episode.runtime}m")
+    if episode.is_special:
+        parts.append("特别篇")
+    return " · ".join(parts)
+
+
+def _overview_max_height(columns: int) -> int:
+    if columns == 1:
+        return 96
+    if columns == 2:
+        return 60
+    return 40
+
+
+def _clear_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        child_layout = item.layout()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+        elif child_layout is not None:
+            _clear_layout(child_layout)
