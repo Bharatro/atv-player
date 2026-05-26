@@ -415,6 +415,43 @@ def test_following_controller_refresh_metadata_saves_bundle_back_to_snapshot() -
     assert repository.saved_snapshot.metadata_bundle is not None
 
 
+def test_following_metadata_bundle_does_not_let_douban_override_existing_tmdb_overview() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1:season:1",
+        title="测试",
+        tmdb_id="1",
+        overview="TMDB简介",
+        rating="8.1",
+    )
+    douban_record = MetadataRecord(
+        provider="douban",
+        provider_id="2",
+        title="测试",
+        overview="豆瓣简介",
+        rating="7.9",
+    )
+
+    bundle, _merged_record, merged_snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (douban_record, 0.91)},
+    )
+
+    assert bundle.merged_snapshot.ratings[0].label == "TMDB"
+    assert merged_snapshot.overview == "TMDB简介"
+
+
 def test_following_candidate_from_supported_urls() -> None:
     assert following_candidate_from_url("https://bgm.tv/subject/521431").provider_id == "subject:521431"
     assert following_candidate_from_url("https://movie.douban.com/subject/37090537/").provider_id == "37090537"
