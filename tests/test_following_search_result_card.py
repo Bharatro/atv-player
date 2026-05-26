@@ -30,7 +30,7 @@ def test_following_search_result_card_renders_rating_title_year_and_overview(qtb
     assert card.title_label.text() == "The Boys"
     assert card.meta_label.text() == "2019 · 电视"
     assert card.rating_label.text() == "8.7"
-    assert card.overview_label.text() == "A long overview for the TV result."
+    assert card.overview_label.text().replace("\n", "") == "A long overview for the TV result."
 
 
 def test_following_search_result_card_uses_fallback_overview_and_hides_empty_rating(qtbot) -> None:

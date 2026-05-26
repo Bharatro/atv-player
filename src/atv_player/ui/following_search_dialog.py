@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from atv_player.ui.following_search_result_card import FollowingSearchResultCard
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.theme import build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -58,12 +59,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         search_row.setColumnStretch(0, 1)
         layout.addLayout(search_row)
 
-        columns = QHBoxLayout()
-        self.group_list = QListWidget(host)
         self.result_list = QListWidget(host)
-        columns.addWidget(self.group_list, 1)
-        columns.addWidget(self.result_list, 2)
-        layout.addLayout(columns)
+        self.result_list.setSpacing(10)
+        layout.addWidget(self.result_list, 1)
 
         self.status_label = QLabel("请输入标题搜索可追更媒体", host)
         layout.addWidget(self.status_label)
@@ -82,8 +80,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
         self.search_button.clicked.connect(self.run_search)
         self.search_edit.returnPressed.connect(self.run_search)
-        self.group_list.currentRowChanged.connect(self._populate_results)
-        self.result_list.currentRowChanged.connect(lambda _row: self._sync_action_state())
+        self.result_list.currentRowChanged.connect(self._handle_result_selection_changed)
         self.result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
         self.add_button.clicked.connect(self._add_selected_candidate)
         self.close_button.clicked.connect(self.reject)
@@ -118,54 +115,45 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _clear_results(self) -> None:
         self.groups = []
-        self.group_list.clear()
         self.result_list.clear()
         self._sync_action_state()
 
     def _render_groups(self, groups) -> None:
         self.groups = list(groups or [])
-        self.group_list.clear()
         self.result_list.clear()
         total = 0
         for group in self.groups:
             items = list(getattr(group, "items", []) or [])
             total += len(items)
-            provider_label = str(getattr(group, "provider_label", "") or getattr(group, "provider", "") or "未知来源")
-            self.group_list.addItem(f"{provider_label} ({len(items)})")
-        if self.groups:
-            first_non_empty = next(
-                (index for index, group in enumerate(self.groups) if list(getattr(group, "items", []) or [])),
-                0,
-            )
-            self.group_list.setCurrentRow(first_non_empty)
+            error_text = str(getattr(group, "error_text", "") or "").strip()
+            if error_text and not items:
+                item = QListWidgetItem(error_text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                self.result_list.addItem(item)
+                continue
+            for candidate in items:
+                self._append_candidate_item(candidate)
+        if self.result_list.count():
+            self.result_list.setCurrentRow(0)
         else:
             self._sync_action_state()
         self.status_label.setText(f"找到 {total} 个结果" if total else "没有找到可加入追更的结果")
 
-    def _populate_results(self, group_index: int) -> None:
-        self.result_list.clear()
-        if group_index < 0 or group_index >= len(self.groups):
-            self._sync_action_state()
-            return
-        group = self.groups[group_index]
-        error_text = str(getattr(group, "error_text", "") or "")
-        if error_text:
-            item = QListWidgetItem(error_text)
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            self.result_list.addItem(item)
-        for candidate in list(getattr(group, "items", []) or []):
-            item = QListWidgetItem(self._candidate_text(candidate))
-            item.setData(Qt.ItemDataRole.UserRole, candidate)
-            self.result_list.addItem(item)
-        if self.result_list.count():
-            self.result_list.setCurrentRow(0)
-        self._sync_action_state()
+    def _append_candidate_item(self, candidate) -> None:
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, candidate)
+        card = FollowingSearchResultCard(candidate, self.result_list)
+        item.setSizeHint(card.sizeHint())
+        self.result_list.addItem(item)
+        self.result_list.setItemWidget(item, card)
 
-    def _candidate_text(self, candidate) -> str:
-        title = str(getattr(candidate, "title", "") or "")
-        year = str(getattr(candidate, "year", "") or "")
-        subtitle = str(getattr(candidate, "subtitle", "") or "")
-        return " · ".join(part for part in (title, year, subtitle) if part) or "未命名条目"
+    def _handle_result_selection_changed(self, _row: int) -> None:
+        for index in range(self.result_list.count()):
+            item = self.result_list.item(index)
+            card = self.result_list.itemWidget(item)
+            if isinstance(card, FollowingSearchResultCard):
+                card.set_selected(item is self.result_list.currentItem())
+        self._sync_action_state()
 
     def _selected_candidate(self):
         item = self.result_list.currentItem()
@@ -223,7 +211,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.search_edit.setEnabled(not busy)
         self.current_episode_spin.setEnabled(not busy)
         self.search_button.setEnabled(not busy)
-        self.group_list.setEnabled(not busy)
         self.result_list.setEnabled(not busy)
         self.close_button.setEnabled(not self._add_in_progress)
         self._sync_action_state()
@@ -297,7 +284,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         }}
         QListWidget::item {{
             border-radius: 8px;
-            padding: 8px;
+            padding: 4px;
         }}
         QListWidget::item:selected {{
             background: {tokens.menu_selected_bg};
@@ -307,7 +294,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             background: {tokens.menu_hover_bg};
         }}
         """
-        self.group_list.setStyleSheet(list_qss)
         self.result_list.setStyleSheet(list_qss)
         self.status_label.setStyleSheet(
             "background: transparent;"

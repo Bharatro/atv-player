@@ -30,11 +30,13 @@ class FollowingSearchResultCard(QFrame):
     def __init__(self, candidate, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.candidate = candidate
+        self._selected = False
+        self._overview_full_text = self._overview_text()
         self.poster_label = QLabel("封面", self)
         self.title_label = QLabel(str(getattr(candidate, "title", "") or "未命名条目"), self)
         self.rating_label = QLabel(self._rating_text(), self)
         self.meta_label = QLabel(self._meta_text(), self)
-        self.overview_label = QLabel(self._overview_text(), self)
+        self.overview_label = QLabel(self._overview_full_text, self)
         self._build_ui()
         self.image_loaded.connect(self._handle_image_loaded)
         self._start_poster_load()
@@ -49,6 +51,10 @@ class FollowingSearchResultCard(QFrame):
                 background: {tokens.panel_bg};
                 border: 1px solid {tokens.border_subtle};
                 border-radius: 16px;
+            }}
+            QFrame#followingSearchResultCard[selected="true"] {{
+                border: 1px solid {tokens.accent};
+                background: {tokens.menu_hover_bg};
             }}
             QLabel {{
                 color: {tokens.text_primary};
@@ -101,6 +107,7 @@ class FollowingSearchResultCard(QFrame):
 
         self.overview_label.setProperty("resultOverview", True)
         self.overview_label.setWordWrap(True)
+        self.overview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
@@ -118,6 +125,7 @@ class FollowingSearchResultCard(QFrame):
         layout.setSpacing(14)
         layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(text_layout, 1)
+        self._apply_overview_clamp()
 
     def _candidate_raw(self) -> dict[str, object]:
         return dict(getattr(self.candidate, "raw", {}) or {})
@@ -136,6 +144,13 @@ class FollowingSearchResultCard(QFrame):
 
     def _overview_text(self) -> str:
         return str(self._candidate_raw().get("overview") or "").strip() or "暂无简介"
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = bool(selected)
+        self.setProperty("selected", self._selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def _start_poster_load(self) -> None:
         source = self._poster_source()
@@ -157,3 +172,56 @@ class FollowingSearchResultCard(QFrame):
             return
         self.poster_label.setText("")
         self.poster_label.setPixmap(QPixmap.fromImage(image))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_overview_clamp()
+
+    def _apply_overview_clamp(self) -> None:
+        width = max(0, self.overview_label.contentsRect().width())
+        if width <= 0:
+            width = max(0, self.overview_label.width() - 2)
+        if width <= 0:
+            self.overview_label.setText(self._overview_full_text)
+            return
+
+        metrics = self.overview_label.fontMetrics()
+        max_lines = 3
+        line_height = metrics.lineSpacing()
+        self.overview_label.setFixedHeight(line_height * max_lines)
+        lines: list[str] = []
+        current = ""
+        text = self._overview_full_text.replace("\r\n", "\n").replace("\r", "\n")
+        index = 0
+        length = len(text)
+
+        while index < length and len(lines) < max_lines:
+            char = text[index]
+            if char == "\n":
+                lines.append(current.rstrip())
+                current = ""
+                index += 1
+                continue
+            proposed = current + char
+            if current and metrics.horizontalAdvance(proposed) > width:
+                lines.append(current.rstrip())
+                current = ""
+                continue
+            current = proposed
+            index += 1
+
+        if len(lines) < max_lines and current:
+            lines.append(current.rstrip())
+
+        remaining = text[index:]
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+        if remaining:
+            last = lines[max_lines - 1] if len(lines) >= max_lines else ""
+            overflow_text = f"{last}{remaining}"
+            if len(lines) >= max_lines:
+                lines[max_lines - 1] = metrics.elidedText(overflow_text, Qt.TextElideMode.ElideRight, width)
+            else:
+                lines.append(metrics.elidedText(overflow_text, Qt.TextElideMode.ElideRight, width))
+
+        self.overview_label.setText("\n".join(lines) if lines else self._overview_full_text)

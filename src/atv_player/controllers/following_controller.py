@@ -108,6 +108,9 @@ class FollowingController:
         overview = str(getattr(detail_record, "overview", "") or "").strip()
         if overview:
             raw["overview"] = overview
+        rating = str(getattr(detail_record, "rating", "") or "").strip()
+        if rating:
+            raw["rating"] = rating
         poster = str(getattr(detail_record, "poster", "") or "").strip()
         if poster:
             raw["poster"] = poster

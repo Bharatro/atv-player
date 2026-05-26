@@ -12,7 +12,12 @@ from atv_player.ui.following_search_dialog import FollowingSearchDialog
 
 
 def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(qtbot) -> None:
-    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    candidate = SimpleNamespace(
+        provider_id="tv:1:season:1",
+        title="凡人修仙传",
+        year="2026",
+        raw={"rating": "8.8", "overview": "修仙剧情"},
+    )
 
     class Controller:
         def __init__(self) -> None:
@@ -22,8 +27,8 @@ def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(
             assert keyword == "凡人"
             return [
                 SimpleNamespace(
-                    provider="bangumi",
-                    provider_label="Bangumi",
+                    provider="tmdb",
+                    provider_label="TMDB",
                     items=[candidate],
                     error_text="",
                 )
@@ -42,12 +47,17 @@ def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(
     dialog.search_edit.setText("凡人")
     dialog.run_search()
 
-    qtbot.waitUntil(lambda: dialog.group_list.count() == 1)
     qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
 
-    assert dialog.group_list.count() == 1
     assert dialog.result_list.count() == 1
     assert "找到 1 个结果" in dialog.status_label.text()
+    assert hasattr(dialog, "group_list") is False
+
+    card = dialog.result_list.itemWidget(dialog.result_list.item(0))
+    assert card.title_label.text() == "凡人修仙传"
+    assert card.meta_label.text() == "2026 · 电视"
+    assert card.rating_label.text() == "8.8"
+    assert card.overview_label.text() == "修仙剧情"
 
     dialog.result_list.setCurrentRow(0)
     dialog.current_episode_spin.setValue(12)
@@ -61,14 +71,19 @@ def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(
 
 
 def test_following_search_dialog_passes_manual_current_episode_when_supported(qtbot) -> None:
-    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    candidate = SimpleNamespace(
+        provider_id="tv:1:season:1",
+        title="凡人修仙传",
+        year="2026",
+        raw={},
+    )
 
     class Controller:
         def __init__(self) -> None:
             self.added = []
 
         def search_media(self, _keyword: str):
-            return [SimpleNamespace(provider="bangumi", provider_label="Bangumi", items=[candidate], error_text="")]
+            return [SimpleNamespace(provider="tmdb", provider_label="TMDB", items=[candidate], error_text="")]
 
         def add_candidate(self, selected, *, current_episode: int = 0) -> None:
             self.added.append((selected, current_episode))
@@ -95,6 +110,9 @@ def test_following_search_dialog_renders_tmdb_url_candidate_details(qtbot, tmp_p
                 provider_id=candidate.provider_id,
                 title="名侦探柯南",
                 year="1996",
+                poster="https://img.test/conan.jpg",
+                overview="高中生侦探化身小学生继续破案。",
+                rating="8.9",
                 tmdb_id="30983",
             )
 
@@ -110,11 +128,15 @@ def test_following_search_dialog_renders_tmdb_url_candidate_details(qtbot, tmp_p
 
     qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
     assert dialog.result_list.count() == 1
-    assert dialog.result_list.item(0).text() == "名侦探柯南 · 1996 · 剧集"
+    card = dialog.result_list.itemWidget(dialog.result_list.item(0))
+    assert card.title_label.text() == "名侦探柯南"
+    assert card.meta_label.text() == "1996 · 电视"
+    assert card.rating_label.text() == "8.9"
+    assert card.overview_label.text().replace("\n", "") == "高中生侦探化身小学生继续破案。"
 
 
 def test_following_search_dialog_runs_search_off_main_thread(qtbot) -> None:
-    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    candidate = SimpleNamespace(provider_id="tv:1:season:1", title="凡人修仙传", year="2026", raw={})
     main_thread = threading.get_ident()
     search_threads: list[int] = []
 
@@ -123,8 +145,8 @@ def test_following_search_dialog_runs_search_off_main_thread(qtbot) -> None:
             search_threads.append(threading.get_ident())
             return [
                 SimpleNamespace(
-                    provider="bangumi",
-                    provider_label="Bangumi",
+                    provider="tmdb",
+                    provider_label="TMDB",
                     items=[candidate],
                     error_text="",
                 )
@@ -144,7 +166,7 @@ def test_following_search_dialog_runs_search_off_main_thread(qtbot) -> None:
 
 
 def test_following_search_dialog_adds_candidate_off_main_thread(qtbot) -> None:
-    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    candidate = SimpleNamespace(provider_id="tv:1:season:1", title="凡人修仙传", year="2026", raw={})
     main_thread = threading.get_ident()
     add_threads: list[int] = []
 
@@ -152,8 +174,8 @@ def test_following_search_dialog_adds_candidate_off_main_thread(qtbot) -> None:
         def search_media(self, _keyword: str):
             return [
                 SimpleNamespace(
-                    provider="bangumi",
-                    provider_label="Bangumi",
+                    provider="tmdb",
+                    provider_label="TMDB",
                     items=[candidate],
                     error_text="",
                 )
@@ -183,7 +205,7 @@ def test_following_search_dialog_adds_candidate_off_main_thread(qtbot) -> None:
 
 
 def test_following_search_dialog_pressing_return_in_search_edit_runs_search_without_closing(qtbot) -> None:
-    candidate = SimpleNamespace(title="凡人修仙传", year="2026", subtitle="Bangumi")
+    candidate = SimpleNamespace(provider_id="tv:1:season:1", title="凡人修仙传", year="2026", raw={})
     search_calls: list[str] = []
 
     class Controller:
@@ -191,8 +213,8 @@ def test_following_search_dialog_pressing_return_in_search_edit_runs_search_with
             search_calls.append(keyword)
             return [
                 SimpleNamespace(
-                    provider="bangumi",
-                    provider_label="Bangumi",
+                    provider="tmdb",
+                    provider_label="TMDB",
                     items=[candidate],
                     error_text="",
                 )
