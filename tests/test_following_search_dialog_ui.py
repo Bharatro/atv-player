@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDialog
 
 from atv_player.controllers.following_controller import FollowingController
 from atv_player.following_repository import FollowingRepository
+from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
 from atv_player.metadata.models import MetadataRecord
 from atv_player.ui.following_search_dialog import FollowingSearchDialog
 
@@ -242,3 +243,74 @@ def test_following_search_dialog_action_buttons_are_not_default_submit_targets(q
     assert dialog.add_button.isDefault() is False
     assert dialog.close_button.autoDefault() is False
     assert dialog.close_button.isDefault() is False
+
+
+def test_following_search_dialog_defaults_to_recommendation_tab_and_loads_results(qtbot) -> None:
+    recommendation = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:100",
+        tmdb_id="100",
+        media_type="tv",
+        title="Gen V",
+        year="2023",
+        source_label="推荐",
+    )
+
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            assert tab_key == "recommendation"
+            assert kwargs["page"] == 1
+            return DiscoveryResult(items=[recommendation], total=1, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            assert selected.provider_id == "tv:100"
+            assert kwargs == {}
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+
+    assert dialog.tab_bar.currentData() == "recommendation"
+    assert "推荐" in dialog.status_label.text()
+    assert dialog.search_edit.isHidden() is True
+
+
+def test_following_search_dialog_switching_to_search_preserves_url_direct_path(qtbot) -> None:
+    candidate = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:30983",
+        tmdb_id="30983",
+        media_type="tv",
+        title="名侦探柯南",
+        year="1996",
+        source_label="搜索",
+    )
+
+    class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            self.calls.append((tab_key, kwargs))
+            if tab_key == "search":
+                assert kwargs["query"] == "https://www.themoviedb.org/tv/30983-case-closed"
+                return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
+            return DiscoveryResult(items=[], total=0, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            assert selected is candidate
+            assert kwargs == {}
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog._activate_tab("search")
+    dialog.search_edit.setText("https://www.themoviedb.org/tv/30983-case-closed")
+    dialog.run_search()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+
+    assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "名侦探柯南"
+    assert any(call[0] == "search" for call in controller.calls)

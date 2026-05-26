@@ -128,7 +128,12 @@ class FollowingSearchResultCard(QFrame):
         self._apply_overview_clamp()
 
     def _candidate_raw(self) -> dict[str, object]:
-        return dict(getattr(self.candidate, "raw", {}) or {})
+        raw = dict(getattr(self.candidate, "raw", {}) or {})
+        for key in ("poster", "poster_url", "backdrop", "backdrop_url", "rating", "overview"):
+            value = getattr(self.candidate, key, None)
+            if value not in (None, "") and key not in raw:
+                raw[key] = value
+        return raw
 
     def _poster_source(self) -> str:
         raw = self._candidate_raw()

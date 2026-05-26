@@ -28,7 +28,7 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
     resolve_progress_season,
 )
-from atv_player.metadata.discovery import DiscoveryQuery, DiscoveryResult, RecommendationSeed
+from atv_player.metadata.discovery import DiscoveryItem, DiscoveryQuery, DiscoveryResult, RecommendationSeed
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
@@ -75,12 +75,23 @@ class FollowingController:
         groups = self._search_tmdb_following(query)
         return [self._sort_following_group_items(group) for group in groups]
 
+    def has_discovery_tabs(self) -> bool:
+        return self._discovery_service is not None
+
     def load_discovery_tab(self, tab_key: str, *, query: str = "", page: int = 1, filters: dict[str, str] | None = None):
         if self._discovery_service is None:
             raise RuntimeError("TMDB discovery unavailable")
         normalized_tab = str(tab_key or "").strip() or "recommendation"
         if normalized_tab == "recommendation":
             return self._load_recommendation_result(page=page)
+        if normalized_tab == "search":
+            groups = self.search_media(query)
+            items = [
+                self._discovery_item_from_candidate(candidate)
+                for group in groups
+                for candidate in list(getattr(group, "items", []) or [])
+            ]
+            return DiscoveryResult(items=items, total=len(items), source_label="搜索")
         if normalized_tab == "trending":
             return self._discovery_service.trending(
                 DiscoveryQuery(
@@ -103,6 +114,27 @@ class FollowingController:
                 )
             )
         raise RuntimeError(f"unsupported discovery tab: {normalized_tab}")
+
+    def _discovery_item_from_candidate(self, candidate) -> DiscoveryItem:
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+        tmdb_id = str(raw.get("tmdb_id") or "").strip()
+        if not tmdb_id and provider_id.startswith(("tv:", "movie:")):
+            tmdb_id = provider_id.split(":")[1]
+        media_type = "tv" if provider_id.startswith("tv:") else ("movie" if provider_id.startswith("movie:") else "")
+        return DiscoveryItem(
+            provider=str(getattr(candidate, "provider", "") or "tmdb"),
+            provider_id=provider_id,
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            title=str(getattr(candidate, "title", "") or "").strip(),
+            year=str(getattr(candidate, "year", "") or "").strip(),
+            poster=str(raw.get("poster") or raw.get("poster_url") or "").strip(),
+            backdrop=str(raw.get("backdrop") or raw.get("backdrop_url") or "").strip(),
+            rating=str(raw.get("rating") or "").strip(),
+            overview=str(raw.get("overview") or "").strip(),
+            source_label="搜索",
+        )
 
     def _load_recommendation_result(self, *, page: int) -> DiscoveryResult:
         seeds = self._build_recommendation_seeds(limit=30)
