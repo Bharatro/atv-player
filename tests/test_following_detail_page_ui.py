@@ -11,6 +11,7 @@ from atv_player.following_models import (
 from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
     FollowingDetailPage,
+    FollowingEpisodePreviewDialog,
     FollowingPersonCard,
     QDesktopServices,
     _person_avatar,
@@ -360,7 +361,13 @@ def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) 
             view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
             view.snapshot.seasons = [
                 FollowingSeason(season_number=1, title="第一季", overview="第一季简介", episode_count=2),
-                FollowingSeason(season_number=2, title="第二季", overview="第二季简介", episode_count=1),
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    overview="第二季简介",
+                    air_date="2026-05-13",
+                    episode_count=1,
+                ),
             ]
             view.snapshot.episodes = [
                 FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
@@ -376,6 +383,8 @@ def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) 
     page.episode_browser.season_list.setCurrentIndex(season_model.index(1, 0))
 
     assert page.episode_browser.season_detail_title_label.text() == "第二季"
+    assert page.episode_browser.season_detail_air_date_label.text() == "2026-05-13"
+    assert page.episode_browser.season_detail_episode_count_label.text() == "共 1 集"
     assert "第二季简介" in page.episode_browser.season_detail_overview_label.text()
 
 
@@ -396,6 +405,34 @@ def test_following_detail_page_opens_preview_dialog_from_episode_activation(
     page.episode_browser._handle_episode_activated(model.index(0, 0))
 
     assert opened == [128]
+
+
+def test_following_episode_preview_dialog_shows_air_date_and_runtime_on_same_line(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=3,
+            title="第三集",
+            air_date="2026-05-13",
+            runtime=24,
+        )
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-13 · 24m"
+
+
+def test_following_episode_preview_dialog_omits_runtime_separator_when_runtime_missing(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=3,
+            title="第三集",
+            air_date="2026-05-13",
+            runtime=0,
+        )
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-13"
 
 
 def test_following_detail_title_and_metadata_text_are_selectable(qtbot) -> None:

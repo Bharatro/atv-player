@@ -171,6 +171,47 @@ def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot)
     assert browser.grid_columns() == 1
 
 
+def test_following_episode_browser_uses_official_style_season_detail_layout(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1")],
+            seasons=[
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    overview="第二季简介",
+                    poster="poster-2",
+                    air_date="2026-05-13",
+                    episode_count=24,
+                )
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=2,
+    )
+
+    assert browser.season_detail_poster_label.minimumWidth() > 96
+    assert browser.season_detail_top_row.parent() is browser.season_detail_panel
+    assert browser.season_detail_info_layout.count() == 3
+    assert browser.season_detail_air_date_label.text() == "2026-05-13"
+    assert browser.season_detail_episode_count_label.text() == "共 24 集"
+    assert browser.season_detail_overview_label.text() == "第二季简介"
+
+
+def test_following_episode_browser_season_detail_text_is_selectable(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    selectable = Qt.TextInteractionFlag.TextSelectableByMouse
+    assert browser.season_detail_title_label.textInteractionFlags() & selectable
+    assert browser.season_detail_air_date_label.textInteractionFlags() & selectable
+    assert browser.season_detail_episode_count_label.textInteractionFlags() & selectable
+    assert browser.season_detail_overview_label.textInteractionFlags() & selectable
+
+
 def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
@@ -221,6 +262,7 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
                     title="第二季",
                     overview="第二季简介",
                     poster="poster-2",
+                    air_date="2026-05-13",
                     episode_count=6,
                 ),
             ],
@@ -234,6 +276,8 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
     browser.season_list.setCurrentIndex(season_model.index(1, 0))
 
     assert browser.season_detail_title_label.text() == "第二季"
+    assert browser.season_detail_air_date_label.text() == "2026-05-13"
+    assert browser.season_detail_episode_count_label.text() == "共 6 集"
     assert "第二季简介" in browser.season_detail_overview_label.text()
 
 
