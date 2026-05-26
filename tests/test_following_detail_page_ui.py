@@ -355,6 +355,16 @@ def test_following_detail_page_uses_browser_owned_three_pane_workspace(qtbot) ->
     assert page.episode_browser.episode_list_panel.isVisible() is True
 
 
+def test_following_detail_page_uses_browser_owned_virtual_card_grid(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    assert page.episode_browser.episode_list.isHidden() is False
+    assert page.episode_browser.episode_scroll.isHidden() is True
+    assert page.episode_browser.episode_cards == []
+
+
 def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) -> None:
     class MultiSeasonController(FakeController):
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):

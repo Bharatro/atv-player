@@ -349,7 +349,7 @@ def test_following_episode_browser_places_title_count_and_air_date_at_top(qtbot)
     assert browser.season_detail_info_layout.itemAt(3).spacerItem() is not None
 
 
-def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
+def test_following_episode_browser_uses_virtual_list_instead_of_card_grid(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
     browser.set_content(
@@ -364,20 +364,52 @@ def test_following_episode_browser_clears_unused_grid_column_stretch_when_reduci
         current_episode=0,
     )
 
+    assert browser.episode_list.isHidden() is False
+    assert browser.episode_scroll.isHidden() is True
+    assert browser.episode_cards == []
+
+
+def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.resize(960, 720)
+    browser.show()
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
+                FollowingEpisode(episode_number=3, season_number=1, title="S1E3"),
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+    qtbot.waitUntil(lambda: browser.episode_list.gridSize().width() > 220, timeout=1000)
+
+    grid_width_one = browser.episode_list.gridSize().width()
     browser.set_grid_columns(3)
-    browser.set_grid_columns(1)
-
-    assert browser.episode_grid_layout.columnStretch(0) == 1
-    assert browser.episode_grid_layout.columnStretch(1) == 0
-    assert browser.episode_grid_layout.columnStretch(2) == 0
-
+    grid_width_three = browser.episode_list.gridSize().width()
     browser.set_grid_columns(2)
+    grid_width_two = browser.episode_list.gridSize().width()
+
+    assert grid_width_one > grid_width_two > grid_width_three > 0
+
+
+def test_following_episode_browser_switches_virtual_list_display_mode(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=1, title="冒险开始", overview="完整剧情", still="still")],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+
     browser.set_grid_columns(3)
-    browser.set_grid_columns(2)
 
-    assert browser.episode_grid_layout.columnStretch(0) == 1
-    assert browser.episode_grid_layout.columnStretch(1) == 1
-    assert browser.episode_grid_layout.columnStretch(2) == 0
+    assert browser.episode_model.display_mode == EpisodeDisplayMode.COMPACT
 
 
 def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbot) -> None:
@@ -545,10 +577,10 @@ def test_following_episode_browser_renders_inline_status_badge_on_card(qtbot) ->
         next_episode=None,
     )
 
-    card = browser.episode_cards[0]
-    assert card.title_label.text() == "128. 新章"
-    assert card.status_badge_label.text() == "已更新"
-    assert card.property("episode_status") == FollowingEpisodeState.RELEASED
+    index = browser.episode_model.index(0, 0)
+    assert browser.episode_model.data(index, Qt.ItemDataRole.DisplayRole) == "128. 新章"
+    assert browser.episode_model.data(index, STATUS_TEXT_ROLE) == "已更新"
+    assert browser.episode_model.data(index, STATUS_ROLE) == FollowingEpisodeState.RELEASED
 
 
 def test_following_episode_browser_keeps_episode_overview_in_multi_column_modes(qtbot) -> None:
@@ -564,9 +596,27 @@ def test_following_episode_browser_keeps_episode_overview_in_multi_column_modes(
 
     browser.set_grid_columns(3)
 
-    card = browser.episode_cards[0]
-    assert "完整剧情" in card.overview_label.text()
-    assert card.overview_label.maximumHeight() > 0
+    assert browser.episode_model.display_mode == EpisodeDisplayMode.COMPACT
+    assert browser.episode_model.data(browser.episode_model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "1. 冒险开始"
+
+
+def test_following_episode_browser_does_not_build_card_widgets_for_large_season(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [
+                FollowingEpisode(episode_number=episode_number, season_number=1, title=f"第{episode_number}集")
+                for episode_number in range(1, 1201)
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+
+    assert browser.episode_model.rowCount() == 1200
+    assert browser.episode_cards == []
+    assert browser.episode_list.isHidden() is False
 
 
 def test_following_episode_browser_restores_selection_when_switching_back_to_season(qtbot) -> None:

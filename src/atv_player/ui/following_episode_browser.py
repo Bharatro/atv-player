@@ -58,6 +58,23 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
+class EpisodeCardMetrics:
+    item_height: int
+    thumbnail_width: int
+    thumbnail_height: int
+    outer_margin_x: int
+    outer_margin_y: int
+    inner_spacing: int
+    title_height: int
+    meta_height: int
+    overview_height: int
+    badge_height: int
+    badge_padding_x: int
+    badge_padding_y: int
+    corner_radius: int
+
+
+@dataclass(frozen=True, slots=True)
 class EpisodeSeasonGroup:
     season_number: int
     display_title: str
@@ -326,12 +343,8 @@ class EpisodeItemDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index) -> QSize:
         del option
-        mode = index.data(DISPLAY_MODE_ROLE)
-        if mode == EpisodeDisplayMode.COMPACT:
-            return QSize(0, 58)
-        if mode == EpisodeDisplayMode.POSTER:
-            return QSize(0, 92)
-        return QSize(0, 122)
+        metrics = _card_metrics_for_mode(str(index.data(DISPLAY_MODE_ROLE) or EpisodeDisplayMode.FULL))
+        return QSize(280, metrics.item_height)
 
     def paint(self, painter: QPainter, option, index) -> None:
         tokens = current_tokens()
@@ -352,63 +365,88 @@ class EpisodeItemDelegate(QStyledItemDelegate):
             painter.restore()
             return
         mode = index.data(DISPLAY_MODE_ROLE) or EpisodeDisplayMode.POSTER
-        watched = bool(index.data(WATCHED_ROLE))
+        metrics = _card_metrics_for_mode(str(mode))
         is_special = bool(index.data(SPECIAL_ROLE))
         title = format_episode_title(episode)
         status_text = str(index.data(STATUS_TEXT_ROLE) or "").strip()
-        air_date = str(index.data(AIR_DATE_ROLE) or "").strip()
+        meta_text = _episode_meta_text(episode)
         overview = str(index.data(OVERVIEW_ROLE) or "").strip()
         still = str(index.data(STILL_ROLE) or "").strip()
 
-        content_rect = rect.adjusted(12, 10, -12, -10)
+        content_rect = rect.adjusted(
+            metrics.outer_margin_x,
+            metrics.outer_margin_y,
+            -metrics.outer_margin_x,
+            -metrics.outer_margin_y,
+        )
+        thumb_rect = QRect(
+            content_rect.left(),
+            content_rect.top(),
+            metrics.thumbnail_width,
+            metrics.thumbnail_height,
+        )
+        self._draw_thumbnail(painter, thumb_rect, still)
         text_rect = QRect(content_rect)
-        if mode in {EpisodeDisplayMode.POSTER, EpisodeDisplayMode.FULL}:
-            thumb_rect = QRect(content_rect.left(), content_rect.top(), 120, 68)
-            self._draw_thumbnail(painter, thumb_rect, still)
-            text_rect.setLeft(thumb_rect.right() + 12)
+        text_rect.setLeft(thumb_rect.right() + metrics.inner_spacing)
 
         title_font = painter.font()
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.setPen(QColor(tokens.text_primary))
-        title_line_rect = QRect(text_rect.left(), text_rect.top(), text_rect.width(), 20)
+        title_line_rect = QRect(text_rect.left(), text_rect.top(), text_rect.width(), metrics.title_height)
         badge_width = 0
         if status_text:
-            badge_width = _status_badge_width(painter, status_text) + 8
+            badge_width = _status_badge_width(
+                painter,
+                status_text,
+                padding_x=metrics.badge_padding_x,
+            ) + 8
         painter.drawText(
             title_line_rect.adjusted(0, 0, -badge_width, 0),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
             title,
         )
         if status_text:
-            badge_rect = QRect(
-                title_line_rect.right() - _status_badge_width(painter, status_text),
-                title_line_rect.top(),
-                _status_badge_width(painter, status_text),
-                20,
+            badge_text_width = _status_badge_width(
+                painter,
+                status_text,
+                padding_x=metrics.badge_padding_x,
             )
-            _draw_status_badge(painter, badge_rect, status_text, state)
+            badge_rect = QRect(
+                title_line_rect.right() - badge_text_width,
+                title_line_rect.top(),
+                badge_text_width,
+                metrics.badge_height,
+            )
+            _draw_status_badge(
+                painter,
+                badge_rect,
+                status_text,
+                state,
+                radius=max(8, metrics.badge_height // 2),
+            )
 
-        meta_y = text_rect.top() + 26
-        meta_parts = []
-        if air_date:
-            meta_parts.append(air_date)
-        if is_special:
-            meta_parts.append("特别篇")
-        meta_text = " · ".join(meta_parts)
+        meta_y = title_line_rect.bottom() + 6
+        if is_special and "特别篇" not in meta_text:
+            meta_text = " · ".join([part for part in (meta_text, "特别篇") if part])
 
         meta_font = painter.font()
         meta_font.setBold(False)
         painter.setFont(meta_font)
         painter.setPen(QColor(tokens.text_secondary))
         painter.drawText(
-            QRect(text_rect.left(), meta_y, text_rect.width(), 20),
+            QRect(text_rect.left(), meta_y, text_rect.width(), metrics.meta_height),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
             meta_text,
         )
 
-        if mode == EpisodeDisplayMode.FULL and overview:
-            overview_rect = QRect(text_rect.left(), meta_y + 24, text_rect.width(), 46)
+        if overview:
+            overview_rect = QRect(
+                text_rect.left(),
+                meta_y + metrics.meta_height + 4,
+                text_rect.width(),
+                metrics.overview_height,
+            )
             painter.drawText(
                 overview_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
@@ -661,6 +699,13 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_list.setObjectName("followingEpisodeList")
         self.episode_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.episode_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.episode_list.setViewMode(QListView.ViewMode.IconMode)
+        self.episode_list.setFlow(QListView.Flow.LeftToRight)
+        self.episode_list.setWrapping(True)
+        self.episode_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.episode_list.setMovement(QListView.Movement.Static)
+        self.episode_list.setWordWrap(True)
+        self.episode_list.setSpacing(10)
 
         self.season_model = SeasonListModel(self)
         self.episode_model = EpisodeListModel(
@@ -674,7 +719,7 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_list.setModel(self.episode_model)
         self.episode_list.setItemDelegate(EpisodeItemDelegate(self.thumbnail_store, self.episode_list))
         self.episode_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.episode_list.setHidden(True)
+        self.episode_list.setHidden(False)
 
         self.episode_grid_container = QWidget(self.episode_list_panel)
         self.episode_grid_layout = QGridLayout(self.episode_grid_container)
@@ -687,6 +732,7 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_scroll.setWidgetResizable(True)
         self.episode_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.episode_scroll.setWidget(self.episode_grid_container)
+        self.episode_scroll.setHidden(True)
 
         episode_list_layout = QVBoxLayout(self.episode_list_panel)
         episode_list_layout.setContentsMargins(0, 0, 0, 0)
@@ -727,7 +773,8 @@ class FollowingEpisodeBrowser(QWidget):
             return
         self._grid_columns = normalized
         self._refresh_grid_cycle_button()
-        self._relayout_episode_cards()
+        self.episode_model.set_display_mode(_display_mode_for_grid_columns(normalized))
+        self._apply_episode_grid_metrics()
         self.grid_columns_changed.emit(normalized)
 
     def current_season_summary(self) -> EpisodeSeasonSummary:
@@ -752,6 +799,7 @@ class FollowingEpisodeBrowser(QWidget):
         self._next_episode = next_episode
         self._season_state = {}
         self.season_model.set_groups(self._groups)
+        self.episode_model.set_display_mode(_display_mode_for_grid_columns(self._grid_columns))
         if self._groups:
             initial_row = self._initial_season_row(selected_season_number)
             self._set_current_season_row(initial_row)
@@ -765,6 +813,11 @@ class FollowingEpisodeBrowser(QWidget):
                 latest_season_number=self._latest_season_number,
                 next_episode=self._next_episode,
             )
+            self._apply_episode_grid_metrics()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_episode_grid_metrics()
 
     def current_season_number(self) -> int:
         index = self.season_list.currentIndex()
@@ -830,7 +883,8 @@ class FollowingEpisodeBrowser(QWidget):
         self._current_group = group
         self._current_season_summary = self._build_season_summary(group)
         self._refresh_season_detail_panel()
-        self._rebuild_episode_cards(group.episodes)
+        self.episode_cards = []
+        self._apply_episode_grid_metrics()
         if not group.episodes:
             return
         if restore_state and group.season_number in self._season_state:
@@ -888,6 +942,15 @@ class FollowingEpisodeBrowser(QWidget):
             return 1
         return normalized if normalized in {1, 2, 3} else 1
 
+    def _apply_episode_grid_metrics(self) -> None:
+        metrics = _card_metrics_for_columns(self._grid_columns)
+        spacing = max(0, self.episode_list.spacing())
+        viewport_width = max(1, self.episode_list.viewport().width() or self.episode_list.width() or 1)
+        usable_width = max(1, viewport_width - spacing * max(0, self._grid_columns - 1))
+        card_width = max(220, usable_width // self._grid_columns)
+        self.episode_list.setGridSize(QSize(card_width, metrics.item_height))
+        self.episode_list.doItemsLayout()
+
     def _cycle_grid_columns(self) -> None:
         self.set_grid_columns({1: 2, 2: 3, 3: 1}[self._grid_columns])
 
@@ -931,9 +994,6 @@ class FollowingEpisodeBrowser(QWidget):
 
     def _handle_card_thumbnail_ready(self, source: str) -> None:
         normalized = str(source or "").strip()
-        for card in self.episode_cards:
-            if card._thumbnail_source == normalized:
-                card.refresh_thumbnail()
         if normalized == str(self._current_season_summary.poster or "").strip():
             self._refresh_season_detail_panel()
 
@@ -1082,19 +1142,50 @@ def _episode_status_border_color(tokens, state: str) -> str:
     return border
 
 
-def _status_badge_width(painter: QPainter, text: str) -> int:
-    return painter.fontMetrics().horizontalAdvance(text) + 16
+def _status_badge_width(painter: QPainter, text: str, *, padding_x: int = 8) -> int:
+    return painter.fontMetrics().horizontalAdvance(text) + (padding_x * 2)
 
 
-def _draw_status_badge(painter: QPainter, rect: QRect, text: str, state: str) -> None:
+def _draw_status_badge(
+    painter: QPainter,
+    rect: QRect,
+    text: str,
+    state: str,
+    *,
+    radius: int = 10,
+) -> None:
     background, foreground, _border = _episode_status_colors(state)
     painter.save()
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(background))
-    painter.drawRoundedRect(rect, 10, 10)
+    painter.drawRoundedRect(rect, radius, radius)
     painter.setPen(QColor(foreground))
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
     painter.restore()
+
+
+def _display_mode_for_grid_columns(columns: int) -> str:
+    return {
+        1: EpisodeDisplayMode.FULL,
+        2: EpisodeDisplayMode.POSTER,
+        3: EpisodeDisplayMode.COMPACT,
+    }.get(columns, EpisodeDisplayMode.FULL)
+
+
+def _card_metrics_for_columns(columns: int) -> EpisodeCardMetrics:
+    return {
+        1: EpisodeCardMetrics(164, 148, 84, 10, 10, 10, 42, 18, 54, 20, 8, 2, 12),
+        2: EpisodeCardMetrics(148, 116, 68, 10, 10, 10, 38, 18, 38, 20, 8, 2, 12),
+        3: EpisodeCardMetrics(138, 116, 68, 10, 10, 8, 34, 16, 34, 18, 6, 1, 10),
+    }[columns]
+
+
+def _card_metrics_for_mode(mode: str) -> EpisodeCardMetrics:
+    return {
+        EpisodeDisplayMode.FULL: _card_metrics_for_columns(1),
+        EpisodeDisplayMode.POSTER: _card_metrics_for_columns(2),
+        EpisodeDisplayMode.COMPACT: _card_metrics_for_columns(3),
+    }.get(mode, _card_metrics_for_columns(1))
 
 
 def _overview_max_height(columns: int) -> int:
