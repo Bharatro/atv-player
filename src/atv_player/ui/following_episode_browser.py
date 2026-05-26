@@ -496,20 +496,36 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_detail_panel.setObjectName("followingEpisodeSeasonDetailPanel")
         self.season_detail_poster_label = QLabel("季封面", self.season_detail_panel)
         self.season_detail_title_label = QLabel("", self.season_detail_panel)
-        self.season_detail_meta_label = QLabel("", self.season_detail_panel)
+        self.season_detail_air_date_label = QLabel("", self.season_detail_panel)
+        self.season_detail_episode_count_label = QLabel("", self.season_detail_panel)
         self.season_detail_overview_label = QLabel("", self.season_detail_panel)
         self.season_detail_poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.season_detail_poster_label.setMinimumSize(96, 136)
-        self.season_detail_poster_label.setMaximumSize(96, 136)
+        self.season_detail_poster_label.setMinimumSize(128, 182)
+        self.season_detail_poster_label.setMaximumSize(128, 182)
         self.season_detail_title_label.setWordWrap(True)
-        self.season_detail_meta_label.setWordWrap(True)
+        self.season_detail_air_date_label.setWordWrap(True)
+        self.season_detail_episode_count_label.setWordWrap(True)
         self.season_detail_overview_label.setWordWrap(True)
+        self.season_detail_top_row = QWidget(self.season_detail_panel)
+        self.season_detail_info_layout = QVBoxLayout()
+        self.season_detail_info_layout.setContentsMargins(0, 0, 0, 0)
+        self.season_detail_info_layout.setSpacing(6)
+        self.season_detail_info_layout.addWidget(self.season_detail_title_label)
+        self.season_detail_info_layout.addWidget(self.season_detail_air_date_label)
+        self.season_detail_info_layout.addWidget(self.season_detail_episode_count_label)
+
+        season_detail_top_row_layout = QHBoxLayout(self.season_detail_top_row)
+        season_detail_top_row_layout.setContentsMargins(0, 0, 0, 0)
+        season_detail_top_row_layout.setSpacing(14)
+        season_detail_top_row_layout.addWidget(
+            self.season_detail_poster_label, 0, Qt.AlignmentFlag.AlignTop
+        )
+        season_detail_top_row_layout.addLayout(self.season_detail_info_layout, 1)
+
         season_detail_layout = QVBoxLayout(self.season_detail_panel)
         season_detail_layout.setContentsMargins(10, 10, 10, 10)
-        season_detail_layout.setSpacing(8)
-        season_detail_layout.addWidget(self.season_detail_poster_label, 0, Qt.AlignmentFlag.AlignLeft)
-        season_detail_layout.addWidget(self.season_detail_title_label)
-        season_detail_layout.addWidget(self.season_detail_meta_label)
+        season_detail_layout.setSpacing(12)
+        season_detail_layout.addWidget(self.season_detail_top_row)
         season_detail_layout.addWidget(self.season_detail_overview_label)
         season_detail_layout.addStretch(1)
 
@@ -791,7 +807,10 @@ class FollowingEpisodeBrowser(QWidget):
     def _refresh_season_detail_panel(self) -> None:
         summary = self._current_season_summary
         self.season_detail_title_label.setText(summary.title or "未命名季")
-        self.season_detail_meta_label.setText(_season_summary_meta_text(summary))
+        self.season_detail_air_date_label.setText(summary.air_date or "")
+        self.season_detail_episode_count_label.setText(
+            f"共 {summary.episode_count} 集" if summary.episode_count > 0 else ""
+        )
         self.season_detail_overview_label.setText(summary.overview or "暂无本季简介")
         self.season_detail_poster_label.setText("暂无季封面")
         self.season_detail_poster_label.setPixmap(QPixmap())
@@ -813,15 +832,6 @@ def _episode_meta_text(episode: FollowingEpisode) -> str:
         parts.append(f"{episode.runtime}m")
     if episode.is_special:
         parts.append("特别篇")
-    return " · ".join(parts)
-
-
-def _season_summary_meta_text(summary: EpisodeSeasonSummary) -> str:
-    parts = []
-    if summary.air_date:
-        parts.append(summary.air_date)
-    if summary.episode_count > 0:
-        parts.append(f"共 {summary.episode_count} 集")
     return " · ".join(parts)
 
 
