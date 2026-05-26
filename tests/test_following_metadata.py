@@ -340,6 +340,80 @@ def test_following_metadata_gateway_maps_local_douban_source_into_douban_slot() 
     assert result["douban"][1] >= 0.75
 
 
+def test_following_metadata_gateway_searches_only_tmdb_watch_platforms_and_third_party_sources() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            del query
+            self.calls.append(provider_filter)
+            if provider_filter != "iqiyi":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    "iqiyi",
+                    "爱奇艺",
+                    [
+                        MetadataScrapeCandidate(
+                            provider="iqiyi",
+                            provider_label="爱奇艺",
+                            provider_id="iqiyi:album:1",
+                            title="蜜语纪",
+                            year="2026",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[
+                    {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+                    {"label": "更新状态", "value": "更新至第12集"},
+                ],
+            )
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="蜜语纪",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:123",
+            external_ids={"tmdb": "123"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:123:season:1",
+            title="蜜语纪",
+            year="2026",
+            tmdb_id="123",
+            detail_fields=[
+                {
+                    "label": "watch_providers",
+                    "value": [
+                        {
+                            "provider": "iqiyi",
+                            "label": "爱奇艺",
+                            "url": "https://www.iqiyi.com/a_1.html",
+                        }
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert service.calls == ["official_douban", "local_douban", "douban", "bangumi", "iqiyi"]
+    assert set(result) <= {"douban", "bangumi", "iqiyi"}
+    assert result["iqiyi"][0].provider == "iqiyi"
+
+
 def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
     class Repository:
         def __init__(self) -> None:
@@ -384,6 +458,59 @@ def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_sna
     assert view.snapshot.metadata_bundle is not None
     assert view.snapshot.metadata_bundle.available_source_keys[0] == "merged"
     assert "tmdb" in view.snapshot.metadata_bundle.source_snapshots
+
+
+def test_following_controller_load_detail_saves_generated_metadata_bundle() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.record = FollowingRecord(
+                id=1,
+                title="凡人修仙传",
+                media_kind="anime",
+                provider="tmdb",
+                provider_id="tv:272432",
+                external_ids={"tmdb": "272432"},
+            )
+            self.snapshot = FollowingDetailSnapshot(following_id=1)
+            self.saved_snapshot = None
+
+        def get(self, following_id: int):
+            assert following_id == 1
+            return self.record
+
+        def get_detail_snapshot(self, following_id: int):
+            assert following_id == 1
+            return self.snapshot
+
+        def save_detail_snapshot(self, following_id: int, snapshot: FollowingDetailSnapshot) -> None:
+            assert following_id == 1
+            self.snapshot = snapshot
+            self.saved_snapshot = snapshot
+
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            del query, provider_filter
+            return []
+
+        def detail_record_full(self, candidate):
+            assert candidate.provider == "tmdb"
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:272432:season:1",
+                title="凡人修仙传",
+                year="2026",
+                tmdb_id="272432",
+                overview="TMDB简介",
+            )
+
+    repository = Repository()
+    controller = FollowingController(repository, metadata_search_service=SearchService())
+
+    view = controller.load_detail(1, refresh_if_empty=False)
+
+    assert view.snapshot.metadata_bundle is not None
+    assert repository.saved_snapshot is not None
+    assert repository.saved_snapshot.metadata_bundle is not None
 
 
 def test_following_controller_refresh_metadata_saves_bundle_back_to_snapshot() -> None:

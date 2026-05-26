@@ -448,7 +448,13 @@ class FollowingController:
             self._update_service.check_record(following_id)
             record = self._repository.get(following_id) or record
             snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
+        original_bundle = snapshot.metadata_bundle
         snapshot = self._ensure_metadata_bundle(record, snapshot)
+        if original_bundle is None and snapshot.metadata_bundle is not None:
+            snapshot.following_id = snapshot.following_id or following_id
+            save_snapshot = getattr(self._repository, "save_detail_snapshot", None)
+            if callable(save_snapshot):
+                save_snapshot(following_id, snapshot)
         return FollowingDetailView(record=record, snapshot=snapshot)
 
     def load_detail_season(self, following_id: int, *, season_number: int) -> FollowingDetailView:
@@ -635,6 +641,8 @@ class FollowingController:
             raise KeyError(f"following not found: {following_id}")
         existing_snapshot = self._repository.get_detail_snapshot(following_id)
         candidate = self._tmdb_refresh_candidate_from_record(record)
+        if self._should_skip_tmdb_refresh_without_known_season(record):
+            candidate = None
         include_related = True
         if candidate is None:
             candidate = self._metadata_refresh_candidate(record)
@@ -685,7 +693,8 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
-        snapshot = self._ensure_metadata_bundle(refreshed_record, snapshot)
+        if existing_snapshot is None or self._snapshot_needs_refresh(existing_snapshot):
+            snapshot = self._ensure_metadata_bundle(refreshed_record, snapshot)
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
             following_id,
@@ -702,7 +711,10 @@ class FollowingController:
             snapshot = self._merge_refreshed_snapshot(existing_snapshot, snapshot)
         snapshot.following_id = following_id
         self._repository.save_detail_snapshot(following_id, snapshot)
-        return self.load_detail(following_id, refresh_if_empty=False)
+        return FollowingDetailView(
+            record=self._repository.get(following_id) or replace(refreshed_record, id=following_id),
+            snapshot=snapshot,
+        )
 
     def check_all_due(self):
         if self._update_service is None:
@@ -750,6 +762,17 @@ class FollowingController:
                 if str(getattr(candidate, "provider", "") or "") == provider:
                     return candidate
         return candidates[0]
+
+    def _should_skip_tmdb_refresh_without_known_season(self, record: FollowingRecord) -> bool:
+        if record.provider == "tmdb":
+            return False
+        tmdb_id = str(record.external_ids.get("tmdb") or "").strip()
+        if not tmdb_id:
+            return False
+        media_kind = str(record.media_kind or "").strip().lower()
+        if media_kind == "movie" or "电影" in media_kind:
+            return False
+        return record.season_number <= 0
 
     def _tmdb_refresh_candidate_from_record(self, record: FollowingRecord):
         normalized, season_number = self._normalized_tmdb_provider_id_and_season(

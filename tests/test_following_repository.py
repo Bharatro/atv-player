@@ -4,6 +4,10 @@ from pathlib import Path
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingMetadataBundle,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
+    FollowingRatingEntry,
     FollowingRecord,
     FollowingSeason,
 )
@@ -110,6 +114,63 @@ def test_following_repository_saves_snapshot_progress_and_prompt_state(tmp_path:
     assert snapshot.seasons[0].title == "第一季"
     assert snapshot.episodes[0].title == "新章"
     assert [item.id for item in prompts] == [following_id]
+
+
+def test_following_repository_persists_metadata_bundle(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(_record(provider="tmdb", provider_id="tv:272432", external_ids={"tmdb": "272432"}))
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            overview="TMDB简介",
+            metadata_bundle=FollowingMetadataBundle(
+                merged_snapshot=FollowingMetadataSourceSnapshot(
+                    source_key="merged",
+                    provider="merged",
+                    provider_label="合并",
+                    overview="TMDB简介",
+                    ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1")],
+                    playback_platforms=[
+                        FollowingPlaybackPlatformEntry(
+                            provider="iqiyi",
+                            label="爱奇艺",
+                            url="https://www.iqiyi.com/a_1.html",
+                        )
+                    ],
+                ),
+                source_snapshots={
+                    "merged": FollowingMetadataSourceSnapshot(
+                        source_key="merged",
+                        provider="merged",
+                        provider_label="合并",
+                        overview="TMDB简介",
+                    ),
+                    "tmdb": FollowingMetadataSourceSnapshot(
+                        source_key="tmdb",
+                        provider="tmdb",
+                        provider_label="TMDB",
+                        provider_id="tv:272432:season:1",
+                        overview="TMDB简介",
+                        ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1")],
+                    ),
+                },
+                available_source_keys=["merged", "tmdb"],
+                default_source_key="merged",
+            ),
+            refreshed_at=110,
+        ),
+    )
+
+    reopened = FollowingRepository(tmp_path / "app.db")
+    loaded = reopened.get_detail_snapshot(following_id)
+
+    assert loaded is not None
+    assert loaded.metadata_bundle is not None
+    assert loaded.metadata_bundle.available_source_keys == ["merged", "tmdb"]
+    assert loaded.metadata_bundle.source_snapshots["tmdb"].provider_id == "tv:272432:season:1"
+    assert loaded.metadata_bundle.merged_snapshot.ratings[0].value == "8.1"
+    assert loaded.metadata_bundle.merged_snapshot.playback_platforms[0].label == "爱奇艺"
 
 
 def test_following_repository_update_progress_clears_update_when_latest_watched(tmp_path: Path) -> None:

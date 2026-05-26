@@ -9,6 +9,10 @@ from typing import Any
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingMetadataBundle,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
+    FollowingRatingEntry,
     FollowingRecord,
     FollowingSeason,
     FollowingSourceBinding,
@@ -141,6 +145,134 @@ def _season_from_dict(value: object) -> FollowingSeason:
     )
 
 
+def _rating_entry_to_dict(entry: FollowingRatingEntry) -> dict[str, str]:
+    return {
+        "provider": entry.provider,
+        "label": entry.label,
+        "value": entry.value,
+    }
+
+
+def _rating_entry_from_dict(value: object) -> FollowingRatingEntry:
+    data = value if isinstance(value, dict) else {}
+    return FollowingRatingEntry(
+        provider=str(data.get("provider") or ""),
+        label=str(data.get("label") or ""),
+        value=str(data.get("value") or ""),
+    )
+
+
+def _platform_entry_to_dict(entry: FollowingPlaybackPlatformEntry) -> dict[str, object]:
+    return {
+        "provider": entry.provider,
+        "label": entry.label,
+        "url": entry.url,
+        "latest_episode": entry.latest_episode,
+        "update_time_text": entry.update_time_text,
+        "status_text": entry.status_text,
+    }
+
+
+def _platform_entry_from_dict(value: object) -> FollowingPlaybackPlatformEntry:
+    data = value if isinstance(value, dict) else {}
+    return FollowingPlaybackPlatformEntry(
+        provider=str(data.get("provider") or ""),
+        label=str(data.get("label") or ""),
+        url=str(data.get("url") or ""),
+        latest_episode=int(data.get("latest_episode") or 0),
+        update_time_text=str(data.get("update_time_text") or ""),
+        status_text=str(data.get("status_text") or ""),
+    )
+
+
+def _source_snapshot_to_dict(snapshot: FollowingMetadataSourceSnapshot) -> dict[str, object]:
+    return {
+        "source_key": snapshot.source_key,
+        "provider": snapshot.provider,
+        "provider_label": snapshot.provider_label,
+        "provider_id": snapshot.provider_id,
+        "matched": snapshot.matched,
+        "confidence": snapshot.confidence,
+        "url": snapshot.url,
+        "overview": snapshot.overview,
+        "metadata_fields": list(snapshot.metadata_fields),
+        "ratings": [_rating_entry_to_dict(entry) for entry in snapshot.ratings],
+        "playback_platforms": [_platform_entry_to_dict(entry) for entry in snapshot.playback_platforms],
+        "episodes": [_episode_to_dict(item) for item in snapshot.episodes],
+        "seasons": [_season_to_dict(item) for item in snapshot.seasons],
+    }
+
+
+def _source_snapshot_from_dict(value: object) -> FollowingMetadataSourceSnapshot:
+    data = value if isinstance(value, dict) else {}
+    metadata_fields = []
+    for item in data.get("metadata_fields") or []:
+        if not isinstance(item, dict):
+            continue
+        metadata_fields.append(
+            {
+                "label": str(item.get("label") or ""),
+                "value": str(item.get("value") or ""),
+            }
+        )
+    return FollowingMetadataSourceSnapshot(
+        source_key=str(data.get("source_key") or ""),
+        provider=str(data.get("provider") or ""),
+        provider_label=str(data.get("provider_label") or ""),
+        provider_id=str(data.get("provider_id") or ""),
+        matched=bool(data.get("matched", True)),
+        confidence=float(data.get("confidence") or 0.0),
+        url=str(data.get("url") or ""),
+        overview=str(data.get("overview") or ""),
+        metadata_fields=metadata_fields,
+        ratings=[_rating_entry_from_dict(item) for item in data.get("ratings") or []],
+        playback_platforms=[_platform_entry_from_dict(item) for item in data.get("playback_platforms") or []],
+        episodes=[_episode_from_dict(item) for item in data.get("episodes") or []],
+        seasons=[_season_from_dict(item) for item in data.get("seasons") or []],
+    )
+
+
+def _metadata_bundle_to_dict(bundle: FollowingMetadataBundle | None) -> dict[str, object] | None:
+    if bundle is None:
+        return None
+    return {
+        "merged_snapshot": _source_snapshot_to_dict(bundle.merged_snapshot),
+        "source_snapshots": {
+            str(key): _source_snapshot_to_dict(snapshot)
+            for key, snapshot in bundle.source_snapshots.items()
+        },
+        "available_source_keys": list(bundle.available_source_keys),
+        "default_source_key": bundle.default_source_key,
+    }
+
+
+def _metadata_bundle_from_dict(value: object) -> FollowingMetadataBundle | None:
+    data = value if isinstance(value, dict) else {}
+    merged_raw = data.get("merged_snapshot")
+    if not isinstance(merged_raw, dict):
+        return None
+    source_snapshots: dict[str, FollowingMetadataSourceSnapshot] = {}
+    raw_sources = data.get("source_snapshots")
+    if isinstance(raw_sources, dict):
+        for key, snapshot in raw_sources.items():
+            if not isinstance(snapshot, dict):
+                continue
+            source_snapshots[str(key)] = _source_snapshot_from_dict(snapshot)
+    merged_snapshot = _source_snapshot_from_dict(merged_raw)
+    if "merged" not in source_snapshots:
+        source_snapshots["merged"] = merged_snapshot
+    available_source_keys = [str(item) for item in data.get("available_source_keys") or [] if str(item or "").strip()]
+    if not available_source_keys:
+        available_source_keys = list(source_snapshots) or ["merged"]
+    default_source_key = str(data.get("default_source_key") or "merged").strip() or "merged"
+    return FollowingMetadataBundle(
+        merged_snapshot=merged_snapshot,
+        source_snapshots=source_snapshots,
+        available_source_keys=available_source_keys,
+        default_source_key=default_source_key,
+    )
+
+
 class FollowingRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -201,6 +333,7 @@ class FollowingRepository:
                     episodes_json TEXT NOT NULL DEFAULT '[]',
                     posters_json TEXT NOT NULL DEFAULT '[]',
                     backdrops_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_bundle_json TEXT NOT NULL DEFAULT '',
                     refreshed_at INTEGER NOT NULL DEFAULT 0
                 )
                 """
@@ -215,6 +348,10 @@ class FollowingRepository:
                 pass
             try:
                 conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN seasons_json TEXT NOT NULL DEFAULT '[]'")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN metadata_bundle_json TEXT NOT NULL DEFAULT ''")
             except Exception:
                 pass
             conn.execute(
@@ -332,9 +469,9 @@ class FollowingRepository:
                 """
                 INSERT INTO following_detail_snapshots (
                     following_id, overview, metadata_fields_json, cast_json, crew_json, seasons_json, episodes_json,
-                    posters_json, backdrops_json, refreshed_at
+                    posters_json, backdrops_json, metadata_bundle_json, refreshed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(following_id) DO UPDATE SET
                     overview = excluded.overview,
                     metadata_fields_json = excluded.metadata_fields_json,
@@ -344,6 +481,7 @@ class FollowingRepository:
                     episodes_json = excluded.episodes_json,
                     posters_json = excluded.posters_json,
                     backdrops_json = excluded.backdrops_json,
+                    metadata_bundle_json = excluded.metadata_bundle_json,
                     refreshed_at = excluded.refreshed_at
                 """,
                 (
@@ -356,6 +494,7 @@ class FollowingRepository:
                     _json_dumps([_episode_to_dict(episode) for episode in snapshot.episodes]),
                     _json_dumps(snapshot.posters),
                     _json_dumps(snapshot.backdrops),
+                    _json_dumps(_metadata_bundle_to_dict(snapshot.metadata_bundle) or {}),
                     snapshot.refreshed_at,
                 ),
             )
@@ -365,7 +504,7 @@ class FollowingRepository:
             row = conn.execute(
                 """
                 SELECT following_id, overview, metadata_fields_json, cast_json, crew_json, seasons_json, episodes_json,
-                       posters_json, backdrops_json, refreshed_at
+                       posters_json, backdrops_json, metadata_bundle_json, refreshed_at
                 FROM following_detail_snapshots
                 WHERE following_id = ?
                 """,
@@ -387,7 +526,8 @@ class FollowingRepository:
             episodes=[_episode_from_dict(item) for item in _json_loads(row[6], [])],
             posters=[str(item) for item in _json_loads(row[7], [])],
             backdrops=[str(item) for item in _json_loads(row[8], [])],
-            refreshed_at=int(row[9]),
+            metadata_bundle=_metadata_bundle_from_dict(_json_loads(row[9], {})),
+            refreshed_at=int(row[10]),
         )
 
     def update_progress(

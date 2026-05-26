@@ -42,6 +42,8 @@ _FOLLOWING_SOURCE_THRESHOLDS = {
 _FOLLOWING_SOURCE_PROVIDER_FILTERS = {
     "douban": ("official_douban", "local_douban", "douban"),
 }
+_THIRD_PARTY_SOURCE_PROVIDERS = ("douban", "bangumi")
+_PLAYBACK_SOURCE_PROVIDERS = {"bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}
 
 
 def following_provider_priority(media_kind: str) -> list[str]:
@@ -1098,6 +1100,14 @@ class FollowingMetadataGateway:
     def _source_provider_filters(self, provider: str) -> tuple[str, ...]:
         return _FOLLOWING_SOURCE_PROVIDER_FILTERS.get(provider, (provider,))
 
+    def _source_providers_for_tmdb_record(self, tmdb_record: MetadataRecord) -> tuple[str, ...]:
+        providers: list[str] = list(_THIRD_PARTY_SOURCE_PROVIDERS)
+        for entry in _playback_platform_entries_from_tmdb(tmdb_record):
+            provider = str(entry.provider or "").strip()
+            if provider in _PLAYBACK_SOURCE_PROVIDERS and provider not in providers:
+                providers.append(provider)
+        return tuple(providers)
+
     def load_source_records(
         self,
         record: FollowingRecord,
@@ -1111,7 +1121,7 @@ class FollowingMetadataGateway:
             year=str(getattr(tmdb_record, "year", "") or "").strip(),
             category_name=category_name,
         )
-        for provider in ("douban", "bangumi", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"):
+        for provider in self._source_providers_for_tmdb_record(tmdb_record):
             candidates: list[object] = []
             for provider_filter in self._source_provider_filters(provider):
                 try:
