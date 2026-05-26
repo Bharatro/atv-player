@@ -2385,26 +2385,26 @@ def test_settings_repository_persists_bilibili_grouped_playlist_tree_enabled(tmp
     assert loaded.bilibili_grouped_playlist_tree_enabled is True
 
 
-def test_settings_repository_persists_following_episode_display_mode(tmp_path: Path) -> None:
+def test_settings_repository_persists_following_episode_grid_columns(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
-    config.following_episode_display_mode = "full"
+    config.following_episode_grid_columns = 3
 
     repo.save_config(config)
     loaded = SettingsRepository(tmp_path / "app.db").load_config()
 
-    assert loaded.following_episode_display_mode == "full"
+    assert loaded.following_episode_grid_columns == 3
 
 
-def test_settings_repository_normalizes_invalid_following_episode_display_mode(tmp_path: Path) -> None:
+def test_settings_repository_normalizes_invalid_following_episode_grid_columns(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
-    config.following_episode_display_mode = "giant-cards"
+    config.following_episode_grid_columns = 99
 
     repo.save_config(config)
     loaded = repo.load_config()
 
-    assert loaded.following_episode_display_mode == "poster"
+    assert loaded.following_episode_grid_columns == 1
 
 
 def test_settings_repository_defaults_missing_bilibili_grouped_playlist_tree_enabled_to_false(tmp_path: Path) -> None:
