@@ -177,8 +177,8 @@ def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None
     assert page.episodes_section.objectName() == "followingDetailEpisodesSection"
     assert page.cast_section.objectName() == "followingDetailCastSection"
     assert page.episode_browser.grid_columns() == 1
-    assert hasattr(page, "season_header_title_label")
-    assert len(page.episode_column_buttons) == 3
+    assert page.episode_browser.season_detail_panel.isVisible() is True
+    assert page.episode_browser.episode_list_panel.isVisible() is True
     assert page.episode_browser.season_list.model().rowCount() == 1
     assert page.episode_browser.episode_list.model().rowCount() == 1
     assert page.cast_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
@@ -322,10 +322,10 @@ def test_following_detail_page_uses_configured_initial_grid_columns(qtbot) -> No
     page.load_record(1)
 
     assert page.episode_browser.grid_columns() == 1
-    assert page.episode_column_buttons[1].isChecked() is True
+    assert page.episode_browser.grid_cycle_button.toolTip() == "单列"
 
 
-def test_following_detail_page_switches_and_persists_episode_grid_columns(qtbot) -> None:
+def test_following_detail_page_persists_grid_columns_after_cycle_click(qtbot) -> None:
     config = AppConfig(following_episode_grid_columns=1)
     saved: list[int] = []
 
@@ -336,19 +336,45 @@ def test_following_detail_page_switches_and_persists_episode_grid_columns(qtbot)
     qtbot.addWidget(page)
     page.load_record(1)
 
-    page.episode_column_buttons[3].click()
+    page.episode_browser.grid_cycle_button.click()
 
-    assert config.following_episode_grid_columns == 3
-    assert saved == [3]
+    assert config.following_episode_grid_columns == 2
+    assert saved == [2]
 
 
-def test_following_detail_page_renders_selected_season_header(qtbot) -> None:
+def test_following_detail_page_uses_browser_owned_three_pane_workspace(qtbot) -> None:
     page = FollowingDetailPage(FakeController())
     qtbot.addWidget(page)
     page.load_record(1)
 
-    assert page.season_header_title_label.text() == "第一季"
-    assert "长篇简介" in page.season_header_overview_label.text()
+    assert not hasattr(page, "season_header_title_label")
+    assert page.episode_browser.season_detail_panel.isVisible() is True
+    assert page.episode_browser.episode_list_panel.isVisible() is True
+
+
+def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) -> None:
+    class MultiSeasonController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.snapshot.seasons = [
+                FollowingSeason(season_number=1, title="第一季", overview="第一季简介", episode_count=2),
+                FollowingSeason(season_number=2, title="第二季", overview="第二季简介", episode_count=1),
+            ]
+            view.snapshot.episodes = [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=1, season_number=2, title="S2E1"),
+            ]
+            return view
+
+    page = FollowingDetailPage(MultiSeasonController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    season_model = page.episode_browser.season_list.model()
+    page.episode_browser.season_list.setCurrentIndex(season_model.index(1, 0))
+
+    assert page.episode_browser.season_detail_title_label.text() == "第二季"
+    assert "第二季简介" in page.episode_browser.season_detail_overview_label.text()
 
 
 def test_following_detail_page_opens_preview_dialog_from_episode_activation(
