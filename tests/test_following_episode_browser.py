@@ -212,6 +212,16 @@ def test_following_episode_browser_season_detail_text_is_selectable(qtbot) -> No
     assert browser.season_detail_overview_label.textInteractionFlags() & selectable
 
 
+def test_following_episode_browser_places_title_count_and_air_date_at_top(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    assert browser.season_detail_info_layout.itemAt(0).widget() is browser.season_detail_title_label
+    assert browser.season_detail_info_layout.itemAt(1).widget() is browser.season_detail_episode_count_label
+    assert browser.season_detail_info_layout.itemAt(2).widget() is browser.season_detail_air_date_label
+    assert browser.season_detail_info_layout.itemAt(3).spacerItem() is not None
+
+
 def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)

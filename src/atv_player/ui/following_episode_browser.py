@@ -516,8 +516,9 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_detail_info_layout.setContentsMargins(0, 0, 0, 0)
         self.season_detail_info_layout.setSpacing(6)
         self.season_detail_info_layout.addWidget(self.season_detail_title_label)
-        self.season_detail_info_layout.addWidget(self.season_detail_air_date_label)
         self.season_detail_info_layout.addWidget(self.season_detail_episode_count_label)
+        self.season_detail_info_layout.addWidget(self.season_detail_air_date_label)
+        self.season_detail_info_layout.addStretch(1)
 
         season_detail_top_row_layout = QHBoxLayout(self.season_detail_top_row)
         season_detail_top_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -812,10 +813,10 @@ class FollowingEpisodeBrowser(QWidget):
     def _refresh_season_detail_panel(self) -> None:
         summary = self._current_season_summary
         self.season_detail_title_label.setText(summary.title or "未命名季")
-        self.season_detail_air_date_label.setText(summary.air_date or "")
         self.season_detail_episode_count_label.setText(
             f"共 {summary.episode_count} 集" if summary.episode_count > 0 else ""
         )
+        self.season_detail_air_date_label.setText(summary.air_date or "")
         self.season_detail_overview_label.setText(summary.overview or "暂无本季简介")
         self.season_detail_poster_label.setText("暂无季封面")
         self.season_detail_poster_label.setPixmap(QPixmap())
