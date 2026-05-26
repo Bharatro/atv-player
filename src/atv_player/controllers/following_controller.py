@@ -28,6 +28,7 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
     resolve_progress_season,
 )
+from atv_player.metadata.discovery import DiscoveryQuery, DiscoveryResult, RecommendationSeed
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
@@ -40,11 +41,22 @@ class FollowingDetailView:
 
 
 class FollowingController:
-    def __init__(self, repository, *, metadata_search_service, update_service=None, now=None) -> None:
+    def __init__(
+        self,
+        repository,
+        *,
+        metadata_search_service,
+        update_service=None,
+        now=None,
+        discovery_service=None,
+        favorite_tmdb_binding_repository=None,
+    ) -> None:
         self._repository = repository
         self._metadata_search_service = metadata_search_service
         self._update_service = update_service
         self._now = now or (lambda: int(time.time()))
+        self._discovery_service = discovery_service
+        self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
 
     def search_media(self, keyword: str):
         url_candidate = self.candidate_from_url(keyword)
@@ -62,6 +74,120 @@ class FollowingController:
         query = MetadataQuery(title=keyword.strip())
         groups = self._search_tmdb_following(query)
         return [self._sort_following_group_items(group) for group in groups]
+
+    def load_discovery_tab(self, tab_key: str, *, query: str = "", page: int = 1, filters: dict[str, str] | None = None):
+        if self._discovery_service is None:
+            raise RuntimeError("TMDB discovery unavailable")
+        normalized_tab = str(tab_key or "").strip() or "recommendation"
+        if normalized_tab == "recommendation":
+            return self._load_recommendation_result(page=page)
+        if normalized_tab == "trending":
+            return self._discovery_service.trending(
+                DiscoveryQuery(
+                    kind="trending",
+                    media_type=str((filters or {}).get("media_type") or "tv"),
+                    list_key=str((filters or {}).get("list_key") or "trending_week"),
+                    page=page,
+                )
+            )
+        if normalized_tab == "discover":
+            return self._discovery_service.discover(
+                DiscoveryQuery(
+                    kind="discover",
+                    media_type=str((filters or {}).get("media_type") or "tv"),
+                    sort_by=str((filters or {}).get("sort_by") or ""),
+                    year=str((filters or {}).get("year") or ""),
+                    with_genres=str((filters or {}).get("with_genres") or ""),
+                    with_origin_country=str((filters or {}).get("with_origin_country") or ""),
+                    page=page,
+                )
+            )
+        raise RuntimeError(f"unsupported discovery tab: {normalized_tab}")
+
+    def _load_recommendation_result(self, *, page: int) -> DiscoveryResult:
+        seeds = self._build_recommendation_seeds(limit=30)
+        favorite_provider_ids = set()
+        if self._favorite_tmdb_binding_repository is not None and hasattr(
+            self._favorite_tmdb_binding_repository, "load_recent"
+        ):
+            favorite_provider_ids = {
+                str(binding.provider_id or "").strip()
+                for binding in self._favorite_tmdb_binding_repository.load_recent(limit=200)
+                if str(getattr(binding, "provider_id", "") or "").strip()
+            }
+        following_provider_ids = {
+            str(record.provider_id or "").strip()
+            for record in self._repository.load_recent_recommendation_candidates(limit=200)
+            if str(record.provider_id or "").strip()
+        }
+        result = self._discovery_service.recommend(
+            seeds=seeds,
+            favorite_provider_ids=favorite_provider_ids,
+            following_provider_ids=following_provider_ids,
+        )
+        if result.items:
+            return result
+        fallback = self._discovery_service.trending(
+            DiscoveryQuery(kind="trending", media_type="tv", list_key="trending_week", page=page)
+        )
+        fallback.fallback_reason = "recommendation-empty"
+        return fallback
+
+    def _build_recommendation_seeds(self, *, limit: int) -> list[RecommendationSeed]:
+        seeds: list[RecommendationSeed] = []
+        seen_provider_ids: set[str] = set()
+        for record in self._repository.load_recent_recommendation_candidates(limit=limit):
+            provider_id = str(record.provider_id or "").strip()
+            tmdb_id = str((record.external_ids or {}).get("tmdb") or "").strip()
+            if provider_id.startswith("tv:") and not tmdb_id:
+                tmdb_id = provider_id.split(":")[1]
+            elif provider_id.startswith("movie:") and not tmdb_id:
+                tmdb_id = provider_id.split(":")[1]
+            if not provider_id or not tmdb_id or provider_id in seen_provider_ids:
+                continue
+            seen_provider_ids.add(provider_id)
+            media_type = "tv" if provider_id.startswith("tv:") else "movie"
+            activity_weight = 5.0 if bool(record.has_update) else 3.0
+            if int(record.last_played_at or 0) > 0:
+                activity_weight += 1.0
+            seeds.append(
+                RecommendationSeed(
+                    provider_id=provider_id,
+                    tmdb_id=tmdb_id,
+                    media_type=media_type,
+                    seed_source="following",
+                    activity_weight=activity_weight,
+                    activity_timestamp=max(int(record.last_played_at or 0), int(record.updated_at or 0)),
+                    reason_flags=["has_update"] if bool(record.has_update) else [],
+                )
+            )
+        if self._favorite_tmdb_binding_repository is not None and hasattr(
+            self._favorite_tmdb_binding_repository, "load_recent"
+        ):
+            remaining = max(0, int(limit or 0) - len(seeds))
+            for binding in self._favorite_tmdb_binding_repository.load_recent(limit=max(remaining, limit)):
+                provider_id = str(getattr(binding, "provider_id", "") or "").strip()
+                tmdb_id = str(getattr(binding, "tmdb_id", "") or "").strip()
+                media_type = str(getattr(binding, "media_type", "") or "").strip() or (
+                    "tv" if provider_id.startswith("tv:") else "movie"
+                )
+                if not provider_id or not tmdb_id or provider_id in seen_provider_ids:
+                    continue
+                seen_provider_ids.add(provider_id)
+                seeds.append(
+                    RecommendationSeed(
+                        provider_id=provider_id,
+                        tmdb_id=tmdb_id,
+                        media_type=media_type,
+                        seed_source="favorite",
+                        activity_weight=2.0,
+                        activity_timestamp=int(getattr(binding, "updated_at", 0) or 0),
+                        reason_flags=[],
+                    )
+                )
+                if len(seeds) >= max(0, int(limit or 0)):
+                    break
+        return seeds
 
     def _search_tmdb_following(self, query: MetadataQuery):
         search_fn = getattr(self._metadata_search_service, "search_following", None)

@@ -43,6 +43,17 @@ class DiscoveryResult:
     fallback_reason: str = ""
 
 
+@dataclass(slots=True)
+class RecommendationSeed:
+    provider_id: str
+    tmdb_id: str
+    media_type: str
+    seed_source: str
+    activity_weight: float
+    activity_timestamp: int
+    reason_flags: list[str] = field(default_factory=list)
+
+
 class TMDBDiscoveryService:
     def __init__(self, *, client, cache: MetadataCache) -> None:
         self._client = client
@@ -72,6 +83,33 @@ class TMDBDiscoveryService:
             )
         ]
         return DiscoveryResult(items=items, total=len(items), source_label="筛选结果")
+
+    def recommend(
+        self,
+        *,
+        seeds: list[RecommendationSeed],
+        favorite_provider_ids: set[str],
+        following_provider_ids: set[str],
+    ) -> DiscoveryResult:
+        scored: dict[str, tuple[float, dict[str, object]]] = {}
+        for seed in list(seeds or []):
+            rows = self._client.get_recommendations(
+                media_type=seed.media_type,
+                tmdb_id=seed.tmdb_id,
+                page=1,
+            )
+            for raw in rows[:12]:
+                item = self._map_item(raw, source_label="推荐")
+                if item.provider_id in favorite_provider_ids or item.provider_id in following_provider_ids:
+                    continue
+                score = seed.activity_weight
+                score += float(raw.get("vote_average") or 0) / 10.0
+                score += float(raw.get("popularity") or 0) / 1000.0
+                existing_score, _existing_raw = scored.get(item.provider_id, (0.0, raw))
+                scored[item.provider_id] = (existing_score + score, raw)
+        ordered = sorted(scored.items(), key=lambda entry: entry[1][0], reverse=True)
+        items = [self._map_item(raw, source_label="推荐") for _provider_id, (_score, raw) in ordered]
+        return DiscoveryResult(items=items, total=len(items), source_label="推荐")
 
     def _map_item(self, raw: dict[str, object], *, source_label: str) -> DiscoveryItem:
         media_type = "tv" if raw.get("name") else "movie"

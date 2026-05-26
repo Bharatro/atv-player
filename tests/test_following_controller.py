@@ -8,6 +8,8 @@ from atv_player.following_models import (
     FollowingRecord,
 )
 from atv_player.following_repository import FollowingRepository
+from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
+from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
 from atv_player.models import PlaybackDetailField, PlayItem, VodItem
@@ -415,6 +417,92 @@ def test_following_controller_builds_card_and_detail_models(tmp_path: Path) -> N
     assert cards[0].progress_text == "看到 S2E3 · 最新 S5E8 / 总 8"
     assert cards[0].updated_hint is True
     assert detail.snapshot.overview == "简介"
+
+
+def test_following_controller_loads_recommendations_and_falls_back_to_trending_when_empty(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="黑袍纠察队",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:76479",
+            external_ids={"tmdb": "76479"},
+            has_update=True,
+            updated_at=100,
+        )
+    )
+
+    class DiscoveryService:
+        def recommend(self, **_kwargs):
+            return DiscoveryResult(items=[], total=0, source_label="推荐", fallback_reason="")
+
+        def trending(self, query):
+            assert query.kind == "trending"
+            return DiscoveryResult(
+                items=[
+                    DiscoveryItem(
+                        provider="tmdb",
+                        provider_id="tv:100",
+                        tmdb_id="100",
+                        media_type="tv",
+                        title="Gen V",
+                        source_label="本周趋势",
+                    )
+                ],
+                total=1,
+                source_label="本周趋势",
+            )
+
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        discovery_service=DiscoveryService(),
+        favorite_tmdb_binding_repository=FavoriteTMDBBindingRepository(tmp_path / "app.db"),
+    )
+
+    result = controller.load_discovery_tab("recommendation")
+
+    assert result.items[0].provider_id == "tv:100"
+    assert result.fallback_reason == "recommendation-empty"
+
+
+def test_following_controller_recommendation_seeds_include_recent_favorite_tmdb_bindings(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    favorite_bindings = FavoriteTMDBBindingRepository(tmp_path / "app.db")
+    favorite_bindings.save(
+        source_kind="browse",
+        source_key="",
+        vod_id="detail-2",
+        provider_id="movie:157336",
+        tmdb_id="157336",
+        media_type="movie",
+        title="星际穿越",
+        year="2014",
+        updated_at=200,
+    )
+    captured = {}
+
+    class DiscoveryService:
+        def recommend(self, **kwargs):
+            captured.update(kwargs)
+            return DiscoveryResult(items=[], total=0, source_label="推荐", fallback_reason="")
+
+        def trending(self, query):
+            return DiscoveryResult(items=[], total=0, source_label="本周趋势", fallback_reason="")
+
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        discovery_service=DiscoveryService(),
+        favorite_tmdb_binding_repository=favorite_bindings,
+    )
+
+    controller.load_discovery_tab("recommendation")
+
+    assert [seed.provider_id for seed in captured["seeds"]] == ["movie:157336"]
+    assert captured["seeds"][0].seed_source == "favorite"
 
 
 def test_following_controller_records_season_progress(tmp_path: Path) -> None:
