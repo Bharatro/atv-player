@@ -75,6 +75,213 @@ def test_following_playback_platform_entry_can_represent_link_only_platform() ->
     assert entry.status_text == ""
 
 
+def test_build_following_metadata_bundle_keeps_tmdb_primary_and_adds_douban_bangumi_ratings() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:272432:season:1",
+        title="凡人修仙传",
+        tmdb_id="272432",
+        rating="8.1",
+        poster="tmdb-poster",
+        backdrop="tmdb-backdrop",
+        overview="TMDB简介",
+        genres=["动画"],
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "provider": "iqiyi",
+                        "label": "爱奇艺",
+                        "url": "https://www.iqiyi.com/a_1.html",
+                    }
+                ],
+            },
+            {"label": "episodes", "value": [{"episode_number": 128, "name": "新章"}]},
+        ],
+    )
+    douban_record = MetadataRecord(
+        provider="douban",
+        provider_id="35517044",
+        title="凡人修仙传",
+        rating="7.9",
+        overview="豆瓣简介",
+        directors=["刘海波"],
+    )
+    bangumi_record = MetadataRecord(
+        provider="bangumi",
+        provider_id="subject:1",
+        title="凡人修仙传",
+        rating="8.4",
+        aliases=["凡人修仙传 动画版"],
+    )
+    iqiyi_record = MetadataRecord(
+        provider="iqiyi",
+        provider_id="iqiyi:album:1",
+        title="凡人修仙传",
+        detail_fields=[
+            {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+            {"label": "更新时间", "value": "2026-05-25"},
+            {"label": "更新状态", "value": "更新至第128集"},
+            {"label": "最新集数", "value": "128"},
+        ],
+    )
+
+    bundle, merged_record, merged_snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:272432",
+            external_ids={"tmdb": "272432"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={
+            "douban": (douban_record, 0.92),
+            "bangumi": (bangumi_record, 0.94),
+            "iqiyi": (iqiyi_record, 0.98),
+        },
+    )
+
+    assert merged_record.poster == "tmdb-poster"
+    assert [item.label for item in bundle.merged_snapshot.ratings] == ["TMDB", "豆瓣", "Bangumi"]
+    assert [item.value for item in bundle.merged_snapshot.ratings] == ["8.1", "7.9", "8.4"]
+    assert merged_snapshot.overview == "TMDB简介"
+    assert any(field["label"] == "导演" and field["value"] == "刘海波" for field in merged_snapshot.metadata_fields)
+    assert bundle.merged_snapshot.playback_platforms[0].label == "爱奇艺"
+    assert bundle.merged_snapshot.playback_platforms[0].update_time_text == "2026-05-25"
+    assert bundle.merged_snapshot.playback_platforms[0].status_text == "更新至第128集"
+
+
+def test_build_following_metadata_bundle_ignores_provider_below_threshold() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(provider="tmdb", provider_id="tv:1:season:1", title="测试", tmdb_id="1")
+    low_confidence = MetadataRecord(provider="douban", provider_id="2", title="错误候选", rating="4.2")
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (low_confidence, 0.45)},
+    )
+
+    assert bundle.available_source_keys == ["merged", "tmdb"]
+    assert "douban" not in bundle.source_snapshots
+
+
+def test_build_following_metadata_bundle_keeps_tmdb_platform_link_without_fake_update_fields() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1:season:1",
+        title="测试",
+        tmdb_id="1",
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "provider": "youku",
+                        "label": "优酷",
+                        "url": "https://v.youku.com/v_show/id_x.html",
+                    }
+                ],
+            }
+        ],
+    )
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={},
+    )
+
+    platform = bundle.merged_snapshot.playback_platforms[0]
+    assert platform.label == "优酷"
+    assert platform.url == "https://v.youku.com/v_show/id_x.html"
+    assert platform.update_time_text == ""
+    assert platform.status_text == ""
+
+
+def test_following_metadata_gateway_searches_platform_sources_from_tmdb_identity() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def search(self, query, provider_filter=""):
+            self.calls.append((provider_filter, query.title, query.year))
+            if provider_filter == "douban":
+                return [
+                    MetadataScrapeGroup(
+                        "douban",
+                        "豆瓣",
+                        [
+                            MetadataScrapeCandidate(
+                                provider="douban",
+                                provider_label="豆瓣",
+                                provider_id="35517044",
+                                title="凡人修仙传",
+                                year="2026",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                rating="7.9",
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:272432",
+            external_ids={"tmdb": "272432"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="凡人修仙传",
+            year="2026",
+            tmdb_id="272432",
+            aliases=["凡人修仙传 动画版"],
+        ),
+    )
+
+    assert "douban" in result
+    assert result["douban"][0].provider == "douban"
+    assert result["douban"][1] >= 0.75
+
+
 def test_following_candidate_from_supported_urls() -> None:
     assert following_candidate_from_url("https://bgm.tv/subject/521431").provider_id == "subject:521431"
     assert following_candidate_from_url("https://movie.douban.com/subject/37090537/").provider_id == "37090537"
