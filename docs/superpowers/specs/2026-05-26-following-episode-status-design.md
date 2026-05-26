@@ -16,6 +16,8 @@ This design also extends TMDB-derived following detail data so `next_episode_to_
 ## Goals
 
 - Show a clear, stable status for each visible episode card in the following detail page.
+- Show the same resolved status inside the episode preview dialog opened from the detail page.
+- Let users mark the previewed episode as watched from that same preview dialog.
 - Keep the status readable in single-column, two-column, and three-column episode layouts.
 - Use both text and color so the meaning is understandable without memorizing colors.
 - Treat TMDB `next_episode_to_air` as a first-class signal for `即将更新`.
@@ -26,6 +28,8 @@ This design also extends TMDB-derived following detail data so `next_episode_to_
 
 - Do not add new episode rows that are not already present in the loaded episode list.
 - Do not redesign the page layout beyond status badges and border accents on episode cards.
+- Do not redesign the preview dialog layout beyond adding the episode status to its displayed metadata.
+- Do not add a second progress-management flow; reuse the existing following progress write path.
 - Do not introduce background refreshes or extra metadata fetches only for status display.
 - Do not add hover popovers, tooltips, or separate legend UI in this iteration.
 - Do not persist per-episode status in storage; it should be derived from existing detail data.
@@ -69,6 +73,7 @@ Responsibilities by layer:
 - UI layer:
   - consume the resolved status
   - render inline badge text and border color
+  - pass the same resolved status into the preview dialog instead of recomputing from raw TMDB fields there
   - avoid embedding TMDB-specific rules directly in widget code
 
 This keeps the UI deterministic and avoids scattering episode-state rules across delegates, cards, and page-level glue.
@@ -206,8 +211,22 @@ Apply the same status presentation in both right-side episode renderers:
 
 - custom `FollowingEpisodeCard` grid cards
 - `EpisodeItemDelegate` list-style row rendering
+- `FollowingEpisodePreviewDialog` metadata line / status row
 
 Even if the detail page currently favors the card/grid presentation, the delegate path should stay behaviorally aligned.
+
+### Preview Dialog
+
+When a user opens the episode preview dialog from a card or list row, the dialog should display the same resolved symbolic status as the source card.
+
+Recommended behavior:
+
+- keep the existing title, air date, runtime, overview, and image structure
+- add the localized status text to the dialog metadata area
+- do not recompute status in the dialog from partial information; pass the already resolved state from the browser/detail-page path
+- add a `标记本集已看` action button in the dialog
+- clicking that action should advance following progress to the previewed episode's `(season_number, episode_number)` using the existing `record_playback_progress(...)` flow
+- after the action succeeds, close the dialog and refresh the detail page state so the source card and metadata update together
 
 ## Fallback Rules
 
@@ -234,6 +253,8 @@ Add or update coverage for:
 - missing `air_date` rows falling back to `未更新`
 - badge text appearing on the same title row
 - card/list render paths using the same symbolic status mapping
+- preview dialog showing the same resolved status as the activated episode card
+- preview dialog action marking the current episode as watched and calling the existing progress update path with the previewed episode coordinates
 
 ## Implementation Plan Shape
 
@@ -243,8 +264,10 @@ Expected files:
 - `src/atv_player/following_metadata.py`
 - `src/atv_player/metadata/providers/tmdb.py`
 - `src/atv_player/ui/following_episode_browser.py`
+- `src/atv_player/ui/following_detail_page.py`
 - `tests/test_following_metadata.py`
 - `tests/test_following_episode_browser.py`
+- `tests/test_following_detail_page_ui.py`
 
 Implementation should stay narrow:
 
