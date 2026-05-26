@@ -211,6 +211,7 @@ def resolve_following_episode_state(
     today: date | None = None,
 ) -> str:
     resolved_today = today or datetime.now(BEIJING_TZ).date()
+    air_date = _episode_air_date(episode.air_date)
     episode_season = resolve_progress_season(
         episode.season_number,
         episode.episode_number,
@@ -238,14 +239,19 @@ def resolve_following_episode_state(
             next_episode.episode_number,
             fallback_season=visible_season_number,
         )
+        next_air_date = _episode_air_date(next_episode.air_date)
         if (
             episode_season == next_episode_season
-            and episode.episode_number == next_episode.episode_number
+            and (
+                episode.episode_number == next_episode.episode_number
+                or (
+                    air_date is not None
+                    and next_air_date is not None
+                    and air_date == next_air_date
+                )
+            )
         ):
             return FollowingEpisodeState.UPCOMING
-    air_date = _episode_air_date(episode.air_date)
-    if air_date is not None and air_date > resolved_today:
-        return FollowingEpisodeState.UPCOMING
     if (
         episode_season == latest_season
         and episode.episode_number > 0

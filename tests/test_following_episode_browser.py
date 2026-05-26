@@ -127,6 +127,53 @@ def test_resolve_following_episode_state_does_not_mark_other_season_as_released(
     assert state == FollowingEpisodeState.PENDING
 
 
+def test_resolve_following_episode_state_limits_upcoming_to_nearest_future_air_date() -> None:
+    nearest = FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-31")
+    later = FollowingEpisode(episode_number=25, season_number=1, air_date="2026-06-07")
+
+    nearest_state = resolve_following_episode_state(
+        episode=nearest,
+        current_season_number=1,
+        current_episode=23,
+        latest_season_number=1,
+        latest_episode=23,
+        visible_season_number=1,
+        next_episode=nearest,
+        today=date(2026, 5, 26),
+    )
+    later_state = resolve_following_episode_state(
+        episode=later,
+        current_season_number=1,
+        current_episode=23,
+        latest_season_number=1,
+        latest_episode=23,
+        visible_season_number=1,
+        next_episode=nearest,
+        today=date(2026, 5, 26),
+    )
+
+    assert nearest_state == FollowingEpisodeState.UPCOMING
+    assert later_state == FollowingEpisodeState.PENDING
+
+
+def test_resolve_following_episode_state_marks_same_next_air_date_batch_as_upcoming() -> None:
+    next_episode = FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-31")
+    same_day_batch_episode = FollowingEpisode(episode_number=25, season_number=1, air_date="2026-05-31")
+
+    state = resolve_following_episode_state(
+        episode=same_day_batch_episode,
+        current_season_number=1,
+        current_episode=23,
+        latest_season_number=1,
+        latest_episode=23,
+        visible_season_number=1,
+        next_episode=next_episode,
+        today=date(2026, 5, 26),
+    )
+
+    assert state == FollowingEpisodeState.UPCOMING
+
+
 def test_episode_list_model_emits_data_changed_when_display_mode_changes() -> None:
     model = EpisodeListModel(display_mode=EpisodeDisplayMode.COMPACT)
     model.set_episodes([FollowingEpisode(episode_number=1, title="第一集")], current_episode=0)
@@ -155,6 +202,25 @@ def test_episode_list_model_exposes_upcoming_status_for_same_day_next_episode() 
 
     assert model.data(model.index(0, 0), STATUS_ROLE) == FollowingEpisodeState.UPCOMING
     assert model.data(model.index(0, 0), STATUS_TEXT_ROLE) == "即将更新"
+
+
+def test_episode_list_model_falls_back_to_nearest_future_air_date_when_next_episode_missing() -> None:
+    model = EpisodeListModel()
+    model.set_episodes(
+        [
+            FollowingEpisode(episode_number=24, season_number=1, title="第 24 集", air_date="2026-05-31"),
+            FollowingEpisode(episode_number=25, season_number=1, title="第 25 集", air_date="2026-06-07"),
+        ],
+        current_episode=23,
+        current_season_number=1,
+        visible_season_number=1,
+        latest_episode=23,
+        latest_season_number=1,
+        next_episode=None,
+    )
+
+    assert model.data(model.index(0, 0), STATUS_ROLE) == FollowingEpisodeState.UPCOMING
+    assert model.data(model.index(1, 0), STATUS_ROLE) == FollowingEpisodeState.PENDING
 
 
 def test_episode_thumbnail_store_refreshes_only_matching_rows() -> None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import threading
+from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
@@ -52,6 +54,7 @@ STILL_ROLE = Qt.ItemDataRole.UserRole + 5
 SPECIAL_ROLE = Qt.ItemDataRole.UserRole + 6
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 7
 STATUS_TEXT_ROLE = Qt.ItemDataRole.UserRole + 8
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +232,11 @@ class EpisodeListModel(QAbstractListModel):
         self._visible_season_number = max(0, int(visible_season_number))
         self._latest_episode = max(0, int(latest_episode))
         self._latest_season_number = max(0, int(latest_season_number))
-        self._next_episode = next_episode
+        self._next_episode = next_episode or _nearest_future_episode(
+            self._episodes,
+            today=datetime.now(BEIJING_TZ).date(),
+            visible_season_number=self._visible_season_number,
+        )
         self.endResetModel()
 
     def set_display_mode(self, display_mode: str) -> None:
@@ -1001,6 +1008,39 @@ def _episode_status_text(state: str) -> str:
         FollowingEpisodeState.UPCOMING: "即将更新",
         FollowingEpisodeState.PENDING: "未更新",
     }.get(state, "未更新")
+
+
+def _episode_air_date(value: str) -> datetime.date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _nearest_future_episode(
+    episodes: list[FollowingEpisode],
+    *,
+    today,
+    visible_season_number: int,
+) -> FollowingEpisode | None:
+    candidates: list[tuple[datetime.date, int, FollowingEpisode]] = []
+    for episode in episodes:
+        air_date = _episode_air_date(episode.air_date)
+        if air_date is None or air_date <= today:
+            continue
+        episode_season = resolve_progress_season(
+            episode.season_number,
+            episode.episode_number,
+            fallback_season=visible_season_number,
+        )
+        candidates.append((air_date, episode_season, episode))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1], item[2].episode_number))
+    return candidates[0][2]
 
 
 def _episode_status_colors(state: str) -> tuple[str, str, str]:
