@@ -1,3 +1,3 @@
 ## 修复
 
-- 修复关闭窗口时仍可能继续弹出后续提示的问题，关闭操作现在会同步取消相关提示流程。
+- 修复 Windows 版在部分环境中启动时报错 `No time zone found with key Asia/Shanghai` 的问题。
