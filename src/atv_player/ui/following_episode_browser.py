@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QListView,
     QStyle,
-    QTabBar,
     QVBoxLayout,
     QWidget,
     QStyledItemDelegate,
@@ -368,29 +367,17 @@ class EpisodeItemDelegate(QStyledItemDelegate):
 
 class FollowingEpisodeBrowser(QWidget):
     episode_activated = Signal(object)
-    display_mode_changed = Signal(str)
+    grid_columns_changed = Signal(int)
     season_changed = Signal(int)
 
-    _TAB_TO_MODE = {
-        0: EpisodeDisplayMode.COMPACT,
-        1: EpisodeDisplayMode.POSTER,
-        2: EpisodeDisplayMode.FULL,
-    }
-    _MODE_TO_TAB = {value: key for key, value in _TAB_TO_MODE.items()}
-
-    def __init__(self, *, initial_display_mode: str, parent: QWidget | None = None) -> None:
+    def __init__(self, *, initial_grid_columns: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._groups: list[EpisodeSeasonGroup] = []
         self._current_episode = 0
         self._current_season_number = 0
         self._season_state: dict[int, tuple[int, int]] = {}
         self._season_change_in_progress = False
-
-        self.mode_tabs = QTabBar(self)
-        self.mode_tabs.addTab("简洁")
-        self.mode_tabs.addTab("封面")
-        self.mode_tabs.addTab("完整")
-        self.mode_tabs.setExpanding(False)
+        self._grid_columns = self._normalize_grid_columns(initial_grid_columns)
 
         self.season_list = QListView(self)
         self.season_list.setObjectName("followingEpisodeSeasonList")
@@ -404,7 +391,7 @@ class FollowingEpisodeBrowser(QWidget):
 
         self.season_model = SeasonListModel(self)
         self.episode_model = EpisodeListModel(
-            display_mode=initial_display_mode,
+            display_mode=EpisodeDisplayMode.FULL,
             parent=self,
         )
         self.thumbnail_store = EpisodeThumbnailStore(self)
@@ -424,37 +411,24 @@ class FollowingEpisodeBrowser(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        layout.addWidget(self.mode_tabs)
+        layout.setSpacing(0)
         layout.addWidget(self.browser_frame)
 
-        self.mode_tabs.currentChanged.connect(self._handle_mode_tab_changed)
         self.season_list.selectionModel().currentChanged.connect(
             self._handle_current_season_changed
         )
         self.episode_list.activated.connect(self._handle_episode_activated)
         self.episode_list.doubleClicked.connect(self._handle_episode_activated)
 
-        self.set_display_mode(initial_display_mode)
+    def grid_columns(self) -> int:
+        return self._grid_columns
 
-    def display_mode(self) -> str:
-        return self.episode_model.display_mode
-
-    def set_display_mode(self, display_mode: str) -> None:
-        normalized = (
-            display_mode
-            if display_mode in self._MODE_TO_TAB
-            else EpisodeDisplayMode.POSTER
-        )
-        previous = self.episode_model.display_mode
-        tab_index = self._MODE_TO_TAB[normalized]
-        self.mode_tabs.blockSignals(True)
-        self.mode_tabs.setCurrentIndex(tab_index)
-        self.mode_tabs.blockSignals(False)
-        self.episode_model.set_display_mode(normalized)
-        self.episode_list.doItemsLayout()
-        if previous != normalized:
-            self.display_mode_changed.emit(normalized)
+    def set_grid_columns(self, columns: int) -> None:
+        normalized = self._normalize_grid_columns(columns)
+        if normalized == self._grid_columns:
+            return
+        self._grid_columns = normalized
+        self.grid_columns_changed.emit(normalized)
 
     def set_content(
         self,
@@ -500,10 +474,6 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_list.setCurrentIndex(index)
         self._season_change_in_progress = False
         self._apply_group(group, restore_state=True)
-
-    def _handle_mode_tab_changed(self, index: int) -> None:
-        display_mode = self._TAB_TO_MODE.get(index, EpisodeDisplayMode.POSTER)
-        self.set_display_mode(display_mode)
 
     def _handle_current_season_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         if self._season_change_in_progress or not current.isValid():
@@ -587,3 +557,11 @@ class FollowingEpisodeBrowser(QWidget):
                 if episode.episode_number == self._current_episode:
                     return row
         return 0
+
+    @staticmethod
+    def _normalize_grid_columns(columns: int) -> int:
+        try:
+            normalized = int(columns)
+        except (TypeError, ValueError):
+            return 1
+        return normalized if normalized in {1, 2, 3} else 1

@@ -120,8 +120,34 @@ def test_episode_thumbnail_store_refreshes_only_matching_rows() -> None:
     assert changed == [(0, 0)]
 
 
+def test_following_episode_browser_uses_configured_initial_grid_columns(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=3)
+    qtbot.addWidget(browser)
+
+    assert browser.grid_columns() == 3
+
+
+def test_following_episode_browser_normalizes_invalid_initial_grid_columns(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=99)
+    qtbot.addWidget(browser)
+
+    assert browser.grid_columns() == 1
+
+
+def test_following_episode_browser_emits_grid_columns_changed(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    changed: list[int] = []
+    browser.grid_columns_changed.connect(changed.append)
+
+    browser.set_grid_columns(2)
+
+    assert browser.grid_columns() == 2
+    assert changed == [2]
+
+
 def test_following_episode_browser_restores_selection_when_switching_back_to_season(qtbot) -> None:
-    browser = FollowingEpisodeBrowser(initial_display_mode=EpisodeDisplayMode.POSTER)
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
     browser.set_content(
         groups=build_episode_season_groups(
@@ -145,7 +171,7 @@ def test_following_episode_browser_restores_selection_when_switching_back_to_sea
 
 
 def test_following_episode_browser_marks_watched_only_in_current_season(qtbot) -> None:
-    browser = FollowingEpisodeBrowser(initial_display_mode=EpisodeDisplayMode.POSTER)
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
     browser.set_content(
         groups=build_episode_season_groups(
