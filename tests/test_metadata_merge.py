@@ -1,4 +1,9 @@
-from atv_player.metadata.merge import choose_preferred_title, merge_metadata_record, replace_metadata_record
+from atv_player.metadata.merge import (
+    choose_preferred_title,
+    fill_missing_metadata_record,
+    merge_metadata_record,
+    replace_metadata_record,
+)
 from atv_player.metadata.models import MetadataRecord
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, VodItem
 
@@ -235,6 +240,44 @@ def test_merge_metadata_uses_redirect_target_for_official_link_label() -> None:
         type="link",
         value="https://www.iqiyi.com/a_25vgx15887l.html",
     )
+
+
+def test_fill_missing_metadata_appends_second_official_platform_link() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="蜜语纪",
+        detail_fields=[
+            PlaybackDetailField(
+                label="播放链接",
+                value="https://v.qq.com/x/cover/mzc00200miyuji.html",
+            )
+        ],
+    )
+    tmdb_record = MetadataRecord(provider="tmdb", provider_id="tv:281231", tmdb_id="281231")
+    iqiyi_record = MetadataRecord(
+        provider="iqiyi",
+        provider_id="https://www.iqiyi.com/a_miyuji.html",
+        detail_fields=[{"label": "播放链接", "value": "https://www.iqiyi.com/a_miyuji.html"}],
+    )
+
+    merge_metadata_record(vod, tmdb_record, provider_priority=["tmdb"])
+    fill_missing_metadata_record(vod, iqiyi_record)
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("官方链接", "腾讯视频 / 爱奇艺"),
+        ("TMDB ID", "281231"),
+    ]
+    official_parts = vod.detail_fields[0].value_parts
+    assert [part.action for part in official_parts] == [
+        PlaybackDetailFieldAction(
+            type="link",
+            value="https://v.qq.com/x/cover/mzc00200miyuji.html",
+        ),
+        PlaybackDetailFieldAction(
+            type="link",
+            value="https://www.iqiyi.com/a_miyuji.html",
+        ),
+    ]
 
 
 def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:

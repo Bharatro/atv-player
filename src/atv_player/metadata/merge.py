@@ -204,6 +204,7 @@ def _canonical_official_link_url(url: object) -> str:
         redirected = parse_qs(parsed.query).get("url", [""])[0].strip()
         if redirected.startswith(("http://", "https://")):
             return redirected
+        return ""
     return text
 
 
@@ -221,6 +222,41 @@ def _official_link_detail_field(url: object, label: object = "") -> PlaybackDeta
             )
         ],
     )
+
+
+def _official_link_part_key(part: PlaybackDetailValuePart) -> tuple[str, str]:
+    action = part.action
+    if action is not None and action.type == "link":
+        return ("link", _canonical_official_link_url(action.value) or str(action.value or "").strip())
+    return ("label", _clean_detail_text(part.label))
+
+
+def _append_missing_official_link_parts(
+    target: PlaybackDetailField,
+    source: PlaybackDetailField,
+) -> bool:
+    if target.label.strip() != "官方链接" or source.label.strip() != "官方链接":
+        return False
+    seen = {_official_link_part_key(part) for part in target.value_parts}
+    changed = False
+    for part in source.value_parts:
+        key = _official_link_part_key(part)
+        if not key[1] or key in seen:
+            continue
+        target.value_parts.append(part)
+        seen.add(key)
+        changed = True
+    return changed
+
+
+def _merge_official_link_field(
+    fields: list[PlaybackDetailField],
+    source: PlaybackDetailField,
+) -> bool:
+    for field in fields:
+        if _append_missing_official_link_parts(field, source):
+            return True
+    return False
 
 
 def _watch_provider_value_parts(value: object) -> list[PlaybackDetailValuePart]:
@@ -370,30 +406,42 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         seen_labels: set[str] = set()
         for field in vod.detail_fields:
             if field.label.strip() == "播放链接":
-                if not has_new_official_link:
-                    official_link = _official_link_detail_field(field.value)
-                    if official_link is not None:
+                official_link = _official_link_detail_field(field.value)
+                if official_link is not None:
+                    if "官方链接" in seen_labels:
+                        _merge_official_link_field(merged, official_link)
+                    else:
                         merged.append(official_link)
                         seen_labels.add("官方链接")
-                        has_new_official_link = True
+                    has_new_official_link = has_new_official_link or official_link is not None
                 seen_labels.add(field.label)
                 continue
             replacement = next((item for item in detail_fields if item.get("label") == field.label), None)
             if replacement is not None:
                 replacement_field = _build_detail_field(record, replacement)
                 if replacement_field is not None:
-                    merged.append(replacement_field)
+                    if field.label.strip() == "官方链接" and replacement_field.label.strip() == "官方链接":
+                        _append_missing_official_link_parts(field, replacement_field)
+                        merged.append(field)
+                    else:
+                        merged.append(replacement_field)
                 seen_labels.add(field.label)
                 continue
             merged.append(field)
             seen_labels.add(field.label)
         for item in detail_fields:
             label = str(item.get("label") or "").strip()
-            if label and label not in seen_labels:
-                appended_field = _build_detail_field(record, item)
-                if appended_field is not None:
-                    merged.append(appended_field)
-                    seen_labels.add(label)
+            if not label:
+                continue
+            appended_field = _build_detail_field(record, item)
+            if appended_field is None:
+                continue
+            if label == "官方链接" and label in seen_labels:
+                _merge_official_link_field(merged, appended_field)
+                continue
+            if label not in seen_labels:
+                merged.append(appended_field)
+                seen_labels.add(label)
         vod.detail_fields = merged
         _set_field_source(vod, "detail_fields", record.provider)
     return vod
@@ -439,10 +487,16 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
         appended = False
         for item in detail_fields:
             label = str(item.get("label") or "").strip()
-            if not label or label in existing_labels:
+            if not label:
                 continue
             appended_field = _build_detail_field(record, item)
             if appended_field is None:
+                continue
+            if label == "官方链接" and label in existing_labels:
+                if _merge_official_link_field(vod.detail_fields, appended_field):
+                    appended = True
+                continue
+            if label in existing_labels:
                 continue
             vod.detail_fields.append(appended_field)
             existing_labels.add(label)
