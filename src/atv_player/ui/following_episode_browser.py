@@ -491,7 +491,7 @@ class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
         layout = self.content_layout()
         self.poster_label = QLabel("季封面", self)
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.poster_label.setMinimumSize(640, 360)
+        self.poster_label.setMinimumSize(720, 960)
         self.poster_label.setStyleSheet(_image_placeholder_qss())
         layout.addWidget(self.poster_label)
 
@@ -505,7 +505,7 @@ class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
             return
         target_size = self.poster_label.minimumSize()
         if target_size.isEmpty():
-            target_size = QSize(320, 180)
+            target_size = QSize(480, 720)
 
         def load() -> None:
             image = load_local_poster_image(self._poster_source, target_size)
@@ -518,7 +518,15 @@ class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
 
     def _handle_image_loaded(self, label: QLabel, image) -> None:
         label.setText("")
-        label.setPixmap(QPixmap.fromImage(image))
+        target_size = label.size()
+        if target_size.isEmpty():
+            target_size = label.minimumSize()
+        pixmap = QPixmap.fromImage(image).scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        label.setPixmap(pixmap)
 
 
 class FollowingEpisodeBrowser(QWidget):
