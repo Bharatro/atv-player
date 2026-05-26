@@ -263,6 +263,22 @@ def _extract_year(payload: dict[str, object], *, media_type: str) -> str:
     return raw[:4] if len(raw) >= 4 and raw[:4].isdigit() else ""
 
 
+def _search_result_raw(item: dict[str, object], *, season_number: int | None = None) -> dict[str, object]:
+    raw: dict[str, object] = {}
+    if season_number is not None:
+        raw["season_number"] = season_number
+    poster_url = _poster_url_from_payload(item)
+    if poster_url:
+        raw["poster_url"] = poster_url
+    overview = str(item.get("overview") or "").strip()
+    if overview:
+        raw["overview"] = overview
+    rating = _format_tmdb_rating(item.get("vote_average"))
+    if rating:
+        raw["rating"] = rating
+    return raw
+
+
 def _extract_year_int(payload: dict[str, object], *, media_type: str) -> int | None:
     year = _extract_year(payload, media_type=media_type)
     return int(year) if year.isdigit() else None
@@ -438,19 +454,13 @@ class TMDBProvider:
         if not provider_id:
             return None
         season_number = extract_season_number(query_title) if media_type == "tv" else None
-        raw: dict[str, object] = {}
-        if season_number is not None:
-            raw["season_number"] = season_number
-        poster_url = _poster_url_from_payload(item)
-        if poster_url:
-            raw["poster_url"] = poster_url
         return MetadataMatch(
             provider=self.name,
             provider_id=f"{media_type}:{_provider_id_with_season(media_type, provider_id, query_title)}",
             title=item_title,
             year=item_year,
             score=1.0,
-            raw=raw,
+            raw=_search_result_raw(item, season_number=season_number),
         )
 
     def _search_media_type(self, media_type: str, candidate: MetadataQuery) -> list[MetadataMatch]:
@@ -483,12 +493,10 @@ class TMDBProvider:
             item_year = _extract_year(normalized_item, media_type=media_type)
             if _should_reject_year_mismatch(media_type, candidate.year, item_year):
                 continue
-            fb_raw: dict[str, object] = {}
-            if media_type == "tv" and extract_season_number(candidate.title) is not None:
-                fb_raw["season_number"] = extract_season_number(candidate.title)
-            fb_poster = _poster_url_from_payload(normalized_item)
-            if fb_poster:
-                fb_raw["poster_url"] = fb_poster
+            fb_raw = _search_result_raw(
+                normalized_item,
+                season_number=extract_season_number(candidate.title) if media_type == "tv" else None,
+            )
             fallback_matches.append(
                 MetadataMatch(
                     provider=self.name,
@@ -539,12 +547,7 @@ class TMDBProvider:
                 if match is None:
                     if _should_reject_year_mismatch("tv", candidate.year, item_year):
                         continue
-                    sa_raw: dict[str, object] = {}
-                    if extract_season_number(candidate.title) is not None:
-                        sa_raw["season_number"] = extract_season_number(candidate.title)
-                    sa_poster = _poster_url_from_payload(item)
-                    if sa_poster:
-                        sa_raw["poster_url"] = sa_poster
+                    sa_raw = _search_result_raw(item, season_number=extract_season_number(candidate.title))
                     match = MetadataMatch(
                         provider=self.name,
                         provider_id=f"tv:{_provider_id_with_season('tv', provider_id, candidate.title)}",
@@ -588,12 +591,10 @@ class TMDBProvider:
             item_year = _extract_year(normalized_item, media_type=media_type)
             if _should_reject_year_mismatch(media_type, candidate.year, item_year):
                 continue
-            fb_raw: dict[str, object] = {}
-            if media_type == "tv" and extract_season_number(candidate.title) is not None:
-                fb_raw["season_number"] = extract_season_number(candidate.title)
-            fb_poster = _poster_url_from_payload(normalized_item)
-            if fb_poster:
-                fb_raw["poster_url"] = fb_poster
+            fb_raw = _search_result_raw(
+                normalized_item,
+                season_number=extract_season_number(candidate.title) if media_type == "tv" else None,
+            )
             fallback_matches.append(
                 MetadataMatch(
                     provider=self.name,

@@ -252,6 +252,40 @@ def test_tmdb_provider_prefers_candidate_with_requested_season_when_same_title_r
     assert ("get_tv_season_detail", "256783", "2") in client.calls
 
 
+def test_tmdb_provider_search_all_preserves_overview_rating_and_poster_metadata() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [
+        {
+            "id": 233295,
+            "name": "仙剑奇侠传叁",
+            "original_name": "仙剑奇侠传叁",
+            "overview": "作品改编自经典游戏《仙剑奇侠传三》。",
+            "poster_path": "/gorGXNaHiFIBn7EEafx5uh7VzhT.jpg",
+            "genre_ids": [16, 10759],
+            "first_air_date": "2025-12-30",
+            "vote_average": 7.0,
+        }
+    ]
+    provider = TMDBProvider(client)
+
+    matches = provider.search_all(MetadataQuery(title="仙剑奇侠传叁", category_name="动漫"))
+
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:233295",
+            title="仙剑奇侠传叁",
+            year="2025",
+            score=1.0,
+            raw={
+                "poster_url": "https://image.tmdb.org/t/p/w185/gorGXNaHiFIBn7EEafx5uh7VzhT.jpg",
+                "overview": "作品改编自经典游戏《仙剑奇侠传三》。",
+                "rating": "7.0",
+            },
+        )
+    ]
+
+
 def test_tmdb_provider_get_detail_uses_tv_season_overview_when_provider_id_contains_season() -> None:
     client = FakeTMDBClient()
     client.tv_detail = {
