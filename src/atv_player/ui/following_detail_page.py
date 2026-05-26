@@ -59,7 +59,7 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
         self.still_label.setStyleSheet(_image_placeholder_qss())
         self.title_label = QLabel(title, self)
         self.title_label.setWordWrap(True)
-        self.meta_label = QLabel(episode.air_date, self)
+        self.meta_label = QLabel(_episode_preview_meta_text(episode), self)
         self.overview_label = QLabel(episode.overview or "暂无剧情概要", self)
         self.overview_label.setWordWrap(True)
 
@@ -884,6 +884,15 @@ def _clear_layout(layout: QHBoxLayout) -> None:
 def _episode_title(episode: FollowingEpisode) -> str:
     title = episode.title.strip() or "未命名"
     return f"{episode.episode_number}. {title}"
+
+
+def _episode_preview_meta_text(episode: FollowingEpisode) -> str:
+    parts = []
+    if episode.air_date:
+        parts.append(episode.air_date)
+    if episode.runtime > 0:
+        parts.append(f"{episode.runtime}m")
+    return " · ".join(parts)
 
 
 def _unique_sources(sources: list[str]) -> list[str]:

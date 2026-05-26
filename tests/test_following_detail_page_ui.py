@@ -11,6 +11,7 @@ from atv_player.following_models import (
 from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
     FollowingDetailPage,
+    FollowingEpisodePreviewDialog,
     FollowingPersonCard,
     QDesktopServices,
     _person_avatar,
@@ -404,6 +405,34 @@ def test_following_detail_page_opens_preview_dialog_from_episode_activation(
     page.episode_browser._handle_episode_activated(model.index(0, 0))
 
     assert opened == [128]
+
+
+def test_following_episode_preview_dialog_shows_air_date_and_runtime_on_same_line(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=3,
+            title="第三集",
+            air_date="2026-05-13",
+            runtime=24,
+        )
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-13 · 24m"
+
+
+def test_following_episode_preview_dialog_omits_runtime_separator_when_runtime_missing(qtbot) -> None:
+    dialog = FollowingEpisodePreviewDialog(
+        FollowingEpisode(
+            episode_number=3,
+            title="第三集",
+            air_date="2026-05-13",
+            runtime=0,
+        )
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.meta_label.text() == "2026-05-13"
 
 
 def test_following_detail_title_and_metadata_text_are_selectable(qtbot) -> None:
