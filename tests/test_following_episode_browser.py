@@ -195,7 +195,7 @@ def test_following_episode_browser_uses_official_style_season_detail_layout(qtbo
 
     assert browser.season_detail_poster_label.minimumWidth() > 96
     assert browser.season_detail_top_row.parent() is browser.season_detail_panel
-    assert browser.season_detail_info_layout.count() == 3
+    assert browser.season_detail_info_layout.count() == 4
     assert browser.season_detail_air_date_label.text() == "2026-05-13"
     assert browser.season_detail_episode_count_label.text() == "共 24 集"
     assert browser.season_detail_overview_label.text() == "第二季简介"
