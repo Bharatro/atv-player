@@ -28,6 +28,7 @@ from atv_player.ui.poster_loader import (
     normalize_poster_url,
 )
 from atv_player.ui.theme import current_tokens
+from atv_player.ui.window_chrome import ThemedDialogBase
 
 
 class EpisodeDisplayMode:
@@ -467,6 +468,59 @@ class FollowingEpisodeCard(QFrame):
         super().mouseReleaseEvent(event)
 
 
+class SeasonPosterLabel(QLabel):
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
+    _image_loaded = Signal(QLabel, object)
+
+    def __init__(
+        self, title: str, poster_source: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(title=title or "季封面", parent=parent, resizable=True)
+        self._poster_source = poster_source
+
+        layout = self.content_layout()
+        self.poster_label = QLabel("季封面", self)
+        self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poster_label.setMinimumSize(640, 360)
+        self.poster_label.setStyleSheet(_image_placeholder_qss())
+        layout.addWidget(self.poster_label)
+
+        self._image_loaded.connect(self._handle_image_loaded)
+        self._load_poster()
+
+    def _load_poster(self) -> None:
+        image_url = normalize_poster_url(self._poster_source)
+        if not image_url:
+            self.poster_label.setText("暂无季封面")
+            return
+        target_size = self.poster_label.minimumSize()
+        if target_size.isEmpty():
+            target_size = QSize(320, 180)
+
+        def load() -> None:
+            image = load_local_poster_image(self._poster_source, target_size)
+            if image is None:
+                image = load_remote_poster_image(image_url, target_size)
+            if image is not None:
+                self._image_loaded.emit(self.poster_label, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_image_loaded(self, label: QLabel, image) -> None:
+        label.setText("")
+        label.setPixmap(QPixmap.fromImage(image))
+
+
 class FollowingEpisodeBrowser(QWidget):
     episode_activated = Signal(object)
     grid_columns_changed = Signal(int)
@@ -494,7 +548,7 @@ class FollowingEpisodeBrowser(QWidget):
 
         self.season_detail_panel = QFrame(self.browser_frame)
         self.season_detail_panel.setObjectName("followingEpisodeSeasonDetailPanel")
-        self.season_detail_poster_label = QLabel("季封面", self.season_detail_panel)
+        self.season_detail_poster_label = SeasonPosterLabel("季封面", self.season_detail_panel)
         self.season_detail_title_label = QLabel("", self.season_detail_panel)
         self.season_detail_air_date_label = QLabel("", self.season_detail_panel)
         self.season_detail_episode_count_label = QLabel("", self.season_detail_panel)
@@ -516,8 +570,9 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_detail_info_layout.setContentsMargins(0, 0, 0, 0)
         self.season_detail_info_layout.setSpacing(6)
         self.season_detail_info_layout.addWidget(self.season_detail_title_label)
-        self.season_detail_info_layout.addWidget(self.season_detail_air_date_label)
         self.season_detail_info_layout.addWidget(self.season_detail_episode_count_label)
+        self.season_detail_info_layout.addWidget(self.season_detail_air_date_label)
+        self.season_detail_info_layout.addStretch(1)
 
         season_detail_top_row_layout = QHBoxLayout(self.season_detail_top_row)
         season_detail_top_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -526,6 +581,7 @@ class FollowingEpisodeBrowser(QWidget):
             self.season_detail_poster_label, 0, Qt.AlignmentFlag.AlignTop
         )
         season_detail_top_row_layout.addLayout(self.season_detail_info_layout, 1)
+        self.season_detail_poster_label.clicked.connect(self._open_current_season_poster_preview)
 
         season_detail_layout = QVBoxLayout(self.season_detail_panel)
         season_detail_layout.setContentsMargins(10, 10, 10, 10)
@@ -812,21 +868,33 @@ class FollowingEpisodeBrowser(QWidget):
     def _refresh_season_detail_panel(self) -> None:
         summary = self._current_season_summary
         self.season_detail_title_label.setText(summary.title or "未命名季")
-        self.season_detail_air_date_label.setText(summary.air_date or "")
         self.season_detail_episode_count_label.setText(
             f"共 {summary.episode_count} 集" if summary.episode_count > 0 else ""
         )
+        self.season_detail_air_date_label.setText(summary.air_date or "")
         self.season_detail_overview_label.setText(summary.overview or "暂无本季简介")
         self.season_detail_poster_label.setText("暂无季封面")
         self.season_detail_poster_label.setPixmap(QPixmap())
+        self.season_detail_poster_label.setCursor(Qt.CursorShape.ArrowCursor)
         if summary.poster:
             image = self.thumbnail_store.image_for(summary.poster)
+            self.season_detail_poster_label.setCursor(Qt.CursorShape.PointingHandCursor)
             if image is None:
                 self.thumbnail_store.request(summary.poster, target_size=self.season_detail_poster_label.size())
                 self.season_detail_poster_label.setText("季封面")
             else:
                 self.season_detail_poster_label.setText("")
                 self.season_detail_poster_label.setPixmap(QPixmap.fromImage(image))
+
+    def _open_current_season_poster_preview(self) -> None:
+        poster_source = str(self._current_season_summary.poster or "").strip()
+        if not poster_source:
+            return
+        FollowingSeasonPosterPreviewDialog(
+            self._current_season_summary.title or "季封面",
+            poster_source,
+            self,
+        ).exec()
 
 
 def _episode_meta_text(episode: FollowingEpisode) -> str:
@@ -846,6 +914,16 @@ def _overview_max_height(columns: int) -> int:
     if columns == 2:
         return 60
     return 40
+
+
+def _image_placeholder_qss() -> str:
+    tokens = current_tokens()
+    return (
+        f"border: 1px solid {tokens.border_subtle};"
+        "border-radius: 12px;"
+        f"background: {tokens.panel_alt_bg};"
+        f"color: {tokens.text_secondary};"
+    )
 
 
 def _clear_layout(layout) -> None:

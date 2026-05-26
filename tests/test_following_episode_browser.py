@@ -195,7 +195,7 @@ def test_following_episode_browser_uses_official_style_season_detail_layout(qtbo
 
     assert browser.season_detail_poster_label.minimumWidth() > 96
     assert browser.season_detail_top_row.parent() is browser.season_detail_panel
-    assert browser.season_detail_info_layout.count() == 3
+    assert browser.season_detail_info_layout.count() == 4
     assert browser.season_detail_air_date_label.text() == "2026-05-13"
     assert browser.season_detail_episode_count_label.text() == "共 24 集"
     assert browser.season_detail_overview_label.text() == "第二季简介"
@@ -210,6 +210,16 @@ def test_following_episode_browser_season_detail_text_is_selectable(qtbot) -> No
     assert browser.season_detail_air_date_label.textInteractionFlags() & selectable
     assert browser.season_detail_episode_count_label.textInteractionFlags() & selectable
     assert browser.season_detail_overview_label.textInteractionFlags() & selectable
+
+
+def test_following_episode_browser_places_title_count_and_air_date_at_top(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    assert browser.season_detail_info_layout.itemAt(0).widget() is browser.season_detail_title_label
+    assert browser.season_detail_info_layout.itemAt(1).widget() is browser.season_detail_episode_count_label
+    assert browser.season_detail_info_layout.itemAt(2).widget() is browser.season_detail_air_date_label
+    assert browser.season_detail_info_layout.itemAt(3).spacerItem() is not None
 
 
 def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
@@ -279,6 +289,63 @@ def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbo
     assert browser.season_detail_air_date_label.text() == "2026-05-13"
     assert browser.season_detail_episode_count_label.text() == "共 6 集"
     assert "第二季简介" in browser.season_detail_overview_label.text()
+
+
+def test_following_episode_browser_opens_large_preview_from_season_poster_click(
+    qtbot, monkeypatch
+) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1")],
+            seasons=[
+                FollowingSeason(
+                    season_number=2,
+                    title="第二季",
+                    poster="poster-2",
+                    episode_count=8,
+                )
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=2,
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "atv_player.ui.following_episode_browser.FollowingSeasonPosterPreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.windowTitle()) or 1,
+    )
+
+    browser._open_current_season_poster_preview()
+
+    assert opened == ["第二季"]
+
+
+def test_following_episode_browser_skips_poster_preview_when_no_poster_available(
+    qtbot, monkeypatch
+) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=2, title="S2E1")],
+            seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=8)],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=2,
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "atv_player.ui.following_episode_browser.FollowingSeasonPosterPreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.windowTitle()) or 1,
+    )
+
+    browser._open_current_season_poster_preview()
+
+    assert opened == []
 
 
 def test_following_episode_browser_exposes_selected_season_summary(qtbot) -> None:
