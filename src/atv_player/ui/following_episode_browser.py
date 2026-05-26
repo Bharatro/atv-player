@@ -506,6 +506,11 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_detail_air_date_label.setWordWrap(True)
         self.season_detail_episode_count_label.setWordWrap(True)
         self.season_detail_overview_label.setWordWrap(True)
+        selectable_flags = Qt.TextInteractionFlag.TextSelectableByMouse
+        self.season_detail_title_label.setTextInteractionFlags(selectable_flags)
+        self.season_detail_air_date_label.setTextInteractionFlags(selectable_flags)
+        self.season_detail_episode_count_label.setTextInteractionFlags(selectable_flags)
+        self.season_detail_overview_label.setTextInteractionFlags(selectable_flags)
         self.season_detail_top_row = QWidget(self.season_detail_panel)
         self.season_detail_info_layout = QVBoxLayout()
         self.season_detail_info_layout.setContentsMargins(0, 0, 0, 0)

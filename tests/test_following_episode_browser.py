@@ -201,6 +201,17 @@ def test_following_episode_browser_uses_official_style_season_detail_layout(qtbo
     assert browser.season_detail_overview_label.text() == "第二季简介"
 
 
+def test_following_episode_browser_season_detail_text_is_selectable(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    selectable = Qt.TextInteractionFlag.TextSelectableByMouse
+    assert browser.season_detail_title_label.textInteractionFlags() & selectable
+    assert browser.season_detail_air_date_label.textInteractionFlags() & selectable
+    assert browser.season_detail_episode_count_label.textInteractionFlags() & selectable
+    assert browser.season_detail_overview_label.textInteractionFlags() & selectable
+
+
 def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
