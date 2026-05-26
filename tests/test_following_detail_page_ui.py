@@ -82,6 +82,18 @@ class FakeController:
                             {"label": "豆瓣ID", "value": "35517044"},
                             {"label": "IMDb ID", "value": "tt32592348"},
                             {"label": "TMDB ID", "value": "272432"},
+                            {"label": "最近更新", "value": "2026-05-24"},
+                            {"label": "更新时间", "value": "连载中, 每周日 11:00更新"},
+                            {"label": "更新状态", "value": "连载中"},
+                            {"label": "开播", "value": "2024年10月27日11:00"},
+                            {"label": "播放", "value": "18.0亿"},
+                            {"label": "追番", "value": "653.8万追番"},
+                            {"label": "点赞", "value": "17.8万"},
+                            {"label": "投币", "value": "647.5万"},
+                            {"label": "收藏", "value": "145.3万"},
+                            {"label": "回复", "value": "33.5万"},
+                            {"label": "弹幕", "value": "348.9万"},
+                            {"label": "分享", "value": "14.5万"},
                         ],
                         ratings=[
                             FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1"),
@@ -107,8 +119,21 @@ class FakeController:
                             overview="TMDB简介",
                             metadata_fields=[
                                 {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+                                {"label": "年代", "value": "2026"},
+                                {"label": "地区", "value": "内地"},
+                                {"label": "语言", "value": "普通话"},
                                 {"label": "导演", "value": "刘海波"},
                                 {"label": "演员", "value": "王骁,田曦薇,王传君,朱云峰"},
+                                {"label": "别名", "value": "擒贼记 / Low IQ Crime / Born with Luck"},
+                                {"label": "豆瓣ID", "value": "35517044"},
+                                {"label": "IMDb ID", "value": "tt32592348"},
+                                {"label": "TMDB ID", "value": "272432"},
+                                {"label": "最近更新", "value": "2026-05-24"},
+                                {"label": "更新时间", "value": "连载中, 每周日 11:00更新"},
+                                {"label": "更新状态", "value": "连载中"},
+                                {"label": "开播", "value": "2024年10月27日11:00"},
+                                {"label": "播放", "value": "18.0亿"},
+                                {"label": "追番", "value": "653.8万追番"},
                             ],
                             ratings=[
                                 FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1"),
@@ -247,7 +272,17 @@ def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_p
     page.load_record(1)
 
     assert page.rating_strip.text() == "TMDB 8.1  ·  豆瓣 7.9  ·  Bangumi 8.4"
-    assert [button.text() for button in page.metadata_source_buttons] == ["合并", "TMDB", "豆瓣", "Bangumi", "爱奇艺"]
+    assert "评分" not in page.meta_label.text()
+    assert "bangumi" not in page.meta_label.text()
+    assert [button.text() for button in page.metadata_source_buttons] == ["媒体信息", "TMDB", "豆瓣", "Bangumi", "爱奇艺"]
+    assert "类型: 喜剧 / 悬疑 / 犯罪" in page.overview_label.text()
+    assert "TMDB ID: 272432" in page.overview_label.text()
+    assert "最近更新:" not in page.overview_label.text()
+    assert "更新时间:" not in page.overview_label.text()
+    assert "更新状态:" not in page.overview_label.text()
+    assert "开播:" not in page.overview_label.text()
+    assert "播放:" not in page.overview_label.text()
+    assert "追番:" not in page.overview_label.text()
     assert page.playback_platform_layout.count() > 0
     assert "爱奇艺" in page.playback_platform_widgets[0].text()
     assert "更新至第128集" in page.playback_platform_widgets[0].text()
@@ -263,6 +298,12 @@ def test_following_detail_page_switches_between_merged_and_provider_raw_views(qt
 
     assert "豆瓣简介" in page.overview_label.text()
     assert "TMDB简介" not in page.overview_label.text()
+
+    page.metadata_source_buttons[4].click()
+
+    assert "播放链接: https://www.iqiyi.com/a_1.html" in page.overview_label.text()
+    assert "更新时间: 2026-05-25" in page.overview_label.text()
+    assert "更新状态: 更新至第128集" in page.overview_label.text()
 
     page.metadata_source_buttons[0].click()
 

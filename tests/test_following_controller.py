@@ -577,6 +577,54 @@ def test_following_controller_recommendation_seeds_include_recent_favorite_tmdb_
     assert captured["seeds"][0].seed_source == "favorite"
 
 
+def test_following_controller_add_candidate_accepts_discovery_item(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+
+    class SearchService:
+        def detail_record(self, candidate):
+            assert candidate.provider == "tmdb"
+            assert candidate.provider_id == "tv:272432:season:1"
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:272432:season:1",
+                title="低智商犯罪",
+                year="2026",
+                tmdb_id="272432",
+                overview="剧集简介",
+                detail_fields=[
+                    {
+                        "label": "episodes",
+                        "value": [{"episode_number": 1, "name": "第一集"}],
+                    }
+                ],
+            )
+
+    controller = FollowingController(
+        repo,
+        metadata_search_service=SearchService(),
+    )
+
+    record = controller.add_candidate(
+        DiscoveryItem(
+            provider="tmdb",
+            provider_id="tv:272432",
+            tmdb_id="272432",
+            media_type="tv",
+            title="低智商犯罪",
+            year="2026",
+            poster="https://image.tmdb.org/t/p/original/poster.jpg",
+            backdrop="https://image.tmdb.org/t/p/w1280/backdrop.jpg",
+            rating="8.1",
+            overview="搜索简介",
+            source_label="搜索",
+        )
+    )
+
+    assert record.title == "低智商犯罪"
+    assert record.provider == "tmdb"
+    assert record.provider_id == "tv:272432"
+
+
 def test_following_controller_records_season_progress(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     following_id = repo.upsert(

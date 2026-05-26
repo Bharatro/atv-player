@@ -283,6 +283,63 @@ def test_following_metadata_gateway_searches_platform_sources_from_tmdb_identity
     assert result["douban"][1] >= 0.75
 
 
+def test_following_metadata_gateway_maps_local_douban_source_into_douban_slot() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def search(self, query, provider_filter=""):
+            self.calls.append((provider_filter, query.title, query.year))
+            if provider_filter == "local_douban":
+                return [
+                    MetadataScrapeGroup(
+                        "local_douban",
+                        "本地豆瓣",
+                        [
+                            MetadataScrapeCandidate(
+                                provider="local_douban",
+                                provider_label="本地豆瓣",
+                                provider_id="35517044",
+                                title="凡人修仙传",
+                                year="2026",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                rating="7.9",
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:272432",
+            external_ids={"tmdb": "272432"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="凡人修仙传",
+            year="2026",
+            tmdb_id="272432",
+        ),
+    )
+
+    assert "douban" in result
+    assert result["douban"][0].provider == "local_douban"
+    assert result["douban"][1] >= 0.75
+
+
 def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
     class Repository:
         def __init__(self) -> None:

@@ -46,6 +46,13 @@ class FakeTMDBClient:
         return dict(self.tv_season_detail)
 
 
+def _detail_field_value(record, label: str):
+    for field in record.detail_fields:
+        if field.get("label") == label:
+            return field.get("value")
+    return None
+
+
 def test_infer_tmdb_media_type_uses_category_name() -> None:
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", category_name="电影")) == "movie"
     assert infer_tmdb_media_type(MetadataQuery(title="深空彼岸", type_name="电影")) == "movie"
@@ -422,6 +429,145 @@ def test_tmdb_provider_get_detail_full_formats_vote_average_to_one_decimal() -> 
     )
 
     assert record.rating == "7.7"
+
+
+def test_tmdb_provider_get_detail_full_uses_homepage_as_fallback_for_matching_network_platform() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 272432,
+        "name": "低智商犯罪",
+        "overview": "剧集简介",
+        "homepage": "https://www.iqiyi.com/a_25vgx15887l.html",
+        "networks": [
+            {"id": 1330, "name": "iQiyi", "origin_country": "CN"},
+            {"id": 6357, "name": "Migu Video", "origin_country": "CN"},
+        ],
+        "first_air_date": "2026-05-04",
+        "genres": [{"name": "犯罪"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="低智商犯罪",
+        )
+    )
+
+    watch_providers = _detail_field_value(record, "watch_providers")
+    assert watch_providers == [
+        {
+            "provider": "iqiyi",
+            "label": "爱奇艺",
+            "url": "https://www.iqiyi.com/a_25vgx15887l.html",
+        }
+    ]
+
+
+def test_tmdb_provider_get_detail_full_keeps_explicit_watch_provider_url_over_homepage_fallback() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 272432,
+        "name": "低智商犯罪",
+        "overview": "剧集简介",
+        "homepage": "https://v.qq.com/x/cover/mzc002009g0nh88.html",
+        "networks": [
+            {"id": 2007, "name": "Tencent Video", "origin_country": "CN"},
+        ],
+        "watch/providers": {
+            "results": {
+                "CN": {
+                    "flatrate": [
+                        {
+                            "provider_id": 2007,
+                            "provider_name": "Tencent Video",
+                            "link": "https://www.themoviedb.org/tv/272432/watch?locale=CN",
+                            "url": "https://www.themoviedb.org/tv/272432/watch?locale=CN",
+                        }
+                    ]
+                }
+            }
+        },
+        "first_air_date": "2026-05-04",
+        "genres": [{"name": "犯罪"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="低智商犯罪",
+        )
+    )
+
+    watch_providers = _detail_field_value(record, "watch_providers")
+    assert watch_providers == [
+        {
+            "provider": "tencent",
+            "label": "腾讯",
+            "url": "https://www.themoviedb.org/tv/272432/watch?locale=CN",
+        }
+    ]
+
+
+def test_tmdb_provider_get_detail_full_does_not_copy_homepage_to_other_network_platforms() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 272432,
+        "name": "低智商犯罪",
+        "overview": "剧集简介",
+        "homepage": "https://www.iqiyi.com/a_1euk1nkfz9l.html",
+        "networks": [
+            {"id": 1330, "name": "iQiyi", "origin_country": "CN"},
+            {"id": 2007, "name": "Tencent Video", "origin_country": "CN"},
+        ],
+        "first_air_date": "2026-05-04",
+        "genres": [{"name": "犯罪"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="低智商犯罪",
+        )
+    )
+
+    watch_providers = _detail_field_value(record, "watch_providers")
+    assert watch_providers == [
+        {
+            "provider": "iqiyi",
+            "label": "爱奇艺",
+            "url": "https://www.iqiyi.com/a_1euk1nkfz9l.html",
+        }
+    ]
 
 
 def test_tmdb_provider_get_detail_returns_empty_rating_for_invalid_vote_average() -> None:

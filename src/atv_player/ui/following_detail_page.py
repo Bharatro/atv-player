@@ -570,7 +570,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._render_source_buttons(bundle.available_source_keys, source_snapshots=source_snapshots)
         platforms = bundle.merged_snapshot.playback_platforms if current_key == "merged" else current.playback_platforms
         self._render_playback_platforms(platforms)
-        self.overview_label.setText(_format_source_snapshot_text(current))
+        if current_key == "merged":
+            self.overview_label.setText(_format_merged_source_snapshot_text(bundle.merged_snapshot))
+        else:
+            self.overview_label.setText(_format_source_snapshot_text(current))
 
     def _render_source_buttons(
         self,
@@ -582,7 +585,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.metadata_source_buttons = []
         for source_key in source_keys:
             if source_key == "merged":
-                label = "合并"
+                label = "媒体信息"
             else:
                 snapshot = source_snapshots.get(source_key)
                 label = snapshot.provider_label if snapshot is not None else source_key
@@ -1185,8 +1188,6 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
     elif record.total_episodes > 0:
         episode_parts.append(f"总 {record.total_episodes}")
     parts = [
-        f"评分 {record.rating}" if record.rating else "",
-        record.provider,
         *episode_parts,
         "有更新" if record.has_update else "",
     ]
@@ -1203,6 +1204,35 @@ def _format_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot) -> s
         label = str(field.get("label", "")).strip()
         value = str(field.get("value", "")).strip()
         if not value:
+            continue
+        parts.append(f"{label}: {value}")
+    overview = str(snapshot.overview or "").strip()
+    if overview:
+        parts.append("")
+        parts.append(f"简介:\n{overview}")
+    return "\n".join(parts) if parts else "暂无简介"
+
+
+_MERGED_METADATA_LABEL_WHITELIST = {
+    "类型",
+    "年代",
+    "地区",
+    "语言",
+    "导演",
+    "演员",
+    "别名",
+    "豆瓣ID",
+    "IMDb ID",
+    "TMDB ID",
+}
+
+
+def _format_merged_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot) -> str:
+    parts: list[str] = []
+    for field in snapshot.metadata_fields:
+        label = str(field.get("label", "")).strip()
+        value = str(field.get("value", "")).strip()
+        if label not in _MERGED_METADATA_LABEL_WHITELIST or not value:
             continue
         parts.append(f"{label}: {value}")
     overview = str(snapshot.overview or "").strip()

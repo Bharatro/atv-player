@@ -287,8 +287,41 @@ class FollowingController:
             raw=raw,
         )
 
+    def _candidate_for_add(self, candidate):
+        if isinstance(candidate, DiscoveryItem):
+            provider = str(candidate.provider or "").strip() or "tmdb"
+            raw = {
+                "tmdb_id": str(candidate.tmdb_id or "").strip(),
+                "poster_url": str(candidate.poster or "").strip(),
+                "backdrop_url": str(candidate.backdrop or "").strip(),
+                "rating": str(candidate.rating or "").strip(),
+                "overview": str(candidate.overview or "").strip(),
+            }
+            normalized_raw = {key: value for key, value in raw.items() if value}
+            return MetadataScrapeCandidate(
+                provider=provider,
+                provider_label={
+                    "tmdb": "TMDB",
+                    "bangumi": "Bangumi",
+                    "douban": "豆瓣",
+                    "bilibili": "B站",
+                    "iqiyi": "爱奇艺",
+                    "tencent": "腾讯",
+                    "youku": "优酷",
+                    "mgtv": "芒果",
+                    "sohu": "搜狐",
+                }.get(provider, provider),
+                provider_id=str(candidate.provider_id or "").strip(),
+                title=str(candidate.title or "").strip(),
+                year=str(candidate.year or "").strip(),
+                subtitle="电影" if str(candidate.media_type or "").strip() == "movie" else "剧集",
+                raw=normalized_raw,
+            )
+        return candidate
+
     def add_candidate(self, candidate, *, current_episode: int = 0) -> FollowingRecord:
         now = self._now()
+        candidate = self._candidate_for_add(candidate)
         record, snapshot = build_following_from_metadata_candidate(
             candidate,
             metadata_search_service=self._metadata_search_service,

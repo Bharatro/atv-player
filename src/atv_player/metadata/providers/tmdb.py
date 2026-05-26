@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
@@ -297,6 +298,124 @@ def _should_reject_year_mismatch(media_type: str, expected_year: str, actual_yea
 
 def _split_names(values: list[object] | None) -> list[str]:
     return [str(value or "").strip() for value in values or [] if str(value or "").strip()]
+
+
+_TMDB_PLATFORM_LABELS = {
+    "bilibili": "B站",
+    "iqiyi": "爱奇艺",
+    "mgtv": "芒果",
+    "migu": "咪咕",
+    "sohu": "搜狐",
+    "tencent": "腾讯",
+    "youku": "优酷",
+}
+_TMDB_PLATFORM_HOSTS = {
+    "bilibili.com": "bilibili",
+    "iqiyi.com": "iqiyi",
+    "mgtv.com": "mgtv",
+    "migu.cn": "migu",
+    "miguvideo.com": "migu",
+    "sohu.com": "sohu",
+    "v.qq.com": "tencent",
+    "youku.com": "youku",
+}
+_TMDB_NETWORK_NAME_MAP = {
+    "bilibili": "bilibili",
+    "bilibilibangumi": "bilibili",
+    "dragontelevision东方卫视": "",
+    "iqiyi": "iqiyi",
+    "jiangsutelevision": "",
+    "miguvideo": "migu",
+    "sohu": "sohu",
+    "sohutv": "sohu",
+    "tencentvideo": "tencent",
+    "youku": "youku",
+}
+
+
+def _normalize_tmdb_platform_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(value or "").strip().lower())
+
+
+def _tmdb_platform_key_from_network_name(value: object) -> str:
+    normalized = _normalize_tmdb_platform_name(value)
+    return _TMDB_NETWORK_NAME_MAP.get(normalized, "")
+
+
+def _tmdb_platform_key_from_homepage(url: object) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    host = (urlparse(text).hostname or "").lower().strip(".")
+    if not host:
+        return ""
+    if host in _TMDB_PLATFORM_HOSTS:
+        return _TMDB_PLATFORM_HOSTS[host]
+    for domain, provider in _TMDB_PLATFORM_HOSTS.items():
+        if host.endswith(f".{domain}"):
+            return provider
+    return ""
+
+
+def _tmdb_platform_label(provider: str) -> str:
+    return _TMDB_PLATFORM_LABELS.get(str(provider or "").strip(), str(provider or "").strip())
+
+
+def _tmdb_network_platform_keys(payload: dict[str, object]) -> set[str]:
+    keys: set[str] = set()
+    for item in payload.get("networks") or []:
+        if not isinstance(item, dict):
+            continue
+        key = _tmdb_platform_key_from_network_name(item.get("name"))
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, str]]:
+    entries: dict[str, dict[str, str]] = {}
+    watch_payload = payload.get("watch/providers")
+    if not isinstance(watch_payload, dict):
+        watch_payload = payload.get("watch_providers")
+    country = (watch_payload or {}).get("results", {}).get("CN") if isinstance(watch_payload, dict) else None
+    if isinstance(country, dict):
+        shared_link = str(country.get("link") or country.get("url") or "").strip()
+        for bucket in ("flatrate", "free", "ads", "buy", "rent"):
+            providers = country.get(bucket)
+            if not isinstance(providers, list):
+                continue
+            for item in providers:
+                if not isinstance(item, dict):
+                    continue
+                provider = _tmdb_platform_key_from_network_name(item.get("provider_name"))
+                if not provider:
+                    continue
+                current = entries.get(provider)
+                if current is None:
+                    current = {
+                        "provider": provider,
+                        "label": _tmdb_platform_label(provider),
+                        "url": "",
+                    }
+                    entries[provider] = current
+                explicit_url = str(item.get("url") or item.get("link") or "").strip()
+                if explicit_url:
+                    current["url"] = explicit_url
+                elif not current["url"] and shared_link:
+                    current["url"] = shared_link
+    homepage = str(payload.get("homepage") or "").strip()
+    homepage_provider = _tmdb_platform_key_from_homepage(homepage)
+    if homepage_provider and homepage_provider in _tmdb_network_platform_keys(payload):
+        current = entries.get(homepage_provider)
+        if current is None:
+            entries[homepage_provider] = {
+                "provider": homepage_provider,
+                "label": _tmdb_platform_label(homepage_provider),
+                "url": homepage,
+            }
+        elif not str(current.get("url") or "").strip():
+            current["url"] = homepage
+    return list(entries.values())
 
 
 class TMDBProvider:
@@ -656,6 +775,9 @@ class TMDBProvider:
             last_air = str(payload.get("last_air_date") or "").strip()
             if last_air:
                 detail_fields.append({"label": "last_air_date", "value": last_air})
+        watch_providers = _tmdb_watch_provider_entries(payload)
+        if watch_providers:
+            detail_fields.append({"label": "watch_providers", "value": watch_providers})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []
@@ -736,6 +858,9 @@ class TMDBProvider:
         last_air = str(payload.get("last_air_date") or "").strip()
         if last_air:
             detail_fields.append({"label": "last_air_date", "value": last_air})
+        watch_providers = _tmdb_watch_provider_entries(payload)
+        if watch_providers:
+            detail_fields.append({"label": "watch_providers", "value": watch_providers})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []

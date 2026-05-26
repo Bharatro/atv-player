@@ -39,6 +39,9 @@ _FOLLOWING_SOURCE_THRESHOLDS = {
     "mgtv": 0.80,
     "sohu": 0.80,
 }
+_FOLLOWING_SOURCE_PROVIDER_FILTERS = {
+    "douban": ("official_douban", "local_douban", "douban"),
+}
 
 
 def following_provider_priority(media_kind: str) -> list[str]:
@@ -1092,6 +1095,9 @@ class FollowingMetadataGateway:
                 best_score = score
         return best
 
+    def _source_provider_filters(self, provider: str) -> tuple[str, ...]:
+        return _FOLLOWING_SOURCE_PROVIDER_FILTERS.get(provider, (provider,))
+
     def load_source_records(
         self,
         record: FollowingRecord,
@@ -1106,11 +1112,13 @@ class FollowingMetadataGateway:
             category_name=category_name,
         )
         for provider in ("douban", "bangumi", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"):
-            try:
-                groups = self._metadata_search_service.search(query, provider_filter=provider)
-            except Exception:
-                continue
-            candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
+            candidates: list[object] = []
+            for provider_filter in self._source_provider_filters(provider):
+                try:
+                    groups = self._metadata_search_service.search(query, provider_filter=provider_filter)
+                except Exception:
+                    continue
+                candidates.extend(item for group in groups for item in list(getattr(group, "items", []) or []))
             best = self._best_source_candidate(provider, candidates, tmdb_record)
             if best is None:
                 continue
