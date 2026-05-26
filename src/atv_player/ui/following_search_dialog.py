@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSpinBox,
 )
 
 from atv_player.ui.following_search_result_card import FollowingSearchResultCard
@@ -47,15 +46,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.search_edit = QLineEdit(host)
         self.search_edit.setPlaceholderText("搜索标题或粘贴 Bangumi / 豆瓣 / TMDB 链接")
         search_row.addWidget(self.search_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
-        search_row.addWidget(QLabel("当前集数", host), 0, 1)
-        self.current_episode_spin = QSpinBox(host)
-        self.current_episode_spin.setRange(0, 9999)
-        self.current_episode_spin.setSpecialValueText(" ")
-        search_row.addWidget(self.current_episode_spin, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         self.search_button = QPushButton("搜索", host)
         self.search_button.setAutoDefault(False)
         self.search_button.setDefault(False)
-        search_row.addWidget(self.search_button, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(self.search_button, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         search_row.setColumnStretch(0, 1)
         layout.addLayout(search_row)
 
@@ -170,15 +164,11 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         self._add_request_id += 1
         request_id = self._add_request_id
-        current_episode = int(self.current_episode_spin.value())
         self._set_add_loading(True)
 
         def run() -> None:
             try:
-                try:
-                    self.controller.add_candidate(candidate, current_episode=current_episode)
-                except TypeError:
-                    self.controller.add_candidate(candidate)
+                self.controller.add_candidate(candidate)
                 error = ""
             except Exception as exc:
                 error = str(exc)
@@ -209,7 +199,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     def _apply_busy_state(self) -> None:
         busy = self._search_in_progress or self._add_in_progress
         self.search_edit.setEnabled(not busy)
-        self.current_episode_spin.setEnabled(not busy)
         self.search_button.setEnabled(not busy)
         self.result_list.setEnabled(not busy)
         self.close_button.setEnabled(not self._add_in_progress)
@@ -238,22 +227,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     def _apply_theme(self) -> None:
         tokens = current_tokens()
         self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=14, min_height=40))
-        self.current_episode_spin.setFixedHeight(40)
-        self.current_episode_spin.setStyleSheet(
-            f"""
-            QSpinBox {{
-                min-height: 40px;
-                padding: 0 10px;
-                border: 1px solid {tokens.input_border};
-                border-radius: 14px;
-                background: {tokens.input_bg};
-                color: {tokens.text_primary};
-            }}
-            QSpinBox:focus {{
-                border: 1px solid {tokens.accent};
-            }}
-            """
-        )
         self.search_button.setFixedHeight(40)
         button_qss = f"""
         QPushButton {{
