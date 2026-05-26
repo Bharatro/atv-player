@@ -14,6 +14,7 @@ from atv_player.ui.following_episode_browser import (
     EpisodeListModel,
     EpisodeThumbnailStore,
     FollowingEpisodeBrowser,
+    FollowingSeasonPosterPreviewDialog,
     SeasonListModel,
     STATUS_ROLE,
     STATUS_TEXT_ROLE,
@@ -381,6 +382,30 @@ def test_following_episode_browser_opens_large_preview_from_season_poster_click(
     browser._open_current_season_poster_preview()
 
     assert opened == ["第二季"]
+
+
+def test_following_season_poster_preview_dialog_uses_taller_portrait_friendly_canvas(
+    qtbot,
+) -> None:
+    dialog = FollowingSeasonPosterPreviewDialog("第二季", "poster")
+    qtbot.addWidget(dialog)
+
+    assert dialog.poster_label.minimumWidth() >= 640
+    assert dialog.poster_label.minimumHeight() > 360
+
+
+def test_following_season_poster_preview_dialog_scales_loaded_image_to_fit_label_height(
+    qtbot,
+) -> None:
+    dialog = FollowingSeasonPosterPreviewDialog("第二季", "poster")
+    qtbot.addWidget(dialog)
+
+    image = QImage(600, 900, QImage.Format.Format_RGB32)
+    dialog._handle_image_loaded(dialog.poster_label, image)
+
+    pixmap = dialog.poster_label.pixmap()
+    assert pixmap is not None
+    assert pixmap.height() <= dialog.poster_label.minimumHeight()
 
 
 def test_following_episode_browser_skips_poster_preview_when_no_poster_available(

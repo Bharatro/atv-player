@@ -54,6 +54,8 @@ The season detail pane remains a dedicated middle column inside `FollowingEpisod
 - The poster is clickable when a season poster source exists.
 - Clicking the poster opens a dedicated large-image preview dialog titled with the current season name.
 - If no poster source exists, the pane keeps the current empty-state behavior and does not open a preview.
+- The large-image preview should increase its poster display height enough to favor full vertical-poster presentation.
+- The preview should prioritize showing the poster as completely as practical rather than forcing the image to feel short or overly cropped.
 
 #### Season Information Block
 
@@ -109,6 +111,7 @@ Expected changes:
 - Update season-detail refresh logic to populate the new labels.
 - Keep current async image refresh behavior for season posters.
 - Add a poster-preview dialog or equivalent dedicated large-image dialog for the middle-pane season poster click action.
+- Adjust the poster-preview dialog sizing and image-fit behavior so vertically oriented posters appear taller and more complete.
 
 Additional file:
 
@@ -139,6 +142,7 @@ Add or update UI tests to verify:
 - missing season overview still falls back correctly
 - existing poster refresh behavior still works
 - clicking the middle-pane poster opens a large poster preview when poster content exists
+- the large poster preview uses a taller display area and preserves poster completeness as much as practical
 - episode preview dialog metadata shows runtime on the same line as air date when runtime is available
 
 ## Risks
@@ -155,4 +159,5 @@ Add or update UI tests to verify:
 - The overview appears below that top row and spans the pane width.
 - The three-pane page structure and episode grid behavior remain unchanged.
 - Clicking the middle-pane season poster opens a large-image preview dialog when a poster is available.
+- The large-image preview gives the poster more vertical space and aims to show the full poster proportion more faithfully.
 - Episode preview dialog shows runtime in the metadata line together with air date when runtime is present.
