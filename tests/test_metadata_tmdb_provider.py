@@ -278,7 +278,7 @@ def test_tmdb_provider_search_all_preserves_overview_rating_and_poster_metadata(
             year="2025",
             score=1.0,
             raw={
-                "poster_url": "https://image.tmdb.org/t/p/w185/gorGXNaHiFIBn7EEafx5uh7VzhT.jpg",
+                "poster_url": "https://image.tmdb.org/t/p/original/gorGXNaHiFIBn7EEafx5uh7VzhT.jpg",
                 "overview": "作品改编自经典游戏《仙剑奇侠传三》。",
                 "rating": "7.0",
             },
@@ -388,7 +388,8 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
     assert record.detail_fields[0]["label"] == "episodes"
     assert record.detail_fields[0]["value"][0]["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
     assert record.detail_fields[1]["label"] == "seasons"
-    assert record.detail_fields[1]["value"][1]["poster_url"].endswith("/season2.jpg")
+    assert record.detail_fields[1]["value"][0]["poster_url"] == "https://image.tmdb.org/t/p/original/season1.jpg"
+    assert record.detail_fields[1]["value"][1]["poster_url"] == "https://image.tmdb.org/t/p/original/season2.jpg"
     assert client.calls == [("get_tv_detail_with_season", "272432", "1")]
 
 

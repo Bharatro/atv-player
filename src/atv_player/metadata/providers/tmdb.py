@@ -60,14 +60,14 @@ def _tmdb_person_url(person_id: object) -> str:
     return f"https://www.themoviedb.org/person/{text}"
 
 
-def _poster_url_from_payload(payload: dict[str, object]) -> str:
+def _poster_url_from_payload(payload: dict[str, object], poster_base_url: str = "https://image.tmdb.org/t/p/original") -> str:
     url = str(payload.get("poster_url") or "").strip()
     if url:
         return url
     path = str(payload.get("poster_path") or "").strip()
     if not path:
         return ""
-    return f"https://image.tmdb.org/t/p/w185{path}"
+    return f"{poster_base_url}{path}"
 
 
 def _tmdb_cast_role(item: dict[str, object]) -> str:
@@ -160,13 +160,13 @@ def _best_backdrop_urls(payload: dict[str, object], base_url: str, *, limit: int
     return urls
 
 
-def _season_rows(payload: dict[str, object]) -> list[dict[str, object]]:
+def _season_rows(payload: dict[str, object], *, poster_base_url: str = "https://image.tmdb.org/t/p/original") -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for season in payload.get("seasons") or []:
         if not isinstance(season, dict):
             continue
         normalized = dict(season)
-        poster_url = _poster_url_from_payload(normalized)
+        poster_url = _poster_url_from_payload(normalized, poster_base_url)
         if poster_url:
             normalized["poster_url"] = poster_url
         rows.append(normalized)
@@ -263,11 +263,16 @@ def _extract_year(payload: dict[str, object], *, media_type: str) -> str:
     return raw[:4] if len(raw) >= 4 and raw[:4].isdigit() else ""
 
 
-def _search_result_raw(item: dict[str, object], *, season_number: int | None = None) -> dict[str, object]:
+def _search_result_raw(
+    item: dict[str, object],
+    *,
+    poster_base_url: str = "https://image.tmdb.org/t/p/original",
+    season_number: int | None = None,
+) -> dict[str, object]:
     raw: dict[str, object] = {}
     if season_number is not None:
         raw["season_number"] = season_number
-    poster_url = _poster_url_from_payload(item)
+    poster_url = _poster_url_from_payload(item, poster_base_url)
     if poster_url:
         raw["poster_url"] = poster_url
     overview = str(item.get("overview") or "").strip()
@@ -302,6 +307,9 @@ class TMDBProvider:
 
     def can_enrich(self, _context) -> bool:
         return True
+
+    def _poster_base_url(self) -> str:
+        return str(self._client.image_base("poster") or "https://image.tmdb.org/t/p/original").strip()
 
     def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
         media_type = infer_tmdb_media_type(candidate)
@@ -392,7 +400,7 @@ class TMDBProvider:
                 fallback_raw: dict[str, object] = {}
                 if extract_season_number(candidate.title) is not None:
                     fallback_raw["season_number"] = extract_season_number(candidate.title)
-                fallback_poster = _poster_url_from_payload(item)
+                fallback_poster = _poster_url_from_payload(item, self._poster_base_url())
                 if fallback_poster:
                     fallback_raw["poster_url"] = fallback_poster
                 match = MetadataMatch(
@@ -547,7 +555,11 @@ class TMDBProvider:
                 if match is None:
                     if _should_reject_year_mismatch("tv", candidate.year, item_year):
                         continue
-                    sa_raw = _search_result_raw(item, season_number=extract_season_number(candidate.title))
+                    sa_raw = _search_result_raw(
+                        item,
+                        poster_base_url=self._poster_base_url(),
+                        season_number=extract_season_number(candidate.title),
+                    )
                     match = MetadataMatch(
                         provider=self.name,
                         provider_id=f"tv:{_provider_id_with_season('tv', provider_id, candidate.title)}",
@@ -593,6 +605,7 @@ class TMDBProvider:
                 continue
             fb_raw = _search_result_raw(
                 normalized_item,
+                poster_base_url=self._poster_base_url(),
                 season_number=extract_season_number(candidate.title) if media_type == "tv" else None,
             )
             fallback_matches.append(
@@ -633,7 +646,7 @@ class TMDBProvider:
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
         if media_type == "tv":
-            detail_fields.append({"label": "seasons", "value": _season_rows(payload)})
+            detail_fields.append({"label": "seasons", "value": _season_rows(payload, poster_base_url=self._poster_base_url())})
             last_ep = payload.get("last_episode_to_air")
             if isinstance(last_ep, dict):
                 detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
@@ -713,7 +726,7 @@ class TMDBProvider:
             season_payload = self._client.get_tv_season_detail(provider_id, season_number) or {}
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
-        detail_fields.append({"label": "seasons", "value": _season_rows(payload)})
+        detail_fields.append({"label": "seasons", "value": _season_rows(payload, poster_base_url=self._poster_base_url())})
         last_ep = payload.get("last_episode_to_air")
         if isinstance(last_ep, dict):
             detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
