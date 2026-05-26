@@ -27,6 +27,7 @@ This replaces the current stacked poster-title-meta-overview arrangement with a 
 - Do not change the season list pane structure.
 - Do not change the right-side episode list interaction model.
 - Do not add new season fields beyond title, air date, episode count, poster, and overview.
+- Do not redesign the episode preview dialog beyond restoring missing runtime metadata.
 
 ## Layout Design
 
@@ -102,6 +103,16 @@ Expected changes:
 - Update season-detail refresh logic to populate the new labels.
 - Keep current async image refresh behavior for season posters.
 
+Additional file:
+
+- `src/atv_player/ui/following_detail_page.py`
+
+Expected preview-dialog change:
+
+- Update `FollowingEpisodePreviewDialog` metadata text to include episode runtime on the same line as air date.
+- Format should be `日期 · 时长` when both values exist.
+- If runtime is missing or `0`, keep the current safe fallback behavior without showing misleading empty separators.
+
 ## Styling Expectations
 
 - Preserve the existing app visual language; do not introduce a new design system.
@@ -119,6 +130,7 @@ Add or update UI tests to verify:
 - season selection still updates all middle-pane fields
 - missing season overview still falls back correctly
 - existing poster refresh behavior still works
+- episode preview dialog metadata shows runtime on the same line as air date when runtime is available
 
 ## Risks
 
@@ -133,3 +145,4 @@ Add or update UI tests to verify:
 - Season title, air date, and episode count appear as separate rows to the right of the poster.
 - The overview appears below that top row and spans the pane width.
 - The three-pane page structure and episode grid behavior remain unchanged.
+- Episode preview dialog shows runtime in the metadata line together with air date when runtime is present.
