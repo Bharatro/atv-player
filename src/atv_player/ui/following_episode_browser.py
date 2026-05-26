@@ -583,7 +583,7 @@ class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
         layout = self.content_layout()
         self.poster_label = QLabel("季封面", self)
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.poster_label.setMinimumSize(720, 960)
+        self.poster_label.setMinimumSize(720, 1080)
         self.poster_label.setStyleSheet(_image_placeholder_qss())
         layout.addWidget(self.poster_label)
 

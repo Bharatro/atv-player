@@ -32,7 +32,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         super().__init__(title="添加追更", parent=parent)
         self._init_async_guard()
         self.controller = controller
-        self.resize(760, 560)
+        self.resize(800, 600)
         self.groups = []
         self._search_request_id = 0
         self._add_request_id = 0
