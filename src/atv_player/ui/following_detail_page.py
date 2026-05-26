@@ -324,7 +324,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.overview_label = QLabel()
         self.status_label = QLabel()
         self.search_play_button = QPushButton("搜索播放")
-        self.manual_check_button = QPushButton("手动检查")
+        self.manual_check_button = QPushButton("检查更新")
         self.refresh_metadata_button = QPushButton("更新元数据")
         self.set_progress_button = QPushButton("设置进度")
         self.unfollow_button = QPushButton("取消追更")
@@ -633,7 +633,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         elif result is not None and getattr(result, "checked", False) is False:
             self.status_label.setText(str(getattr(result, "error", "") or "检查失败"))
         else:
-            self.status_label.setText("已完成手动检查")
+            self.status_label.setText("已完成检查更新")
 
     def _handle_metadata_refresh_finished(self, following_id: int, view, error: str) -> None:
         if following_id != self.current_following_id:
