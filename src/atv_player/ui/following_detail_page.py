@@ -22,6 +22,9 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingEpisodeState,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
+    FollowingRatingEntry,
     FollowingRecord,
     FollowingSeason,
     format_progress_episode,
@@ -337,6 +340,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.poster_label = QLabel("封面")
         self.title_label = QLabel()
         self.meta_label = QLabel()
+        self.rating_strip = QLabel()
         self.overview_label = QLabel()
         self.status_label = QLabel()
         self.search_play_button = QPushButton("搜索播放")
@@ -353,6 +357,14 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             initial_grid_columns=self._config.following_episode_grid_columns,
             parent=self,
         )
+        self.metadata_source_bar = QWidget()
+        self.metadata_source_layout = QHBoxLayout(self.metadata_source_bar)
+        self.metadata_source_buttons: list[QPushButton] = []
+        self.playback_platform_section = QFrame()
+        self.playback_platform_layout = QVBoxLayout(self.playback_platform_section)
+        self.playback_platform_buttons: list[QPushButton] = []
+        self.playback_platform_widgets: list[QLabel] = []
+        self._selected_metadata_source_key = "merged"
 
         self._cast_container = QWidget()
         self._cast_layout = QHBoxLayout(self._cast_container)
@@ -378,6 +390,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._pending_people = []
         self.current_following_id = int(following_id)
         self.current_view = self._load_detail_view(self.current_following_id)
+        self._selected_metadata_source_key = "merged"
         self._selected_season_number = self._initial_selected_season(
             self.current_view.record,
             self.current_view.snapshot,
@@ -399,6 +412,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.title_label.setWordWrap(True)
         self.title_label.setObjectName("followingDetailTitle")
         self.meta_label.setWordWrap(True)
+        self.rating_strip.setWordWrap(True)
         self.overview_label.setWordWrap(True)
         self.overview_label.setMinimumHeight(64)
         selectable_flags = (
@@ -407,7 +421,12 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         )
         self.title_label.setTextInteractionFlags(selectable_flags)
         self.meta_label.setTextInteractionFlags(selectable_flags)
+        self.rating_strip.setTextInteractionFlags(selectable_flags)
         self.overview_label.setTextInteractionFlags(selectable_flags)
+        self.metadata_source_layout.setContentsMargins(0, 0, 0, 0)
+        self.metadata_source_layout.setSpacing(8)
+        self.playback_platform_layout.setContentsMargins(0, 0, 0, 0)
+        self.playback_platform_layout.setSpacing(8)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self.back_button)
@@ -429,6 +448,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         metadata_layout.addWidget(self.status_label)
         metadata_layout.addWidget(self.title_label)
         metadata_layout.addWidget(self.meta_label)
+        metadata_layout.addWidget(self.rating_strip)
+        metadata_layout.addWidget(self.metadata_source_bar)
+        metadata_layout.addWidget(self.playback_platform_section)
         metadata_layout.addWidget(self.overview_label)
         metadata_layout.addStretch(1)
 
@@ -507,7 +529,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.status_label.setText("")
         self.title_label.setText(record.title)
         self.meta_label.setText(_meta_text(record))
-        self.overview_label.setText(_format_detail_text(snapshot))
+        self._render_metadata_bundle(snapshot)
         self._render_poster_carousel(record, snapshot)
         groups = build_episode_season_groups(
             snapshot.episodes,
@@ -532,6 +554,79 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         _clear_layout(self._cast_layout)
         self._pending_people = [*snapshot.cast, *snapshot.crew]
         self._render_next_batch()
+
+    def _render_metadata_bundle(self, snapshot: FollowingDetailSnapshot) -> None:
+        bundle = snapshot.metadata_bundle
+        if bundle is None:
+            self.rating_strip.setText("")
+            self._render_source_buttons(["merged"], source_snapshots={})
+            self._render_playback_platforms([])
+            self.overview_label.setText(_format_detail_text(snapshot))
+            return
+        source_snapshots = dict(bundle.source_snapshots)
+        current_key = (
+            self._selected_metadata_source_key
+            if self._selected_metadata_source_key in source_snapshots
+            else bundle.default_source_key
+        )
+        current = bundle.merged_snapshot if current_key == "merged" else source_snapshots[current_key]
+        self.rating_strip.setText(_rating_strip_text(bundle.merged_snapshot.ratings))
+        self._render_source_buttons(bundle.available_source_keys, source_snapshots=source_snapshots)
+        platforms = bundle.merged_snapshot.playback_platforms if current_key == "merged" else current.playback_platforms
+        self._render_playback_platforms(platforms)
+        self.overview_label.setText(_format_source_snapshot_text(current))
+
+    def _render_source_buttons(
+        self,
+        source_keys: list[str],
+        *,
+        source_snapshots: dict[str, FollowingMetadataSourceSnapshot],
+    ) -> None:
+        _clear_layout(self.metadata_source_layout)
+        self.metadata_source_buttons = []
+        for source_key in source_keys:
+            if source_key == "merged":
+                label = "合并"
+            else:
+                snapshot = source_snapshots.get(source_key)
+                label = snapshot.provider_label if snapshot is not None else source_key
+            button = QPushButton(label, self.metadata_source_bar)
+            button.setCheckable(True)
+            button.setChecked(source_key == self._selected_metadata_source_key)
+            button.clicked.connect(
+                lambda _checked=False, target=source_key: self._handle_metadata_source_selected(target)
+            )
+            self.metadata_source_layout.addWidget(button)
+            self.metadata_source_buttons.append(button)
+        self.metadata_source_layout.addStretch(1)
+
+    def _handle_metadata_source_selected(self, source_key: str) -> None:
+        self._selected_metadata_source_key = str(source_key or "merged")
+        if self.current_view is None:
+            return
+        self._render_metadata_bundle(self.current_view.snapshot)
+
+    def _render_playback_platforms(self, platforms: list[FollowingPlaybackPlatformEntry]) -> None:
+        _clear_layout(self.playback_platform_layout)
+        self.playback_platform_buttons = []
+        self.playback_platform_widgets = []
+        for entry in platforms:
+            row = QWidget(self.playback_platform_section)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            label = QLabel(_playback_platform_text(entry), row)
+            label.setWordWrap(True)
+            row_layout.addWidget(label, 1)
+            self.playback_platform_widgets.append(label)
+            if entry.url:
+                button = QPushButton("打开链接", row)
+                button.clicked.connect(
+                    lambda _checked=False, url=entry.url: QDesktopServices.openUrl(QUrl(url))
+                )
+                row_layout.addWidget(button)
+                self.playback_platform_buttons.append(button)
+            self.playback_platform_layout.addWidget(row)
 
     def _render_next_batch(self) -> None:
         batch = 20
@@ -1063,6 +1158,36 @@ def _meta_text(record: FollowingRecord) -> str:
         "有更新" if record.has_update else "",
     ]
     return " · ".join(part for part in parts if part)
+
+
+def _rating_strip_text(ratings: list[FollowingRatingEntry]) -> str:
+    return "  ·  ".join(f"{item.label} {item.value}" for item in ratings if item.value)
+
+
+def _format_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot) -> str:
+    parts: list[str] = []
+    for field in snapshot.metadata_fields:
+        label = str(field.get("label", "")).strip()
+        value = str(field.get("value", "")).strip()
+        if not value:
+            continue
+        parts.append(f"{label}: {value}")
+    overview = str(snapshot.overview or "").strip()
+    if overview:
+        parts.append("")
+        parts.append(f"简介:\n{overview}")
+    return "\n".join(parts) if parts else "暂无简介"
+
+
+def _playback_platform_text(entry: FollowingPlaybackPlatformEntry) -> str:
+    parts = [entry.label]
+    if entry.latest_episode > 0:
+        parts.append(f"更新至第{entry.latest_episode}集")
+    if entry.update_time_text:
+        parts.append(entry.update_time_text)
+    if entry.status_text:
+        parts.append(entry.status_text)
+    return "  ·  ".join(part for part in parts if part)
 
 
 _DETAIL_SKIP_LABELS = {"更新时间", "更新状态"}
