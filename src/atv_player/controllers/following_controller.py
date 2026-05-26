@@ -18,6 +18,7 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import (
+    compare_progress,
     format_progress_episode,
     FollowingCardItem,
     FollowingDetailSnapshot,
@@ -538,8 +539,8 @@ class FollowingController:
         current_episode: int,
         position_seconds: int,
     ) -> None:
+        record = self._repository.get(following_id)
         if current_season_number <= 0:
-            record = self._repository.get(following_id)
             current_season_number = (
                 resolve_progress_season(
                     getattr(record, "current_season_number", 0) if record is not None else 0,
@@ -547,6 +548,15 @@ class FollowingController:
                     fallback_season=getattr(record, "season_number", 0) if record is not None else 0,
                 )
             )
+        if record is not None and compare_progress(
+            current_season_number,
+            current_episode,
+            record.current_season_number,
+            record.current_episode,
+            current_fallback_season=record.season_number,
+            target_fallback_season=record.season_number,
+        ) < 0:
+            return
         self._repository.update_progress(
             following_id,
             current_season_number=current_season_number,

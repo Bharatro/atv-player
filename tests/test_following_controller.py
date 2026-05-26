@@ -331,6 +331,42 @@ def test_following_controller_adds_candidate_with_detail_snapshot(tmp_path: Path
     assert snapshot.cast[0]["name"] == "张若昀"
 
 
+def test_following_controller_record_playback_progress_ignores_older_episode_reports(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:1",
+            provider_priority=["bangumi", "tmdb", "douban"],
+            external_ids={"bangumi": "1"},
+            current_season_number=1,
+            current_episode=12,
+            position_seconds=50,
+            latest_episode=24,
+            previous_latest_episode=24,
+            total_episodes=24,
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 100)
+
+    controller.record_playback_progress(
+        following_id,
+        current_season_number=1,
+        current_episode=10,
+        position_seconds=80,
+    )
+
+    loaded = repo.get(following_id)
+    assert loaded is not None
+    assert loaded.current_episode == 12
+    assert loaded.position_seconds == 50
+
+
 def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     service = FakeTMDBUrlSearchService()

@@ -425,6 +425,69 @@ def test_main_window_matches_player_following_by_external_ids(qtbot) -> None:
     assert following.add_from_player_calls == []
 
 
+def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> None:
+    class ReportingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.progress_calls: list[tuple[int, int, int]] = []
+
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            super().load_page(page=page, size=size, keyword=keyword, only_updates=only_updates)
+            return [
+                SimpleNamespace(
+                    record=FollowingRecord(
+                        id=7,
+                        title="凡人修仙传",
+                        provider="player",
+                        provider_id="browse::vod-1",
+                        current_season_number=1,
+                        current_episode=1,
+                        season_number=1,
+                    )
+                )
+            ], 1
+
+        def record_playback_progress(
+            self,
+            following_id: int,
+            *,
+            current_season_number: int,
+            current_episode: int,
+            position_seconds: int,
+        ) -> None:
+            del current_season_number
+            self.progress_calls.append((following_id, current_episode, position_seconds))
+
+    following = ReportingFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(title="第24集", url="https://media.example/24.m3u8", vod_id="vod-1")
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+            playlist=[item],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="browse",
+            source_key="",
+        ),
+        current_index=0,
+    )
+
+    window._report_player_item_following_progress(item, position_seconds=19, duration_seconds=100)
+    window._report_player_item_following_progress(item, position_seconds=20, duration_seconds=100)
+
+    assert following.progress_calls == [(7, 24, 20)]
+
+
 def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
     following = FakeFollowingController()
     window = MainWindow(
