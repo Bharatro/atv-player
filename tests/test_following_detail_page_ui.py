@@ -219,6 +219,54 @@ def test_following_detail_page_groups_multiple_seasons_and_switches_current_seas
     )
 
 
+def test_following_detail_page_marks_stale_current_season_aired_episode_as_released(qtbot) -> None:
+    class LongRunningSeriesController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="海贼王",
+                    provider="tmdb",
+                    provider_id="tv:1:season:14",
+                    season_number=14,
+                    current_season_number=14,
+                    current_episode=580,
+                    latest_episode=580,
+                    total_episodes=1129,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=14, title="第十四季", episode_count=100),
+                        FollowingSeason(season_number=21, title="第二十一季", episode_count=200),
+                    ],
+                    episodes=[
+                        FollowingEpisode(
+                            episode_number=581,
+                            season_number=14,
+                            title="一伙惊愕！令人震惊的独头武士登场",
+                            air_date="2013-07-14",
+                        ),
+                        FollowingEpisode(
+                            episode_number=1129,
+                            season_number=21,
+                            title="最新集",
+                            air_date="2026-05-25",
+                        ),
+                    ],
+                ),
+            )
+
+    page = FollowingDetailPage(LongRunningSeriesController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    episode = page.current_view.snapshot.episodes[0]
+    assert page.episode_browser.status_text_for_episode(episode) == "已更新"
+
+
 def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None:
     class LazySeasonController(FakeController):
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):

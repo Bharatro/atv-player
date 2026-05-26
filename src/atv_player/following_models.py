@@ -258,6 +258,21 @@ def resolve_following_episode_state(
         and episode.episode_number <= max(0, int(latest_episode or 0))
     ):
         return FollowingEpisodeState.RELEASED
+    if (
+        episode_season == current_season
+        and episode.episode_number > max(0, int(current_episode or 0))
+        and air_date is not None
+        and air_date <= resolved_today
+    ):
+        return FollowingEpisodeState.RELEASED
+    if (
+        episode_season > 0
+        and latest_season > 0
+        and episode_season < latest_season
+        and episode.episode_number > 0
+        and (air_date is None or air_date <= resolved_today)
+    ):
+        return FollowingEpisodeState.RELEASED
     return FollowingEpisodeState.PENDING
 
 

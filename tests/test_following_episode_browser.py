@@ -128,6 +128,40 @@ def test_resolve_following_episode_state_does_not_mark_other_season_as_released(
     assert state == FollowingEpisodeState.PENDING
 
 
+def test_resolve_following_episode_state_marks_aired_older_season_episode_as_released() -> None:
+    episode = FollowingEpisode(episode_number=581, season_number=14, air_date="2013-07-14")
+
+    state = resolve_following_episode_state(
+        episode=episode,
+        current_season_number=14,
+        current_episode=580,
+        latest_season_number=21,
+        latest_episode=1129,
+        visible_season_number=14,
+        next_episode=None,
+        today=date(2026, 5, 26),
+    )
+
+    assert state == FollowingEpisodeState.RELEASED
+
+
+def test_resolve_following_episode_state_marks_aired_current_season_episode_as_released_when_latest_is_stale() -> None:
+    episode = FollowingEpisode(episode_number=581, season_number=14, air_date="2013-07-14")
+
+    state = resolve_following_episode_state(
+        episode=episode,
+        current_season_number=14,
+        current_episode=580,
+        latest_season_number=14,
+        latest_episode=580,
+        visible_season_number=14,
+        next_episode=None,
+        today=date(2026, 5, 26),
+    )
+
+    assert state == FollowingEpisodeState.RELEASED
+
+
 def test_resolve_following_episode_state_limits_upcoming_to_nearest_future_air_date() -> None:
     nearest = FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-31")
     later = FollowingEpisode(episode_number=25, season_number=1, air_date="2026-06-07")
