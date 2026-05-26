@@ -341,6 +341,33 @@ def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot)
     assert browser.grid_columns() == 1
 
 
+def test_following_episode_browser_recomputes_grid_width_after_first_show(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=2)
+    qtbot.addWidget(browser)
+    browser.resize(1200, 800)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=1, title="第一集")],
+            seasons=[FollowingSeason(season_number=1, title="第一季", episode_count=1)],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        selected_season_number=1,
+    )
+    initial_grid_width = browser.episode_list.gridSize().width()
+
+    browser.show()
+    qtbot.waitUntil(
+        lambda: browser.episode_list.viewport().width() > initial_grid_width,
+    )
+    qtbot.waitUntil(
+        lambda: browser.episode_list.gridSize().width() > initial_grid_width,
+    )
+
+    viewport_width = browser.episode_list.viewport().width()
+    assert browser.episode_list.gridSize().width() >= (viewport_width // 2) - 8
+
+
 def test_following_episode_browser_uses_official_style_season_detail_layout(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)

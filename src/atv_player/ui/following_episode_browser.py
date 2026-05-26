@@ -5,7 +5,7 @@ from datetime import datetime
 import threading
 from zoneinfo import ZoneInfo
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -726,6 +726,7 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_list.setItemDelegate(EpisodeItemDelegate(self.thumbnail_store, self.episode_list))
         self.episode_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.episode_list.setHidden(False)
+        self.episode_list.viewport().installEventFilter(self)
 
         self.episode_grid_container = QWidget(self.episode_list_panel)
         self.episode_grid_layout = QGridLayout(self.episode_grid_container)
@@ -828,6 +829,15 @@ class FollowingEpisodeBrowser(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._apply_episode_grid_metrics()
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is self.episode_list.viewport()
+            and event is not None
+            and event.type() in {QEvent.Type.Resize, QEvent.Type.Show}
+        ):
+            self._apply_episode_grid_metrics()
+        return super().eventFilter(watched, event)
 
     def current_season_number(self) -> int:
         index = self.season_list.currentIndex()
