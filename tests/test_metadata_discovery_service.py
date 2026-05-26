@@ -207,3 +207,85 @@ def test_tmdb_discovery_service_uses_disk_cache_for_recommendations_when_seed_si
 
     assert [item.provider_id for item in second.items] == ["tv:100"]
     assert client.recommendation_calls == 1
+
+
+def test_tmdb_discovery_service_reuses_recommendation_cache_when_exclusion_sets_change(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    client = StubTMDBClient(
+        recommendations={
+            ("tv", "76479"): [
+                {"id": 100, "name": "Gen V", "vote_average": 7.8, "popularity": 200.0},
+                {"id": 200, "name": "The Boys: Mexico", "vote_average": 7.0, "popularity": 150.0},
+            ]
+        }
+    )
+    seeds = [
+        RecommendationSeed(
+            provider_id="tv:76479",
+            tmdb_id="76479",
+            media_type="tv",
+            seed_source="following",
+            activity_weight=5.0,
+            activity_timestamp=200,
+            reason_flags=["has_update"],
+        )
+    ]
+
+    first = TMDBDiscoveryService(client=client, cache=cache).recommend(
+        seeds=seeds,
+        favorite_provider_ids=set(),
+        following_provider_ids={"tv:76479"},
+    )
+    second = TMDBDiscoveryService(client=client, cache=cache).recommend(
+        seeds=list(seeds),
+        favorite_provider_ids={"tv:100"},
+        following_provider_ids={"tv:76479"},
+    )
+
+    assert [item.provider_id for item in first.items] == ["tv:100", "tv:200"]
+    assert [item.provider_id for item in second.items] == ["tv:200"]
+    assert client.recommendation_calls == 1
+
+
+def test_tmdb_discovery_service_recommendation_cache_miss_when_seed_signature_changes(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    client = StubTMDBClient(
+        recommendations={
+            ("tv", "76479"): [{"id": 100, "name": "Gen V", "vote_average": 7.8, "popularity": 200.0}],
+            ("movie", "157336"): [{"id": 200, "title": "Dune", "vote_average": 8.2, "popularity": 150.0}],
+        }
+    )
+    service = TMDBDiscoveryService(client=client, cache=cache)
+
+    service.recommend(
+        seeds=[
+            RecommendationSeed(
+                provider_id="tv:76479",
+                tmdb_id="76479",
+                media_type="tv",
+                seed_source="following",
+                activity_weight=5.0,
+                activity_timestamp=200,
+                reason_flags=["has_update"],
+            )
+        ],
+        favorite_provider_ids=set(),
+        following_provider_ids={"tv:76479"},
+    )
+    service.recommend(
+        seeds=[
+            RecommendationSeed(
+                provider_id="movie:157336",
+                tmdb_id="157336",
+                media_type="movie",
+                seed_source="favorite",
+                activity_weight=2.0,
+                activity_timestamp=100,
+                reason_flags=[],
+            )
+        ],
+        favorite_provider_ids=set(),
+        following_provider_ids=set(),
+    )
+
+    assert client.recommendation_calls == 2
