@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 ANIME_PROVIDER_PRIORITY = ["bangumi", "tmdb", "douban"]
 LIVE_ACTION_PROVIDER_PRIORITY = ["tmdb", "douban", "bangumi"]
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(slots=True)
@@ -177,6 +180,79 @@ def progress_at_or_beyond(
         current_fallback_season=current_fallback_season,
         target_fallback_season=latest_fallback_season,
     ) >= 0
+
+
+class FollowingEpisodeState:
+    WATCHED = "watched"
+    RELEASED = "released"
+    UPCOMING = "upcoming"
+    PENDING = "pending"
+
+
+def _episode_air_date(value: str) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def resolve_following_episode_state(
+    *,
+    episode: FollowingEpisode,
+    current_season_number: int,
+    current_episode: int,
+    latest_season_number: int,
+    latest_episode: int,
+    visible_season_number: int,
+    next_episode: FollowingEpisode | None,
+    today: date | None = None,
+) -> str:
+    resolved_today = today or datetime.now(BEIJING_TZ).date()
+    episode_season = resolve_progress_season(
+        episode.season_number,
+        episode.episode_number,
+        fallback_season=visible_season_number,
+    )
+    current_season = resolve_progress_season(
+        current_season_number,
+        current_episode,
+        fallback_season=visible_season_number,
+    )
+    latest_season = resolve_progress_season(
+        latest_season_number,
+        latest_episode,
+        fallback_season=visible_season_number,
+    )
+    if (
+        episode_season == current_season
+        and episode.episode_number > 0
+        and episode.episode_number <= max(0, int(current_episode or 0))
+    ):
+        return FollowingEpisodeState.WATCHED
+    if next_episode is not None:
+        next_episode_season = resolve_progress_season(
+            next_episode.season_number,
+            next_episode.episode_number,
+            fallback_season=visible_season_number,
+        )
+        if (
+            episode_season == next_episode_season
+            and episode.episode_number == next_episode.episode_number
+        ):
+            return FollowingEpisodeState.UPCOMING
+    air_date = _episode_air_date(episode.air_date)
+    if air_date is not None and air_date > resolved_today:
+        return FollowingEpisodeState.UPCOMING
+    if (
+        episode_season == latest_season
+        and episode.episode_number > 0
+        and episode.episode_number <= max(0, int(latest_episode or 0))
+    ):
+        return FollowingEpisodeState.RELEASED
+    return FollowingEpisodeState.PENDING
 
 
 def format_progress_episode(

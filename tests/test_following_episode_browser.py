@@ -1,7 +1,14 @@
+from datetime import date
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 
-from atv_player.following_models import FollowingEpisode, FollowingSeason
+from atv_player.following_models import (
+    FollowingEpisode,
+    FollowingEpisodeState,
+    FollowingSeason,
+    resolve_following_episode_state,
+)
 from atv_player.ui.following_episode_browser import (
     EpisodeDisplayMode,
     EpisodeListModel,
@@ -80,6 +87,41 @@ def test_episode_list_model_marks_watched_rows() -> None:
 
     assert model.data(model.index(0, 0), Qt.ItemDataRole.UserRole + 1) is True
     assert model.data(model.index(1, 0), Qt.ItemDataRole.UserRole + 1) is False
+
+
+def test_resolve_following_episode_state_prioritizes_same_day_next_episode() -> None:
+    episode = FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-26")
+    next_episode = FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-26")
+
+    state = resolve_following_episode_state(
+        episode=episode,
+        current_season_number=1,
+        current_episode=23,
+        latest_season_number=1,
+        latest_episode=24,
+        visible_season_number=1,
+        next_episode=next_episode,
+        today=date(2026, 5, 26),
+    )
+
+    assert state == FollowingEpisodeState.UPCOMING
+
+
+def test_resolve_following_episode_state_does_not_mark_other_season_as_released() -> None:
+    episode = FollowingEpisode(episode_number=1, season_number=2, air_date="2026-05-26")
+
+    state = resolve_following_episode_state(
+        episode=episode,
+        current_season_number=1,
+        current_episode=23,
+        latest_season_number=1,
+        latest_episode=24,
+        visible_season_number=2,
+        next_episode=None,
+        today=date(2026, 5, 26),
+    )
+
+    assert state == FollowingEpisodeState.PENDING
 
 
 def test_episode_list_model_emits_data_changed_when_display_mode_changes() -> None:
