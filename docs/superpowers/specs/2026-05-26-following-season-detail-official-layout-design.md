@@ -6,8 +6,9 @@ Refit the middle season-detail pane in the following detail three-column workspa
 
 - top section uses a horizontal split
 - left side shows a larger season poster
-- right side shows season title, air date, and episode count on separate rows
+- right side shows season title, episode count, and air date on separate top-aligned rows
 - bottom section shows the season overview text across the full pane width
+- clicking the middle-pane season poster opens a larger poster preview dialog
 
 This replaces the current stacked poster-title-meta-overview arrangement with a clearer two-tier structure while keeping the overall three-pane page architecture unchanged.
 
@@ -50,18 +51,22 @@ The season detail pane remains a dedicated middle column inside `FollowingEpisod
 - Poster should read as the dominant visual anchor for the pane.
 - Poster remains aligned to the top-left of the detail pane.
 - Existing poster loading behavior stays intact.
+- The poster is clickable when a season poster source exists.
+- Clicking the poster opens a dedicated large-image preview dialog titled with the current season name.
+- If no poster source exists, the pane keeps the current empty-state behavior and does not open a preview.
 
 #### Season Information Block
 
 The text block to the right of the poster uses a vertical stack with three rows:
 
 1. Season title
-2. Air date
-3. Episode count
+2. Episode count
+3. Air date
 
 Requirements:
 
-- Air date and episode count must not be collapsed into one combined line.
+- Episode count and air date must not be collapsed into one combined line.
+- The text stack must stay pinned to the top of the poster area rather than drifting vertically.
 - Title remains the strongest text style in the block.
 - Air date and episode count use secondary styling.
 - If air date is missing, its line remains empty-safe without collapsing the layout in a way that breaks spacing.
@@ -79,8 +84,8 @@ Requirements:
 The middle pane continues to render from `EpisodeSeasonSummary`.
 
 - `title` -> season title label
-- `air_date` -> dedicated air-date label
 - `episode_count` -> dedicated episode-count label
+- `air_date` -> dedicated air-date label
 - `overview` -> overview block
 - `poster` -> season poster
 
@@ -99,9 +104,11 @@ Expected changes:
 
 - Replace the current season-detail vertical layout with nested top-row and bottom-row layouts.
 - Increase poster label sizing constraints.
-- Split the current combined metadata label into dedicated air-date and episode-count labels.
+- Split the current combined metadata label into dedicated episode-count and air-date labels.
+- Keep the right-side metadata labels top-aligned within the top row.
 - Update season-detail refresh logic to populate the new labels.
 - Keep current async image refresh behavior for season posters.
+- Add a poster-preview dialog or equivalent dedicated large-image dialog for the middle-pane season poster click action.
 
 Additional file:
 
@@ -125,11 +132,13 @@ Expected preview-dialog change:
 
 Add or update UI tests to verify:
 
-- the season detail pane exposes separate labels for title, air date, and episode count
+- the season detail pane exposes separate labels for title, episode count, and air date
+- the right-side information stack remains top-aligned and ordered as title -> episode count -> air date
 - the season overview renders below the top-row information structure
 - season selection still updates all middle-pane fields
 - missing season overview still falls back correctly
 - existing poster refresh behavior still works
+- clicking the middle-pane poster opens a large poster preview when poster content exists
 - episode preview dialog metadata shows runtime on the same line as air date when runtime is available
 
 ## Risks
@@ -142,7 +151,8 @@ Add or update UI tests to verify:
 
 - The middle season-detail pane uses a two-section official-style layout.
 - The season poster is larger than before.
-- Season title, air date, and episode count appear as separate rows to the right of the poster.
+- Season title, episode count, and air date appear as separate top-aligned rows to the right of the poster.
 - The overview appears below that top row and spans the pane width.
 - The three-pane page structure and episode grid behavior remain unchanged.
+- Clicking the middle-pane season poster opens a large-image preview dialog when a poster is available.
 - Episode preview dialog shows runtime in the metadata line together with air date when runtime is present.
