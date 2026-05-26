@@ -19,6 +19,7 @@ from atv_player.ui.following_episode_browser import (
     STATUS_ROLE,
     STATUS_TEXT_ROLE,
     WATCHED_ROLE,
+    _card_metrics_for_columns,
     build_episode_season_groups,
 )
 
@@ -282,6 +283,14 @@ def test_following_episode_browser_exposes_three_workspace_panes(qtbot) -> None:
     assert browser.episode_list_panel.parent() is browser.browser_frame
 
 
+def test_following_episode_browser_uses_pointing_hand_cursor_for_episode_cards(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+
+    assert browser.episode_list.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert browser.episode_list.viewport().cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
 def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
@@ -385,15 +394,19 @@ def test_following_episode_browser_clears_unused_grid_column_stretch_when_reduci
         ),
         current_episode=0,
     )
-    qtbot.waitUntil(lambda: browser.episode_list.gridSize().width() > 220, timeout=1000)
+    qtbot.waitUntil(lambda: browser.episode_list.gridSize().width() > 0, timeout=1000)
 
-    grid_width_one = browser.episode_list.gridSize().width()
+    viewport_width = browser.episode_list.viewport().width()
+    spacing = browser.episode_list.spacing()
+    rect_width_one = browser.episode_list.visualRect(browser.episode_model.index(0, 0)).width()
     browser.set_grid_columns(3)
-    grid_width_three = browser.episode_list.gridSize().width()
+    rect_width_three = browser.episode_list.visualRect(browser.episode_model.index(0, 0)).width()
     browser.set_grid_columns(2)
-    grid_width_two = browser.episode_list.gridSize().width()
+    rect_width_two = browser.episode_list.visualRect(browser.episode_model.index(0, 0)).width()
 
-    assert grid_width_one > grid_width_two > grid_width_three > 0
+    assert rect_width_one == viewport_width
+    assert rect_width_two == (viewport_width - spacing) // 2
+    assert rect_width_three == (viewport_width - (spacing * 2)) // 3
 
 
 def test_following_episode_browser_switches_virtual_list_display_mode(qtbot) -> None:
@@ -410,6 +423,41 @@ def test_following_episode_browser_switches_virtual_list_display_mode(qtbot) -> 
     browser.set_grid_columns(3)
 
     assert browser.episode_model.display_mode == EpisodeDisplayMode.COMPACT
+
+
+def test_following_episode_browser_keeps_thumbnail_size_constant_across_columns() -> None:
+    full = _card_metrics_for_columns(1)
+    poster = _card_metrics_for_columns(2)
+    compact = _card_metrics_for_columns(3)
+
+    assert (full.thumbnail_width, full.thumbnail_height) == (poster.thumbnail_width, poster.thumbnail_height)
+    assert (poster.thumbnail_width, poster.thumbnail_height) == (compact.thumbnail_width, compact.thumbnail_height)
+
+
+def test_following_episode_browser_clicking_card_emits_episode_activated(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.resize(960, 720)
+    browser.show()
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=1, season_number=1, title="冒险开始", overview="完整剧情", still="still")],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+    activated: list[int] = []
+    browser.episode_activated.connect(lambda episode: activated.append(episode.episode_number))
+    index = browser.episode_model.index(0, 0)
+    rect = browser.episode_list.visualRect(index)
+
+    qtbot.mouseClick(
+        browser.episode_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=rect.center(),
+    )
+
+    assert activated == [1]
 
 
 def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbot) -> None:

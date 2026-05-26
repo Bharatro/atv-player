@@ -344,7 +344,11 @@ class EpisodeItemDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index) -> QSize:
         del option
         metrics = _card_metrics_for_mode(str(index.data(DISPLAY_MODE_ROLE) or EpisodeDisplayMode.FULL))
-        return QSize(280, metrics.item_height)
+        view = self.parent()
+        grid_width = 0
+        if isinstance(view, QListView):
+            grid_width = max(0, view.gridSize().width())
+        return QSize(max(1, grid_width), metrics.item_height)
 
     def paint(self, painter: QPainter, option, index) -> None:
         tokens = current_tokens()
@@ -706,6 +710,8 @@ class FollowingEpisodeBrowser(QWidget):
         self.episode_list.setMovement(QListView.Movement.Static)
         self.episode_list.setWordWrap(True)
         self.episode_list.setSpacing(10)
+        self.episode_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.episode_list.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.season_model = SeasonListModel(self)
         self.episode_model = EpisodeListModel(
@@ -760,6 +766,7 @@ class FollowingEpisodeBrowser(QWidget):
         self.season_list.selectionModel().currentChanged.connect(
             self._handle_current_season_changed
         )
+        self.episode_list.clicked.connect(self._handle_episode_activated)
         self.episode_list.activated.connect(self._handle_episode_activated)
         self.episode_list.doubleClicked.connect(self._handle_episode_activated)
         self._refresh_grid_cycle_button()
@@ -947,7 +954,7 @@ class FollowingEpisodeBrowser(QWidget):
         spacing = max(0, self.episode_list.spacing())
         viewport_width = max(1, self.episode_list.viewport().width() or self.episode_list.width() or 1)
         usable_width = max(1, viewport_width - spacing * max(0, self._grid_columns - 1))
-        card_width = max(220, usable_width // self._grid_columns)
+        card_width = max(1, usable_width // self._grid_columns)
         self.episode_list.setGridSize(QSize(card_width, metrics.item_height))
         self.episode_list.doItemsLayout()
 
@@ -1175,8 +1182,8 @@ def _display_mode_for_grid_columns(columns: int) -> str:
 def _card_metrics_for_columns(columns: int) -> EpisodeCardMetrics:
     return {
         1: EpisodeCardMetrics(164, 148, 84, 10, 10, 10, 42, 18, 54, 20, 8, 2, 12),
-        2: EpisodeCardMetrics(148, 116, 68, 10, 10, 10, 38, 18, 38, 20, 8, 2, 12),
-        3: EpisodeCardMetrics(138, 116, 68, 10, 10, 8, 34, 16, 34, 18, 6, 1, 10),
+        2: EpisodeCardMetrics(148, 148, 84, 10, 10, 10, 38, 18, 38, 20, 8, 2, 12),
+        3: EpisodeCardMetrics(138, 148, 84, 10, 10, 8, 34, 16, 34, 18, 6, 1, 10),
     }[columns]
 
 

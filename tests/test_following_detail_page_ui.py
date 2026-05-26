@@ -365,6 +365,33 @@ def test_following_detail_page_uses_browser_owned_virtual_card_grid(qtbot) -> No
     assert page.episode_browser.episode_cards == []
 
 
+def test_following_detail_page_clicking_virtual_card_opens_preview_dialog(
+    qtbot, monkeypatch
+) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.resize(1280, 900)
+    page.show()
+    page.load_record(1)
+    opened: list[int] = []
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingEpisodePreviewDialog.exec",
+        lambda self_dialog: opened.append(self_dialog.episode.episode_number) or 1,
+    )
+
+    model = page.episode_browser.episode_list.model()
+    index = model.index(0, 0)
+    rect = page.episode_browser.episode_list.visualRect(index)
+    qtbot.mouseClick(
+        page.episode_browser.episode_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=rect.center(),
+    )
+
+    assert opened == [128]
+
+
 def test_following_detail_page_updates_middle_pane_when_switching_season(qtbot) -> None:
     class MultiSeasonController(FakeController):
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
