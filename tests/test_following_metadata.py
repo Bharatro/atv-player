@@ -340,25 +340,31 @@ def test_following_metadata_gateway_maps_local_douban_source_into_douban_slot() 
     assert result["douban"][1] >= 0.75
 
 
-def test_following_metadata_gateway_searches_only_tmdb_watch_platforms_and_third_party_sources() -> None:
+def test_following_metadata_gateway_searches_playback_sources_beyond_tmdb_watch_platforms() -> None:
     class SearchService:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
         def search(self, query, provider_filter=""):
-            del query
+            assert query.title == "蜜语纪"
+            assert query.year == "2026"
             self.calls.append(provider_filter)
-            if provider_filter != "iqiyi":
+            if provider_filter not in {"iqiyi", "tencent"}:
                 return []
+            provider_label = {"iqiyi": "爱奇艺", "tencent": "腾讯"}[provider_filter]
+            provider_id = {
+                "iqiyi": "iqiyi:album:1",
+                "tencent": "https://v.qq.com/x/cover/tencent/ep1.html",
+            }[provider_filter]
             return [
                 MetadataScrapeGroup(
-                    "iqiyi",
-                    "爱奇艺",
+                    provider_filter,
+                    provider_label,
                     [
                         MetadataScrapeCandidate(
-                            provider="iqiyi",
-                            provider_label="爱奇艺",
-                            provider_id="iqiyi:album:1",
+                            provider=provider_filter,
+                            provider_label=provider_label,
+                            provider_id=provider_id,
                             title="蜜语纪",
                             year="2026",
                         )
@@ -372,7 +378,14 @@ def test_following_metadata_gateway_searches_only_tmdb_watch_platforms_and_third
                 provider_id=candidate.provider_id,
                 title=candidate.title,
                 detail_fields=[
-                    {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+                    {
+                        "label": "播放链接",
+                        "value": (
+                            "https://www.iqiyi.com/a_1.html"
+                            if candidate.provider == "iqiyi"
+                            else "https://v.qq.com/x/cover/tencent/ep1.html"
+                        ),
+                    },
                     {"label": "更新状态", "value": "更新至第12集"},
                 ],
             )
@@ -409,9 +422,11 @@ def test_following_metadata_gateway_searches_only_tmdb_watch_platforms_and_third
         ),
     )
 
-    assert service.calls == ["official_douban", "local_douban", "douban", "bangumi", "iqiyi"]
-    assert set(result) <= {"douban", "bangumi", "iqiyi"}
+    assert "iqiyi" in service.calls
+    assert "tencent" in service.calls
+    assert set(result) <= {"douban", "bangumi", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}
     assert result["iqiyi"][0].provider == "iqiyi"
+    assert result["tencent"][0].provider == "tencent"
 
 
 def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
@@ -421,6 +436,7 @@ def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_sna
                 id=1,
                 title="凡人修仙传",
                 media_kind="anime",
+                season_number=1,
                 provider="tmdb",
                 provider_id="tv:272432",
                 external_ids={"tmdb": "272432"},
@@ -467,6 +483,7 @@ def test_following_controller_load_detail_saves_generated_metadata_bundle() -> N
                 id=1,
                 title="凡人修仙传",
                 media_kind="anime",
+                season_number=1,
                 provider="tmdb",
                 provider_id="tv:272432",
                 external_ids={"tmdb": "272432"},
@@ -520,6 +537,7 @@ def test_following_controller_refresh_metadata_saves_bundle_back_to_snapshot() -
                 id=1,
                 title="凡人修仙传",
                 media_kind="anime",
+                season_number=1,
                 provider="tmdb",
                 provider_id="tv:272432",
                 external_ids={"tmdb": "272432"},

@@ -83,7 +83,7 @@ class TencentMetadataProvider:
             genres=list(payload.get("genres") or []),
             country=str(payload.get("country") or "").strip(),
             language=str(payload.get("language") or "").strip(),
-            detail_fields=[],
+            detail_fields=self._detail_fields(payload, match),
         )
 
     def _apply_native_site_penalty(self, match: MetadataMatch) -> float:
@@ -167,6 +167,13 @@ class TencentMetadataProvider:
             "play_sites": self._play_sites(video_info),
             "provider_id": self._provider_id(video_info, doc),
         }
+
+    def _detail_fields(self, payload: dict, match: MetadataMatch) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        url = str(payload.get("provider_id") or match.provider_id or "").strip()
+        if url:
+            fields.append({"label": "播放链接", "value": url})
+        return fields
 
     def _episode_sites(self, video_info: dict) -> list[dict]:
         return self._site_list(video_info.get("episodeSites"))

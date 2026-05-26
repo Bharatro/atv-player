@@ -696,8 +696,17 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
-        if existing_snapshot is None or self._snapshot_needs_refresh(existing_snapshot):
-            snapshot = self._ensure_metadata_bundle(refreshed_record, snapshot)
+        should_force_bundle_refresh = existing_snapshot is not None and existing_snapshot.metadata_bundle is not None
+        if (
+            should_force_bundle_refresh
+            or existing_snapshot is None
+            or self._snapshot_needs_refresh(existing_snapshot)
+        ):
+            snapshot = self._ensure_metadata_bundle(
+                refreshed_record,
+                snapshot,
+                force=should_force_bundle_refresh,
+            )
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
             following_id,
@@ -870,8 +879,10 @@ class FollowingController:
         self,
         record: FollowingRecord,
         snapshot: FollowingDetailSnapshot,
+        *,
+        force: bool = False,
     ) -> FollowingDetailSnapshot:
-        if snapshot.metadata_bundle is not None:
+        if snapshot.metadata_bundle is not None and not force:
             return snapshot
         candidate = self._tmdb_refresh_candidate_from_record(record)
         if candidate is None:

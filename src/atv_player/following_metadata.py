@@ -43,7 +43,7 @@ _FOLLOWING_SOURCE_PROVIDER_FILTERS = {
     "douban": ("official_douban", "local_douban", "douban"),
 }
 _THIRD_PARTY_SOURCE_PROVIDERS = ("douban", "bangumi")
-_PLAYBACK_SOURCE_PROVIDERS = {"bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}
+_PLAYBACK_SOURCE_PROVIDERS = ("bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu")
 
 
 def following_provider_priority(media_kind: str) -> list[str]:
@@ -1105,6 +1105,9 @@ class FollowingMetadataGateway:
         for entry in _playback_platform_entries_from_tmdb(tmdb_record):
             provider = str(entry.provider or "").strip()
             if provider in _PLAYBACK_SOURCE_PROVIDERS and provider not in providers:
+                providers.append(provider)
+        for provider in _PLAYBACK_SOURCE_PROVIDERS:
+            if provider not in providers:
                 providers.append(provider)
         return tuple(providers)
 

@@ -108,6 +108,11 @@ class FakeController:
                                 latest_episode=128,
                                 update_time_text="2026-05-25",
                                 status_text="更新至第128集",
+                            ),
+                            FollowingPlaybackPlatformEntry(
+                                provider="tencent",
+                                label="腾讯",
+                                url="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
                             )
                         ],
                     ),
@@ -148,6 +153,11 @@ class FakeController:
                                     latest_episode=128,
                                     update_time_text="2026-05-25",
                                     status_text="更新至第128集",
+                                ),
+                                FollowingPlaybackPlatformEntry(
+                                    provider="tencent",
+                                    label="腾讯",
+                                    url="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
                                 )
                             ],
                         ),
@@ -276,16 +286,24 @@ def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_p
     assert "bangumi" not in page.meta_label.text()
     assert [button.text() for button in page.metadata_source_buttons] == ["媒体信息", "TMDB", "豆瓣", "Bangumi", "爱奇艺"]
     assert "类型: 喜剧 / 悬疑 / 犯罪" in page.overview_label.text()
-    assert "TMDB ID: 272432" in page.overview_label.text()
+    assert "TMDB ID:" in page.overview_label.text()
+    assert 'href="https://www.themoviedb.org/tv/272432"' in page.overview_label.text()
     assert "最近更新:" not in page.overview_label.text()
     assert "更新时间:" not in page.overview_label.text()
     assert "更新状态:" not in page.overview_label.text()
     assert "开播:" not in page.overview_label.text()
     assert "播放:" not in page.overview_label.text()
     assert "追番:" not in page.overview_label.text()
-    assert page.playback_platform_layout.count() > 0
-    assert "爱奇艺" in page.playback_platform_widgets[0].text()
-    assert "更新至第128集" in page.playback_platform_widgets[0].text()
+    assert page.playback_platform_layout.count() == 1
+    assert len(page.playback_platform_widgets) == 1
+    assert page.playback_platform_buttons == []
+    platform_html = page.playback_platform_widgets[0].text()
+    assert 'href="https://www.iqiyi.com/a_1.html"' in platform_html
+    assert 'href="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html"' in platform_html
+    assert "爱奇艺" in platform_html
+    assert "腾讯" in platform_html
+    assert "更新至第128集" in platform_html
+    assert platform_html.index("爱奇艺") < platform_html.index("腾讯")
 
 
 def test_following_detail_page_switches_between_merged_and_provider_raw_views(qtbot) -> None:
@@ -301,7 +319,8 @@ def test_following_detail_page_switches_between_merged_and_provider_raw_views(qt
 
     page.metadata_source_buttons[4].click()
 
-    assert "播放链接: https://www.iqiyi.com/a_1.html" in page.overview_label.text()
+    assert "播放链接:" in page.overview_label.text()
+    assert 'href="https://www.iqiyi.com/a_1.html"' in page.overview_label.text()
     assert "更新时间: 2026-05-25" in page.overview_label.text()
     assert "更新状态: 更新至第128集" in page.overview_label.text()
 
@@ -311,19 +330,36 @@ def test_following_detail_page_switches_between_merged_and_provider_raw_views(qt
     assert "爱奇艺" in page.playback_platform_widgets[0].text()
 
 
-def test_following_detail_page_opens_playback_platform_link(qtbot) -> None:
-    from unittest.mock import patch
-
+def test_following_detail_page_opens_inline_playback_platform_link(qtbot, monkeypatch) -> None:
     controller = FakeController()
     page = FollowingDetailPage(controller)
     qtbot.addWidget(page)
     opened: list[str] = []
 
     page.load_record(1)
-    with patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True):
-        page.playback_platform_buttons[0].click()
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+    page.playback_platform_widgets[0].linkActivated.emit("https://www.iqiyi.com/a_1.html")
 
     assert opened == ["https://www.iqiyi.com/a_1.html"]
+
+
+def test_following_detail_page_links_metadata_ids_like_player_detail(qtbot, monkeypatch) -> None:
+    controller = FakeController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+    opened: list[str] = []
+
+    page.load_record(1)
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+
+    html = page.overview_label.text()
+    assert 'href="https://movie.douban.com/subject/35517044/"' in html
+    assert 'href="https://www.imdb.com/title/tt32592348"' in html
+    assert 'href="https://www.themoviedb.org/tv/272432"' in html
+
+    page.overview_label.linkActivated.emit("https://www.themoviedb.org/tv/272432")
+
+    assert opened == ["https://www.themoviedb.org/tv/272432"]
 
 
 def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> None:
@@ -365,12 +401,15 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert "类型: 喜剧 / 悬疑 / 犯罪" in page.overview_label.text()
     assert "导演: 刘海波" in page.overview_label.text()
     assert "演员: 王骁,田曦薇,王传君,朱云峰" in page.overview_label.text()
-    assert "豆瓣ID: 35517044" in page.overview_label.text()
-    assert "IMDb ID: tt32592348" in page.overview_label.text()
-    assert "TMDB ID: 272432" in page.overview_label.text()
+    assert "豆瓣ID:" in page.overview_label.text()
+    assert "IMDb ID:" in page.overview_label.text()
+    assert "TMDB ID:" in page.overview_label.text()
+    assert 'href="https://movie.douban.com/subject/35517044/"' in page.overview_label.text()
+    assert 'href="https://www.imdb.com/title/tt32592348"' in page.overview_label.text()
+    assert 'href="https://www.themoviedb.org/tv/272432"' in page.overview_label.text()
     assert "更新时间:" not in page.overview_label.text()
     assert "更新状态:" not in page.overview_label.text()
-    assert "简介:\nTMDB简介" in page.overview_label.text()
+    assert "简介:<br>TMDB简介" in page.overview_label.text()
     assert page.page_scroll.verticalScrollBarPolicy().name == "ScrollBarAsNeeded"
     episode_model = page.episode_browser.episode_list.model()
     assert episode_model.data(

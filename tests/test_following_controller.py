@@ -5,6 +5,9 @@ from atv_player.controllers.following_controller import FollowingController
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingMetadataBundle,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
     FollowingRecord,
 )
 from atv_player.following_repository import FollowingRepository
@@ -922,6 +925,116 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
     assert snapshot is not None
     assert snapshot.cast[1]["avatar"] == "/tian.jpg"
     assert snapshot.episodes[0].still == "old-still"
+
+
+def test_following_controller_refresh_metadata_rebuilds_existing_metadata_bundle_platforms(tmp_path: Path) -> None:
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            assert query.title == "蜜语纪"
+            if provider_filter != "tencent":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="tencent",
+                            provider_label="腾讯",
+                            provider_id="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                            title="蜜语纪",
+                            year="2026",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            if candidate.provider == "tencent":
+                return MetadataRecord(
+                    provider="tencent",
+                    provider_id=candidate.provider_id,
+                    title="蜜语纪",
+                    year="2026",
+                    detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+                )
+            return self.detail_record_full(candidate)
+
+        def detail_record_full(self, candidate):
+            assert candidate.provider == "tmdb"
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:281231:season:1",
+                title="蜜语纪",
+                year="2026",
+                tmdb_id="281231",
+                overview="TMDB简介",
+                detail_fields=[
+                    {
+                        "label": "watch_providers",
+                        "value": [
+                            {
+                                "provider": "iqiyi",
+                                "label": "爱奇艺",
+                                "url": "https://www.iqiyi.com/a_1euk1nkfz9l.html",
+                            }
+                        ],
+                    },
+                    {"label": "episodes", "value": [{"episode_number": 38, "name": "第38集"}]},
+                ],
+            )
+
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="蜜语纪",
+            media_kind="live_action",
+            season_number=1,
+            provider="tmdb",
+            provider_id="tv:281231",
+            external_ids={"tmdb": "281231"},
+        )
+    )
+    stale_bundle = FollowingMetadataBundle(
+        merged_snapshot=FollowingMetadataSourceSnapshot(
+            source_key="merged",
+            provider="merged",
+            provider_label="合并",
+            playback_platforms=[
+                FollowingPlaybackPlatformEntry(
+                    provider="iqiyi",
+                    label="爱奇艺",
+                    url="https://www.iqiyi.com/a_1euk1nkfz9l.html",
+                )
+            ],
+        ),
+        source_snapshots={
+            "merged": FollowingMetadataSourceSnapshot(
+                source_key="merged",
+                provider="merged",
+                provider_label="合并",
+            )
+        },
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="旧简介",
+            metadata_bundle=stale_bundle,
+            episodes=[FollowingEpisode(episode_number=1, title="旧第1集")],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=SearchService(), now=lambda: 100)
+
+    refreshed = controller.refresh_metadata(record_id)
+
+    platforms = refreshed.snapshot.metadata_bundle.merged_snapshot.playback_platforms
+    assert [(item.provider, item.url) for item in platforms] == [
+        ("iqiyi", "https://www.iqiyi.com/a_1euk1nkfz9l.html"),
+        ("tencent", "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html"),
+    ]
 
 
 def test_following_controller_refresh_metadata_keeps_existing_episode_entries_when_refresh_returns_subset(

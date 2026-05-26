@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import shiboken6
 import re
 import threading
@@ -32,6 +33,7 @@ from atv_player.following_models import (
     resolve_progress_season,
 )
 from atv_player.models import AppConfig
+from atv_player.ui.external_links import external_link_html
 from atv_player.ui.following_episode_browser import (
     FollowingEpisodeBrowser,
     build_episode_season_groups,
@@ -342,6 +344,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.meta_label = QLabel()
         self.rating_strip = QLabel()
         self.overview_label = QLabel()
+        self.overview_label.setTextFormat(Qt.TextFormat.RichText)
+        self.overview_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.overview_label.setOpenExternalLinks(False)
+        self.overview_label.linkActivated.connect(self._open_external_link)
         self.status_label = QLabel()
         self.search_play_button = QPushButton("搜索播放")
         self.manual_check_button = QPushButton("检查更新")
@@ -557,7 +563,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.rating_strip.setText("")
             self._render_source_buttons(["merged"], source_snapshots={})
             self._render_playback_platforms([])
-            self.overview_label.setText(_format_detail_text(snapshot))
+            record = self.current_view.record if self.current_view is not None else None
+            self.overview_label.setText(_format_detail_text(snapshot, record=record))
             return
         source_snapshots = dict(bundle.source_snapshots)
         current_key = (
@@ -570,10 +577,11 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._render_source_buttons(bundle.available_source_keys, source_snapshots=source_snapshots)
         platforms = bundle.merged_snapshot.playback_platforms if current_key == "merged" else current.playback_platforms
         self._render_playback_platforms(platforms)
+        record = self.current_view.record if self.current_view is not None else None
         if current_key == "merged":
-            self.overview_label.setText(_format_merged_source_snapshot_text(bundle.merged_snapshot))
+            self.overview_label.setText(_format_merged_source_snapshot_text(bundle.merged_snapshot, record=record))
         else:
-            self.overview_label.setText(_format_source_snapshot_text(current))
+            self.overview_label.setText(_format_source_snapshot_text(current, record=record))
 
     def _render_source_buttons(
         self,
@@ -609,23 +617,19 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         _clear_layout(self.playback_platform_layout)
         self.playback_platform_buttons = []
         self.playback_platform_widgets = []
-        for entry in platforms:
-            row = QWidget(self.playback_platform_section)
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(8)
-            label = QLabel(_playback_platform_text(entry), row)
-            label.setWordWrap(True)
-            row_layout.addWidget(label, 1)
-            self.playback_platform_widgets.append(label)
-            if entry.url:
-                button = QPushButton("打开链接", row)
-                button.clicked.connect(
-                    lambda _checked=False, url=entry.url: QDesktopServices.openUrl(QUrl(url))
-                )
-                row_layout.addWidget(button)
-                self.playback_platform_buttons.append(button)
-            self.playback_platform_layout.addWidget(row)
+        if not platforms:
+            return
+        label = QLabel(_playback_platforms_html(platforms), self.playback_platform_section)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        label.setOpenExternalLinks(False)
+        label.linkActivated.connect(self._open_external_link)
+        self.playback_platform_widgets.append(label)
+        self.playback_platform_layout.addWidget(label)
+
+    def _open_external_link(self, url: str) -> None:
+        QDesktopServices.openUrl(QUrl(str(url or "")))
 
     def _render_next_batch(self) -> None:
         batch = 20
@@ -1198,19 +1202,19 @@ def _rating_strip_text(ratings: list[FollowingRatingEntry]) -> str:
     return "  ·  ".join(f"{item.label} {item.value}" for item in ratings if item.value)
 
 
-def _format_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot) -> str:
+def _format_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot, *, record: FollowingRecord | None = None) -> str:
     parts: list[str] = []
     for field in snapshot.metadata_fields:
         label = str(field.get("label", "")).strip()
         value = str(field.get("value", "")).strip()
         if not value:
             continue
-        parts.append(f"{label}: {value}")
+        parts.append(_metadata_field_html(label, value, record=record))
     overview = str(snapshot.overview or "").strip()
     if overview:
         parts.append("")
-        parts.append(f"简介:\n{overview}")
-    return "\n".join(parts) if parts else "暂无简介"
+        parts.append(f"{html.escape('简介:')}<br>{_metadata_value_html('简介', overview, record=record)}")
+    return "<br>".join(parts) if parts else "暂无简介"
 
 
 _MERGED_METADATA_LABEL_WHITELIST = {
@@ -1227,19 +1231,19 @@ _MERGED_METADATA_LABEL_WHITELIST = {
 }
 
 
-def _format_merged_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot) -> str:
+def _format_merged_source_snapshot_text(snapshot: FollowingMetadataSourceSnapshot, *, record: FollowingRecord | None = None) -> str:
     parts: list[str] = []
     for field in snapshot.metadata_fields:
         label = str(field.get("label", "")).strip()
         value = str(field.get("value", "")).strip()
         if label not in _MERGED_METADATA_LABEL_WHITELIST or not value:
             continue
-        parts.append(f"{label}: {value}")
+        parts.append(_metadata_field_html(label, value, record=record))
     overview = str(snapshot.overview or "").strip()
     if overview:
         parts.append("")
-        parts.append(f"简介:\n{overview}")
-    return "\n".join(parts) if parts else "暂无简介"
+        parts.append(f"{html.escape('简介:')}<br>{_metadata_value_html('简介', overview, record=record)}")
+    return "<br>".join(parts) if parts else "暂无简介"
 
 
 def _playback_platform_text(entry: FollowingPlaybackPlatformEntry) -> str:
@@ -1253,22 +1257,80 @@ def _playback_platform_text(entry: FollowingPlaybackPlatformEntry) -> str:
     return "  ·  ".join(part for part in parts if part)
 
 
+def _playback_platforms_html(platforms: list[FollowingPlaybackPlatformEntry]) -> str:
+    return "  ·  ".join(_playback_platform_entry_html(entry) for entry in platforms)
+
+
+def _playback_platform_entry_html(entry: FollowingPlaybackPlatformEntry) -> str:
+    label = str(entry.label or entry.provider or "").strip()
+    label_html = external_link_html(entry.url, label) if entry.url else html.escape(label)
+    parts = [label_html]
+    if entry.latest_episode > 0:
+        parts.append(html.escape(f"更新至第{entry.latest_episode}集"))
+    if entry.update_time_text:
+        parts.append(html.escape(entry.update_time_text))
+    if entry.status_text:
+        parts.append(html.escape(entry.status_text))
+    return " ".join(part for part in parts if part)
+
+
+def _metadata_field_html(label: str, value: str, *, record: FollowingRecord | None = None) -> str:
+    return f"{html.escape(label)}: {_metadata_value_html(label, value, record=record)}".rstrip()
+
+
+def _metadata_value_html(label: str, value: str, *, record: FollowingRecord | None = None) -> str:
+    url = _external_metadata_url(label, value, record=record)
+    if url:
+        return external_link_html(url, value)
+    return html.escape(value).replace("\n", "<br>")
+
+
+def _external_metadata_url(label: str, value: object, *, record: FollowingRecord | None = None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://")):
+        return text
+    normalized_label = str(label or "").strip().lower()
+    if normalized_label in {"豆瓣id", "dbid"}:
+        return f"https://movie.douban.com/subject/{text}/"
+    if normalized_label == "imdb id":
+        return f"https://www.imdb.com/title/{text}"
+    if normalized_label == "bangumi id":
+        return f"https://bgm.tv/subject/{text}"
+    if normalized_label == "tmdb id":
+        media_type = "movie" if str(getattr(record, "media_kind", "") or "").strip().lower() == "movie" else "tv"
+        provider_id = str(getattr(record, "provider_id", "") or "").strip()
+        if provider_id.startswith("movie:"):
+            media_type = "movie"
+        return f"https://www.themoviedb.org/{media_type}/{text}"
+    if normalized_label in {"bilibili id", "b站id", "season id"}:
+        if re.match(r"^BV[0-9A-Za-z]+$", text):
+            return f"https://www.bilibili.com/video/{text}"
+        if text.isdigit():
+            return f"https://www.bilibili.com/bangumi/play/ss{text}"
+        ss_match = re.match(r"^ss(\d+)$", text, re.IGNORECASE)
+        if ss_match is not None:
+            return f"https://www.bilibili.com/bangumi/play/ss{ss_match.group(1)}"
+    return ""
+
+
 _DETAIL_SKIP_LABELS = {"更新时间", "更新状态"}
 
 
-def _format_detail_text(snapshot: FollowingDetailSnapshot) -> str:
+def _format_detail_text(snapshot: FollowingDetailSnapshot, *, record: FollowingRecord | None = None) -> str:
     parts: list[str] = []
     for field in snapshot.metadata_fields:
         label = str(field.get("label", "")).strip()
         value = str(field.get("value", "")).strip()
         if label in _DETAIL_SKIP_LABELS or not value:
             continue
-        parts.append(f"{label}: {value}")
+        parts.append(_metadata_field_html(label, value, record=record))
     overview = (snapshot.overview or "").strip()
     if overview:
         parts.append("")
-        parts.append(f"简介:\n{overview}")
-    return "\n".join(parts) if parts else "暂无简介"
+        parts.append(f"{html.escape('简介:')}<br>{_metadata_value_html('简介', overview, record=record)}")
+    return "<br>".join(parts) if parts else "暂无简介"
 
 
 def _image_placeholder_qss() -> str:

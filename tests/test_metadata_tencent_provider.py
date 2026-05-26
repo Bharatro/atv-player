@@ -105,7 +105,9 @@ def test_tencent_metadata_provider_search_keeps_only_datatype_2_and_omits_rating
     assert record.actors == ["郭赫轩", "陈芷琰"]
     assert matches[0].raw["typeName"] == "少儿"
     assert record.genres == ["儿童剧", "情景喜剧"]
-    assert record.detail_fields == []
+    assert record.detail_fields == [
+        {"label": "播放链接", "value": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"}
+    ]
 
 
 def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> None:
@@ -144,6 +146,46 @@ def test_tencent_metadata_provider_search_preserves_episode_sites_in_raw() -> No
 
     assert "episode_sites" in match.raw
     assert match.raw["episode_sites"][0]["episodeInfoList"][0]["title"] == "第01话 金银米小圈1"
+
+
+def test_tencent_metadata_provider_detail_exposes_playback_link() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "miyuji"},
+                                "videoInfo": {
+                                    "title": "蜜语纪",
+                                    "year": 2026,
+                                    "typeName": "电视剧",
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {"url": "https://v.qq.com/x/cover/miyuji/ep1.html"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="蜜语纪", year="2026", category_name="剧集"))[0]
+    record = provider.get_detail(match)
+
+    assert record.detail_fields == [
+        {"label": "播放链接", "value": "https://v.qq.com/x/cover/miyuji/ep1.html"}
+    ]
 
 
 def test_tencent_metadata_provider_keeps_channel_type_out_of_record_genres() -> None:
@@ -387,7 +429,10 @@ def test_tencent_metadata_provider_detail_omits_source_site_field() -> None:
     match = provider.search(MetadataQuery(title="米小圈上学记4", year="2026", category_name="少儿"))[0]
     record = provider.get_detail(match)
 
-    assert record.detail_fields == []
+    assert record.detail_fields == [
+        {"label": "播放链接", "value": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"}
+    ]
+    assert all(field["label"] != "来源站点" for field in record.detail_fields)
 
 
 def test_tencent_metadata_provider_ignores_zero_year_values() -> None:
