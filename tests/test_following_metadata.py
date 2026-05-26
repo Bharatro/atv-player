@@ -368,6 +368,27 @@ def test_build_snapshot_from_record_uses_last_episode_to_air_for_latest_and_tota
     assert following.total_episodes == 1201
 
 
+def test_build_snapshot_from_record_uses_last_episode_air_date_for_recent_update_metadata() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:233295:season:1",
+        title="仙剑奇侠传叁",
+        tmdb_id="233295",
+        detail_fields=[
+            {"label": "last_air_date", "value": "2026-03-31"},
+            {
+                "label": "last_episode_to_air",
+                "value": {"episode_number": 23, "air_date": "2026-05-19"},
+            },
+        ],
+    )
+
+    _following, snapshot = build_snapshot_from_record(record, now=300, media_kind="live_action")
+
+    assert {"label": "最近更新", "value": "2026-05-19"} in snapshot.metadata_fields
+    assert {"label": "last_air_date", "value": "2026-03-31"} not in snapshot.metadata_fields
+
+
 def test_compute_episode_counts_ignores_specials_and_zero_episode_numbers() -> None:
     latest, total = compute_episode_counts(
         [

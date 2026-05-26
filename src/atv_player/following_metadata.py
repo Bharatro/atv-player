@@ -251,6 +251,29 @@ def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object
     return 0
 
 
+def _tmdb_recent_update_date_from_detail_fields(detail_fields: list[dict[str, object]]) -> str:
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != "last_episode_to_air":
+            continue
+        value = field.get("value")
+        if not isinstance(value, dict):
+            continue
+        air_date = str(value.get("air_date") or "").strip()
+        if air_date:
+            return air_date
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != "last_air_date":
+            continue
+        air_date = str(field.get("value") or "").strip()
+        if air_date:
+            return air_date
+    return ""
+
+
 def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRecord, FollowingDetailSnapshot]:
     raw = dict(getattr(candidate, "raw", {}) or {})
     provider = str(getattr(candidate, "provider", "") or "").strip()
@@ -676,6 +699,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
 def _metadata_fields_from_record(record) -> list[dict[str, str]]:
     fields: list[dict[str, str]] = []
     seen: set[str] = set()
+    detail_fields = list(getattr(record, "detail_fields", []) or [])
 
     def put(label: str, value: object) -> None:
         normalized = str(value or "").strip()
@@ -696,11 +720,13 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
         put("豆瓣ID", str(douban_id))
     put("IMDb ID", getattr(record, "imdb_id", ""))
     put("TMDB ID", getattr(record, "tmdb_id", ""))
-    for item in list(getattr(record, "detail_fields", []) or []):
+    if str(getattr(record, "provider", "") or "").strip() == "tmdb":
+        put("最近更新", _tmdb_recent_update_date_from_detail_fields(detail_fields))
+    for item in detail_fields:
         if not isinstance(item, dict):
             continue
         label = str(item.get("label") or "").strip()
-        if label in ("episodes", "last_episode_to_air", "seasons"):
+        if label in ("episodes", "last_episode_to_air", "seasons", "last_air_date"):
             continue
         value = item.get("value")
         if isinstance(value, list):
