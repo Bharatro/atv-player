@@ -63,7 +63,7 @@ class FollowingController:
         self._discovery_service = discovery_service
         self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
 
-    def search_media(self, keyword: str):
+    def search_media(self, keyword: str, *, year: str = ""):
         url_candidate = self.candidate_from_url(keyword)
         if url_candidate is not None:
             from atv_player.metadata.scrape import MetadataScrapeGroup
@@ -76,7 +76,7 @@ class FollowingController:
                     items=[url_candidate],
                 )
             ]
-        query = MetadataQuery(title=keyword.strip())
+        query = MetadataQuery(title=keyword.strip(), year=str(year or "").strip())
         groups = self._search_tmdb_following(query)
         return [self._sort_following_group_items(group) for group in groups]
 
@@ -90,7 +90,10 @@ class FollowingController:
         if normalized_tab == "recommendation":
             return self._load_recommendation_result(page=page)
         if normalized_tab == "search":
-            groups = self.search_media(query)
+            groups = self.search_media(
+                query,
+                year=str((filters or {}).get("year") or ""),
+            )
             items = [
                 self._discovery_item_from_candidate(candidate)
                 for group in groups
