@@ -422,3 +422,81 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_resu
     dialog._activate_tab("recommendation")
 
     assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
+
+
+def test_following_search_dialog_trending_filters_change_request_parameters(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            self.calls.append((tab_key, dict(kwargs.get("filters") or {})))
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
+            source_label = str((kwargs.get("filters") or {}).get("list_key") or "trending_week")
+            return DiscoveryResult(items=[], total=0, source_label=source_label)
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._activate_tab("trending")
+    qtbot.waitUntil(lambda: any(call[0] == "trending" for call in controller.calls))
+
+    list_index = dialog.trending_list_combo.findData("trending_day")
+    media_index = dialog.trending_media_combo.findData("movie")
+    dialog.trending_list_combo.setCurrentIndex(list_index)
+    dialog.trending_media_combo.setCurrentIndex(media_index)
+
+    qtbot.waitUntil(
+        lambda: any(
+            call[0] == "trending"
+            and call[1].get("list_key") == "trending_day"
+            and call[1].get("media_type") == "movie"
+            for call in controller.calls
+        )
+    )
+
+
+def test_following_search_dialog_discover_filters_change_request_parameters(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            self.calls.append((tab_key, dict(kwargs.get("filters") or {})))
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
+            return DiscoveryResult(items=[], total=0, source_label="筛选结果")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._activate_tab("discover")
+    qtbot.waitUntil(lambda: any(call[0] == "discover" for call in controller.calls))
+
+    media_index = dialog.discover_media_combo.findData("movie")
+    sort_index = dialog.discover_sort_combo.findData("vote_average.desc")
+    year_index = dialog.discover_year_combo.findData("2024")
+    dialog.discover_media_combo.setCurrentIndex(media_index)
+    dialog.discover_sort_combo.setCurrentIndex(sort_index)
+    dialog.discover_year_combo.setCurrentIndex(year_index)
+
+    qtbot.waitUntil(
+        lambda: any(
+            call[0] == "discover"
+            and call[1].get("media_type") == "movie"
+            and call[1].get("sort_by") == "vote_average.desc"
+            and call[1].get("year") == "2024"
+            for call in controller.calls
+        )
+    )
