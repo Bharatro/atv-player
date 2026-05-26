@@ -750,6 +750,8 @@ class FollowingEpisodeBrowser(QWidget):
 
     def _rebuild_episode_cards(self, episodes: list[FollowingEpisode]) -> None:
         _clear_layout(self.episode_grid_layout)
+        for column in range(self.episode_grid_layout.columnCount()):
+            self.episode_grid_layout.setColumnStretch(column, 0)
         self.episode_cards = []
         if not episodes:
             return
