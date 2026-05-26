@@ -9,6 +9,8 @@ from dataclasses import dataclass, replace
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
+    FollowingMetadataGateway,
+    build_following_metadata_bundle,
     build_snapshot_from_record,
     build_following_from_metadata_candidate,
     compute_episode_counts,
@@ -398,6 +400,7 @@ class FollowingController:
             self._update_service.check_record(following_id)
             record = self._repository.get(following_id) or record
             snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
+        snapshot = self._ensure_metadata_bundle(record, snapshot)
         return FollowingDetailView(record=record, snapshot=snapshot)
 
     def load_detail_season(self, following_id: int, *, season_number: int) -> FollowingDetailView:
@@ -625,6 +628,7 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
+        snapshot = self._ensure_metadata_bundle(refreshed_record, snapshot)
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
             following_id,
@@ -765,15 +769,42 @@ class FollowingController:
                 resolved_season = season_number if season_number > 0 else self._to_int(parts[3]) or 1
                 return f"tv:{parts[1]}:season:{resolved_season}", resolved_season
             if season_number <= 0:
-                return "", 0
+                season_number = 1
             return f"{text}:season:{season_number}", season_number
         if not text.isdigit():
             return "", 0
         if normalized_kind == "movie" or "电影" in normalized_kind:
             return f"movie:{text}", 0
         if season_number <= 0:
-            return "", 0
+            season_number = 1
         return f"tv:{text}:season:{season_number}", season_number
+
+    def _ensure_metadata_bundle(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> FollowingDetailSnapshot:
+        if snapshot.metadata_bundle is not None:
+            return snapshot
+        candidate = self._tmdb_refresh_candidate_from_record(record)
+        if candidate is None:
+            return snapshot
+        detail_record, _detail_error = load_candidate_detail_record_full(
+            self._metadata_search_service,
+            candidate,
+        )
+        if detail_record is None:
+            return snapshot
+        gateway = FollowingMetadataGateway(self._metadata_search_service)
+        provider_records = gateway.load_source_records(record, tmdb_record=detail_record)
+        _bundle, _merged_record, merged_snapshot = build_following_metadata_bundle(
+            base_record=record,
+            base_snapshot=snapshot,
+            tmdb_detail_record=detail_record,
+            provider_records=provider_records,
+        )
+        merged_snapshot.following_id = snapshot.following_id or record.id
+        return merged_snapshot
 
     def _merge_refreshed_snapshot(
         self,

@@ -635,6 +635,7 @@ def merge_following_snapshot(
                 next_episode=detail.next_episode or snapshot.next_episode,
                 posters=snapshot.posters or detail.posters,
                 backdrops=snapshot.backdrops or detail.backdrops,
+                metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
                 refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
             )
         return replace(
@@ -648,6 +649,7 @@ def merge_following_snapshot(
             next_episode=detail.next_episode or snapshot.next_episode,
             posters=snapshot.posters or detail.posters,
             backdrops=snapshot.backdrops or detail.backdrops,
+            metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
             refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
         )
     return replace(
@@ -661,6 +663,7 @@ def merge_following_snapshot(
         next_episode=detail.next_episode or snapshot.next_episode,
         posters=detail.posters or snapshot.posters,
         backdrops=detail.backdrops or snapshot.backdrops,
+        metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
         refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
     )
 
