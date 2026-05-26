@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import threading
+from datetime import date
+import json
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QWidget,
 )
 
 from atv_player.ui.following_search_result_card import FollowingSearchResultCard
@@ -78,11 +81,40 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         layout.addLayout(search_row)
         self._search_row = search_row
 
-        self.filter_media_combo = FlatComboBox(host)
-        self.filter_media_combo.addItem("全部", "")
-        self.filter_media_combo.addItem("剧集", "tv")
-        self.filter_media_combo.addItem("电影", "movie")
-        layout.addWidget(self.filter_media_combo)
+        self.trending_filters_widget = QWidget(host)
+        trending_filters_layout = QHBoxLayout(self.trending_filters_widget)
+        trending_filters_layout.setContentsMargins(0, 0, 0, 0)
+        trending_filters_layout.setSpacing(6)
+        self.trending_list_combo = FlatComboBox(self.trending_filters_widget)
+        self.trending_list_combo.addItem("本周趋势", "trending_week")
+        self.trending_list_combo.addItem("今日趋势", "trending_day")
+        trending_filters_layout.addWidget(self.trending_list_combo)
+        self.trending_media_combo = FlatComboBox(self.trending_filters_widget)
+        self.trending_media_combo.addItem("全部媒体", "all")
+        self.trending_media_combo.addItem("剧集", "tv")
+        self.trending_media_combo.addItem("电影", "movie")
+        trending_filters_layout.addWidget(self.trending_media_combo)
+        layout.addWidget(self.trending_filters_widget)
+
+        self.discover_filters_widget = QWidget(host)
+        discover_filters_layout = QHBoxLayout(self.discover_filters_widget)
+        discover_filters_layout.setContentsMargins(0, 0, 0, 0)
+        discover_filters_layout.setSpacing(6)
+        self.discover_media_combo = FlatComboBox(self.discover_filters_widget)
+        self.discover_media_combo.addItem("剧集", "tv")
+        self.discover_media_combo.addItem("电影", "movie")
+        discover_filters_layout.addWidget(self.discover_media_combo)
+        self.discover_sort_combo = FlatComboBox(self.discover_filters_widget)
+        self.discover_sort_combo.addItem("热门优先", "popularity.desc")
+        self.discover_sort_combo.addItem("评分优先", "vote_average.desc")
+        self.discover_sort_combo.addItem("讨论度优先", "vote_count.desc")
+        discover_filters_layout.addWidget(self.discover_sort_combo)
+        self.discover_year_combo = FlatComboBox(self.discover_filters_widget)
+        self.discover_year_combo.addItem("全部年份", "")
+        for year in range(date.today().year, date.today().year - 12, -1):
+            self.discover_year_combo.addItem(str(year), str(year))
+        discover_filters_layout.addWidget(self.discover_year_combo)
+        layout.addWidget(self.discover_filters_widget)
 
         self.result_list = QListWidget(host)
         self.result_list.setSpacing(10)
@@ -105,6 +137,11 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
         self.search_button.clicked.connect(self.run_search)
         self.search_edit.returnPressed.connect(self.run_search)
+        self.trending_list_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("trending"))
+        self.trending_media_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("trending"))
+        self.discover_media_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
+        self.discover_sort_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
+        self.discover_year_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
         self.result_list.currentRowChanged.connect(self._handle_result_selection_changed)
         self.result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
         self.add_button.clicked.connect(self._add_selected_candidate)
@@ -118,7 +155,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         else:
             for button in self.tab_buttons:
                 button.hide()
-            self.filter_media_combo.hide()
+            self.trending_filters_widget.hide()
+            self.discover_filters_widget.hide()
 
     def run_search(self) -> None:
         if self._search_in_progress or self._add_in_progress:
@@ -166,24 +204,15 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         search_visible = normalized_tab == "search"
         self.search_edit.setVisible(search_visible)
         self.search_button.setVisible(search_visible)
-        self.filter_media_combo.setVisible(normalized_tab in {"trending", "discover"})
-        state = self._tab_state.get(normalized_tab, {})
+        self.trending_filters_widget.setVisible(normalized_tab == "trending")
+        self.discover_filters_widget.setVisible(normalized_tab == "discover")
+        state = self._tab_state.get(self._state_key(normalized_tab), {})
         cached_items = list(state.get("items", []) or [])
-        if cached_items:
-            self._render_discovery_result(
-                type(
-                    "CachedResult",
-                    (),
-                    {
-                        "items": cached_items,
-                        "source_label": state.get("source_label", ""),
-                        "fallback_reason": state.get("fallback_reason", ""),
-                    },
-                )()
-            )
+        if state.get("loaded", False):
+            self._render_cached_state(state, cached_items)
         if normalized_tab == "search":
             self.status_label.setText("输入标题或粘贴链接搜索可追更媒体")
-            if not cached_items:
+            if not state.get("loaded", False):
                 self._clear_results()
             return
         if not state.get("loaded", False):
@@ -192,22 +221,24 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     def _load_active_tab(self) -> None:
         self._search_request_id += 1
         request_id = self._search_request_id
+        tab_key = self._active_tab
+        state_key = self._state_key(tab_key)
         self._set_search_loading(True)
 
         def run() -> None:
             try:
                 result = self.controller.load_discovery_tab(
-                    self._active_tab,
+                    tab_key,
                     query=self.search_edit.text().strip(),
                     page=1,
-                    filters={"media_type": str(self.filter_media_combo.currentData() or "")},
+                    filters=self._filters_for_tab(tab_key),
                 )
                 error = ""
             except Exception as exc:
                 result = None
                 error = str(exc)
             if self._can_deliver_async_result():
-                self.search_finished.emit(request_id, (self._active_tab, result), error)
+                self.search_finished.emit(request_id, (tab_key, state_key, result), error)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -326,14 +357,14 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             self.status_label.setText(f"搜索失败: {error}")
             return
         if self._discovery_mode:
-            tab_key, result = groups
-            self._tab_state[tab_key] = {
+            tab_key, state_key, result = groups
+            self._tab_state[state_key] = {
                 "items": list(getattr(result, "items", []) or []),
                 "source_label": str(getattr(result, "source_label", "") or ""),
                 "fallback_reason": str(getattr(result, "fallback_reason", "") or ""),
                 "loaded": True,
             }
-            if tab_key != self._active_tab:
+            if tab_key != self._active_tab or state_key != self._state_key(tab_key):
                 return
             self._render_discovery_result(result)
             return
@@ -356,7 +387,14 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         tokens = current_tokens()
         self.search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=14, min_height=40))
         self.search_button.setFixedHeight(40)
-        self.filter_media_combo.setFixedHeight(40)
+        for combo in (
+            self.trending_list_combo,
+            self.trending_media_combo,
+            self.discover_media_combo,
+            self.discover_sort_combo,
+            self.discover_year_combo,
+        ):
+            combo.setFixedHeight(40)
         for button in self.tab_buttons:
             button.setFixedHeight(40)
         button_qss = f"""
@@ -407,4 +445,50 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.status_label.setStyleSheet(
             "background: transparent;"
             f"color: {tokens.text_secondary};"
+        )
+
+    def _handle_filter_changed(self, tab_key: str) -> None:
+        if not self._discovery_mode or self._active_tab != tab_key:
+            return
+        state = self._tab_state.get(self._state_key(tab_key), {})
+        cached_items = list(state.get("items", []) or [])
+        if state.get("loaded", False):
+            self._render_cached_state(state, cached_items)
+            return
+        self._load_active_tab()
+
+    def _filters_for_tab(self, tab_key: str) -> dict[str, str]:
+        normalized_tab = str(tab_key or "").strip() or "recommendation"
+        if normalized_tab == "trending":
+            return {
+                "list_key": str(self.trending_list_combo.currentData() or "trending_week"),
+                "media_type": str(self.trending_media_combo.currentData() or "all"),
+            }
+        if normalized_tab == "discover":
+            return {
+                "media_type": str(self.discover_media_combo.currentData() or "tv"),
+                "sort_by": str(self.discover_sort_combo.currentData() or "popularity.desc"),
+                "year": str(self.discover_year_combo.currentData() or ""),
+            }
+        return {}
+
+    def _state_key(self, tab_key: str) -> str:
+        normalized_tab = str(tab_key or "").strip() or "recommendation"
+        if normalized_tab == "search":
+            payload = {"tab": normalized_tab, "query": self.search_edit.text().strip()}
+        else:
+            payload = {"tab": normalized_tab, "filters": self._filters_for_tab(normalized_tab)}
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    def _render_cached_state(self, state: dict[str, object], cached_items: list[object]) -> None:
+        self._render_discovery_result(
+            type(
+                "CachedResult",
+                (),
+                {
+                    "items": cached_items,
+                    "source_label": state.get("source_label", ""),
+                    "fallback_reason": state.get("fallback_reason", ""),
+                },
+            )()
         )
