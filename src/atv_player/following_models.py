@@ -49,6 +49,7 @@ class FollowingDetailSnapshot:
     crew: list[dict[str, object]] = field(default_factory=list)
     seasons: list[FollowingSeason] = field(default_factory=list)
     episodes: list[FollowingEpisode] = field(default_factory=list)
+    next_episode: FollowingEpisode | None = None
     posters: list[str] = field(default_factory=list)
     backdrops: list[str] = field(default_factory=list)
     refreshed_at: int = 0

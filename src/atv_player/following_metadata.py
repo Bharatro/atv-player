@@ -251,6 +251,22 @@ def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object
     return 0
 
 
+def _next_episode_to_air_from_detail_fields(
+    detail_fields: list[dict[str, object]],
+) -> FollowingEpisode | None:
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != "next_episode_to_air":
+            continue
+        value = field.get("value")
+        if not isinstance(value, dict):
+            continue
+        episode = _episode_from_raw(value)
+        return episode if episode.episode_number > 0 else None
+    return None
+
+
 def _tmdb_recent_update_date_from_detail_fields(detail_fields: list[dict[str, object]]) -> str:
     for field in detail_fields:
         if not isinstance(field, dict):
@@ -281,6 +297,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     external_key, external_value = _provider_external_id(provider, provider_id)
     raw_seasons = [item for item in raw.get("seasons") or [] if isinstance(item, dict)]
     raw_episodes = [item for item in raw.get("episodes") or [] if isinstance(item, dict)]
+    raw_next_episode = raw.get("next_episode_to_air")
     latest, total = compute_episode_counts(raw_episodes, now=now)
     season_number = _to_int(raw.get("season_number")) or _season_number_from_provider_id(provider_id)
     media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""))
@@ -303,6 +320,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     snapshot = FollowingDetailSnapshot(
         seasons=[_season_from_raw(item) for item in raw_seasons],
         episodes=[_episode_from_raw(item) for item in raw_episodes],
+        next_episode=_episode_from_raw(raw_next_episode) if isinstance(raw_next_episode, dict) else None,
         refreshed_at=now,
     )
     return record, snapshot
@@ -600,6 +618,7 @@ def merge_following_snapshot(
                 crew=snapshot.crew or detail.crew,
                 seasons=snapshot.seasons or detail.seasons,
                 episodes=detail.episodes or snapshot.episodes,
+                next_episode=detail.next_episode or snapshot.next_episode,
                 posters=snapshot.posters or detail.posters,
                 backdrops=snapshot.backdrops or detail.backdrops,
                 refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
@@ -612,6 +631,7 @@ def merge_following_snapshot(
             crew=snapshot.crew or detail.crew,
             seasons=snapshot.seasons or detail.seasons,
             episodes=detail.episodes if prefer_episodes and detail.episodes else snapshot.episodes or detail.episodes,
+            next_episode=detail.next_episode or snapshot.next_episode,
             posters=snapshot.posters or detail.posters,
             backdrops=snapshot.backdrops or detail.backdrops,
             refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
@@ -624,6 +644,7 @@ def merge_following_snapshot(
         crew=detail.crew or snapshot.crew,
         seasons=detail.seasons or snapshot.seasons,
         episodes=detail.episodes or snapshot.episodes,
+        next_episode=detail.next_episode or snapshot.next_episode,
         posters=detail.posters or snapshot.posters,
         backdrops=detail.backdrops or snapshot.backdrops,
         refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
@@ -650,6 +671,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     season_number = _season_number_from_provider_id(provider_id)
     latest, total = compute_episode_counts(raw_episodes, now=now)
     last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
+    next_episode = _next_episode_to_air_from_detail_fields(detail_fields)
     if last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:
@@ -689,6 +711,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         ),
         seasons=[_season_from_raw(item) for item in raw_seasons],
         episodes=[_episode_from_raw(item) for item in raw_episodes],
+        next_episode=next_episode,
         posters=[following.poster] if following.poster else [],
         backdrops=list(getattr(record, "backdrops", []) or []) or ([following.backdrop] if following.backdrop else []),
         refreshed_at=now,
@@ -726,7 +749,7 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         label = str(item.get("label") or "").strip()
-        if label in ("episodes", "last_episode_to_air", "seasons", "last_air_date"):
+        if label in ("episodes", "last_episode_to_air", "next_episode_to_air", "seasons", "last_air_date"):
             continue
         value = item.get("value")
         if isinstance(value, list):
