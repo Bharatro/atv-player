@@ -227,10 +227,11 @@ def resolve_following_episode_state(
         latest_episode,
         fallback_season=visible_season_number,
     )
+    normalized_current_episode = max(0, int(current_episode or 0))
     if (
-        episode_season == current_season
+        normalized_current_episode > 0
         and episode.episode_number > 0
-        and episode.episode_number <= max(0, int(current_episode or 0))
+        and (current_season, normalized_current_episode) >= (episode_season, episode.episode_number)
     ):
         return FollowingEpisodeState.WATCHED
     if next_episode is not None:
@@ -260,7 +261,7 @@ def resolve_following_episode_state(
         return FollowingEpisodeState.RELEASED
     if (
         episode_season == current_season
-        and episode.episode_number > max(0, int(current_episode or 0))
+        and episode.episode_number > normalized_current_episode
         and air_date is not None
         and air_date <= resolved_today
     ):

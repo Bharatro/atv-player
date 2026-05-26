@@ -506,7 +506,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     ) -> None:
         self.status_label.setText("")
         self.title_label.setText(record.title)
-        self.meta_label.setText(_meta_text(record))
+        self.meta_label.setText(_meta_text(record, snapshot))
         self.overview_label.setText(_format_detail_text(snapshot))
         self._render_poster_carousel(record, snapshot)
         groups = build_episode_season_groups(
@@ -514,11 +514,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             seasons=snapshot.seasons,
             fallback_season=record.season_number,
         )
-        latest_season_number = resolve_progress_season(
-            record.season_number,
-            record.latest_episode,
-            fallback_season=record.season_number or self._selected_season_number,
-        )
+        latest_season_number = _detail_latest_season_number(record, snapshot)
         self.episode_browser.set_content(
             groups=groups,
             current_season_number=record.current_season_number,
@@ -718,11 +714,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             record.current_episode,
             fallback_season=record.season_number or self._selected_season_number,
         )
-        latest_season_number = resolve_progress_season(
-            record.season_number,
-            record.latest_episode,
-            fallback_season=record.season_number,
-        )
+        latest_season_number = _detail_latest_season_number(record, self.current_view.snapshot)
         dialog = FollowingProgressDialog(
             current_season_number=current_season_number,
             current_episode=record.current_episode,
@@ -996,18 +988,59 @@ def _person_link(person: dict[str, object]) -> str:
     return ""
 
 
-def _meta_text(record: FollowingRecord) -> str:
+def _detail_latest_season_number(
+    record: FollowingRecord,
+    snapshot: FollowingDetailSnapshot | None = None,
+) -> int:
+    latest_episode = max(0, int(record.latest_episode or 0))
+    base = resolve_progress_season(
+        record.season_number,
+        latest_episode,
+        fallback_season=record.season_number,
+    )
+    if snapshot is None:
+        return base
+
+    exact_match_seasons = [
+        int(episode.season_number)
+        for episode in snapshot.episodes
+        if int(episode.episode_number or 0) == latest_episode and int(episode.season_number or 0) > 0
+    ]
+    if (
+        snapshot.next_episode is not None
+        and int(snapshot.next_episode.episode_number or 0) == latest_episode
+        and int(snapshot.next_episode.season_number or 0) > 0
+    ):
+        exact_match_seasons.append(int(snapshot.next_episode.season_number))
+    if exact_match_seasons:
+        return max(exact_match_seasons)
+
+    snapshot_seasons = [int(season.season_number) for season in snapshot.seasons if int(season.season_number or 0) > 0]
+    snapshot_seasons.extend(
+        int(episode.season_number)
+        for episode in snapshot.episodes
+        if int(episode.season_number or 0) > 0
+    )
+    if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
+        snapshot_seasons.append(int(snapshot.next_episode.season_number))
+    if (
+        latest_episode > 0
+        and int(record.total_episodes or 0) > 0
+        and latest_episode >= int(record.total_episodes or 0)
+        and snapshot_seasons
+    ):
+        return max(snapshot_seasons)
+    return base
+
+
+def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None = None) -> str:
     episode_parts = []
     current_season_number = resolve_progress_season(
         record.current_season_number,
         record.current_episode,
         fallback_season=record.season_number,
     )
-    latest_season_number = resolve_progress_season(
-        record.season_number,
-        record.latest_episode,
-        fallback_season=record.season_number,
-    )
+    latest_season_number = _detail_latest_season_number(record, snapshot)
     completed = False
     if (
         record.total_episodes > 0

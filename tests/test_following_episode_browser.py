@@ -725,7 +725,7 @@ def test_following_episode_browser_restores_selection_when_switching_back_to_sea
     assert browser.episode_list.currentIndex().row() == 0
 
 
-def test_following_episode_browser_marks_watched_only_in_current_season(qtbot) -> None:
+def test_following_episode_browser_marks_previous_seasons_as_watched(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
     browser.set_content(
@@ -741,7 +741,7 @@ def test_following_episode_browser_marks_watched_only_in_current_season(qtbot) -
         selected_season_number=1,
     )
 
-    assert browser.episode_model.data(browser.episode_model.index(0, 0), WATCHED_ROLE) is False
+    assert browser.episode_model.data(browser.episode_model.index(0, 0), WATCHED_ROLE) is True
 
     season_model = browser.season_list.model()
     browser.season_list.setCurrentIndex(season_model.index(1, 0))

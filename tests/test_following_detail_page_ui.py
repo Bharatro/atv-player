@@ -267,6 +267,63 @@ def test_following_detail_page_marks_stale_current_season_aired_episode_as_relea
     assert page.episode_browser.status_text_for_episode(episode) == "已更新"
 
 
+def test_following_detail_page_progress_dialog_uses_snapshot_latest_season(qtbot, monkeypatch) -> None:
+    class LongRunningSeriesController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="海贼王",
+                    provider="tmdb",
+                    provider_id="tv:1:season:1",
+                    season_number=1,
+                    current_season_number=15,
+                    current_episode=62,
+                    latest_episode=1163,
+                    total_episodes=1163,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=1, title="第一季", episode_count=61),
+                        FollowingSeason(season_number=15, title="第十五季", episode_count=100),
+                        FollowingSeason(season_number=23, title="第二十三季", episode_count=100),
+                    ],
+                    episodes=[
+                        FollowingEpisode(episode_number=62, season_number=15, title="S15E62"),
+                    ],
+                ),
+            )
+
+    captured: dict[str, object] = {}
+
+    def fake_exec(self_dialog):
+        captured["latest_season_number"] = self_dialog._latest_season_number
+        captured["latest_episode"] = self_dialog._latest_episode
+        captured["season_maximum"] = self_dialog.season_spin.maximum()
+        captured["set_latest_text"] = self_dialog.content_layout().itemAt(2).widget().text()
+        return 0
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingProgressDialog.exec",
+        fake_exec,
+    )
+
+    page = FollowingDetailPage(LongRunningSeriesController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    page.set_progress_button.click()
+
+    assert captured == {
+        "latest_season_number": 23,
+        "latest_episode": 1163,
+        "season_maximum": 23,
+        "set_latest_text": "设为最新 (S23E1163)",
+    }
+
+
 def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None:
     class LazySeasonController(FakeController):
         def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
