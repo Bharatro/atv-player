@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingEpisodeState,
     FollowingRecord,
     FollowingSeason,
     format_progress_episode,
@@ -45,11 +46,18 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
     _image_loaded = Signal(QLabel, object)
 
     def __init__(
-        self, episode: FollowingEpisode, parent: QWidget | None = None
+        self,
+        episode: FollowingEpisode,
+        *,
+        status_text: str = "",
+        can_mark_watched: bool = True,
+        parent: QWidget | None = None,
     ) -> None:
         title = _episode_title(episode)
         super().__init__(title=title, parent=parent, resizable=True)
         self.episode = episode
+        self.status_text = str(status_text or "").strip()
+        self.mark_watched_requested = False
 
         layout = self.content_layout()
         self.still_label = QLabel("分集封面", self)
@@ -59,14 +67,18 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
         self.still_label.setStyleSheet(_image_placeholder_qss())
         self.title_label = QLabel(title, self)
         self.title_label.setWordWrap(True)
-        self.meta_label = QLabel(_episode_preview_meta_text(episode), self)
+        self.meta_label = QLabel(_episode_preview_meta_text(episode, self.status_text), self)
         self.overview_label = QLabel(episode.overview or "暂无剧情概要", self)
         self.overview_label.setWordWrap(True)
+        self.mark_watched_button = QPushButton("标记本集已看", self)
+        self.mark_watched_button.setVisible(can_mark_watched)
+        self.mark_watched_button.clicked.connect(self._mark_watched_and_accept)
 
         layout.addWidget(self.still_label)
         layout.addWidget(self.title_label)
         layout.addWidget(self.meta_label)
         layout.addWidget(self.overview_label)
+        layout.addWidget(self.mark_watched_button, 0, Qt.AlignmentFlag.AlignRight)
 
         self._image_loaded.connect(self._handle_image_loaded)
         self._load_still_image()
@@ -94,6 +106,10 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
             return
         label.setText("")
         label.setPixmap(QPixmap.fromImage(image))
+
+    def _mark_watched_and_accept(self) -> None:
+        self.mark_watched_requested = True
+        self.accept()
 
 
 class FollowingProgressDialog(ThemedDialogBase):
@@ -567,7 +583,28 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.unfollow_requested.emit(self.current_following_id)
 
     def _open_episode_preview(self, episode: FollowingEpisode) -> None:
-        FollowingEpisodePreviewDialog(episode, self).exec()
+        status = self.episode_browser.status_for_episode(episode)
+        dialog = FollowingEpisodePreviewDialog(
+            episode,
+            status_text=self.episode_browser.status_text_for_episode(episode),
+            can_mark_watched=status != FollowingEpisodeState.WATCHED,
+            parent=self,
+        )
+        if dialog.exec() != 1 or not dialog.mark_watched_requested:
+            return
+        fallback_season = self.episode_browser.current_season_number()
+        if fallback_season <= 0 and self.current_view is not None:
+            fallback_season = self.current_view.record.season_number
+        season_number = resolve_progress_season(
+            episode.season_number,
+            episode.episode_number,
+            fallback_season=fallback_season,
+        )
+        self._save_following_progress(
+            season_number=season_number,
+            episode_number=episode.episode_number,
+            message="已标记本集为已看",
+        )
 
     def _handle_episode_grid_columns_changed(self, columns: int) -> None:
         normalized = int(columns)
@@ -698,14 +735,27 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         )
         if dialog.exec() != 1:
             return
+        self._save_following_progress(
+            season_number=dialog.accepted_season_number,
+            episode_number=dialog.accepted_episode,
+            message="已保存追更进度",
+        )
+
+    def _save_following_progress(
+        self,
+        *,
+        season_number: int,
+        episode_number: int,
+        message: str,
+    ) -> None:
         self.controller.record_playback_progress(
             self.current_following_id,
-            current_season_number=dialog.accepted_season_number,
-            current_episode=dialog.accepted_episode,
+            current_season_number=season_number,
+            current_episode=episode_number,
             position_seconds=0,
         )
         self.load_record(self.current_following_id)
-        self.status_label.setText("已保存追更进度")
+        self.status_label.setText(message)
 
     def _start_image_load(self, label: QLabel, source: str) -> None:
         image_url = normalize_poster_url(source)
@@ -894,12 +944,14 @@ def _episode_title(episode: FollowingEpisode) -> str:
     return f"{episode.episode_number}. {title}"
 
 
-def _episode_preview_meta_text(episode: FollowingEpisode) -> str:
+def _episode_preview_meta_text(episode: FollowingEpisode, status_text: str = "") -> str:
     parts = []
     if episode.air_date:
         parts.append(episode.air_date)
     if episode.runtime > 0:
         parts.append(f"{episode.runtime}m")
+    if status_text:
+        parts.append(status_text)
     return " · ".join(parts)
 
 
