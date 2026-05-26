@@ -171,6 +171,37 @@ def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot)
     assert browser.grid_columns() == 1
 
 
+def test_following_episode_browser_clears_unused_grid_column_stretch_when_reducing_columns(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [
+                FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+                FollowingEpisode(episode_number=2, season_number=1, title="S1E2"),
+                FollowingEpisode(episode_number=3, season_number=1, title="S1E3"),
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+    )
+
+    browser.set_grid_columns(3)
+    browser.set_grid_columns(1)
+
+    assert browser.episode_grid_layout.columnStretch(0) == 1
+    assert browser.episode_grid_layout.columnStretch(1) == 0
+    assert browser.episode_grid_layout.columnStretch(2) == 0
+
+    browser.set_grid_columns(2)
+    browser.set_grid_columns(3)
+    browser.set_grid_columns(2)
+
+    assert browser.episode_grid_layout.columnStretch(0) == 1
+    assert browser.episode_grid_layout.columnStretch(1) == 1
+    assert browser.episode_grid_layout.columnStretch(2) == 0
+
+
 def test_following_episode_browser_updates_season_detail_panel_on_selection(qtbot) -> None:
     browser = FollowingEpisodeBrowser(initial_grid_columns=1)
     qtbot.addWidget(browser)
