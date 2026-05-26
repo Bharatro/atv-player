@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from zoneinfo import ZoneInfo
+
+from atv_player.time_utils import beijing_timezone
 
 ANIME_PROVIDER_PRIORITY = ["bangumi", "tmdb", "douban"]
 LIVE_ACTION_PROVIDER_PRIORITY = ["tmdb", "douban", "bangumi"]
-BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+BEIJING_TZ = beijing_timezone()
 
 
 @dataclass(slots=True)

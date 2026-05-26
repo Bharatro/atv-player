@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _MIN_PLAUSIBLE_UNIX_TIMESTAMP = 946684800
 _REFRESH_STALE_SECONDS = 4 * 60 * 60
+
+
+def beijing_timezone() -> tzinfo:
+    try:
+        return ZoneInfo("Asia/Shanghai")
+    except ZoneInfoNotFoundError:
+        return timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 def normalize_refresh_timestamp(value: object) -> int:

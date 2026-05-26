@@ -6,7 +6,6 @@ import time
 from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
 
 from atv_player.following_models import (
     FollowingDetailSnapshot,
@@ -14,16 +13,17 @@ from atv_player.following_models import (
     FollowingMetadataBundle,
     FollowingMetadataSourceSnapshot,
     FollowingPlaybackPlatformEntry,
-    FollowingRecord,
     FollowingRatingEntry,
+    FollowingRecord,
     FollowingSeason,
     provider_priority_for_media_kind,
 )
 from atv_player.metadata.models import MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import VodItem
+from atv_player.time_utils import beijing_timezone
 
-BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+BEIJING_TZ = beijing_timezone()
 _FIELD_PROVIDER_PRIORITY = {
     "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
     "backdrop": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],

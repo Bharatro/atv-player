@@ -4,20 +4,20 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
-    resolve_following_completion_state,
     FollowingRecord,
     FollowingUpdateResult,
     progress_at_or_beyond,
+    resolve_following_completion_state,
     resolve_progress_season,
 )
+from atv_player.time_utils import beijing_timezone
 
-BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+BEIJING_TZ = beijing_timezone()
 NORMAL_INTERVAL_SECONDS = 6 * 3600
 WINDOW_INTERVAL_SECONDS = 5 * 60
 

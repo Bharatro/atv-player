@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime
-import threading
-from zoneinfo import ZoneInfo
 
-from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QObject, QRect, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QEvent,
+    QModelIndex,
+    QObject,
+    QRect,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -18,9 +26,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyle,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
-    QStyledItemDelegate,
 )
 
 from atv_player.following_models import (
@@ -30,6 +38,7 @@ from atv_player.following_models import (
     resolve_following_episode_state,
     resolve_progress_season,
 )
+from atv_player.time_utils import beijing_timezone
 from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
@@ -54,7 +63,7 @@ STILL_ROLE = Qt.ItemDataRole.UserRole + 5
 SPECIAL_ROLE = Qt.ItemDataRole.UserRole + 6
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 7
 STATUS_TEXT_ROLE = Qt.ItemDataRole.UserRole + 8
-BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+BEIJING_TZ = beijing_timezone()
 
 
 @dataclass(frozen=True, slots=True)
