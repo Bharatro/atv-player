@@ -6,6 +6,10 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingEpisodeState,
+    FollowingMetadataBundle,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
+    FollowingRatingEntry,
     FollowingRecord,
     FollowingSeason,
 )
@@ -46,7 +50,7 @@ class FakeController:
             ),
             snapshot=FollowingDetailSnapshot(
                 following_id=following_id,
-                overview="长篇简介",
+                overview="TMDB简介",
                 metadata_fields=[
                     {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
                     {"label": "年代", "value": "2026"},
@@ -61,6 +65,133 @@ class FakeController:
                     {"label": "更新时间", "value": "2026-05-25"},
                     {"label": "更新状态", "value": "更新至第128集"},
                 ],
+                metadata_bundle=FollowingMetadataBundle(
+                    merged_snapshot=FollowingMetadataSourceSnapshot(
+                        source_key="merged",
+                        provider="merged",
+                        provider_label="合并",
+                        overview="TMDB简介",
+                        metadata_fields=[
+                            {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+                            {"label": "年代", "value": "2026"},
+                            {"label": "地区", "value": "内地"},
+                            {"label": "语言", "value": "普通话"},
+                            {"label": "导演", "value": "刘海波"},
+                            {"label": "演员", "value": "王骁,田曦薇,王传君,朱云峰"},
+                            {"label": "别名", "value": "擒贼记 / Low IQ Crime / Born with Luck"},
+                            {"label": "豆瓣ID", "value": "35517044"},
+                            {"label": "IMDb ID", "value": "tt32592348"},
+                            {"label": "TMDB ID", "value": "272432"},
+                        ],
+                        ratings=[
+                            FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1"),
+                            FollowingRatingEntry(provider="douban", label="豆瓣", value="7.9"),
+                            FollowingRatingEntry(provider="bangumi", label="Bangumi", value="8.4"),
+                        ],
+                        playback_platforms=[
+                            FollowingPlaybackPlatformEntry(
+                                provider="iqiyi",
+                                label="爱奇艺",
+                                url="https://www.iqiyi.com/a_1.html",
+                                latest_episode=128,
+                                update_time_text="2026-05-25",
+                                status_text="更新至第128集",
+                            )
+                        ],
+                    ),
+                    source_snapshots={
+                        "merged": FollowingMetadataSourceSnapshot(
+                            source_key="merged",
+                            provider="merged",
+                            provider_label="合并",
+                            overview="TMDB简介",
+                            metadata_fields=[
+                                {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+                                {"label": "导演", "value": "刘海波"},
+                                {"label": "演员", "value": "王骁,田曦薇,王传君,朱云峰"},
+                            ],
+                            ratings=[
+                                FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1"),
+                                FollowingRatingEntry(provider="douban", label="豆瓣", value="7.9"),
+                                FollowingRatingEntry(provider="bangumi", label="Bangumi", value="8.4"),
+                            ],
+                            playback_platforms=[
+                                FollowingPlaybackPlatformEntry(
+                                    provider="iqiyi",
+                                    label="爱奇艺",
+                                    url="https://www.iqiyi.com/a_1.html",
+                                    latest_episode=128,
+                                    update_time_text="2026-05-25",
+                                    status_text="更新至第128集",
+                                )
+                            ],
+                        ),
+                        "tmdb": FollowingMetadataSourceSnapshot(
+                            source_key="tmdb",
+                            provider="tmdb",
+                            provider_label="TMDB",
+                            provider_id="tv:272432:season:1",
+                            confidence=1.0,
+                            overview="TMDB简介",
+                            metadata_fields=[
+                                {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+                                {"label": "TMDB ID", "value": "272432"},
+                            ],
+                            ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1")],
+                        ),
+                        "douban": FollowingMetadataSourceSnapshot(
+                            source_key="douban",
+                            provider="douban",
+                            provider_label="豆瓣",
+                            provider_id="35517044",
+                            confidence=0.92,
+                            overview="豆瓣简介",
+                            metadata_fields=[
+                                {"label": "导演", "value": "刘海波"},
+                                {"label": "豆瓣ID", "value": "35517044"},
+                            ],
+                            ratings=[FollowingRatingEntry(provider="douban", label="豆瓣", value="7.9")],
+                        ),
+                        "bangumi": FollowingMetadataSourceSnapshot(
+                            source_key="bangumi",
+                            provider="bangumi",
+                            provider_label="Bangumi",
+                            provider_id="subject:1",
+                            confidence=0.94,
+                            overview="Bangumi简介",
+                            metadata_fields=[
+                                {"label": "别名", "value": "凡人修仙传 动画版"},
+                                {"label": "Bangumi ID", "value": "1"},
+                            ],
+                            ratings=[FollowingRatingEntry(provider="bangumi", label="Bangumi", value="8.4")],
+                        ),
+                        "iqiyi": FollowingMetadataSourceSnapshot(
+                            source_key="iqiyi",
+                            provider="iqiyi",
+                            provider_label="爱奇艺",
+                            provider_id="iqiyi:album:1",
+                            confidence=0.98,
+                            overview="爱奇艺简介",
+                            metadata_fields=[
+                                {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+                                {"label": "更新时间", "value": "2026-05-25"},
+                                {"label": "更新状态", "value": "更新至第128集"},
+                            ],
+                            playback_platforms=[
+                                FollowingPlaybackPlatformEntry(
+                                    provider="iqiyi",
+                                    label="爱奇艺",
+                                    url="https://www.iqiyi.com/a_1.html",
+                                    latest_episode=128,
+                                    update_time_text="2026-05-25",
+                                    status_text="更新至第128集",
+                                )
+                            ],
+                        ),
+                    },
+                    available_source_keys=["merged", "tmdb", "douban", "bangumi", "iqiyi"],
+                    default_source_key="merged",
+                ),
                 cast=[{"name": "韩立", "role": "主角", "avatar": "avatar"}],
                 crew=[{"name": "导演", "job": "Director", "avatar": "/director.jpg"}],
                 seasons=[FollowingSeason(season_number=1, title="第一季", episode_count=156)],
@@ -108,6 +239,52 @@ class FakeController:
         self.progress_updates.append((following_id, current_season_number, current_episode))
 
 
+def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_platforms(qtbot) -> None:
+    controller = FakeController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert page.rating_strip.text() == "TMDB 8.1  ·  豆瓣 7.9  ·  Bangumi 8.4"
+    assert [button.text() for button in page.metadata_source_buttons] == ["合并", "TMDB", "豆瓣", "Bangumi", "爱奇艺"]
+    assert page.playback_platform_layout.count() > 0
+    assert "爱奇艺" in page.playback_platform_widgets[0].text()
+    assert "更新至第128集" in page.playback_platform_widgets[0].text()
+
+
+def test_following_detail_page_switches_between_merged_and_provider_raw_views(qtbot) -> None:
+    controller = FakeController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+    page.metadata_source_buttons[2].click()
+
+    assert "豆瓣简介" in page.overview_label.text()
+    assert "TMDB简介" not in page.overview_label.text()
+
+    page.metadata_source_buttons[0].click()
+
+    assert "TMDB简介" in page.overview_label.text()
+    assert "爱奇艺" in page.playback_platform_widgets[0].text()
+
+
+def test_following_detail_page_opens_playback_platform_link(qtbot) -> None:
+    from unittest.mock import patch
+
+    controller = FakeController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+    opened: list[str] = []
+
+    page.load_record(1)
+    with patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True):
+        page.playback_platform_buttons[0].click()
+
+    assert opened == ["https://www.iqiyi.com/a_1.html"]
+
+
 def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> None:
     controller = FakeController()
     page = FollowingDetailPage(controller)
@@ -152,7 +329,7 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert "TMDB ID: 272432" in page.overview_label.text()
     assert "更新时间:" not in page.overview_label.text()
     assert "更新状态:" not in page.overview_label.text()
-    assert "简介:\n长篇简介" in page.overview_label.text()
+    assert "简介:\nTMDB简介" in page.overview_label.text()
     assert page.page_scroll.verticalScrollBarPolicy().name == "ScrollBarAsNeeded"
     episode_model = page.episode_browser.episode_list.model()
     assert episode_model.data(

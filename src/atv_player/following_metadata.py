@@ -11,11 +11,15 @@ from zoneinfo import ZoneInfo
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
+    FollowingMetadataBundle,
+    FollowingMetadataSourceSnapshot,
+    FollowingPlaybackPlatformEntry,
     FollowingRecord,
+    FollowingRatingEntry,
     FollowingSeason,
     provider_priority_for_media_kind,
 )
-from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.models import MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import VodItem
 
@@ -24,6 +28,16 @@ _FIELD_PROVIDER_PRIORITY = {
     "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
     "backdrop": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
     "rating": ["tmdb", "official_douban", "bangumi", "local_douban", "douban", "plugin", "iqiyi"],
+}
+_FOLLOWING_SOURCE_THRESHOLDS = {
+    "bangumi": 0.75,
+    "douban": 0.75,
+    "bilibili": 0.80,
+    "iqiyi": 0.80,
+    "tencent": 0.80,
+    "youku": 0.80,
+    "mgtv": 0.80,
+    "sohu": 0.80,
 }
 
 
@@ -621,6 +635,7 @@ def merge_following_snapshot(
                 next_episode=detail.next_episode or snapshot.next_episode,
                 posters=snapshot.posters or detail.posters,
                 backdrops=snapshot.backdrops or detail.backdrops,
+                metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
                 refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
             )
         return replace(
@@ -634,6 +649,7 @@ def merge_following_snapshot(
             next_episode=detail.next_episode or snapshot.next_episode,
             posters=snapshot.posters or detail.posters,
             backdrops=snapshot.backdrops or detail.backdrops,
+            metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
             refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
         )
     return replace(
@@ -647,6 +663,7 @@ def merge_following_snapshot(
         next_episode=detail.next_episode or snapshot.next_episode,
         posters=detail.posters or snapshot.posters,
         backdrops=detail.backdrops or snapshot.backdrops,
+        metadata_bundle=detail.metadata_bundle or snapshot.metadata_bundle,
         refreshed_at=detail.refreshed_at or snapshot.refreshed_at,
     )
 
@@ -717,6 +734,255 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         refreshed_at=now,
     )
     return following, snapshot
+
+
+def _provider_label(provider: str) -> str:
+    return {
+        "tmdb": "TMDB",
+        "douban": "豆瓣",
+        "bangumi": "Bangumi",
+        "bilibili": "B站",
+        "iqiyi": "爱奇艺",
+        "tencent": "腾讯",
+        "youku": "优酷",
+        "mgtv": "芒果",
+        "sohu": "搜狐",
+    }.get(str(provider or "").strip(), str(provider or "").strip())
+
+
+def _normalize_match_text(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def _provider_rating_label(provider: str) -> str:
+    return {
+        "tmdb": "TMDB",
+        "douban": "豆瓣",
+        "bangumi": "Bangumi",
+    }.get(str(provider or "").strip(), _provider_label(provider))
+
+
+def _rating_entry(provider: str, label: str, value: object) -> FollowingRatingEntry:
+    return FollowingRatingEntry(
+        provider=str(provider or "").strip(),
+        label=str(label or "").strip(),
+        value=str(value or "").strip(),
+    )
+
+
+def _merge_metadata_fields_fill_missing(
+    current_fields: list[dict[str, str]],
+    next_fields: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    merged = [dict(item) for item in current_fields]
+    seen = {str(item.get("label") or "").strip() for item in merged}
+    for field in next_fields:
+        label = str(field.get("label") or "").strip()
+        value = str(field.get("value") or "").strip()
+        if not label or not value or label in seen:
+            continue
+        merged.append({"label": label, "value": value})
+        seen.add(label)
+    return merged
+
+
+def _playback_platform_entries_from_tmdb(record: MetadataRecord) -> list[FollowingPlaybackPlatformEntry]:
+    entries: list[FollowingPlaybackPlatformEntry] = []
+    detail_fields = list(getattr(record, "detail_fields", []) or [])
+    for field in detail_fields:
+        if not isinstance(field, dict) or str(field.get("label") or "").strip() != "watch_providers":
+            continue
+        values = field.get("value")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            entries.append(
+                FollowingPlaybackPlatformEntry(
+                    provider=str(item.get("provider") or "").strip(),
+                    label=str(item.get("label") or item.get("provider_name") or "").strip(),
+                    url=str(item.get("url") or item.get("link") or "").strip(),
+                )
+            )
+    return entries
+
+
+def _playback_platform_entries_from_record(record: MetadataRecord) -> list[FollowingPlaybackPlatformEntry]:
+    field_map = {
+        str(item.get("label") or "").strip(): str(item.get("value") or "").strip()
+        for item in list(getattr(record, "detail_fields", []) or [])
+        if isinstance(item, dict)
+    }
+    provider = str(getattr(record, "provider", "") or "").strip()
+    entry = FollowingPlaybackPlatformEntry(
+        provider=provider,
+        label=_provider_label(provider),
+        url=field_map.get("播放链接") or "",
+        latest_episode=_to_int(field_map.get("最新集数")),
+        update_time_text=field_map.get("更新时间") or "",
+        status_text=field_map.get("更新状态") or "",
+    )
+    if not any((entry.url, entry.latest_episode, entry.update_time_text, entry.status_text)):
+        return []
+    return [entry]
+
+
+def _merge_playback_platform_updates(
+    entries: list[FollowingPlaybackPlatformEntry],
+    detail_record: MetadataRecord,
+) -> list[FollowingPlaybackPlatformEntry]:
+    mapped = {entry.provider: entry for entry in entries}
+    for new_entry in _playback_platform_entries_from_record(detail_record):
+        current = mapped.get(new_entry.provider)
+        if current is None:
+            mapped[new_entry.provider] = new_entry
+            continue
+        mapped[new_entry.provider] = replace(
+            current,
+            url=new_entry.url or current.url,
+            latest_episode=new_entry.latest_episode or current.latest_episode,
+            update_time_text=new_entry.update_time_text or current.update_time_text,
+            status_text=new_entry.status_text or current.status_text,
+        )
+    return list(mapped.values())
+
+
+def _source_snapshot_from_record(
+    provider: str,
+    provider_label: str,
+    detail_record: MetadataRecord,
+    *,
+    confidence: float,
+    now: int,
+    media_kind: str,
+) -> FollowingMetadataSourceSnapshot:
+    _following, snapshot = build_snapshot_from_record(
+        detail_record,
+        now=now,
+        media_kind=media_kind,
+    )
+    ratings: list[FollowingRatingEntry] = []
+    rating = str(getattr(detail_record, "rating", "") or "").strip()
+    if rating:
+        ratings.append(_rating_entry(provider, _provider_rating_label(provider), rating))
+    playback_platforms = (
+        _playback_platform_entries_from_tmdb(detail_record)
+        if provider == "tmdb"
+        else _playback_platform_entries_from_record(detail_record)
+    )
+    return FollowingMetadataSourceSnapshot(
+        source_key=provider,
+        provider=provider,
+        provider_label=provider_label,
+        provider_id=str(getattr(detail_record, "provider_id", "") or "").strip(),
+        matched=True,
+        confidence=float(confidence or 0.0),
+        overview=snapshot.overview,
+        metadata_fields=list(snapshot.metadata_fields),
+        ratings=ratings,
+        playback_platforms=playback_platforms,
+        episodes=list(snapshot.episodes),
+        seasons=list(snapshot.seasons),
+    )
+
+
+def build_following_metadata_bundle(
+    *,
+    base_record: FollowingRecord,
+    base_snapshot: FollowingDetailSnapshot,
+    tmdb_detail_record: MetadataRecord,
+    provider_records: dict[str, tuple[MetadataRecord, float]],
+) -> tuple[FollowingMetadataBundle, FollowingRecord, FollowingDetailSnapshot]:
+    now = max(int(base_snapshot.refreshed_at or 0), int(time.time()))
+    tmdb_record, tmdb_snapshot = build_snapshot_from_record(
+        tmdb_detail_record,
+        now=now,
+        media_kind=base_record.media_kind,
+    )
+    field_sources = _initial_field_sources(base_record)
+    merged_record = merge_following_record(
+        base_record,
+        tmdb_record,
+        field_sources=field_sources,
+    )
+    merged_snapshot = merge_following_snapshot(base_snapshot, tmdb_snapshot)
+    source_snapshots = {
+        "merged": FollowingMetadataSourceSnapshot(
+            source_key="merged",
+            provider="merged",
+            provider_label="合并",
+        ),
+        "tmdb": _source_snapshot_from_record(
+            "tmdb",
+            "TMDB",
+            tmdb_detail_record,
+            confidence=1.0,
+            now=now,
+            media_kind=merged_record.media_kind,
+        ),
+    }
+    ratings = [_rating_entry("tmdb", "TMDB", tmdb_detail_record.rating)]
+    playback_platforms = _playback_platform_entries_from_tmdb(tmdb_detail_record)
+
+    for provider, (detail_record, confidence) in provider_records.items():
+        if float(confidence or 0.0) < _FOLLOWING_SOURCE_THRESHOLDS.get(provider, 1.0):
+            continue
+        detail_following, detail_snapshot = build_snapshot_from_record(
+            detail_record,
+            now=now,
+            media_kind=merged_record.media_kind,
+        )
+        merged_record = merge_following_record(
+            merged_record,
+            detail_following,
+            preserve_identity=True,
+            fill_episode_counts=provider in {"bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"},
+            field_sources=field_sources,
+        )
+        merged_snapshot = merge_following_snapshot(
+            merged_snapshot,
+            detail_snapshot,
+            fill_missing=True,
+            prefer_episodes=False,
+        )
+        merged_snapshot.metadata_fields = _merge_metadata_fields_fill_missing(
+            merged_snapshot.metadata_fields,
+            detail_snapshot.metadata_fields,
+        )
+        source_snapshots[provider] = _source_snapshot_from_record(
+            provider,
+            _provider_label(provider),
+            detail_record,
+            confidence=confidence,
+            now=now,
+            media_kind=merged_record.media_kind,
+        )
+        if provider in {"douban", "bangumi"}:
+            ratings.append(_rating_entry(provider, _provider_rating_label(provider), detail_record.rating))
+        if provider in {"bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}:
+            playback_platforms = _merge_playback_platform_updates(playback_platforms, detail_record)
+
+    merged_source = FollowingMetadataSourceSnapshot(
+        source_key="merged",
+        provider="merged",
+        provider_label="合并",
+        overview=merged_snapshot.overview,
+        metadata_fields=list(merged_snapshot.metadata_fields),
+        ratings=[item for item in ratings if item.value],
+        playback_platforms=playback_platforms,
+        episodes=list(merged_snapshot.episodes),
+        seasons=list(merged_snapshot.seasons),
+    )
+    source_snapshots["merged"] = merged_source
+    bundle = FollowingMetadataBundle(
+        merged_snapshot=merged_source,
+        source_snapshots=source_snapshots,
+        available_source_keys=["merged", *[key for key in source_snapshots if key != "merged"]],
+        default_source_key="merged",
+    )
+    merged_snapshot.metadata_bundle = bundle
+    return bundle, merged_record, merged_snapshot
 
 
 def _metadata_fields_from_record(record) -> list[dict[str, str]]:
@@ -793,6 +1059,67 @@ def _people_details(
 class FollowingMetadataGateway:
     def __init__(self, metadata_search_service) -> None:
         self._metadata_search_service = metadata_search_service
+
+    def _source_confidence(self, provider: str, candidate, tmdb_record: MetadataRecord) -> float:
+        score = 0.0
+        candidate_title = _normalize_match_text(getattr(candidate, "title", ""))
+        expected_titles = {
+            _normalize_match_text(getattr(tmdb_record, "title", "")),
+            *{
+                _normalize_match_text(item)
+                for item in list(getattr(tmdb_record, "aliases", []) or [])
+                if _normalize_match_text(item)
+            },
+        }
+        expected_titles.discard("")
+        if candidate_title and candidate_title in expected_titles:
+            score += 0.7
+        candidate_year = str(getattr(candidate, "year", "") or "").strip()
+        tmdb_year = str(getattr(tmdb_record, "year", "") or "").strip()
+        if candidate_year and tmdb_year and candidate_year == tmdb_year:
+            score += 0.2
+        if provider in {"bangumi", "douban"}:
+            score += 0.1
+        return min(score, 1.0)
+
+    def _best_source_candidate(self, provider: str, candidates: list[object], tmdb_record: MetadataRecord):
+        best = None
+        best_score = -1.0
+        for candidate in candidates:
+            score = self._source_confidence(provider, candidate, tmdb_record)
+            if score > best_score:
+                best = candidate
+                best_score = score
+        return best
+
+    def load_source_records(
+        self,
+        record: FollowingRecord,
+        *,
+        tmdb_record: MetadataRecord,
+    ) -> dict[str, tuple[MetadataRecord, float]]:
+        results: dict[str, tuple[MetadataRecord, float]] = {}
+        category_name = "动漫" if record.media_kind == "anime" else "剧集"
+        query = MetadataQuery(
+            title=str(getattr(tmdb_record, "title", "") or record.title or "").strip(),
+            year=str(getattr(tmdb_record, "year", "") or "").strip(),
+            category_name=category_name,
+        )
+        for provider in ("douban", "bangumi", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"):
+            try:
+                groups = self._metadata_search_service.search(query, provider_filter=provider)
+            except Exception:
+                continue
+            candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
+            best = self._best_source_candidate(provider, candidates, tmdb_record)
+            if best is None:
+                continue
+            confidence = self._source_confidence(provider, best, tmdb_record)
+            detail_record, _error = load_candidate_detail_record(self._metadata_search_service, best)
+            if detail_record is None:
+                continue
+            results[provider] = (detail_record, confidence)
+        return results
 
     def refresh(self, record: FollowingRecord, provider: str):
         if provider == "tmdb":

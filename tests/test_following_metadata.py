@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+from atv_player.controllers.following_controller import FollowingController
 from atv_player.following_metadata import (
     FollowingMetadataGateway,
     build_following_from_candidate,
@@ -18,6 +19,437 @@ from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGr
 def test_following_provider_priority_prefers_bangumi_for_anime() -> None:
     assert following_provider_priority("anime") == ["bangumi", "tmdb", "douban"]
     assert following_provider_priority("live_action") == ["tmdb", "douban", "bangumi"]
+
+
+def test_following_detail_snapshot_defaults_to_empty_metadata_bundle() -> None:
+    snapshot = FollowingDetailSnapshot()
+
+    assert snapshot.metadata_bundle is None
+
+
+def test_following_metadata_bundle_keeps_merged_default_source_key() -> None:
+    from atv_player.following_models import (
+        FollowingMetadataBundle,
+        FollowingMetadataSourceSnapshot,
+        FollowingRatingEntry,
+    )
+
+    bundle = FollowingMetadataBundle(
+        merged_snapshot=FollowingMetadataSourceSnapshot(
+            source_key="merged",
+            provider="merged",
+            provider_label="合并",
+        ),
+        source_snapshots={
+            "merged": FollowingMetadataSourceSnapshot(
+                source_key="merged",
+                provider="merged",
+                provider_label="合并",
+            ),
+            "tmdb": FollowingMetadataSourceSnapshot(
+                source_key="tmdb",
+                provider="tmdb",
+                provider_label="TMDB",
+                ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1")],
+            ),
+        },
+        available_source_keys=["merged", "tmdb"],
+        default_source_key="merged",
+    )
+
+    assert bundle.default_source_key == "merged"
+    assert bundle.available_source_keys == ["merged", "tmdb"]
+    assert bundle.source_snapshots["tmdb"].ratings[0].value == "8.1"
+
+
+def test_following_playback_platform_entry_can_represent_link_only_platform() -> None:
+    from atv_player.following_models import FollowingPlaybackPlatformEntry
+
+    entry = FollowingPlaybackPlatformEntry(
+        provider="iqiyi",
+        label="爱奇艺",
+        url="https://www.iqiyi.com/a_19rrn1.html",
+    )
+
+    assert entry.latest_episode == 0
+    assert entry.update_time_text == ""
+    assert entry.status_text == ""
+
+
+def test_build_following_metadata_bundle_keeps_tmdb_primary_and_adds_douban_bangumi_ratings() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:272432:season:1",
+        title="凡人修仙传",
+        tmdb_id="272432",
+        rating="8.1",
+        poster="tmdb-poster",
+        backdrop="tmdb-backdrop",
+        overview="TMDB简介",
+        genres=["动画"],
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "provider": "iqiyi",
+                        "label": "爱奇艺",
+                        "url": "https://www.iqiyi.com/a_1.html",
+                    }
+                ],
+            },
+            {"label": "episodes", "value": [{"episode_number": 128, "name": "新章"}]},
+        ],
+    )
+    douban_record = MetadataRecord(
+        provider="douban",
+        provider_id="35517044",
+        title="凡人修仙传",
+        rating="7.9",
+        overview="豆瓣简介",
+        directors=["刘海波"],
+    )
+    bangumi_record = MetadataRecord(
+        provider="bangumi",
+        provider_id="subject:1",
+        title="凡人修仙传",
+        rating="8.4",
+        aliases=["凡人修仙传 动画版"],
+    )
+    iqiyi_record = MetadataRecord(
+        provider="iqiyi",
+        provider_id="iqiyi:album:1",
+        title="凡人修仙传",
+        detail_fields=[
+            {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+            {"label": "更新时间", "value": "2026-05-25"},
+            {"label": "更新状态", "value": "更新至第128集"},
+            {"label": "最新集数", "value": "128"},
+        ],
+    )
+
+    bundle, merged_record, merged_snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:272432",
+            external_ids={"tmdb": "272432"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={
+            "douban": (douban_record, 0.92),
+            "bangumi": (bangumi_record, 0.94),
+            "iqiyi": (iqiyi_record, 0.98),
+        },
+    )
+
+    assert merged_record.poster == "tmdb-poster"
+    assert [item.label for item in bundle.merged_snapshot.ratings] == ["TMDB", "豆瓣", "Bangumi"]
+    assert [item.value for item in bundle.merged_snapshot.ratings] == ["8.1", "7.9", "8.4"]
+    assert merged_snapshot.overview == "TMDB简介"
+    assert any(field["label"] == "导演" and field["value"] == "刘海波" for field in merged_snapshot.metadata_fields)
+    assert bundle.merged_snapshot.playback_platforms[0].label == "爱奇艺"
+    assert bundle.merged_snapshot.playback_platforms[0].update_time_text == "2026-05-25"
+    assert bundle.merged_snapshot.playback_platforms[0].status_text == "更新至第128集"
+
+
+def test_build_following_metadata_bundle_ignores_provider_below_threshold() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(provider="tmdb", provider_id="tv:1:season:1", title="测试", tmdb_id="1")
+    low_confidence = MetadataRecord(provider="douban", provider_id="2", title="错误候选", rating="4.2")
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (low_confidence, 0.45)},
+    )
+
+    assert bundle.available_source_keys == ["merged", "tmdb"]
+    assert "douban" not in bundle.source_snapshots
+
+
+def test_build_following_metadata_bundle_keeps_tmdb_platform_link_without_fake_update_fields() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1:season:1",
+        title="测试",
+        tmdb_id="1",
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "provider": "youku",
+                        "label": "优酷",
+                        "url": "https://v.youku.com/v_show/id_x.html",
+                    }
+                ],
+            }
+        ],
+    )
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={},
+    )
+
+    platform = bundle.merged_snapshot.playback_platforms[0]
+    assert platform.label == "优酷"
+    assert platform.url == "https://v.youku.com/v_show/id_x.html"
+    assert platform.update_time_text == ""
+    assert platform.status_text == ""
+
+
+def test_following_metadata_gateway_searches_platform_sources_from_tmdb_identity() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def search(self, query, provider_filter=""):
+            self.calls.append((provider_filter, query.title, query.year))
+            if provider_filter == "douban":
+                return [
+                    MetadataScrapeGroup(
+                        "douban",
+                        "豆瓣",
+                        [
+                            MetadataScrapeCandidate(
+                                provider="douban",
+                                provider_label="豆瓣",
+                                provider_id="35517044",
+                                title="凡人修仙传",
+                                year="2026",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                rating="7.9",
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:272432",
+            external_ids={"tmdb": "272432"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:272432:season:1",
+            title="凡人修仙传",
+            year="2026",
+            tmdb_id="272432",
+            aliases=["凡人修仙传 动画版"],
+        ),
+    )
+
+    assert "douban" in result
+    assert result["douban"][0].provider == "douban"
+    assert result["douban"][1] >= 0.75
+
+
+def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.record = FollowingRecord(
+                id=1,
+                title="凡人修仙传",
+                media_kind="anime",
+                provider="tmdb",
+                provider_id="tv:272432",
+                external_ids={"tmdb": "272432"},
+            )
+            self.snapshot = FollowingDetailSnapshot(following_id=1)
+
+        def get(self, following_id: int):
+            assert following_id == 1
+            return self.record
+
+        def get_detail_snapshot(self, following_id: int):
+            assert following_id == 1
+            return self.snapshot
+
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            del query, provider_filter
+            return []
+
+        def detail_record_full(self, candidate):
+            assert candidate.provider == "tmdb"
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:272432:season:1",
+                title="凡人修仙传",
+                year="2026",
+                tmdb_id="272432",
+                overview="TMDB简介",
+            )
+
+    controller = FollowingController(Repository(), metadata_search_service=SearchService())
+
+    view = controller.load_detail(1, refresh_if_empty=False)
+
+    assert view.snapshot.metadata_bundle is not None
+    assert view.snapshot.metadata_bundle.available_source_keys[0] == "merged"
+    assert "tmdb" in view.snapshot.metadata_bundle.source_snapshots
+
+
+def test_following_controller_refresh_metadata_saves_bundle_back_to_snapshot() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.record = FollowingRecord(
+                id=1,
+                title="凡人修仙传",
+                media_kind="anime",
+                provider="tmdb",
+                provider_id="tv:272432",
+                external_ids={"tmdb": "272432"},
+            )
+            self.snapshot = FollowingDetailSnapshot(following_id=1)
+            self.saved_snapshot = None
+
+        def get(self, following_id: int):
+            assert following_id == 1
+            return self.record
+
+        def get_detail_snapshot(self, following_id: int):
+            assert following_id == 1
+            return self.snapshot
+
+        def update_metadata(self, following_id: int, refreshed_record: FollowingRecord) -> None:
+            assert following_id == 1
+            self.record = refreshed_record
+            self.record.id = following_id
+
+        def update_check_state(self, following_id: int, **kwargs) -> None:
+            assert following_id == 1
+            del kwargs
+
+        def save_detail_snapshot(self, following_id: int, snapshot: FollowingDetailSnapshot) -> None:
+            assert following_id == 1
+            self.snapshot = snapshot
+            self.saved_snapshot = snapshot
+
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            del query
+            if provider_filter == "tmdb":
+                return [
+                    MetadataScrapeGroup(
+                        provider="tmdb",
+                        provider_label="TMDB",
+                        items=[
+                            MetadataScrapeCandidate(
+                                provider="tmdb",
+                                provider_label="TMDB",
+                                provider_id="tv:272432:season:1",
+                                title="凡人修仙传",
+                                year="2026",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return self.detail_record_full(candidate)
+
+        def detail_record_full(self, candidate):
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=str(candidate.provider_id or ""),
+                title="凡人修仙传",
+                year="2026",
+                tmdb_id="272432",
+                overview="TMDB简介",
+                detail_fields=[
+                    {
+                        "label": "episodes",
+                        "value": [{"episode_number": 1, "name": "第一集"}],
+                    }
+                ],
+            )
+
+    repository = Repository()
+    controller = FollowingController(repository, metadata_search_service=SearchService(), now=lambda: 200)
+
+    view = controller.refresh_metadata(1)
+
+    assert view.snapshot.metadata_bundle is not None
+    assert repository.saved_snapshot is not None
+    assert repository.saved_snapshot.metadata_bundle is not None
+
+
+def test_following_metadata_bundle_does_not_let_douban_override_existing_tmdb_overview() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1:season:1",
+        title="测试",
+        tmdb_id="1",
+        overview="TMDB简介",
+        rating="8.1",
+    )
+    douban_record = MetadataRecord(
+        provider="douban",
+        provider_id="2",
+        title="测试",
+        overview="豆瓣简介",
+        rating="7.9",
+    )
+
+    bundle, _merged_record, merged_snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="测试",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:1",
+            external_ids={"tmdb": "1"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (douban_record, 0.91)},
+    )
+
+    assert bundle.merged_snapshot.ratings[0].label == "TMDB"
+    assert merged_snapshot.overview == "TMDB简介"
 
 
 def test_following_candidate_from_supported_urls() -> None:
