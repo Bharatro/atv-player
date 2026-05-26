@@ -176,7 +176,9 @@ def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None
     assert page.poster_carousel_panel.layout().indexOf(page.poster_label) == -1
     assert page.episodes_section.objectName() == "followingDetailEpisodesSection"
     assert page.cast_section.objectName() == "followingDetailCastSection"
-    assert page.episode_browser.mode_tabs.count() == 3
+    assert page.episode_browser.grid_columns() == 1
+    assert hasattr(page, "season_header_title_label")
+    assert len(page.episode_column_buttons) == 3
     assert page.episode_browser.season_list.model().rowCount() == 1
     assert page.episode_browser.episode_list.model().rowCount() == 1
     assert page.cast_scroll.verticalScrollBarPolicy().name == "ScrollBarAlwaysOff"
@@ -311,32 +313,42 @@ def test_following_detail_page_prefers_provider_id_season_over_specials_on_initi
     assert page.episode_browser.episode_list.model().rowCount() == 1
 
 
-def test_following_detail_page_uses_configured_initial_display_mode(qtbot) -> None:
+def test_following_detail_page_uses_configured_initial_grid_columns(qtbot) -> None:
     page = FollowingDetailPage(
         FakeController(),
-        config=AppConfig(following_episode_display_mode="full"),
+        config=AppConfig(following_episode_grid_columns=1),
     )
     qtbot.addWidget(page)
     page.load_record(1)
 
-    assert page.episode_browser.display_mode() == "full"
+    assert page.episode_browser.grid_columns() == 1
+    assert page.episode_column_buttons[1].isChecked() is True
 
 
-def test_following_detail_page_switches_and_persists_episode_display_mode(qtbot) -> None:
-    config = AppConfig(following_episode_display_mode="poster")
-    saved: list[str] = []
+def test_following_detail_page_switches_and_persists_episode_grid_columns(qtbot) -> None:
+    config = AppConfig(following_episode_grid_columns=1)
+    saved: list[int] = []
 
     def save_config() -> None:
-        saved.append(config.following_episode_display_mode)
+        saved.append(config.following_episode_grid_columns)
 
     page = FollowingDetailPage(FakeController(), config=config, save_config=save_config)
     qtbot.addWidget(page)
     page.load_record(1)
 
-    page.episode_browser.set_display_mode("full")
+    page.episode_column_buttons[3].click()
 
-    assert config.following_episode_display_mode == "full"
-    assert saved == ["full"]
+    assert config.following_episode_grid_columns == 3
+    assert saved == [3]
+
+
+def test_following_detail_page_renders_selected_season_header(qtbot) -> None:
+    page = FollowingDetailPage(FakeController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    assert page.season_header_title_label.text() == "第一季"
+    assert "长篇简介" in page.season_header_overview_label.text()
 
 
 def test_following_detail_page_opens_preview_dialog_from_episode_activation(
@@ -377,11 +389,12 @@ def test_following_person_card_inner_labels_have_no_borders(qtbot) -> None:
     page.load_record(1)
 
     card = page.cast_widgets[0]
-    assert card.avatar_label.width() == 144
-    assert card.avatar_label.height() == 216
-    assert card.minimumHeight() >= 292
-    assert page.cast_scroll.minimumHeight() >= 334
-    assert page.cast_scroll.maximumHeight() >= 360
+    assert card.avatar_label.width() < 144
+    assert card.avatar_label.height() < 216
+    assert card.minimumHeight() < 292
+    assert page.episodes_section.minimumHeight() > 400
+    assert page.cast_scroll.minimumHeight() < 334
+    assert page.cast_scroll.maximumHeight() < 360
     assert "border: 0" in card.avatar_label.styleSheet()
     assert "border: 0" in card.name_label.styleSheet()
     assert "border: 0" in card.role_label.styleSheet()

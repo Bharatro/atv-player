@@ -238,18 +238,18 @@ class FollowingPersonCard(QFrame):
         self.person = person
         self.setObjectName("personCard")
         self._person_url = _person_link(person)
-        self.setMinimumSize(166, 292)
+        self.setMinimumSize(142, 248)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         if self._person_url:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         self.avatar_label = QLabel(_person_avatar_initial(person), self)
         self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.avatar_label.setFixedSize(144, 216)
+        self.avatar_label.setFixedSize(120, 180)
         self.avatar_label.setProperty("person_avatar", True)
         self.avatar_label.setObjectName("personAvatar")
         self.avatar_label.setStyleSheet(_person_avatar_fallback_qss())
@@ -334,9 +334,14 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.poster_carousel_timer = QTimer(self)
         self.poster_carousel_timer.setInterval(4500)
         self.episode_browser = FollowingEpisodeBrowser(
-            initial_display_mode=self._config.following_episode_display_mode,
+            initial_grid_columns=self._config.following_episode_grid_columns,
             parent=self,
         )
+        self.season_header_poster_label = QLabel("季封面")
+        self.season_header_title_label = QLabel()
+        self.season_header_meta_label = QLabel()
+        self.season_header_overview_label = QLabel()
+        self.episode_column_buttons: dict[int, QPushButton] = {}
 
         self._cast_container = QWidget()
         self._cast_layout = QHBoxLayout(self._cast_container)
@@ -352,8 +357,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self.season_detail_finished, self._handle_season_detail_finished)
         self.episode_browser.episode_activated.connect(self._open_episode_preview)
         self.episode_browser.season_changed.connect(self._handle_season_changed)
-        self.episode_browser.display_mode_changed.connect(
-            self._handle_episode_display_mode_changed
+        self.episode_browser.grid_columns_changed.connect(
+            self._handle_episode_grid_columns_changed
         )
         self._apply_style()
 
@@ -382,6 +387,13 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.poster_carousel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_carousel_label.setMinimumSize(720, 405)
         self.poster_carousel_label.setStyleSheet(_carousel_image_qss())
+        self.season_header_poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.season_header_poster_label.setMinimumSize(112, 160)
+        self.season_header_poster_label.setMaximumSize(112, 160)
+        self.season_header_poster_label.setStyleSheet(_image_placeholder_qss())
+        self.season_header_title_label.setWordWrap(True)
+        self.season_header_meta_label.setWordWrap(True)
+        self.season_header_overview_label.setWordWrap(True)
         self.title_label.setWordWrap(True)
         self.title_label.setObjectName("followingDetailTitle")
         self.meta_label.setWordWrap(True)
@@ -438,16 +450,49 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.cast_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cast_scroll.setWidget(self._cast_container)
-        self.cast_scroll.setMinimumHeight(334)
-        self.cast_scroll.setMaximumHeight(360)
+        self.cast_scroll.setMinimumHeight(248)
+        self.cast_scroll.setMaximumHeight(296)
 
         self.episodes_section = QFrame(content)
         self.episodes_section.setObjectName("followingDetailEpisodesSection")
-        self.episodes_section.setMinimumHeight(400)
+        self.episodes_section.setMinimumHeight(480)
         episodes_section_layout = QVBoxLayout(self.episodes_section)
         episodes_section_layout.setContentsMargins(14, 14, 14, 14)
         episodes_section_layout.setSpacing(10)
         episodes_section_layout.addWidget(QLabel("分集详情", self.episodes_section))
+        season_header_layout = QHBoxLayout()
+        season_header_layout.setContentsMargins(0, 0, 0, 0)
+        season_header_layout.setSpacing(12)
+        season_header_layout.addWidget(self.season_header_poster_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        season_header_text_layout = QVBoxLayout()
+        season_header_text_layout.setContentsMargins(0, 0, 0, 0)
+        season_header_text_layout.setSpacing(6)
+
+        season_header_top_row = QHBoxLayout()
+        season_header_top_row.setContentsMargins(0, 0, 0, 0)
+        season_header_top_row.setSpacing(8)
+        season_header_top_row.addWidget(self.season_header_title_label, 1)
+
+        column_button_row = QHBoxLayout()
+        column_button_row.setContentsMargins(0, 0, 0, 0)
+        column_button_row.setSpacing(6)
+        for columns, label in ((1, "1"), (2, "2"), (3, "3")):
+            button = self._create_episode_column_button(label, columns)
+            self.episode_column_buttons[columns] = button
+            column_button_row.addWidget(button)
+        season_header_top_row.addLayout(column_button_row)
+
+        season_header_text_layout.addLayout(season_header_top_row)
+        season_header_text_layout.addWidget(self.season_header_meta_label)
+        season_header_text_layout.addWidget(self.season_header_overview_label)
+        season_header_layout.addLayout(season_header_text_layout, 1)
+
+        episodes_section_layout.addLayout(season_header_layout)
+
+        self.episode_browser.season_list.setMaximumWidth(180)
+        self.episode_browser.browser_frame.layout().setStretch(0, 0)
+        self.episode_browser.browser_frame.layout().setStretch(1, 1)
         episodes_section_layout.addWidget(self.episode_browser)
 
         self.cast_section = QFrame(content)
@@ -503,6 +548,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             current_episode=record.current_episode,
             selected_season_number=self._selected_season_number,
         )
+        self._sync_episode_column_buttons(self.episode_browser.grid_columns())
+        self._refresh_season_header()
         self.cast_widgets = []
         _clear_layout(self._cast_layout)
         self._pending_people = [*snapshot.cast, *snapshot.crew]
@@ -560,16 +607,18 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     def _open_episode_preview(self, episode: FollowingEpisode) -> None:
         FollowingEpisodePreviewDialog(episode, self).exec()
 
-    def _handle_episode_display_mode_changed(self, display_mode: str) -> None:
-        normalized = str(display_mode or "").strip() or "poster"
-        if self._config.following_episode_display_mode == normalized:
+    def _handle_episode_grid_columns_changed(self, columns: int) -> None:
+        normalized = int(columns)
+        self._sync_episode_column_buttons(normalized)
+        if self._config.following_episode_grid_columns == normalized:
             return
-        self._config.following_episode_display_mode = normalized
+        self._config.following_episode_grid_columns = normalized
         if callable(self._save_config):
             self._save_config()
 
     def _handle_season_changed(self, season_number: int) -> None:
         normalized = int(season_number)
+        self._refresh_season_header()
         if self.current_following_id <= 0:
             return
         if normalized == self._selected_season_number and self._current_snapshot_matches_selected_season():
@@ -858,6 +907,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             QPushButton:hover {{
                 border-color: {tokens.accent};
             }}
+            QPushButton:checked {{
+                border-color: {tokens.accent};
+                background: {tokens.panel_alt_bg};
+            }}
             QSpinBox {{
                 border: 1px solid {tokens.border_subtle};
                 border-radius: 10px;
@@ -874,6 +927,37 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             }}
             """
         )
+
+    def _create_episode_column_button(self, text: str, columns: int) -> QPushButton:
+        button = QPushButton(text, self)
+        button.setCheckable(True)
+        button.setToolTip(f"{columns}列")
+        button.clicked.connect(lambda _checked=False, value=columns: self.episode_browser.set_grid_columns(value))
+        return button
+
+    def _sync_episode_column_buttons(self, columns: int) -> None:
+        for value, button in self.episode_column_buttons.items():
+            button.blockSignals(True)
+            button.setChecked(value == columns)
+            button.blockSignals(False)
+
+    def _refresh_season_header(self) -> None:
+        summary = self.episode_browser.current_season_summary()
+        self.season_header_title_label.setText(summary.title or "未命名季")
+        record = self.current_view.record if self.current_view is not None else FollowingRecord(id=0, title="")
+        snapshot = (
+            self.current_view.snapshot
+            if self.current_view is not None
+            else FollowingDetailSnapshot()
+        )
+        self.season_header_meta_label.setText(_season_header_meta_text(summary, record))
+        overview = summary.overview or snapshot.overview or "暂无本季简介"
+        self.season_header_overview_label.setText(overview)
+        poster_source = summary.poster or record.poster
+        self.season_header_poster_label.setText("季封面" if poster_source else "暂无季封面")
+        self.season_header_poster_label.setPixmap(QPixmap())
+        if poster_source:
+            self._start_image_load(self.season_header_poster_label, poster_source)
 
 
 def _clear_layout(layout: QHBoxLayout) -> None:
@@ -1017,6 +1101,18 @@ def _format_detail_text(snapshot: FollowingDetailSnapshot) -> str:
         parts.append("")
         parts.append(f"简介:\n{overview}")
     return "\n".join(parts) if parts else "暂无简介"
+
+
+def _season_header_meta_text(summary, record: FollowingRecord) -> str:
+    parts = []
+    rating = str(record.rating or "").strip()
+    if rating:
+        parts.append(f"★ {rating}")
+    if summary.air_date:
+        parts.append(summary.air_date)
+    if summary.episode_count > 0:
+        parts.append(f"共 {summary.episode_count} 集")
+    return " · ".join(parts)
 
 
 def _image_placeholder_qss() -> str:
