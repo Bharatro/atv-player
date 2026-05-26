@@ -20,6 +20,61 @@ def test_following_provider_priority_prefers_bangumi_for_anime() -> None:
     assert following_provider_priority("live_action") == ["tmdb", "douban", "bangumi"]
 
 
+def test_following_detail_snapshot_defaults_to_empty_metadata_bundle() -> None:
+    snapshot = FollowingDetailSnapshot()
+
+    assert snapshot.metadata_bundle is None
+
+
+def test_following_metadata_bundle_keeps_merged_default_source_key() -> None:
+    from atv_player.following_models import (
+        FollowingMetadataBundle,
+        FollowingMetadataSourceSnapshot,
+        FollowingRatingEntry,
+    )
+
+    bundle = FollowingMetadataBundle(
+        merged_snapshot=FollowingMetadataSourceSnapshot(
+            source_key="merged",
+            provider="merged",
+            provider_label="合并",
+        ),
+        source_snapshots={
+            "merged": FollowingMetadataSourceSnapshot(
+                source_key="merged",
+                provider="merged",
+                provider_label="合并",
+            ),
+            "tmdb": FollowingMetadataSourceSnapshot(
+                source_key="tmdb",
+                provider="tmdb",
+                provider_label="TMDB",
+                ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.1")],
+            ),
+        },
+        available_source_keys=["merged", "tmdb"],
+        default_source_key="merged",
+    )
+
+    assert bundle.default_source_key == "merged"
+    assert bundle.available_source_keys == ["merged", "tmdb"]
+    assert bundle.source_snapshots["tmdb"].ratings[0].value == "8.1"
+
+
+def test_following_playback_platform_entry_can_represent_link_only_platform() -> None:
+    from atv_player.following_models import FollowingPlaybackPlatformEntry
+
+    entry = FollowingPlaybackPlatformEntry(
+        provider="iqiyi",
+        label="爱奇艺",
+        url="https://www.iqiyi.com/a_19rrn1.html",
+    )
+
+    assert entry.latest_episode == 0
+    assert entry.update_time_text == ""
+    assert entry.status_text == ""
+
+
 def test_following_candidate_from_supported_urls() -> None:
     assert following_candidate_from_url("https://bgm.tv/subject/521431").provider_id == "subject:521431"
     assert following_candidate_from_url("https://movie.douban.com/subject/37090537/").provider_id == "37090537"

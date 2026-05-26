@@ -44,6 +44,48 @@ class FollowingSeason:
 
 
 @dataclass(slots=True)
+class FollowingRatingEntry:
+    provider: str
+    label: str
+    value: str
+
+
+@dataclass(slots=True)
+class FollowingPlaybackPlatformEntry:
+    provider: str
+    label: str
+    url: str = ""
+    latest_episode: int = 0
+    update_time_text: str = ""
+    status_text: str = ""
+
+
+@dataclass(slots=True)
+class FollowingMetadataSourceSnapshot:
+    source_key: str
+    provider: str
+    provider_label: str
+    provider_id: str = ""
+    matched: bool = True
+    confidence: float = 0.0
+    url: str = ""
+    overview: str = ""
+    metadata_fields: list[dict[str, str]] = field(default_factory=list)
+    ratings: list[FollowingRatingEntry] = field(default_factory=list)
+    playback_platforms: list[FollowingPlaybackPlatformEntry] = field(default_factory=list)
+    episodes: list["FollowingEpisode"] = field(default_factory=list)
+    seasons: list["FollowingSeason"] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FollowingMetadataBundle:
+    merged_snapshot: FollowingMetadataSourceSnapshot
+    source_snapshots: dict[str, FollowingMetadataSourceSnapshot] = field(default_factory=dict)
+    available_source_keys: list[str] = field(default_factory=lambda: ["merged"])
+    default_source_key: str = "merged"
+
+
+@dataclass(slots=True)
 class FollowingDetailSnapshot:
     following_id: int = 0
     overview: str = ""
@@ -55,6 +97,7 @@ class FollowingDetailSnapshot:
     next_episode: FollowingEpisode | None = None
     posters: list[str] = field(default_factory=list)
     backdrops: list[str] = field(default_factory=list)
+    metadata_bundle: FollowingMetadataBundle | None = None
     refreshed_at: int = 0
 
 
