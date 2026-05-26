@@ -119,8 +119,8 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     page.load_record(1)
     page.search_play_button.click()
     page.manual_check_button.click()
-    qtbot.waitUntil(lambda: page.status_label.text() == "已完成手动检查", timeout=1000)
-    assert page.status_label.text() == "已完成手动检查"
+    qtbot.waitUntil(lambda: page.status_label.text() == "已完成检查更新", timeout=1000)
+    assert page.status_label.text() == "已完成检查更新"
     page.refresh_metadata_button.click()
     qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
     assert page.status_label.text() == "元数据已更新"
