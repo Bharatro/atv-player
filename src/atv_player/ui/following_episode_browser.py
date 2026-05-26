@@ -774,6 +774,9 @@ class FollowingEpisodeBrowser(QWidget):
     def grid_columns(self) -> int:
         return self._grid_columns
 
+    def display_mode(self) -> str:
+        return self.episode_model.display_mode
+
     def set_grid_columns(self, columns: int) -> None:
         normalized = self._normalize_grid_columns(columns)
         if normalized == self._grid_columns:

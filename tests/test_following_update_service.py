@@ -407,3 +407,22 @@ def test_update_service_tmdb_check_keeps_existing_metadata_identity(tmp_path: Pa
     assert snapshot is not None
     assert snapshot.overview == "旧简介"
     assert snapshot.episodes[0].title == "旧分集"
+
+
+def test_update_service_reports_completion_state_from_snapshot(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record())
+    gateway = FakeMetadataGateway()
+    gateway.responses["bangumi"] = (
+        _record(id=record_id),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[FollowingEpisode(episode_number=1, air_date="2026-05-19")],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_due_records(limit=10)
+
+    assert results[0].completion_state == "completed"

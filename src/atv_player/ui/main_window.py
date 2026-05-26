@@ -35,6 +35,7 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
+from atv_player.following_progress import resolve_following_playback_progress
 from atv_player.log_store import AppLogFilter
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
@@ -4149,18 +4150,30 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         position_seconds: int,
         duration_seconds: int = 0,
     ) -> None:
-        del duration_seconds
         record = self._player_following_record(item)
-        if record is None or not hasattr(self._following_controller, "record_playback_progress"):
+        if (
+            record is None
+            or self.player_window is None
+            or self.player_window.session is None
+            or not hasattr(self._following_controller, "record_playback_progress")
+        ):
             return
-        current_episode = max(int(getattr(record, "current_episode", 0) or 0), self._current_player_episode_number())
-        current_season_number = int(
-            getattr(record, "current_season_number", 0) or getattr(record, "season_number", 0) or 1
+        decision = resolve_following_playback_progress(
+            item,
+            list(getattr(self.player_window.session, "playlist", []) or []),
+            current_index=max(0, int(getattr(self.player_window, "current_index", 0) or 0)),
+            fallback_season_number=int(
+                getattr(record, "current_season_number", 0) or getattr(record, "season_number", 0) or 1
+            ),
+            position_seconds=position_seconds,
+            duration_seconds=duration_seconds,
         )
+        if decision is None or not decision.threshold_reached:
+            return
         self._following_controller.record_playback_progress(
             record.id,
-            current_season_number=current_season_number,
-            current_episode=current_episode,
+            current_season_number=decision.season_number,
+            current_episode=decision.episode_number,
             position_seconds=position_seconds,
         )
 

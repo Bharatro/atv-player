@@ -18,14 +18,17 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import (
+    compare_progress,
     format_progress_episode,
     FollowingCardItem,
+    FollowingCompletionState,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
     FollowingSourceBinding,
     progress_at_or_beyond,
     provider_priority_for_media_kind,
+    resolve_following_completion_state,
     resolve_progress_season,
 )
 from atv_player.metadata.discovery import DiscoveryItem, DiscoveryQuery, DiscoveryResult, RecommendationSeed
@@ -376,13 +379,25 @@ class FollowingController:
                 display_title=record.title,
                 subtitle=record.provider or record.media_kind,
                 progress_text=self._progress_text(record),
-                update_text=f"有 {record.new_episode_count} 集更新" if record.has_update else "暂无更新",
+                update_text=self._update_text(record),
                 updated_hint=record.has_update,
                 error_text=record.last_error,
             )
             for record in records
         ]
         return cards, total
+
+    def _update_text(self, record: FollowingRecord) -> str:
+        if record.has_update:
+            return f"有 {record.new_episode_count} 集更新"
+        return "已完结" if self._completion_state(record) == FollowingCompletionState.COMPLETED else "连载中"
+
+    def _completion_state(self, record: FollowingRecord) -> str:
+        snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
+        return resolve_following_completion_state(
+            episodes=snapshot.episodes,
+            next_episode=snapshot.next_episode,
+        )
 
     def search_items(self, keyword: str, page: int) -> tuple[list[FollowingCardItem], int]:
         return self.load_page(page=page, size=20, keyword=keyword, only_updates=False)
@@ -538,8 +553,8 @@ class FollowingController:
         current_episode: int,
         position_seconds: int,
     ) -> None:
+        record = self._repository.get(following_id)
         if current_season_number <= 0:
-            record = self._repository.get(following_id)
             current_season_number = (
                 resolve_progress_season(
                     getattr(record, "current_season_number", 0) if record is not None else 0,
@@ -547,6 +562,15 @@ class FollowingController:
                     fallback_season=getattr(record, "season_number", 0) if record is not None else 0,
                 )
             )
+        if record is not None and compare_progress(
+            current_season_number,
+            current_episode,
+            record.current_season_number,
+            record.current_episode,
+            current_fallback_season=record.season_number,
+            target_fallback_season=record.season_number,
+        ) < 0:
+            return
         self._repository.update_progress(
             following_id,
             current_season_number=current_season_number,
