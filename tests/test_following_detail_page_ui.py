@@ -167,6 +167,7 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
 def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:
     page = FollowingDetailPage(FakeController())
     qtbot.addWidget(page)
+    page.show()
 
     page.load_record(1)
 
@@ -345,6 +346,7 @@ def test_following_detail_page_persists_grid_columns_after_cycle_click(qtbot) ->
 def test_following_detail_page_uses_browser_owned_three_pane_workspace(qtbot) -> None:
     page = FollowingDetailPage(FakeController())
     qtbot.addWidget(page)
+    page.show()
     page.load_record(1)
 
     assert not hasattr(page, "season_header_title_label")
