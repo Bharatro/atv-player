@@ -371,8 +371,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
         elif self._should_load_selected_season():
             QTimer.singleShot(0, self._load_selected_season_if_needed)
-        elif self._snapshot_people_missing_avatars(self.current_view.snapshot):
-            QTimer.singleShot(0, self._refresh_metadata)
 
     def _build_layout(self) -> None:
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -812,15 +810,6 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             if "refresh_if_empty" not in str(exc):
                 raise
             return self.controller.load_detail(following_id)
-
-    def _snapshot_people_missing_avatars(self, snapshot: FollowingDetailSnapshot) -> bool:
-        people = [*list(snapshot.cast or []), *list(snapshot.crew or [])]
-        if not people:
-            return False
-        return any(
-            str(person.get("name") or "").strip() and not _person_avatar(person)
-            for person in people
-        )
 
     def _apply_style(self) -> None:
         tokens = current_tokens()

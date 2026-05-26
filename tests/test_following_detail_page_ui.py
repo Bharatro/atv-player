@@ -545,7 +545,7 @@ def test_following_detail_page_renders_completed_progress_text(qtbot) -> None:
     assert "最新 24 / 总 24" not in page.meta_label.text()
 
 
-def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot) -> None:
+def test_following_detail_page_does_not_auto_refresh_when_people_missing_avatars(qtbot) -> None:
     class NoAvatarController(FakeController):
         def __init__(self) -> None:
             super().__init__()
@@ -583,14 +583,13 @@ def test_following_detail_page_auto_refreshes_when_people_missing_avatars(qtbot)
 
     page.load_record(1)
 
-    qtbot.waitUntil(lambda: controller.metadata_refreshes == [1], timeout=1000)
-    qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
+    qtbot.wait(100)
 
-    assert controller.metadata_refreshes == [1]
-    assert page.cast_widgets[0].person["avatar"] == "/wang.jpg"
+    assert controller.metadata_refreshes == []
+    assert "avatar" not in page.cast_widgets[0].person
 
 
-def test_following_detail_page_auto_refreshes_when_only_crew_missing_avatars(qtbot) -> None:
+def test_following_detail_page_does_not_auto_refresh_when_only_crew_missing_avatars(qtbot) -> None:
     class CrewOnlyMissingAvatarController(FakeController):
         def __init__(self) -> None:
             super().__init__()
@@ -627,11 +626,10 @@ def test_following_detail_page_auto_refreshes_when_only_crew_missing_avatars(qtb
 
     page.load_record(1)
 
-    qtbot.waitUntil(lambda: controller.metadata_refreshes == [1], timeout=1000)
-    qtbot.waitUntil(lambda: page.status_label.text() == "元数据已更新", timeout=1000)
+    qtbot.wait(100)
 
-    assert controller.metadata_refreshes == [1]
-    assert page.cast_widgets[1].person["avatar"] == "/liuhb.jpg"
+    assert controller.metadata_refreshes == []
+    assert "avatar" not in page.cast_widgets[1].person
 
 
 def test_following_detail_page_detaches_stale_person_cards_after_metadata_refresh(qtbot) -> None:
