@@ -149,3 +149,56 @@ def test_tmdb_client_get_tv_detail_with_season_builds_episode_still_urls() -> No
     episode = detail["season/1"]["episodes"][0]
     assert episode["still_url"] == "https://image.tmdb.org/t/p/w1280/episode.jpg"
     assert episode["season_number"] == 1
+
+
+def test_tmdb_client_trending_tv_sends_window_and_page() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = dict(request.url.params)
+        return httpx.Response(200, json={"results": [{"id": 76479, "name": "The Boys"}]})
+
+    client = TMDBClient(api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    results = client.get_trending(media_type="tv", window="week", page=2)
+
+    assert results == [{"id": 76479, "name": "The Boys"}]
+    assert seen["path"] == "/3/trending/tv/week"
+    assert seen["query"] == {
+        "api_key": "tmdb-key",
+        "language": "zh-CN",
+        "page": "2",
+    }
+
+
+def test_tmdb_client_discover_tv_passes_filters() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = dict(request.url.params)
+        return httpx.Response(200, json={"results": []})
+
+    client = TMDBClient(api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    results = client.discover(
+        media_type="tv",
+        page=3,
+        sort_by="vote_average.desc",
+        year="2025",
+        with_genres="18",
+        with_origin_country="KR",
+    )
+
+    assert results == []
+    assert seen["path"] == "/3/discover/tv"
+    assert seen["query"] == {
+        "api_key": "tmdb-key",
+        "language": "zh-CN",
+        "page": "3",
+        "sort_by": "vote_average.desc",
+        "first_air_date_year": "2025",
+        "with_genres": "18",
+        "with_origin_country": "KR",
+    }

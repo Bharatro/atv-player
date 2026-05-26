@@ -11,9 +11,11 @@ class FavoritesController:
         repository,
         *,
         detail_loader_by_source: dict[str, Callable[[FavoriteRecord], VodItem | None]],
+        tmdb_binding_repository=None,
     ) -> None:
         self._repository = repository
         self._detail_loader_by_source = dict(detail_loader_by_source)
+        self._tmdb_binding_repository = tmdb_binding_repository
 
     def load_page(self, *, page: int, size: int, keyword: str) -> tuple[list[FavoriteCardItem], int]:
         records, total = self._repository.load_page(page=page, size=size, keyword=keyword)
@@ -71,6 +73,23 @@ class FavoritesController:
 
     def add_favorite(self, payload: dict[str, object]) -> None:
         self._repository.save_favorite(payload)
+        if self._tmdb_binding_repository is None:
+            return
+        provider_id = str(payload.get("tmdb_provider_id") or "").strip()
+        tmdb_id = str(payload.get("tmdb_id") or "").strip()
+        if not provider_id or not tmdb_id:
+            return
+        self._tmdb_binding_repository.save(
+            source_kind=str(payload.get("source_kind", "")),
+            source_key=str(payload.get("source_key", "")),
+            vod_id=str(payload.get("vod_id", "")),
+            provider_id=provider_id,
+            tmdb_id=tmdb_id,
+            media_type=str(payload.get("tmdb_media_type", "")),
+            title=str(payload.get("latest_vod_name") or payload.get("vod_name_snapshot") or ""),
+            year=str(payload.get("vod_year") or ""),
+            updated_at=int(payload.get("updated_at", 0)),
+        )
 
     def remove_favorite(self, records: list[FavoriteRecord]) -> None:
         self._repository.delete_favorites(records)

@@ -80,6 +80,37 @@ class TMDBClient:
     def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
         return list((self._request("/search/tv", query=title, first_air_date_year=year).get("results") or []))
 
+    def get_trending(self, *, media_type: str, window: str = "week", page: int = 1) -> list[dict[str, object]]:
+        return list((self._request(f"/trending/{media_type}/{window}", page=page).get("results") or []))
+
+    def discover(
+        self,
+        *,
+        media_type: str,
+        page: int = 1,
+        sort_by: str = "",
+        year: str = "",
+        with_genres: str = "",
+        with_origin_country: str = "",
+    ) -> list[dict[str, object]]:
+        year_param = {"first_air_date_year": year} if media_type == "tv" else {"primary_release_year": year}
+        return list(
+            (
+                self._request(
+                    f"/discover/{media_type}",
+                    page=page,
+                    sort_by=sort_by,
+                    with_genres=with_genres,
+                    with_origin_country=with_origin_country,
+                    **year_param,
+                ).get("results")
+                or []
+            )
+        )
+
+    def get_recommendations(self, *, media_type: str, tmdb_id: str | int, page: int = 1) -> list[dict[str, object]]:
+        return list((self._request(f"/{media_type}/{tmdb_id}/recommendations", page=page).get("results") or []))
+
     def get_movie_detail(self, tmdb_id: str | int) -> dict[str, Any]:
         self._image_base("poster")
         payload = self._request(

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.favorites_repository import FavoritesRepository
 from atv_player.models import VodItem
 
@@ -105,3 +106,40 @@ def test_favorites_controller_routes_add_remove_and_lookup_to_repository(tmp_pat
     controller.remove_favorite([records[0]])
 
     assert controller.is_favorited(source_kind="browse", source_key="", vod_id="detail-2") is False
+
+
+def test_favorites_controller_saves_explicit_tmdb_binding_when_payload_includes_identity(tmp_path: Path) -> None:
+    from atv_player.controllers.favorites_controller import FavoritesController
+
+    repo = FavoritesRepository(tmp_path / "app.db")
+    bindings = FavoriteTMDBBindingRepository(tmp_path / "app.db")
+    controller = FavoritesController(repo, detail_loader_by_source={}, tmdb_binding_repository=bindings)
+
+    controller.add_favorite(
+        {
+            "source_kind": "browse",
+            "source_key": "",
+            "source_name": "文件浏览",
+            "vod_id": "detail-2",
+            "vod_name_snapshot": "黑袍纠察队",
+            "latest_vod_name": "黑袍纠察队",
+            "vod_pic": "",
+            "vod_remarks": "",
+            "title_changed": False,
+            "tmdb_provider_id": "tv:76479",
+            "tmdb_id": "76479",
+            "tmdb_media_type": "tv",
+            "vod_year": "2019",
+            "created_at": 100,
+            "updated_at": 100,
+        }
+    )
+
+    binding = bindings.load(source_kind="browse", source_key="", vod_id="detail-2")
+
+    assert binding is not None
+    assert binding.provider_id == "tv:76479"
+    assert binding.tmdb_id == "76479"
+    assert binding.media_type == "tv"
+    assert binding.title == "黑袍纠察队"
+    assert binding.year == "2019"

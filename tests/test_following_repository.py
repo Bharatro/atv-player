@@ -220,3 +220,33 @@ def test_following_repository_persists_current_season_progress(tmp_path: Path) -
     assert loaded.has_update is False
     assert loaded.new_episode_count == 0
     assert loaded.homepage_prompt_pending is False
+
+
+def test_following_repository_load_recent_recommendation_candidates_prefers_recent_activity(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    repo.upsert(
+        _record(
+            provider="tmdb",
+            provider_id="tv:1",
+            media_kind="live_action",
+            external_ids={"tmdb": "1"},
+            has_update=False,
+            updated_at=100,
+            last_played_at=50,
+        )
+    )
+    repo.upsert(
+        _record(
+            provider="tmdb",
+            provider_id="tv:2",
+            media_kind="live_action",
+            external_ids={"tmdb": "2"},
+            has_update=True,
+            updated_at=300,
+            last_played_at=200,
+        )
+    )
+
+    rows = repo.load_recent_recommendation_candidates(limit=1)
+
+    assert [row.provider_id for row in rows] == ["tv:2"]

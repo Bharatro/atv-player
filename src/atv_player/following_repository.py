@@ -659,6 +659,19 @@ class FollowingRepository:
             ).fetchall()
         return [self._record_from_row(row) for row in rows]
 
+    def load_recent_recommendation_candidates(self, *, limit: int) -> list[FollowingRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                {self._select_sql()}
+                WHERE provider = 'tmdb' OR external_ids_json LIKE '%"tmdb"%'
+                ORDER BY has_update DESC, last_played_at DESC, updated_at DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (max(0, int(limit or 0)),),
+            ).fetchall()
+        return [self._record_from_row(row) for row in rows]
+
     def load_homepage_prompt_records(self, *, now: int) -> list[FollowingRecord]:
         with self._connect() as conn:
             rows = conn.execute(

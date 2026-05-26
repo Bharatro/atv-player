@@ -143,6 +143,35 @@ class FavoritesRepository:
             for row in rows
         ], total)
 
+    def load_recent(self, *, limit: int) -> list[FavoriteRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_kind, source_key, source_name, vod_id, vod_name_snapshot, latest_vod_name,
+                       vod_pic, vod_remarks, title_changed, created_at, updated_at
+                FROM favorites
+                ORDER BY updated_at DESC, created_at DESC, vod_id ASC
+                LIMIT ?
+                """,
+                (max(0, int(limit or 0)),),
+            ).fetchall()
+        return [
+            FavoriteRecord(
+                source_kind=str(row[0]),
+                source_key=str(row[1]),
+                source_name=str(row[2]),
+                vod_id=str(row[3]),
+                vod_name_snapshot=str(row[4]),
+                latest_vod_name=str(row[5]),
+                vod_pic=str(row[6]),
+                vod_remarks=str(row[7]),
+                title_changed=bool(row[8]),
+                created_at=int(row[9]),
+                updated_at=int(row[10]),
+            )
+            for row in rows
+        ]
+
     def delete_favorites(self, records: list[FavoriteRecord]) -> None:
         if not records:
             return

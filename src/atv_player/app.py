@@ -50,6 +50,7 @@ from atv_player.episode_titles import (
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.favorites_repository import FavoritesRepository
 from atv_player.following_metadata import FollowingMetadataGateway
 from atv_player.following_repository import FollowingRepository
@@ -63,6 +64,7 @@ from atv_player.metadata import (
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
+from atv_player.metadata.discovery import TMDBDiscoveryService
 from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.models import MetadataMatch
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
@@ -431,6 +433,7 @@ class AppCoordinator(QObject):
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             self._favorites_repository = FavoritesRepository(repo.database_path)
             self._following_repository = FollowingRepository(repo.database_path)
+            self._favorite_tmdb_binding_repository = FavoriteTMDBBindingRepository(repo.database_path)
             cache_dir = app_cache_dir() / "plugins"
             self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
@@ -458,6 +461,7 @@ class AppCoordinator(QObject):
             self._playback_history_repository = None
             self._favorites_repository = None
             self._following_repository = None
+            self._favorite_tmdb_binding_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
         self._metadata_binding_repository = (
@@ -768,6 +772,22 @@ class AppCoordinator(QObject):
         return MetadataScrapeService(
             cache=MetadataCache(app_cache_dir() / "metadata"),
             providers=providers,
+        )
+
+    def _build_following_tmdb_discovery_service(self) -> TMDBDiscoveryService | None:
+        config = self.repo.load_config()
+        disabled_provider_ids = {str(item or "").strip() for item in config.disabled_metadata_provider_ids}
+        if "tmdb" in disabled_provider_ids:
+            return None
+        api_key = str(config.metadata_tmdb_api_key or "").strip()
+        if not api_key:
+            return None
+        return TMDBDiscoveryService(
+            client=TMDBClient(
+                api_key=api_key,
+                proxy_decider=self._build_proxy_decider(),
+            ),
+            cache=MetadataCache(app_cache_dir() / "metadata"),
         )
 
     def _build_danmaku_controller_factory(self):
@@ -1847,11 +1867,13 @@ class AppCoordinator(QObject):
                 "jellyfin": lambda record, controller=jellyfin_controller: controller.build_request(record.vod_id).vod,
                 "feiniu": lambda record, controller=feiniu_controller: controller.build_request(record.vod_id).vod,
             },
+            tmdb_binding_repository=self._favorite_tmdb_binding_repository,
         )
         following_controller = None
         following_update_service = None
         if self._following_repository is not None:
             following_search_service = self._build_following_metadata_search_service(self._api_client)
+            following_discovery_service = self._build_following_tmdb_discovery_service()
             following_update_service = FollowingUpdateService(
                 self._following_repository,
                 metadata_gateway=FollowingMetadataGateway(following_search_service),
@@ -1860,6 +1882,8 @@ class AppCoordinator(QObject):
                 self._following_repository,
                 metadata_search_service=following_search_service,
                 update_service=following_update_service,
+                discovery_service=following_discovery_service,
+                favorite_tmdb_binding_repository=self._favorite_tmdb_binding_repository,
             )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)

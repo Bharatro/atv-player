@@ -2778,6 +2778,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         title = str(getattr(item, "vod_name", "") or "").strip()
         now = int(time.time())
         return {
+            **self._favorite_tmdb_identity_payload(item, None),
             "source_kind": source_kind,
             "source_key": source_key,
             "source_name": source_name,
@@ -2789,6 +2790,31 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "title_changed": False,
             "created_at": now,
             "updated_at": now,
+        }
+
+    def _favorite_tmdb_identity_payload(self, vod: VodItem, item: PlayItem | None) -> dict[str, str]:
+        tmdb_id = ""
+        for field in [*list(vod.detail_fields or []), *list(getattr(item, "detail_fields", []) or [])]:
+            label = str(getattr(field, "label", "") or "").strip().lower()
+            value = str(getattr(field, "value", "") or "").strip()
+            if "tmdb" not in label or not value:
+                continue
+            tmdb_id = value
+            break
+        if not tmdb_id:
+            return {}
+        media_tokens = " ".join(
+            str(value or "").strip().lower()
+            for value in (vod.type_name, vod.category_name)
+            if str(value or "").strip()
+        )
+        media_type = "tv"
+        if any(token in media_tokens for token in ("电影", "影片", "movie")):
+            media_type = "movie"
+        return {
+            "tmdb_provider_id": f"{media_type}:{tmdb_id}",
+            "tmdb_id": tmdb_id,
+            "tmdb_media_type": media_type,
         }
 
     def _open_plugin_category_manager(self, plugin_id: int) -> bool:
@@ -3974,6 +4000,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         now = int(time.time())
         title = str(vod.vod_name or item.title or "").strip()
         return {
+            **self._favorite_tmdb_identity_payload(vod, item),
             "source_kind": session.source_kind or "browse",
             "source_key": session.source_key or "",
             "source_name": self._favorite_source_name(session.source_kind or "browse", session.source_key or ""),
