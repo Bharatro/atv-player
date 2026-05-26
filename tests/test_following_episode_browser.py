@@ -161,6 +161,8 @@ def test_following_episode_browser_cycles_grid_columns_with_single_button(qtbot)
     changed: list[int] = []
     browser.grid_columns_changed.connect(changed.append)
 
+    assert browser.grid_cycle_button.text() == "▭"
+
     browser.grid_cycle_button.click()
     browser.grid_cycle_button.click()
     browser.grid_cycle_button.click()

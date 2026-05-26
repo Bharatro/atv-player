@@ -781,7 +781,7 @@ class FollowingEpisodeBrowser(QWidget):
             self._refresh_season_detail_panel()
 
     def _refresh_grid_cycle_button(self) -> None:
-        icon_text = {1: "▮", 2: "▮▮", 3: "▮▮▮"}[self._grid_columns]
+        icon_text = {1: "▭", 2: "▮▮", 3: "▮▮▮"}[self._grid_columns]
         label = {1: "单列", 2: "双列", 3: "三列"}[self._grid_columns]
         self.grid_cycle_button.setText(icon_text)
         self.grid_cycle_button.setToolTip(label)
