@@ -280,6 +280,43 @@ def test_fill_missing_metadata_appends_second_official_platform_link() -> None:
     ]
 
 
+def test_merge_metadata_deduplicates_same_official_platform_with_different_labels() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="都市古医仙",
+        detail_fields=[
+            PlaybackDetailField(
+                label="播放链接",
+                value="https://v.qq.com/x/cover/mzc00200guyixian.html",
+            )
+        ],
+    )
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:323238",
+        tmdb_id="323238",
+        detail_fields=[
+            {
+                "label": "watch_providers",
+                "value": [
+                    {
+                        "label": "腾讯",
+                        "provider": "tencent",
+                        "url": "https://v.qq.com/x/cover/mzc00200guyixian/ep1.html",
+                    }
+                ],
+            }
+        ],
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["tmdb"])
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("官方链接", "腾讯视频"),
+        ("TMDB ID", "323238"),
+    ]
+
+
 def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:
     vod = VodItem(vod_id="v1", vod_name="旧标题", vod_pic="https://img.tmdb/poster.jpg")
     vod.metadata_field_sources["poster"] = "tmdb"

@@ -60,6 +60,29 @@ _OFFICIAL_LINK_HOST_LABELS = {
     "www.mgtv.com": "芒果TV",
     "tv.sohu.com": "搜狐视频",
 }
+_OFFICIAL_LINK_HOST_KEYS = {
+    "v.qq.com": "tencent",
+    "m.v.qq.com": "tencent",
+    "v.youku.com": "youku",
+    "m.youku.com": "youku",
+    "www.iqiyi.com": "iqiyi",
+    "m.iqiyi.com": "iqiyi",
+    "www.bilibili.com": "bilibili",
+    "www.mgtv.com": "mgtv",
+    "tv.sohu.com": "sohu",
+}
+_OFFICIAL_LINK_LABEL_KEYS = {
+    "腾讯": "tencent",
+    "腾讯视频": "tencent",
+    "优酷": "youku",
+    "爱奇艺": "iqiyi",
+    "B站": "bilibili",
+    "哔哩哔哩": "bilibili",
+    "芒果TV": "mgtv",
+    "芒果": "mgtv",
+    "搜狐视频": "sohu",
+    "搜狐": "sohu",
+}
 
 
 def _provider_rank(field_name: str, provider: str) -> int:
@@ -195,6 +218,18 @@ def _official_link_label_from_url(url: object, fallback: object = "") -> str:
     return _OFFICIAL_LINK_HOST_LABELS.get(host) or _OFFICIAL_LINK_HOST_LABELS.get(host_without_www) or fallback_text
 
 
+def _official_link_host_key(url: object) -> str:
+    text = str(url or "").strip()
+    parsed = urlparse(text)
+    host = parsed.netloc.lower()
+    host_without_www = host[4:] if host.startswith("www.") else host
+    return _OFFICIAL_LINK_HOST_KEYS.get(host) or _OFFICIAL_LINK_HOST_KEYS.get(host_without_www) or ""
+
+
+def _official_link_platform_key(url: object, label: object = "") -> str:
+    return _official_link_host_key(url) or _OFFICIAL_LINK_LABEL_KEYS.get(_clean_detail_text(label), "")
+
+
 def _canonical_official_link_url(url: object) -> str:
     text = str(url or "").strip()
     if not text.startswith(("http://", "https://")):
@@ -227,8 +262,12 @@ def _official_link_detail_field(url: object, label: object = "") -> PlaybackDeta
 def _official_link_part_key(part: PlaybackDetailValuePart) -> tuple[str, str]:
     action = part.action
     if action is not None and action.type == "link":
-        return ("link", _canonical_official_link_url(action.value) or str(action.value or "").strip())
-    return ("label", _clean_detail_text(part.label))
+        link = _canonical_official_link_url(action.value) or str(action.value or "").strip()
+        platform_key = _official_link_platform_key(link, part.label)
+        return ("platform", platform_key) if platform_key else ("link", link)
+    label = _clean_detail_text(part.label)
+    platform_key = _official_link_platform_key("", label)
+    return ("platform", platform_key) if platform_key else ("label", label)
 
 
 def _append_missing_official_link_parts(
@@ -263,21 +302,21 @@ def _watch_provider_value_parts(value: object) -> list[PlaybackDetailValuePart]:
     if not isinstance(value, list):
         return []
     parts: list[PlaybackDetailValuePart] = []
-    seen_urls: set[str] = set()
+    seen_keys: set[tuple[str, str]] = set()
     for item in value:
         if not isinstance(item, dict):
             continue
-        url = str(item.get("url") or "").strip()
-        label = _clean_detail_text(item.get("label") or item.get("provider") or "")
-        if not url or not label or url in seen_urls:
-            continue
-        parts.append(
-            PlaybackDetailValuePart(
-                label=label,
-                action=PlaybackDetailFieldAction(type="link", value=url),
-            )
+        url = _canonical_official_link_url(item.get("url"))
+        label = _official_link_label_from_url(url, item.get("label") or item.get("provider") or "")
+        part = PlaybackDetailValuePart(
+            label=label,
+            action=PlaybackDetailFieldAction(type="link", value=url),
         )
-        seen_urls.add(url)
+        key = _official_link_part_key(part)
+        if not url or not label or not key[1] or key in seen_keys:
+            continue
+        parts.append(part)
+        seen_keys.add(key)
     return parts
 
 
