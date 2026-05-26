@@ -498,11 +498,19 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             seasons=snapshot.seasons,
             fallback_season=record.season_number,
         )
+        latest_season_number = resolve_progress_season(
+            record.season_number,
+            record.latest_episode,
+            fallback_season=record.season_number or self._selected_season_number,
+        )
         self.episode_browser.set_content(
             groups=groups,
             current_season_number=record.current_season_number,
             current_episode=record.current_episode,
             selected_season_number=self._selected_season_number,
+            latest_episode=record.latest_episode,
+            latest_season_number=latest_season_number,
+            next_episode=snapshot.next_episode,
         )
         self.cast_widgets = []
         _clear_layout(self._cast_layout)

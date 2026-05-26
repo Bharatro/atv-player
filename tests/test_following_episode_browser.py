@@ -15,6 +15,8 @@ from atv_player.ui.following_episode_browser import (
     EpisodeThumbnailStore,
     FollowingEpisodeBrowser,
     SeasonListModel,
+    STATUS_ROLE,
+    STATUS_TEXT_ROLE,
     WATCHED_ROLE,
     build_episode_season_groups,
 )
@@ -136,6 +138,22 @@ def test_episode_list_model_emits_data_changed_when_display_mode_changes() -> No
 
     assert model.display_mode == EpisodeDisplayMode.FULL
     assert changed == [(0, 0)]
+
+
+def test_episode_list_model_exposes_upcoming_status_for_same_day_next_episode() -> None:
+    model = EpisodeListModel()
+    model.set_episodes(
+        [FollowingEpisode(episode_number=24, season_number=1, title="第 24 集", air_date="2026-05-26")],
+        current_episode=23,
+        current_season_number=1,
+        visible_season_number=1,
+        latest_episode=24,
+        latest_season_number=1,
+        next_episode=FollowingEpisode(episode_number=24, season_number=1, air_date="2026-05-26"),
+    )
+
+    assert model.data(model.index(0, 0), STATUS_ROLE) == FollowingEpisodeState.UPCOMING
+    assert model.data(model.index(0, 0), STATUS_TEXT_ROLE) == "即将更新"
 
 
 def test_episode_thumbnail_store_refreshes_only_matching_rows() -> None:
@@ -352,6 +370,27 @@ def test_following_episode_browser_exposes_selected_season_summary(qtbot) -> Non
     assert summary.overview == "本季简介"
     assert summary.poster == "poster"
     assert summary.episode_count == 8
+
+
+def test_following_episode_browser_renders_inline_status_badge_on_card(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    browser.set_content(
+        groups=build_episode_season_groups(
+            [FollowingEpisode(episode_number=128, season_number=1, title="新章", air_date="2026-05-19")],
+            fallback_season=1,
+        ),
+        current_episode=127,
+        current_season_number=1,
+        latest_episode=128,
+        latest_season_number=1,
+        next_episode=None,
+    )
+
+    card = browser.episode_cards[0]
+    assert card.title_label.text() == "128. 新章"
+    assert card.status_badge_label.text() == "已更新"
+    assert card.property("episode_status") == FollowingEpisodeState.RELEASED
 
 
 def test_following_episode_browser_keeps_episode_overview_in_multi_column_modes(qtbot) -> None:

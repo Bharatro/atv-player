@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
 )
 
-from atv_player.following_models import FollowingEpisode, FollowingSeason, resolve_progress_season
+from atv_player.following_models import (
+    FollowingEpisode,
+    FollowingEpisodeState,
+    FollowingSeason,
+    resolve_following_episode_state,
+    resolve_progress_season,
+)
 from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
@@ -43,6 +49,8 @@ AIR_DATE_ROLE = Qt.ItemDataRole.UserRole + 3
 OVERVIEW_ROLE = Qt.ItemDataRole.UserRole + 4
 STILL_ROLE = Qt.ItemDataRole.UserRole + 5
 SPECIAL_ROLE = Qt.ItemDataRole.UserRole + 6
+STATUS_ROLE = Qt.ItemDataRole.UserRole + 7
+STATUS_TEXT_ROLE = Qt.ItemDataRole.UserRole + 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +175,9 @@ class EpisodeListModel(QAbstractListModel):
         self._current_episode = 0
         self._current_season_number = 0
         self._visible_season_number = 0
+        self._latest_episode = 0
+        self._latest_season_number = 0
+        self._next_episode: FollowingEpisode | None = None
         self.display_mode = display_mode
         self._thumbnail_store: EpisodeThumbnailStore | None = None
 
@@ -182,20 +193,7 @@ class EpisodeListModel(QAbstractListModel):
         if role == EPISODE_ROLE:
             return episode
         if role == WATCHED_ROLE:
-            current_season_number = resolve_progress_season(
-                self._current_season_number,
-                self._current_episode,
-                fallback_season=self._visible_season_number,
-            )
-            visible_season_number = resolve_progress_season(
-                self._visible_season_number,
-                episode.episode_number,
-                fallback_season=self._visible_season_number,
-            )
-            return (
-                visible_season_number == current_season_number
-                and episode.episode_number <= self._current_episode
-            )
+            return self._episode_state(episode) == FollowingEpisodeState.WATCHED
         if role == DISPLAY_MODE_ROLE:
             return self.display_mode
         if role == AIR_DATE_ROLE:
@@ -206,6 +204,10 @@ class EpisodeListModel(QAbstractListModel):
             return episode.still or ""
         if role == SPECIAL_ROLE:
             return bool(episode.is_special)
+        if role == STATUS_ROLE:
+            return self._episode_state(episode)
+        if role == STATUS_TEXT_ROLE:
+            return _episode_status_text(self._episode_state(episode))
         return None
 
     def set_episodes(
@@ -215,12 +217,18 @@ class EpisodeListModel(QAbstractListModel):
         current_episode: int,
         current_season_number: int = 0,
         visible_season_number: int = 0,
+        latest_episode: int = 0,
+        latest_season_number: int = 0,
+        next_episode: FollowingEpisode | None = None,
     ) -> None:
         self.beginResetModel()
         self._episodes = list(episodes)
         self._current_episode = max(0, int(current_episode))
         self._current_season_number = max(0, int(current_season_number))
         self._visible_season_number = max(0, int(visible_season_number))
+        self._latest_episode = max(0, int(latest_episode))
+        self._latest_season_number = max(0, int(latest_season_number))
+        self._next_episode = next_episode
         self.endResetModel()
 
     def set_display_mode(self, display_mode: str) -> None:
@@ -243,6 +251,17 @@ class EpisodeListModel(QAbstractListModel):
     def attach_thumbnail_store(self, store: "EpisodeThumbnailStore") -> None:
         self._thumbnail_store = store
         store.thumbnail_ready.connect(self._handle_thumbnail_ready)
+
+    def _episode_state(self, episode: FollowingEpisode) -> str:
+        return resolve_following_episode_state(
+            episode=episode,
+            current_season_number=self._current_season_number,
+            current_episode=self._current_episode,
+            latest_season_number=self._latest_season_number,
+            latest_episode=self._latest_episode,
+            visible_season_number=self._visible_season_number,
+            next_episode=self._next_episode,
+        )
 
     def _handle_thumbnail_ready(self, source: str) -> None:
         for row, episode in enumerate(self._episodes):
@@ -314,7 +333,8 @@ class EpisodeItemDelegate(QStyledItemDelegate):
         rect = option.rect.adjusted(4, 4, -4, -4)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         background = QColor(tokens.panel_alt_bg if selected else tokens.panel_bg)
-        border = QColor(tokens.accent if selected else tokens.border_subtle)
+        state = str(index.data(STATUS_ROLE) or FollowingEpisodeState.PENDING)
+        border = QColor(tokens.accent if selected else _episode_status_border_color(tokens, state))
         painter.setBrush(background)
         painter.setPen(QPen(border, 1))
         painter.drawRoundedRect(rect, 12, 12)
@@ -327,6 +347,7 @@ class EpisodeItemDelegate(QStyledItemDelegate):
         watched = bool(index.data(WATCHED_ROLE))
         is_special = bool(index.data(SPECIAL_ROLE))
         title = format_episode_title(episode)
+        status_text = str(index.data(STATUS_TEXT_ROLE) or "").strip()
         air_date = str(index.data(AIR_DATE_ROLE) or "").strip()
         overview = str(index.data(OVERVIEW_ROLE) or "").strip()
         still = str(index.data(STILL_ROLE) or "").strip()
@@ -342,18 +363,28 @@ class EpisodeItemDelegate(QStyledItemDelegate):
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.setPen(QColor(tokens.text_primary))
+        title_line_rect = QRect(text_rect.left(), text_rect.top(), text_rect.width(), 20)
+        badge_width = 0
+        if status_text:
+            badge_width = _status_badge_width(painter, status_text) + 8
         painter.drawText(
-            text_rect.adjusted(0, 0, 0, 0),
+            title_line_rect.adjusted(0, 0, -badge_width, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
             title,
         )
+        if status_text:
+            badge_rect = QRect(
+                title_line_rect.right() - _status_badge_width(painter, status_text),
+                title_line_rect.top(),
+                _status_badge_width(painter, status_text),
+                20,
+            )
+            _draw_status_badge(painter, badge_rect, status_text, state)
 
         meta_y = text_rect.top() + 26
         meta_parts = []
         if air_date:
             meta_parts.append(air_date)
-        if watched:
-            meta_parts.append("已看")
         if is_special:
             meta_parts.append("特别篇")
         meta_text = " · ".join(meta_parts)
@@ -401,6 +432,7 @@ class FollowingEpisodeCard(QFrame):
         *,
         summary_columns: int,
         thumbnail_store: EpisodeThumbnailStore,
+        status: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -409,9 +441,11 @@ class FollowingEpisodeCard(QFrame):
         self._thumbnail_store = thumbnail_store
         self._thumbnail_source = str(episode.still or "").strip()
         self.setObjectName("followingEpisodeCard")
+        self.setProperty("episode_status", status)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(164 if summary_columns == 1 else 148 if summary_columns == 2 else 138)
+        self.setStyleSheet(_episode_card_stylesheet(status))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -425,15 +459,24 @@ class FollowingEpisodeCard(QFrame):
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
         self.title_label = QLabel(format_episode_title(episode), self)
         self.title_label.setWordWrap(True)
+        self.status_badge_label = QLabel(_episode_status_text(status), self)
+        self.status_badge_label.setObjectName("followingEpisodeStatusBadge")
+        self.status_badge_label.setProperty("episode_status", status)
+        self.status_badge_label.setStyleSheet(_episode_status_badge_stylesheet(status))
         self.meta_label = QLabel(_episode_meta_text(episode), self)
         self.meta_label.setWordWrap(True)
         self.overview_label = QLabel(episode.overview or "", self)
         self.overview_label.setWordWrap(True)
         self.overview_label.setMaximumHeight(_overview_max_height(summary_columns))
 
-        text_layout.addWidget(self.title_label)
+        title_row.addWidget(self.title_label, 1)
+        title_row.addWidget(self.status_badge_label, 0, Qt.AlignmentFlag.AlignTop)
+        text_layout.addLayout(title_row)
         text_layout.addWidget(self.meta_label)
         text_layout.addWidget(self.overview_label)
         text_layout.addStretch(1)
@@ -477,6 +520,9 @@ class FollowingEpisodeBrowser(QWidget):
         self._groups: list[EpisodeSeasonGroup] = []
         self._current_episode = 0
         self._current_season_number = 0
+        self._latest_episode = 0
+        self._latest_season_number = 0
+        self._next_episode: FollowingEpisode | None = None
         self._current_group: EpisodeSeasonGroup | None = None
         self._current_season_summary = EpisodeSeasonSummary(0, "", "", "", "", 0)
         self._season_state: dict[int, tuple[int, int]] = {}
@@ -623,10 +669,16 @@ class FollowingEpisodeBrowser(QWidget):
         current_episode: int,
         current_season_number: int = 0,
         selected_season_number: int = 0,
+        latest_episode: int = 0,
+        latest_season_number: int = 0,
+        next_episode: FollowingEpisode | None = None,
     ) -> None:
         self._groups = list(groups)
         self._current_episode = max(0, int(current_episode))
         self._current_season_number = max(0, int(current_season_number))
+        self._latest_episode = max(0, int(latest_episode))
+        self._latest_season_number = max(0, int(latest_season_number))
+        self._next_episode = next_episode
         self._season_state = {}
         self.season_model.set_groups(self._groups)
         if self._groups:
@@ -638,6 +690,9 @@ class FollowingEpisodeBrowser(QWidget):
                 current_episode=self._current_episode,
                 current_season_number=self._current_season_number,
                 visible_season_number=0,
+                latest_episode=self._latest_episode,
+                latest_season_number=self._latest_season_number,
+                next_episode=self._next_episode,
             )
 
     def current_season_number(self) -> int:
@@ -653,6 +708,9 @@ class FollowingEpisodeBrowser(QWidget):
                 current_episode=self._current_episode,
                 current_season_number=self._current_season_number,
                 visible_season_number=0,
+                latest_episode=self._latest_episode,
+                latest_season_number=self._latest_season_number,
+                next_episode=self._next_episode,
             )
             return
         index = self.season_model.index(row, 0)
@@ -694,6 +752,9 @@ class FollowingEpisodeBrowser(QWidget):
             current_episode=self._current_episode,
             current_season_number=self._current_season_number,
             visible_season_number=group.season_number,
+            latest_episode=self._latest_episode,
+            latest_season_number=self._latest_season_number,
+            next_episode=self._next_episode,
         )
         self._current_group = group
         self._current_season_summary = self._build_season_summary(group)
@@ -777,10 +838,12 @@ class FollowingEpisodeBrowser(QWidget):
         if not episodes:
             return
         for index, episode in enumerate(episodes):
+            status = self.status_for_episode(episode)
             card = FollowingEpisodeCard(
                 episode,
                 summary_columns=self._grid_columns,
                 thumbnail_store=self.thumbnail_store,
+                status=status,
                 parent=self.episode_grid_container,
             )
             card.activated.connect(self.episode_activated.emit)
@@ -808,6 +871,21 @@ class FollowingEpisodeBrowser(QWidget):
         label = {1: "单列", 2: "双列", 3: "三列"}[self._grid_columns]
         self.grid_cycle_button.setText(icon_text)
         self.grid_cycle_button.setToolTip(label)
+
+    def status_for_episode(self, episode: FollowingEpisode) -> str:
+        visible_season_number = self._current_group.season_number if self._current_group is not None else 0
+        return resolve_following_episode_state(
+            episode=episode,
+            current_season_number=self._current_season_number,
+            current_episode=self._current_episode,
+            latest_season_number=self._latest_season_number,
+            latest_episode=self._latest_episode,
+            visible_season_number=visible_season_number,
+            next_episode=self._next_episode,
+        )
+
+    def status_text_for_episode(self, episode: FollowingEpisode) -> str:
+        return _episode_status_text(self.status_for_episode(episode))
 
     def _refresh_season_detail_panel(self) -> None:
         summary = self._current_season_summary
@@ -838,6 +916,69 @@ def _episode_meta_text(episode: FollowingEpisode) -> str:
     if episode.is_special:
         parts.append("特别篇")
     return " · ".join(parts)
+
+
+def _episode_status_text(state: str) -> str:
+    return {
+        FollowingEpisodeState.WATCHED: "已看",
+        FollowingEpisodeState.RELEASED: "已更新",
+        FollowingEpisodeState.UPCOMING: "即将更新",
+        FollowingEpisodeState.PENDING: "未更新",
+    }.get(state, "未更新")
+
+
+def _episode_status_colors(state: str) -> tuple[str, str, str]:
+    return {
+        FollowingEpisodeState.WATCHED: ("rgba(34,197,94,0.22)", "#dcfce7", "rgba(34,197,94,0.55)"),
+        FollowingEpisodeState.RELEASED: ("rgba(56,189,248,0.22)", "#e0f2fe", "rgba(56,189,248,0.55)"),
+        FollowingEpisodeState.UPCOMING: ("rgba(245,158,11,0.22)", "#fef3c7", "rgba(245,158,11,0.6)"),
+        FollowingEpisodeState.PENDING: ("rgba(148,163,184,0.20)", "#e2e8f0", "rgba(148,163,184,0.35)"),
+    }.get(state, ("rgba(148,163,184,0.20)", "#e2e8f0", "rgba(148,163,184,0.35)"))
+
+
+def _episode_card_stylesheet(state: str) -> str:
+    tokens = current_tokens()
+    _badge_bg, _badge_fg, border = _episode_status_colors(state)
+    return (
+        f"QFrame#followingEpisodeCard {{"
+        f"border: 1px solid {border};"
+        f"border-radius: 14px;"
+        f"background: {tokens.panel_bg};"
+        "}"
+    )
+
+
+def _episode_status_badge_stylesheet(state: str) -> str:
+    background, foreground, _border = _episode_status_colors(state)
+    return (
+        f"background: {background};"
+        f"color: {foreground};"
+        "border-radius: 10px;"
+        "padding: 2px 8px;"
+        "font-size: 11px;"
+        "font-weight: 700;"
+    )
+
+
+def _episode_status_border_color(tokens, state: str) -> str:
+    del tokens
+    _badge_bg, _badge_fg, border = _episode_status_colors(state)
+    return border
+
+
+def _status_badge_width(painter: QPainter, text: str) -> int:
+    return painter.fontMetrics().horizontalAdvance(text) + 16
+
+
+def _draw_status_badge(painter: QPainter, rect: QRect, text: str, state: str) -> None:
+    background, foreground, _border = _episode_status_colors(state)
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(background))
+    painter.drawRoundedRect(rect, 10, 10)
+    painter.setPen(QColor(foreground))
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+    painter.restore()
 
 
 def _overview_max_height(columns: int) -> int:
