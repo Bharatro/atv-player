@@ -182,6 +182,38 @@ class FakeTMDBUrlSearchService:
         )
 
 
+class FakeTMDBFollowingSearchService:
+    def __init__(self) -> None:
+        self.search_following_calls: list[tuple[str, str]] = []
+
+    def search_following(self, query, provider_filter=""):
+        self.search_following_calls.append((query.title, provider_filter))
+        return [
+            MetadataScrapeGroup(
+                provider="tmdb",
+                provider_label="TMDB",
+                items=[
+                    MetadataScrapeCandidate(
+                        provider="tmdb",
+                        provider_label="TMDB",
+                        provider_id="movie:12",
+                        title="Movie First",
+                        year="2024",
+                        subtitle="电影",
+                    ),
+                    MetadataScrapeCandidate(
+                        provider="tmdb",
+                        provider_label="TMDB",
+                        provider_id="tv:34:season:1",
+                        title="TV Second",
+                        year="2025",
+                        subtitle="剧集",
+                    ),
+                ],
+            )
+        ]
+
+
 class FakeUpdateService:
     def __init__(self) -> None:
         self.manual_checks: list[int] = []
@@ -312,6 +344,40 @@ def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp
     assert candidate.title == "名侦探柯南"
     assert candidate.year == "1996"
     assert candidate.subtitle == "剧集"
+
+
+def test_following_controller_keyword_search_uses_tmdb_only_and_sorts_tv_before_movie(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FakeTMDBFollowingSearchService()
+    controller = FollowingController(repo, metadata_search_service=service)
+
+    groups = controller.search_media("星际")
+
+    assert groups[0].provider == "tmdb"
+    assert [item.provider_id for item in groups[0].items] == ["tv:34:season:1", "movie:12"]
+    assert service.search_following_calls == [("星际", "tmdb")]
+
+
+def test_following_controller_non_tmdb_url_passthrough_still_works(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService())
+
+    groups = controller.search_media("https://bgm.tv/subject/123")
+
+    assert len(groups) == 1
+    assert groups[0].provider == "bangumi"
+    assert groups[0].items[0].provider_id == "subject:123"
+
+
+def test_following_controller_douban_url_passthrough_still_works(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService())
+
+    groups = controller.search_media("https://movie.douban.com/subject/1292052/")
+
+    assert len(groups) == 1
+    assert groups[0].provider in {"official_douban", "local_douban", "douban"}
+    assert groups[0].items[0].provider_id == "1292052"
 
 
 def test_following_controller_builds_card_and_detail_models(tmp_path: Path) -> None:

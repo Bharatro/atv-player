@@ -60,10 +60,29 @@ class FollowingController:
                 )
             ]
         query = MetadataQuery(title=keyword.strip())
+        groups = self._search_tmdb_following(query)
+        return [self._sort_following_group_items(group) for group in groups]
+
+    def _search_tmdb_following(self, query: MetadataQuery):
         search_fn = getattr(self._metadata_search_service, "search_following", None)
         if callable(search_fn):
-            return search_fn(query)
-        return self._metadata_search_service.search(query)
+            return search_fn(query, provider_filter="tmdb")
+        return self._metadata_search_service.search(query, provider_filter="tmdb")
+
+    def _sort_following_group_items(self, group):
+        if str(getattr(group, "provider", "") or "").strip() != "tmdb":
+            return group
+        items = list(getattr(group, "items", []) or [])
+        items.sort(key=self._following_candidate_sort_key)
+        return replace(group, items=items)
+
+    def _following_candidate_sort_key(self, candidate) -> int:
+        provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
+        if provider_id.startswith("tv:"):
+            return 0
+        if provider_id.startswith("movie:"):
+            return 1
+        return 2
 
     def candidate_from_url(self, url: str):
         provider_options = getattr(self._metadata_search_service, "provider_options", None)
