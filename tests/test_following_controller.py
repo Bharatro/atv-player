@@ -186,10 +186,10 @@ class FakeTMDBUrlSearchService:
 
 class FakeTMDBFollowingSearchService:
     def __init__(self) -> None:
-        self.search_following_calls: list[tuple[str, str]] = []
+        self.search_following_calls: list[tuple[str, str, str]] = []
 
     def search_following(self, query, provider_filter=""):
-        self.search_following_calls.append((query.title, provider_filter))
+        self.search_following_calls.append((query.title, provider_filter, str(query.year or "")))
         return [
             MetadataScrapeGroup(
                 provider="tmdb",
@@ -429,7 +429,42 @@ def test_following_controller_keyword_search_uses_tmdb_only_and_sorts_tv_before_
 
     assert groups[0].provider == "tmdb"
     assert [item.provider_id for item in groups[0].items] == ["tv:34:season:1", "movie:12"]
-    assert service.search_following_calls == [("星际", "tmdb")]
+    assert service.search_following_calls == [("星际", "tmdb", "")]
+
+
+def test_following_controller_keyword_search_forwards_year_to_tmdb_search(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FakeTMDBFollowingSearchService()
+    controller = FollowingController(repo, metadata_search_service=service)
+
+    controller.search_media("星际", year="2024")
+
+    assert service.search_following_calls == [("星际", "tmdb", "2024")]
+
+
+def test_following_controller_load_discovery_search_forwards_year_filter(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FakeTMDBFollowingSearchService()
+    controller = FollowingController(
+        repo,
+        metadata_search_service=service,
+        discovery_service=type("DiscoveryService", (), {})(),
+    )
+
+    controller.load_discovery_tab("search", query="星际", filters={"year": "2024"})
+
+    assert service.search_following_calls == [("星际", "tmdb", "2024")]
+
+
+def test_following_controller_tmdb_url_search_ignores_year_parameter(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FakeTMDBUrlSearchService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    groups = controller.search_media("https://www.themoviedb.org/tv/30983-case-closed", year="2024")
+
+    assert len(groups) == 1
+    assert service.detail_provider_ids == ["tv:30983:season:1"]
 
 
 def test_following_controller_non_tmdb_url_passthrough_still_works(tmp_path: Path) -> None:

@@ -24,8 +24,9 @@ def test_following_search_dialog_matches_scrape_dialog_shell_and_adds_selection(
         def __init__(self) -> None:
             self.added = []
 
-        def search_media(self, keyword: str):
+        def search_media(self, keyword: str, *, year: str = ""):
             assert keyword == "凡人"
+            assert year == ""
             return [
                 SimpleNamespace(
                     provider="tmdb",
@@ -83,7 +84,8 @@ def test_following_search_dialog_adds_without_manual_current_episode_input(qtbot
         def __init__(self) -> None:
             self.added = []
 
-        def search_media(self, _keyword: str):
+        def search_media(self, _keyword: str, *, year: str = ""):
+            assert year == ""
             return [SimpleNamespace(provider="tmdb", provider_label="TMDB", items=[candidate], error_text="")]
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -141,7 +143,8 @@ def test_following_search_dialog_runs_search_off_main_thread(qtbot) -> None:
     search_threads: list[int] = []
 
     class Controller:
-        def search_media(self, _keyword: str):
+        def search_media(self, _keyword: str, *, year: str = ""):
+            assert year == ""
             search_threads.append(threading.get_ident())
             return [
                 SimpleNamespace(
@@ -171,7 +174,8 @@ def test_following_search_dialog_adds_candidate_off_main_thread(qtbot) -> None:
     add_threads: list[int] = []
 
     class Controller:
-        def search_media(self, _keyword: str):
+        def search_media(self, _keyword: str, *, year: str = ""):
+            assert year == ""
             return [
                 SimpleNamespace(
                     provider="tmdb",
@@ -208,8 +212,8 @@ def test_following_search_dialog_pressing_return_in_search_edit_runs_search_with
     search_calls: list[str] = []
 
     class Controller:
-        def search_media(self, keyword: str):
-            search_calls.append(keyword)
+        def search_media(self, keyword: str, *, year: str = ""):
+            search_calls.append(f"{keyword}|{year}")
             return [
                 SimpleNamespace(
                     provider="tmdb",
@@ -227,7 +231,7 @@ def test_following_search_dialog_pressing_return_in_search_edit_runs_search_with
 
     QTest.keyClick(dialog.search_edit, Qt.Key.Key_Return)
 
-    qtbot.waitUntil(lambda: search_calls == ["凡人"])
+    qtbot.waitUntil(lambda: search_calls == ["凡人|"])
     qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
 
     assert dialog.result() == 0
@@ -243,6 +247,21 @@ def test_following_search_dialog_action_buttons_are_not_default_submit_targets(q
     assert dialog.add_button.isDefault() is False
     assert dialog.close_button.autoDefault() is False
     assert dialog.close_button.isDefault() is False
+
+
+def test_following_search_dialog_blocks_invalid_search_year(qtbot) -> None:
+    class Controller:
+        def search_media(self, keyword: str, *, year: str = ""):
+            raise AssertionError("search_media should not be called for invalid year input")
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+
+    dialog.search_edit.setText("柯南")
+    dialog.search_year_edit.setText("202")
+    dialog.run_search()
+
+    assert dialog.status_label.text() == "请输入 4 位年份"
 
 
 def test_following_search_dialog_defaults_to_recommendation_tab_and_loads_results(qtbot) -> None:
@@ -276,6 +295,25 @@ def test_following_search_dialog_defaults_to_recommendation_tab_and_loads_result
     assert dialog.active_tab_button().text() == "推荐"
     assert "推荐" in dialog.status_label.text()
     assert dialog.search_edit.isHidden() is True
+
+
+def test_following_search_dialog_search_year_field_is_only_visible_on_search_tab(qtbot) -> None:
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            return DiscoveryResult(items=[], total=0, source_label=tab_key)
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog.search_year_edit.isHidden() is True
+
+    dialog._activate_tab("search")
+
+    assert dialog.search_year_edit.isHidden() is False
 
 
 def test_following_search_dialog_switching_to_search_preserves_url_direct_path(qtbot) -> None:
@@ -315,6 +353,47 @@ def test_following_search_dialog_switching_to_search_preserves_url_direct_path(q
 
     assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "名侦探柯南"
     assert any(call[0] == "search" for call in controller.calls)
+
+
+def test_following_search_dialog_search_tab_passes_year_filter_and_cache_key_uses_it(qtbot) -> None:
+    candidate = DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:30983",
+        tmdb_id="30983",
+        media_type="tv",
+        title="名侦探柯南",
+        year="1996",
+        source_label="搜索",
+    )
+
+    class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            self.calls.append((tab_key, kwargs))
+            if tab_key == "search":
+                return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
+            return DiscoveryResult(items=[], total=0, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._activate_tab("search")
+    dialog.search_edit.setText("柯南")
+    dialog.search_year_edit.setText("1996")
+    dialog.run_search()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+
+    assert controller.calls[-1][0] == "search"
+    assert controller.calls[-1][1]["filters"]["year"] == "1996"
+    assert '"year":"1996"' in dialog._state_key("search")
 
 
 def test_following_search_dialog_uses_four_tab_buttons_instead_of_combo(qtbot) -> None:

@@ -61,6 +61,7 @@ class TMDBDiscoveryService:
     _RECOMMEND_CACHE_NAMESPACE = "tmdb_discovery_recommend"
     _TRENDING_CACHE_TTL_SECONDS = 60 * 60 * 6
     _DISCOVER_CACHE_TTL_SECONDS = 60 * 60 * 2
+    _RECOMMEND_CACHE_TTL_SECONDS = 60 * 60 * 6
 
     def __init__(self, *, client, cache: MetadataCache) -> None:
         self._client = client
@@ -141,25 +142,37 @@ class TMDBDiscoveryService:
         cache_key = self._cache_key(
             {
                 "kind": "recommend",
-                "seeds": [
-                    {
-                        "provider_id": seed.provider_id,
-                        "tmdb_id": seed.tmdb_id,
-                        "media_type": seed.media_type,
-                        "seed_source": seed.seed_source,
-                        "activity_weight": seed.activity_weight,
-                        "activity_timestamp": seed.activity_timestamp,
-                        "reason_flags": list(seed.reason_flags),
-                    }
-                    for seed in list(seeds or [])
-                ],
-                "favorite_provider_ids": sorted(str(provider_id) for provider_id in favorite_provider_ids),
-                "following_provider_ids": sorted(str(provider_id) for provider_id in following_provider_ids),
+                "seeds": [self._recommendation_seed_payload(seed) for seed in list(seeds or [])],
             }
         )
-        cached = self._load_cached_result(self._RECOMMEND_CACHE_NAMESPACE, cache_key, ttl_seconds=0)
-        if cached is not None:
-            return cached
+        cached = self._load_cached_result(
+            self._RECOMMEND_CACHE_NAMESPACE,
+            cache_key,
+            ttl_seconds=self._RECOMMEND_CACHE_TTL_SECONDS,
+            empty_ttl_seconds=60 * 10,
+        )
+        if cached is None:
+            cached = self._build_recommendation_pool(seeds)
+            self._save_cached_result(self._RECOMMEND_CACHE_NAMESPACE, cache_key, cached)
+        return self._filter_recommendation_pool(
+            cached,
+            favorite_provider_ids=favorite_provider_ids,
+            following_provider_ids=following_provider_ids,
+        )
+
+    @staticmethod
+    def _recommendation_seed_payload(seed: RecommendationSeed) -> dict[str, object]:
+        return {
+            "provider_id": seed.provider_id,
+            "tmdb_id": seed.tmdb_id,
+            "media_type": seed.media_type,
+            "seed_source": seed.seed_source,
+            "activity_weight": seed.activity_weight,
+            "activity_timestamp": seed.activity_timestamp,
+            "reason_flags": list(seed.reason_flags),
+        }
+
+    def _build_recommendation_pool(self, seeds: list[RecommendationSeed]) -> DiscoveryResult:
         scored: dict[str, tuple[float, dict[str, object]]] = {}
         for seed in list(seeds or []):
             rows = self._client.get_recommendations(
@@ -169,8 +182,6 @@ class TMDBDiscoveryService:
             )
             for raw in rows[:12]:
                 item = self._map_item(raw, source_label="推荐")
-                if item.provider_id in favorite_provider_ids or item.provider_id in following_provider_ids:
-                    continue
                 score = seed.activity_weight
                 score += float(raw.get("vote_average") or 0) / 10.0
                 score += float(raw.get("popularity") or 0) / 1000.0
@@ -178,9 +189,27 @@ class TMDBDiscoveryService:
                 scored[item.provider_id] = (existing_score + score, raw)
         ordered = sorted(scored.items(), key=lambda entry: entry[1][0], reverse=True)
         items = [self._map_item(raw, source_label="推荐") for _provider_id, (_score, raw) in ordered]
-        result = DiscoveryResult(items=items, total=len(items), source_label="推荐")
-        self._save_cached_result(self._RECOMMEND_CACHE_NAMESPACE, cache_key, result)
-        return result
+        return DiscoveryResult(items=items, total=len(items), source_label="推荐")
+
+    def _filter_recommendation_pool(
+        self,
+        result: DiscoveryResult,
+        *,
+        favorite_provider_ids: set[str],
+        following_provider_ids: set[str],
+    ) -> DiscoveryResult:
+        excluded = {
+            str(provider_id or "").strip()
+            for provider_id in {*favorite_provider_ids, *following_provider_ids}
+            if str(provider_id or "").strip()
+        }
+        items = [item for item in list(result.items or []) if item.provider_id not in excluded]
+        return DiscoveryResult(
+            items=items,
+            total=len(items),
+            source_label=result.source_label,
+            fallback_reason=result.fallback_reason,
+        )
 
     def _map_item(self, raw: dict[str, object], *, source_label: str) -> DiscoveryItem:
         media_type = "tv" if raw.get("name") else "movie"

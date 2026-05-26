@@ -63,7 +63,7 @@ class FollowingController:
         self._discovery_service = discovery_service
         self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
 
-    def search_media(self, keyword: str):
+    def search_media(self, keyword: str, *, year: str = ""):
         url_candidate = self.candidate_from_url(keyword)
         if url_candidate is not None:
             from atv_player.metadata.scrape import MetadataScrapeGroup
@@ -76,7 +76,7 @@ class FollowingController:
                     items=[url_candidate],
                 )
             ]
-        query = MetadataQuery(title=keyword.strip())
+        query = MetadataQuery(title=keyword.strip(), year=str(year or "").strip())
         groups = self._search_tmdb_following(query)
         return [self._sort_following_group_items(group) for group in groups]
 
@@ -90,7 +90,10 @@ class FollowingController:
         if normalized_tab == "recommendation":
             return self._load_recommendation_result(page=page)
         if normalized_tab == "search":
-            groups = self.search_media(query)
+            groups = self.search_media(
+                query,
+                year=str((filters or {}).get("year") or ""),
+            )
             items = [
                 self._discovery_item_from_candidate(candidate)
                 for group in groups
@@ -781,6 +784,8 @@ class FollowingController:
         )
         if not normalized:
             return None
+        if normalized.startswith("tv:") and season_number <= 0:
+            return None
         raw = {"season_number": season_number} if season_number > 0 and normalized.startswith("tv:") else {}
         return MetadataScrapeCandidate(
             provider="tmdb",
@@ -846,17 +851,19 @@ class FollowingController:
         if text.startswith("tv:"):
             parts = text.split(":")
             if len(parts) >= 4 and parts[2] == "season":
-                resolved_season = season_number if season_number > 0 else self._to_int(parts[3]) or 1
+                resolved_season = season_number if season_number > 0 else self._to_int(parts[3])
+                if resolved_season <= 0:
+                    return f"tv:{parts[1]}", 0
                 return f"tv:{parts[1]}:season:{resolved_season}", resolved_season
             if season_number <= 0:
-                season_number = 1
+                return text, 0
             return f"{text}:season:{season_number}", season_number
         if not text.isdigit():
             return "", 0
         if normalized_kind == "movie" or "电影" in normalized_kind:
             return f"movie:{text}", 0
         if season_number <= 0:
-            season_number = 1
+            return f"tv:{text}", 0
         return f"tv:{text}:season:{season_number}", season_number
 
     def _ensure_metadata_bundle(
