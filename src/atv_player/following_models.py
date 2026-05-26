@@ -189,6 +189,11 @@ class FollowingEpisodeState:
     PENDING = "pending"
 
 
+class FollowingCompletionState:
+    COMPLETED = "completed"
+    ONGOING = "ongoing"
+
+
 def _episode_air_date(value: str) -> date | None:
     text = str(value or "").strip()
     if not text:
@@ -197,6 +202,22 @@ def _episode_air_date(value: str) -> date | None:
         return datetime.strptime(text[:10], "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def resolve_following_completion_state(
+    *,
+    episodes: list[FollowingEpisode],
+    next_episode: FollowingEpisode | None,
+    today: date | None = None,
+) -> str:
+    resolved_today = today or datetime.now(BEIJING_TZ).date()
+    if next_episode is not None and max(0, int(next_episode.episode_number or 0)) > 0:
+        return FollowingCompletionState.ONGOING
+    for episode in episodes:
+        air_date = _episode_air_date(episode.air_date)
+        if air_date is not None and air_date > resolved_today:
+            return FollowingCompletionState.ONGOING
+    return FollowingCompletionState.COMPLETED
 
 
 def resolve_following_episode_state(
