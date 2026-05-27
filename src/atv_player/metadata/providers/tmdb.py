@@ -372,7 +372,7 @@ def _tmdb_network_platform_keys(payload: dict[str, object]) -> set[str]:
     return keys
 
 
-def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, str]]:
+def _tmdb_watch_provider_entries(payload: dict[str, object], *, require_url: bool = True) -> list[dict[str, str]]:
     entries: dict[str, dict[str, str]] = {}
     watch_payload = payload.get("watch/providers")
     if not isinstance(watch_payload, dict):
@@ -416,7 +416,18 @@ def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, s
             }
         elif not str(current.get("url") or "").strip():
             current["url"] = homepage
-    return [entry for entry in entries.values() if str(entry.get("url") or "").strip()]
+    if not require_url:
+        for provider in _tmdb_network_platform_keys(payload):
+            if provider not in entries:
+                entries[provider] = {
+                    "provider": provider,
+                    "label": _tmdb_platform_label(provider),
+                    "url": "",
+                }
+    values = list(entries.values())
+    if require_url:
+        return [entry for entry in values if str(entry.get("url") or "").strip()]
+    return values
 
 
 class TMDBProvider:
@@ -779,6 +790,9 @@ class TMDBProvider:
         watch_providers = _tmdb_watch_provider_entries(payload)
         if watch_providers:
             detail_fields.append({"label": "watch_providers", "value": watch_providers})
+        watch_provider_sources = _tmdb_watch_provider_entries(payload, require_url=False)
+        if watch_provider_sources:
+            detail_fields.append({"label": "watch_provider_sources", "value": watch_provider_sources})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []
@@ -862,6 +876,9 @@ class TMDBProvider:
         watch_providers = _tmdb_watch_provider_entries(payload)
         if watch_providers:
             detail_fields.append({"label": "watch_providers", "value": watch_providers})
+        watch_provider_sources = _tmdb_watch_provider_entries(payload, require_url=False)
+        if watch_provider_sources:
+            detail_fields.append({"label": "watch_provider_sources", "value": watch_provider_sources})
         genres = [
             str(item.get("name") or "").strip()
             for item in payload.get("genres") or []

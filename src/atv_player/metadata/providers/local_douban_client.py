@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from html import unescape
 from threading import Lock
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,6 +29,17 @@ class LocalDoubanClient:
     _SEARCH_URL = "https://movie.douban.com/j/subject_suggest"
     _DETAIL_URL_TEMPLATE = "https://movie.douban.com/subject/{douban_id}/"
     _RATE_LIMIT_SECONDS = 10.0
+    _OFFICIAL_LINK_HOSTS = {
+        "v.qq.com": ("tencent", "腾讯视频"),
+        "m.v.qq.com": ("tencent", "腾讯视频"),
+        "v.youku.com": ("youku", "优酷"),
+        "m.youku.com": ("youku", "优酷"),
+        "www.iqiyi.com": ("iqiyi", "爱奇艺"),
+        "m.iqiyi.com": ("iqiyi", "爱奇艺"),
+        "www.bilibili.com": ("bilibili", "B站"),
+        "www.mgtv.com": ("mgtv", "芒果TV"),
+        "tv.sohu.com": ("sohu", "搜狐视频"),
+    }
     _rate_limit_lock = Lock()
     _last_allowed_at: float | None = None
 
@@ -149,6 +161,39 @@ class LocalDoubanClient:
         value = cls._extract_first(pattern, text)
         return cls._strip_tags(value)
 
+    @classmethod
+    def _official_link_provider(cls, url: str) -> tuple[str, str]:
+        host = (urlparse(str(url or "").strip()).hostname or "").lower().strip(".")
+        if not host:
+            return "", ""
+        if host in cls._OFFICIAL_LINK_HOSTS:
+            return cls._OFFICIAL_LINK_HOSTS[host]
+        for domain, provider_info in cls._OFFICIAL_LINK_HOSTS.items():
+            if host.endswith(f".{domain}"):
+                return provider_info
+        return "", ""
+
+    @classmethod
+    def _extract_official_links(cls, text: str) -> list[dict[str, str]]:
+        links: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for match in re.finditer(
+            r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            url = unescape(match.group(1)).strip()
+            provider, default_label = cls._official_link_provider(url)
+            if not provider:
+                continue
+            label = cls._strip_tags(match.group(2)) or default_label
+            key = (provider, url)
+            if key in seen:
+                continue
+            links.append({"provider": provider, "label": label, "url": url})
+            seen.add(key)
+        return links
+
     def get_detail(self, douban_id: int | str) -> dict[str, object] | None:
         normalized_id = str(douban_id).strip()
         text = self._get_text(self._DETAIL_URL_TEMPLATE.format(douban_id=normalized_id))
@@ -187,5 +232,6 @@ class LocalDoubanClient:
             "country": self._extract_info_value(text, "制片国家/地区"),
             "language": self._extract_info_value(text, "语言"),
             "description": self._strip_tags(summary),
+            "official_links": self._extract_official_links(text),
         }
         return detail

@@ -48,6 +48,7 @@ _INTERNAL_STRUCTURED_DETAIL_LABELS = {
     "last_episode_to_air",
     "next_episode_to_air",
     "last_air_date",
+    "watch_provider_sources",
 }
 _OFFICIAL_LINK_HOST_LABELS = {
     "v.qq.com": "腾讯视频",

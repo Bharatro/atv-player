@@ -568,6 +568,19 @@ def test_tmdb_provider_get_detail_full_does_not_copy_homepage_to_other_network_p
             "url": "https://www.iqiyi.com/a_1euk1nkfz9l.html",
         }
     ]
+    watch_provider_sources = _detail_field_value(record, "watch_provider_sources")
+    assert sorted(watch_provider_sources, key=lambda item: item["provider"]) == [
+        {
+            "provider": "iqiyi",
+            "label": "爱奇艺",
+            "url": "https://www.iqiyi.com/a_1euk1nkfz9l.html",
+        },
+        {
+            "provider": "tencent",
+            "label": "腾讯",
+            "url": "",
+        },
+    ]
 
 
 def test_tmdb_provider_get_detail_full_does_not_copy_shared_country_link_to_other_platforms() -> None:
@@ -619,6 +632,24 @@ def test_tmdb_provider_get_detail_full_does_not_copy_shared_country_link_to_othe
             "label": "优酷",
             "url": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
         }
+    ]
+    watch_provider_sources = _detail_field_value(record, "watch_provider_sources")
+    assert watch_provider_sources == [
+        {
+            "provider": "iqiyi",
+            "label": "爱奇艺",
+            "url": "",
+        },
+        {
+            "provider": "tencent",
+            "label": "腾讯",
+            "url": "",
+        },
+        {
+            "provider": "youku",
+            "label": "优酷",
+            "url": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+        },
     ]
 
 

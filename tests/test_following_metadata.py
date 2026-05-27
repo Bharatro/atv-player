@@ -434,6 +434,300 @@ def test_following_metadata_gateway_searches_only_tmdb_watch_platform_sources() 
     assert result["iqiyi"][0].provider == "iqiyi"
 
 
+def test_following_metadata_gateway_accepts_exact_tencent_source_without_year() -> None:
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            assert query.title == "吞噬星空"
+            if provider_filter != "tencent":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="tencent",
+                            provider_label="腾讯",
+                            provider_id="https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                            title="吞噬星空",
+                            year="",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="吞噬星空",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:101172",
+            external_ids={"tmdb": "101172"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:101172:season:1",
+            title="吞噬星空",
+            year="2020",
+            tmdb_id="101172",
+            genres=["动画"],
+            detail_fields=[
+                {
+                    "label": "watch_providers",
+                    "value": [
+                        {
+                            "provider": "tencent",
+                            "label": "腾讯",
+                            "url": "https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                        }
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert result["tencent"][0].provider == "tencent"
+    assert result["tencent"][1] >= 0.80
+
+
+def test_following_metadata_gateway_searches_tmdb_unlinked_watch_provider_sources() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            assert query.title == "吞噬星空"
+            self.calls.append(provider_filter)
+            if provider_filter != "tencent":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="tencent",
+                            provider_label="腾讯",
+                            provider_id="https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                            title="吞噬星空",
+                            year="",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="吞噬星空",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:101172",
+            external_ids={"tmdb": "101172"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:101172:season:1",
+            title="吞噬星空",
+            year="2020",
+            tmdb_id="101172",
+            genres=["动画"],
+            detail_fields=[
+                {
+                    "label": "watch_provider_sources",
+                    "value": [
+                        {"provider": "tencent", "label": "腾讯", "url": ""},
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert "tencent" in service.calls
+    assert result["tencent"][0].provider == "tencent"
+
+
+def test_following_metadata_gateway_uses_tmdb_animation_category_for_playback_search() -> None:
+    class SearchService:
+        def search(self, query, provider_filter=""):
+            if provider_filter == "tencent":
+                assert query.category_name == "动漫"
+                return [
+                    MetadataScrapeGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        items=[
+                            MetadataScrapeCandidate(
+                                provider="tencent",
+                                provider_label="腾讯",
+                                provider_id="https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                                title="吞噬星空",
+                                year="2020",
+                                raw={"typeName": "动漫"},
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="吞噬星空",
+            media_kind="剧集",
+            provider="tmdb",
+            provider_id="tv:101172",
+            external_ids={"tmdb": "101172"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:101172:season:1",
+            title="吞噬星空",
+            year="2020",
+            tmdb_id="101172",
+            genres=["动画"],
+            detail_fields=[
+                {
+                    "label": "watch_provider_sources",
+                    "value": [{"provider": "tencent", "label": "腾讯", "url": ""}],
+                }
+            ],
+        ),
+    )
+
+    assert result["tencent"][0].provider == "tencent"
+
+
+def test_following_metadata_gateway_uses_douban_official_links_to_search_playback_sources() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            assert query.title == "吞噬星空"
+            assert query.year == "2020"
+            self.calls.append(provider_filter)
+            if provider_filter == "official_douban":
+                return [
+                    MetadataScrapeGroup(
+                        provider="official_douban",
+                        provider_label="豆瓣官方",
+                        items=[
+                            MetadataScrapeCandidate(
+                                provider="official_douban",
+                                provider_label="豆瓣官方",
+                                provider_id="26636712",
+                                title="吞噬星空",
+                                year="2020",
+                            )
+                        ],
+                    )
+                ]
+            if provider_filter == "tencent":
+                return [
+                    MetadataScrapeGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        items=[
+                            MetadataScrapeCandidate(
+                                provider="tencent",
+                                provider_label="腾讯",
+                                provider_id="https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                                title="吞噬星空",
+                                year="",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            if candidate.provider == "official_douban":
+                return MetadataRecord(
+                    provider="official_douban",
+                    provider_id="26636712",
+                    title="吞噬星空",
+                    year="2020",
+                    rating="7.2",
+                    detail_fields=[
+                        {
+                            "label": "official_links",
+                            "value": [
+                                {
+                                    "provider": "tencent",
+                                    "label": "腾讯视频",
+                                    "url": "https://v.qq.com/x/cover/mzc00200np0le5t.html",
+                                }
+                            ],
+                        }
+                    ],
+                )
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="吞噬星空",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:101172",
+            external_ids={"tmdb": "101172"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:101172:season:1",
+            title="吞噬星空",
+            year="2020",
+            tmdb_id="101172",
+            genres=["动画"],
+        ),
+    )
+
+    assert service.calls == ["official_douban", "local_douban", "douban", "tencent", "bangumi"]
+    assert result["douban"][0].provider == "official_douban"
+    assert result["tencent"][0].provider == "tencent"
+
+
 def test_following_metadata_gateway_skips_playback_source_with_foreign_playback_link() -> None:
     class SearchService:
         def __init__(self) -> None:

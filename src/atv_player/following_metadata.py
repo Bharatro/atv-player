@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+import logging
 from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from atv_player.models import VodItem
 from atv_player.time_utils import beijing_timezone
 
 BEIJING_TZ = beijing_timezone()
+logger = logging.getLogger(__name__)
 _FIELD_PROVIDER_PRIORITY = {
     "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
     "backdrop": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
@@ -52,6 +54,25 @@ _PLAYBACK_SOURCE_PROVIDER_DOMAINS = {
     "youku": ("youku.com",),
     "mgtv": ("mgtv.com",),
     "sohu": ("sohu.com",),
+}
+_PLAYBACK_SOURCE_LABEL_KEYS = {
+    "b站": "bilibili",
+    "bilibili": "bilibili",
+    "哔哩哔哩": "bilibili",
+    "爱奇艺": "iqiyi",
+    "iqiyi": "iqiyi",
+    "腾讯": "tencent",
+    "腾讯视频": "tencent",
+    "tencent": "tencent",
+    "tencentvideo": "tencent",
+    "优酷": "youku",
+    "youku": "youku",
+    "芒果": "mgtv",
+    "芒果tv": "mgtv",
+    "mgtv": "mgtv",
+    "搜狐": "sohu",
+    "搜狐视频": "sohu",
+    "sohutv": "sohu",
 }
 
 
@@ -638,11 +659,30 @@ def _source_providers_for_tmdb_record(tmdb_record: MetadataRecord) -> tuple[str,
     providers: list[str] = list(_THIRD_PARTY_SOURCE_PROVIDERS)
     if _tmdb_record_is_animation(tmdb_record):
         providers.append("bangumi")
-    for entry in _playback_platform_entries_from_tmdb(tmdb_record):
-        provider = str(entry.provider or "").strip()
+    for entry in _playback_platform_source_entries_from_tmdb(tmdb_record):
+        provider = _playback_provider_key(entry.provider, entry.label, entry.url)
         if provider in _PLAYBACK_SOURCE_PROVIDERS and provider not in providers:
             providers.append(provider)
     return tuple(providers)
+
+
+def _playback_provider_key(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized = re.sub(r"[\s\-_:.：,，/\\|·•'\"`()（）《》【】\[\]]+", "", text.lower())
+        key = _PLAYBACK_SOURCE_LABEL_KEYS.get(normalized)
+        if key:
+            return key
+        parsed = urlparse(text)
+        host = (parsed.hostname or "").lower().strip(".")
+        if not host:
+            continue
+        for provider, domains in _PLAYBACK_SOURCE_PROVIDER_DOMAINS.items():
+            if any(host == domain or host.endswith(f".{domain}") for domain in domains):
+                return provider
+    return ""
 
 
 def _tmdb_record_is_animation(tmdb_record: MetadataRecord) -> bool:
@@ -934,7 +974,60 @@ def _playback_platform_entries_from_tmdb(record: MetadataRecord) -> list[Followi
     return entries
 
 
+def _playback_platform_source_entries_from_tmdb(record: MetadataRecord) -> list[FollowingPlaybackPlatformEntry]:
+    entries = _playback_platform_entries_from_tmdb(record)
+    detail_fields = list(getattr(record, "detail_fields", []) or [])
+    for field in detail_fields:
+        if not isinstance(field, dict) or str(field.get("label") or "").strip() != "watch_provider_sources":
+            continue
+        values = field.get("value")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            provider = _playback_provider_key(item.get("provider"), item.get("label"), item.get("url"), item.get("link"))
+            if not provider:
+                continue
+            entries.append(
+                FollowingPlaybackPlatformEntry(
+                    provider=provider,
+                    label=str(item.get("label") or _provider_label(provider)).strip(),
+                    url=str(item.get("url") or item.get("link") or "").strip(),
+                )
+            )
+    return entries
+
+
+def _playback_platform_entries_from_official_links(record: MetadataRecord) -> list[FollowingPlaybackPlatformEntry]:
+    entries: list[FollowingPlaybackPlatformEntry] = []
+    detail_fields = list(getattr(record, "detail_fields", []) or [])
+    for field in detail_fields:
+        if not isinstance(field, dict) or str(field.get("label") or "").strip() != "official_links":
+            continue
+        values = field.get("value")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            provider = _playback_provider_key(item.get("provider"), item.get("label"), item.get("url"), item.get("link"))
+            if not provider:
+                continue
+            entries.append(
+                FollowingPlaybackPlatformEntry(
+                    provider=provider,
+                    label=str(item.get("label") or _provider_label(provider)).strip(),
+                    url=str(item.get("url") or item.get("link") or "").strip(),
+                )
+            )
+    return entries
+
+
 def _playback_platform_entries_from_record(record: MetadataRecord) -> list[FollowingPlaybackPlatformEntry]:
+    official_entries = _playback_platform_entries_from_official_links(record)
+    if official_entries:
+        return official_entries
     field_map = {
         str(item.get("label") or "").strip(): str(item.get("value") or "").strip()
         for item in list(getattr(record, "detail_fields", []) or [])
@@ -1225,7 +1318,14 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         label = str(item.get("label") or "").strip()
-        if label in ("episodes", "last_episode_to_air", "next_episode_to_air", "seasons", "last_air_date"):
+        if label in (
+            "episodes",
+            "last_episode_to_air",
+            "next_episode_to_air",
+            "seasons",
+            "last_air_date",
+            "watch_provider_sources",
+        ):
             continue
         value = item.get("value")
         if isinstance(value, list):
@@ -1284,13 +1384,15 @@ class FollowingMetadataGateway:
         expected_titles.discard("")
         if candidate_title and candidate_title in expected_titles:
             score += 0.7
+            if provider in _PLAYBACK_SOURCE_PROVIDERS:
+                score += 0.1
         candidate_year = str(getattr(candidate, "year", "") or "").strip()
         tmdb_year = str(getattr(tmdb_record, "year", "") or "").strip()
         if candidate_year and tmdb_year and candidate_year == tmdb_year:
             score += 0.2
         if provider in {"bangumi", "douban"}:
             score += 0.1
-        return min(score, 1.0)
+        return round(min(score, 1.0), 4)
 
     def _best_source_candidate(self, provider: str, candidates: list[object], tmdb_record: MetadataRecord):
         best = None
@@ -1315,13 +1417,21 @@ class FollowingMetadataGateway:
         tmdb_record: MetadataRecord,
     ) -> dict[str, tuple[MetadataRecord, float]]:
         results: dict[str, tuple[MetadataRecord, float]] = {}
-        category_name = "动漫" if record.media_kind == "anime" else "剧集"
+        category_name = "动漫" if record.media_kind == "anime" or _tmdb_record_is_animation(tmdb_record) else "剧集"
         query = MetadataQuery(
             title=str(getattr(tmdb_record, "title", "") or record.title or "").strip(),
             year=str(getattr(tmdb_record, "year", "") or "").strip(),
             category_name=category_name,
         )
-        for provider in self._source_providers_for_tmdb_record(tmdb_record):
+        source_providers = self._source_providers_for_tmdb_record(tmdb_record)
+        logger.info(
+            "Following metadata source providers title=%s tmdb_id=%s providers=%s",
+            query.title,
+            str(getattr(tmdb_record, "tmdb_id", "") or "").strip(),
+            ",".join(source_providers),
+            extra={"log_category": "metadata", "log_source": "app"},
+        )
+        for provider in source_providers:
             candidates: list[object] = []
             for provider_filter in self._source_provider_filters(provider):
                 try:
@@ -1339,7 +1449,46 @@ class FollowingMetadataGateway:
             if not _playback_source_record_has_native_link(provider, detail_record):
                 continue
             results[provider] = (detail_record, confidence)
+            for entry in _playback_platform_entries_from_record(detail_record):
+                linked_provider = _playback_provider_key(entry.provider, entry.label, entry.url)
+                if (
+                    linked_provider in _PLAYBACK_SOURCE_PROVIDERS
+                    and linked_provider not in results
+                    and linked_provider != provider
+                ):
+                    linked_record = self._load_single_source_record(
+                        linked_provider,
+                        query,
+                        tmdb_record=tmdb_record,
+                    )
+                    if linked_record is not None:
+                        results[linked_provider] = linked_record
         return results
+
+    def _load_single_source_record(
+        self,
+        provider: str,
+        query: MetadataQuery,
+        *,
+        tmdb_record: MetadataRecord,
+    ) -> tuple[MetadataRecord, float] | None:
+        candidates: list[object] = []
+        for provider_filter in self._source_provider_filters(provider):
+            try:
+                groups = self._metadata_search_service.search(query, provider_filter=provider_filter)
+            except Exception:
+                continue
+            candidates.extend(item for group in groups for item in list(getattr(group, "items", []) or []))
+        best = self._best_source_candidate(provider, candidates, tmdb_record)
+        if best is None:
+            return None
+        confidence = self._source_confidence(provider, best, tmdb_record)
+        detail_record, _error = load_candidate_detail_record(self._metadata_search_service, best)
+        if detail_record is None:
+            return None
+        if not _playback_source_record_has_native_link(provider, detail_record):
+            return None
+        return detail_record, confidence
 
     def refresh(self, record: FollowingRecord, provider: str):
         if provider == "tmdb":

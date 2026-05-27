@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
-from atv_player.metadata.providers.douban import _split_people, clean_overview_text
+from atv_player.metadata.providers.douban import _official_link_detail_fields, _split_people, clean_overview_text
 
 
 def _normalize_search_title(title: object) -> str:
@@ -76,4 +76,5 @@ class LocalDoubanProvider:
             country=str(payload.get("country") or payload.get("region") or "").strip(),
             language=str(payload.get("language") or "").strip(),
             douban_id=int(payload.get("id") or payload.get("dbid") or 0),
+            detail_fields=_official_link_detail_fields(payload),
         )

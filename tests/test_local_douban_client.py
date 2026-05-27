@@ -155,6 +155,9 @@ def test_local_douban_client_parses_subject_detail_html() -> None:
         <span property="v:summary">
           崇尚科技修仙的新术崛起。
         </span>
+        <section>
+          <a href="https://v.qq.com/x/cover/mzc00200np0le5t.html">腾讯视频</a>
+        </section>
       </body>
     </html>
     """
@@ -176,4 +179,11 @@ def test_local_douban_client_parses_subject_detail_html() -> None:
         "country": "中国大陆",
         "language": "汉语普通话",
         "description": "崇尚科技修仙的新术崛起。",
+        "official_links": [
+            {
+                "provider": "tencent",
+                "label": "腾讯视频",
+                "url": "https://v.qq.com/x/cover/mzc00200np0le5t.html",
+            }
+        ],
     }

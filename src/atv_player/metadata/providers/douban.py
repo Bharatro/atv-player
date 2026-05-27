@@ -34,6 +34,14 @@ def _split_people(value: object) -> list[str]:
     ]
 
 
+def _official_link_detail_fields(payload: dict[str, object]) -> list[dict[str, object]]:
+    links = payload.get("official_links")
+    if not isinstance(links, list) or not links:
+        return []
+    normalized = [dict(item) for item in links if isinstance(item, dict)]
+    return [{"label": "official_links", "value": normalized}] if normalized else []
+
+
 class DoubanProvider:
     name = "douban"
 
@@ -120,4 +128,5 @@ class DoubanProvider:
             country=str(payload.get("country") or payload.get("region") or "").strip(),
             language=str(payload.get("language") or "").strip(),
             douban_id=int(payload.get("id") or payload.get("dbid") or 0),
+            detail_fields=_official_link_detail_fields(payload),
         )
