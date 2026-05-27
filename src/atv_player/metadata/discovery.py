@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
 from atv_player.metadata.cache import MetadataCache
@@ -62,6 +63,7 @@ class TMDBDiscoveryService:
     _TRENDING_CACHE_TTL_SECONDS = 60 * 60 * 6
     _DISCOVER_CACHE_TTL_SECONDS = 60 * 60 * 2
     _RECOMMEND_CACHE_TTL_SECONDS = 60 * 60 * 6
+    _RECOMMENDATION_MAX_WORKERS = 8
 
     def __init__(self, *, client, cache: MetadataCache) -> None:
         self._client = client
@@ -174,12 +176,23 @@ class TMDBDiscoveryService:
 
     def _build_recommendation_pool(self, seeds: list[RecommendationSeed]) -> DiscoveryResult:
         scored: dict[str, tuple[float, dict[str, object]]] = {}
-        for seed in list(seeds or []):
+        seed_list = list(seeds or [])
+        if not seed_list:
+            return DiscoveryResult(items=[], total=0, source_label="推荐")
+
+        def fetch(seed: RecommendationSeed) -> tuple[RecommendationSeed, list[dict[str, object]]]:
             rows = self._client.get_recommendations(
                 media_type=seed.media_type,
                 tmdb_id=seed.tmdb_id,
                 page=1,
             )
+            return seed, rows
+
+        max_workers = min(self._RECOMMENDATION_MAX_WORKERS, len(seed_list))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            seed_rows = list(executor.map(fetch, seed_list))
+
+        for seed, rows in seed_rows:
             for raw in rows[:12]:
                 item = self._map_item(raw, source_label="推荐")
                 score = seed.activity_weight

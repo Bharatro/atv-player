@@ -1,3 +1,5 @@
+import threading
+import time
 from pathlib import Path
 
 from atv_player.metadata.cache import MetadataCache
@@ -110,6 +112,57 @@ def test_tmdb_discovery_service_recommendation_aggregates_recent_following_and_f
     assert result.source_label == "推荐"
     assert [item.provider_id for item in result.items] == ["tv:100", "movie:200"]
     assert result.items[0].title == "Gen V"
+
+
+def test_tmdb_discovery_service_fetches_recommendation_seeds_concurrently(tmp_path: Path) -> None:
+    class SlowRecommendationClient(StubTMDBClient):
+        def __init__(self) -> None:
+            super().__init__(
+                recommendations={
+                    ("tv", str(index)): [
+                        {"id": 1000 + index, "name": f"推荐 {index}", "vote_average": 7.0, "popularity": 100.0}
+                    ]
+                    for index in range(4)
+                }
+            )
+            self._lock = threading.Lock()
+            self._active = 0
+            self.max_active = 0
+
+        def get_recommendations(self, *, media_type: str, tmdb_id: str | int, page: int = 1) -> list[dict[str, object]]:
+            with self._lock:
+                self._active += 1
+                self.max_active = max(self.max_active, self._active)
+            try:
+                time.sleep(0.05)
+                return super().get_recommendations(media_type=media_type, tmdb_id=tmdb_id, page=page)
+            finally:
+                with self._lock:
+                    self._active -= 1
+
+    client = SlowRecommendationClient()
+    service = TMDBDiscoveryService(client=client, cache=MetadataCache(tmp_path))
+
+    result = service.recommend(
+        seeds=[
+            RecommendationSeed(
+                provider_id=f"tv:{index}",
+                tmdb_id=str(index),
+                media_type="tv",
+                seed_source="following",
+                activity_weight=5.0,
+                activity_timestamp=index,
+                reason_flags=[],
+            )
+            for index in range(4)
+        ],
+        favorite_provider_ids=set(),
+        following_provider_ids=set(),
+    )
+
+    assert len(result.items) == 4
+    assert client.recommendation_calls == 4
+    assert client.max_active > 1
 
 
 def test_tmdb_discovery_service_uses_disk_cache_for_trending_queries(tmp_path: Path) -> None:

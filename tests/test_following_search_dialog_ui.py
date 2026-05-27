@@ -2,6 +2,7 @@ from types import SimpleNamespace
 import threading
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QLabel, QWidget
 
@@ -265,42 +266,95 @@ def test_following_search_dialog_blocks_invalid_search_year(qtbot) -> None:
     assert dialog.status_label.text() == "请输入 4 位年份"
 
 
-def test_following_search_dialog_defaults_to_recommendation_tab_and_loads_results(qtbot) -> None:
-    recommendation = DiscoveryItem(
+def test_following_search_dialog_defaults_to_search_tab_and_preloads_discovery_tabs(qtbot) -> None:
+    trending = DiscoveryItem(
         provider="tmdb",
         provider_id="tv:100",
         tmdb_id="100",
         media_type="tv",
         title="Gen V",
         year="2023",
-        source_label="推荐",
+        source_label="本周趋势",
     )
 
     class Controller:
+        def __init__(self) -> None:
+            self.calls = []
+
         def load_discovery_tab(self, tab_key: str, **kwargs):
-            assert tab_key == "recommendation"
+            self.calls.append(tab_key)
             assert kwargs["page"] == 1
-            return DiscoveryResult(items=[recommendation], total=1, source_label="推荐")
+            if tab_key == "trending":
+                return DiscoveryResult(items=[trending], total=1, source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
+            raise AssertionError(f"unexpected tab: {tab_key}")
 
         def add_candidate(self, selected, **kwargs) -> None:
             assert selected.provider_id == "tv:100"
             assert kwargs == {}
 
+    controller = Controller()
+    dialog = FollowingSearchDialog(controller)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog.active_tab_button() is not None
+    assert dialog.active_tab_button().text() == "搜索"
+    assert dialog.search_edit.isHidden() is False
+    assert dialog.result_list.count() == 0
+
+    qtbot.waitUntil(lambda: {"trending", "recommendation"}.issubset(set(controller.calls)))
+
+    dialog._activate_tab("trending")
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+    assert controller.calls.count("trending") == 1
+
+
+def test_following_search_dialog_renders_all_discovery_results_as_lightweight_items(qtbot) -> None:
+    items = [
+        DiscoveryItem(
+            provider="tmdb",
+            provider_id=f"tv:{index}",
+            tmdb_id=str(index),
+            media_type="tv",
+            title=f"热门 {index}",
+            year="2024",
+            source_label="本周趋势",
+        )
+        for index in range(45)
+    ]
+
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "trending":
+                return DiscoveryResult(items=items, total=len(items), source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
+            raise AssertionError(f"unexpected tab: {tab_key}")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
     dialog = FollowingSearchDialog(Controller())
     qtbot.addWidget(dialog)
     dialog.show()
 
-    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+    dialog._activate_tab("trending")
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 45)
 
-    assert dialog.active_tab_button() is not None
-    assert dialog.active_tab_button().text() == "推荐"
-    assert "推荐" in dialog.status_label.text()
-    assert dialog.search_edit.isHidden() is True
+    assert dialog.status_label.text() == "本周趋势 · 找到 45 个结果"
+    assert dialog.result_list.itemWidget(dialog.result_list.item(0)) is None
 
 
 def test_following_search_dialog_search_year_field_is_only_visible_on_search_tab(qtbot) -> None:
     class Controller:
         def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
             return DiscoveryResult(items=[], total=0, source_label=tab_key)
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -309,6 +363,10 @@ def test_following_search_dialog_search_year_field_is_only_visible_on_search_tab
     dialog = FollowingSearchDialog(Controller())
     qtbot.addWidget(dialog)
     dialog.show()
+
+    assert dialog.search_year_edit.isHidden() is False
+
+    dialog._activate_tab("trending")
 
     assert dialog.search_year_edit.isHidden() is True
 
@@ -320,6 +378,10 @@ def test_following_search_dialog_search_year_field_is_only_visible_on_search_tab
 def test_following_search_dialog_search_field_labels_only_visible_on_search_tab(qtbot) -> None:
     class Controller:
         def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
             return DiscoveryResult(items=[], total=0, source_label=tab_key)
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -332,6 +394,10 @@ def test_following_search_dialog_search_field_labels_only_visible_on_search_tab(
     field_labels = [label for label in dialog.findChildren(QLabel) if label.text() in {"标题", "年份"}]
 
     assert {label.text() for label in field_labels} == {"标题", "年份"}
+    assert all(not label.isHidden() for label in field_labels)
+
+    dialog._activate_tab("trending")
+
     assert all(label.isHidden() for label in field_labels)
 
     dialog._activate_tab("search")
@@ -359,6 +425,10 @@ def test_following_search_dialog_switching_to_search_preserves_url_direct_path(q
             if tab_key == "search":
                 assert kwargs["query"] == "https://www.themoviedb.org/tv/30983-case-closed"
                 return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
             return DiscoveryResult(items=[], total=0, source_label="推荐")
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -397,6 +467,10 @@ def test_following_search_dialog_search_tab_passes_year_filter_and_cache_key_use
             self.calls.append((tab_key, kwargs))
             if tab_key == "search":
                 return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=[], total=0, source_label="推荐")
             return DiscoveryResult(items=[], total=0, source_label="推荐")
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -432,7 +506,7 @@ def test_following_search_dialog_uses_four_tab_buttons_instead_of_combo(qtbot) -
 
     assert hasattr(dialog, "tab_bar") is False
     assert [button.text() for button in dialog.tab_buttons] == ["推荐", "热门", "筛选", "搜索"]
-    assert dialog.active_tab_button().text() == "推荐"
+    assert dialog.active_tab_button().text() == "搜索"
 
 
 def test_following_search_dialog_can_switch_to_search_while_recommendation_request_is_in_flight(qtbot) -> None:
@@ -452,6 +526,8 @@ def test_following_search_dialog_can_switch_to_search_while_recommendation_reque
             if tab_key == "recommendation":
                 release_recommendation.wait(timeout=2)
                 return DiscoveryResult(items=[], total=0, source_label="推荐")
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
             assert tab_key == "search"
             return DiscoveryResult(items=[candidate], total=1, source_label="搜索")
 
@@ -462,6 +538,7 @@ def test_following_search_dialog_can_switch_to_search_while_recommendation_reque
     qtbot.addWidget(dialog)
     dialog.show()
 
+    dialog._activate_tab("recommendation")
     dialog._activate_tab("search")
     dialog.search_edit.setText("柯南")
     dialog.run_search()
@@ -499,6 +576,8 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_resu
             self.calls.append(tab_key)
             if tab_key == "search":
                 return DiscoveryResult(items=[search_item], total=1, source_label="搜索")
+            if tab_key == "trending":
+                return DiscoveryResult(items=[], total=0, source_label="本周趋势")
             return DiscoveryResult(items=[recommendation], total=1, source_label="推荐")
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -509,8 +588,9 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_resu
     qtbot.addWidget(dialog)
     dialog.show()
 
+    dialog._activate_tab("recommendation")
     qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
-    assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
+    assert dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).title == "Gen V"
 
     dialog._activate_tab("search")
     dialog.search_edit.setText("柯南")
@@ -523,10 +603,10 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_resu
 
     dialog._activate_tab("recommendation")
 
-    assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
+    assert dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).title == "Gen V"
 
 
-def test_following_search_dialog_switching_back_to_loaded_tab_reuses_rendered_cards(qtbot, monkeypatch) -> None:
+def test_following_search_dialog_discovery_results_do_not_create_card_widgets(qtbot, monkeypatch) -> None:
     recommendation_items = [
         DiscoveryItem(
             provider="tmdb",
@@ -567,6 +647,8 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_rendered_ca
         def load_discovery_tab(self, tab_key: str, **kwargs):
             if tab_key == "trending":
                 return DiscoveryResult(items=trending_items, total=2, source_label="热门")
+            if tab_key == "recommendation":
+                return DiscoveryResult(items=recommendation_items, total=2, source_label="推荐")
             return DiscoveryResult(items=recommendation_items, total=2, source_label="推荐")
 
         def add_candidate(self, selected, **kwargs) -> None:
@@ -577,27 +659,64 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_rendered_ca
     qtbot.addWidget(dialog)
     dialog.show()
 
+    dialog._activate_tab("recommendation")
     qtbot.waitUntil(lambda: dialog.result_list.count() == 2)
-    assert created_cards == ["tv:recommendation-0", "tv:recommendation-1"]
+    assert created_cards == []
+    assert dialog.result_list.itemWidget(dialog.result_list.item(0)) is None
 
     dialog._activate_tab("trending")
     qtbot.waitUntil(lambda: dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).provider_id == "tv:trending-0")
-    assert created_cards == [
-        "tv:recommendation-0",
-        "tv:recommendation-1",
-        "tv:trending-0",
-        "tv:trending-1",
-    ]
+    assert created_cards == []
 
     dialog._activate_tab("recommendation")
 
     assert dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).provider_id == "tv:recommendation-0"
-    assert created_cards == [
-        "tv:recommendation-0",
-        "tv:recommendation-1",
-        "tv:trending-0",
-        "tv:trending-1",
-    ]
+    assert created_cards == []
+
+
+def test_following_search_dialog_discovery_delegate_loads_posters(qtbot, monkeypatch) -> None:
+    poster_url = "https://img.test/poster.jpg"
+    image = QImage(30, 40, QImage.Format.Format_RGB32)
+    image.fill(0x00FF00)
+
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "trending":
+                return DiscoveryResult(
+                    items=[
+                        DiscoveryItem(
+                            provider="tmdb",
+                            provider_id="tv:100",
+                            tmdb_id="100",
+                            media_type="tv",
+                            title="Gen V",
+                            poster=poster_url,
+                        )
+                    ],
+                    total=1,
+                    source_label="本周趋势",
+                )
+            return DiscoveryResult(items=[], total=0, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(following_search_dialog_module, "load_local_poster_image", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(following_search_dialog_module, "load_remote_poster_image", lambda *_args, **_kwargs: image)
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog._activate_tab("trending")
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 1)
+
+    delegate = dialog.result_list.itemDelegate()
+    candidate = dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole)
+    delegate._ensure_poster_load(candidate, dialog.result_list)
+
+    qtbot.waitUntil(lambda: poster_url in delegate._poster_cache)
+
+    assert delegate._poster_cache[poster_url].isNull() is False
 
 
 def test_following_search_dialog_trending_filters_change_request_parameters(qtbot) -> None:

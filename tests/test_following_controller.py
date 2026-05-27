@@ -615,6 +615,71 @@ def test_following_controller_loads_recommendations_and_falls_back_to_trending_w
     assert result.fallback_reason == "recommendation-empty"
 
 
+def test_following_controller_reuses_discovery_results_across_dialog_reopens(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+
+    class DiscoveryService:
+        def __init__(self) -> None:
+            self.trending_calls = 0
+            self.recommend_calls = 0
+
+        def trending(self, query):
+            self.trending_calls += 1
+            return DiscoveryResult(
+                items=[
+                    DiscoveryItem(
+                        provider="tmdb",
+                        provider_id="tv:100",
+                        tmdb_id="100",
+                        media_type="tv",
+                        title="Gen V",
+                        source_label="本周趋势",
+                    )
+                ],
+                total=1,
+                source_label="本周趋势",
+            )
+
+        def recommend(self, **kwargs):
+            self.recommend_calls += 1
+            return DiscoveryResult(
+                items=[
+                    DiscoveryItem(
+                        provider="tmdb",
+                        provider_id="tv:200",
+                        tmdb_id="200",
+                        media_type="tv",
+                        title="推荐剧集",
+                        source_label="推荐",
+                    )
+                ],
+                total=1,
+                source_label="推荐",
+            )
+
+    service = DiscoveryService()
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        discovery_service=service,
+        favorite_tmdb_binding_repository=FavoriteTMDBBindingRepository(tmp_path / "app.db"),
+    )
+
+    first_trending = controller.load_discovery_tab("trending")
+    first_recommendation = controller.load_discovery_tab("recommendation")
+    second_trending = controller.load_discovery_tab("trending")
+    second_recommendation = controller.load_discovery_tab("recommendation")
+
+    assert [item.provider_id for item in first_trending.items] == ["tv:100"]
+    assert [item.provider_id for item in second_trending.items] == ["tv:100"]
+    assert [item.provider_id for item in first_recommendation.items] == ["tv:200"]
+    assert [item.provider_id for item in second_recommendation.items] == ["tv:200"]
+    assert service.trending_calls == 1
+    assert service.recommend_calls == 1
+    assert first_trending is not second_trending
+    assert first_recommendation is not second_recommendation
+
+
 def test_following_controller_recommendation_seeds_include_recent_favorite_tmdb_bindings(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     favorite_bindings = FavoriteTMDBBindingRepository(tmp_path / "app.db")
@@ -650,6 +715,43 @@ def test_following_controller_recommendation_seeds_include_recent_favorite_tmdb_
 
     assert [seed.provider_id for seed in captured["seeds"]] == ["movie:157336"]
     assert captured["seeds"][0].seed_source == "favorite"
+
+
+def test_following_controller_limits_recommendation_seed_count_for_fast_loading(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    for index in range(12):
+        repo.upsert(
+            FollowingRecord(
+                id=0,
+                title=f"剧集 {index}",
+                media_kind="live_action",
+                provider="tmdb",
+                provider_id=f"tv:{1000 + index}",
+                external_ids={"tmdb": str(1000 + index)},
+                has_update=index % 2 == 0,
+                updated_at=100 + index,
+            )
+        )
+    captured = {}
+
+    class DiscoveryService:
+        def recommend(self, **kwargs):
+            captured.update(kwargs)
+            return DiscoveryResult(items=[], total=0, source_label="推荐", fallback_reason="")
+
+        def trending(self, query):
+            return DiscoveryResult(items=[], total=0, source_label="本周趋势", fallback_reason="")
+
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        discovery_service=DiscoveryService(),
+        favorite_tmdb_binding_repository=FavoriteTMDBBindingRepository(tmp_path / "app.db"),
+    )
+
+    controller.load_discovery_tab("recommendation")
+
+    assert len(captured["seeds"]) == 8
 
 
 def test_following_controller_add_candidate_accepts_discovery_item(tmp_path: Path) -> None:

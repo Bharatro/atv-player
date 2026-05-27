@@ -5,8 +5,8 @@ import threading
 from datetime import date
 import json
 
-from PySide6.QtCore import QRegularExpression, Qt, Signal
-from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtCore import QRect, QRegularExpression, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QImage, QPainter, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -16,18 +16,150 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QWidget,
 )
 
-from atv_player.ui.following_search_result_card import FollowingSearchResultCard
+from atv_player.ui.following_search_result_card import FollowingSearchResultCard, following_search_candidate_media_type
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 
+class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
+    poster_loaded = Signal(str, object)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._poster_cache: dict[str, QImage] = {}
+        self._poster_loading: set[str] = set()
+        self.poster_loaded.connect(self._handle_poster_loaded)
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        return QSize(max(360, option.rect.width()), 164)
+
+    def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
+        candidate = index.data(Qt.ItemDataRole.UserRole)
+        if candidate is None:
+            super().paint(painter, option, index)
+            return
+
+        tokens = current_tokens()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = option.rect.adjusted(4, 4, -4, -4)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        painter.setPen(tokens.accent if selected else tokens.border_subtle)
+        painter.setBrush(tokens.menu_hover_bg if selected else tokens.panel_bg)
+        painter.drawRoundedRect(rect, 12, 12)
+
+        poster_rect = QRect(rect.left() + 14, rect.top() + 14, 86, 122)
+        painter.setPen(tokens.border_subtle)
+        painter.setBrush(tokens.panel_alt_bg)
+        painter.drawRoundedRect(poster_rect, 10, 10)
+        poster_source = self._poster_source(candidate)
+        poster_image = self._poster_cache.get(poster_source) if poster_source else None
+        if poster_image is not None and not poster_image.isNull():
+            painter.drawImage(poster_rect.adjusted(1, 1, -1, -1), poster_image)
+        else:
+            painter.setPen(tokens.text_secondary)
+            painter.drawText(poster_rect, Qt.AlignmentFlag.AlignCenter, "封面")
+            self._ensure_poster_load(candidate, option.widget)
+
+        content_left = poster_rect.right() + 16
+        content_right = rect.right() - 16
+        rating = self._rating_text(candidate)
+        rating_rect = QRect(content_right - 48, rect.top() + 16, 44, 22) if rating else QRect()
+        title_right = rating_rect.left() - 8 if rating else content_right
+
+        title_font = QFont(option.font)
+        title_font.setPointSize(max(title_font.pointSize(), 11))
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.setPen(tokens.text_primary)
+        title = str(getattr(candidate, "title", "") or "未命名条目")
+        title_rect = QRect(content_left, rect.top() + 16, max(40, title_right - content_left), 24)
+        painter.drawText(title_rect, Qt.TextFlag.TextSingleLine, title)
+
+        if rating:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(tokens.accent)
+            painter.drawRoundedRect(rating_rect, 10, 10)
+            painter.setPen(tokens.button_primary_text)
+            painter.drawText(rating_rect, Qt.AlignmentFlag.AlignCenter, rating)
+
+        normal_font = QFont(option.font)
+        painter.setFont(normal_font)
+        painter.setPen(tokens.text_secondary)
+        meta = self._meta_text(candidate)
+        painter.drawText(QRect(content_left, rect.top() + 48, max(40, content_right - content_left), 22), meta)
+
+        overview = self._overview_text(candidate)
+        overview_rect = QRect(content_left, rect.top() + 78, max(40, content_right - content_left), 58)
+        painter.drawText(
+            overview_rect,
+            Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextSingleLine,
+            option.fontMetrics.elidedText(overview, Qt.TextElideMode.ElideRight, overview_rect.width() * 3),
+        )
+        painter.restore()
+
+    @staticmethod
+    def _candidate_raw(candidate) -> dict[str, object]:
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        for key in ("rating", "overview"):
+            value = getattr(candidate, key, None)
+            if value not in (None, "") and key not in raw:
+                raw[key] = value
+        return raw
+
+    def _rating_text(self, candidate) -> str:
+        return str(self._candidate_raw(candidate).get("rating") or "").strip()
+
+    def _meta_text(self, candidate) -> str:
+        year = str(getattr(candidate, "year", "") or "").strip()
+        media_type = following_search_candidate_media_type(candidate)
+        return " · ".join(part for part in (year, media_type) if part)
+
+    def _overview_text(self, candidate) -> str:
+        return str(self._candidate_raw(candidate).get("overview") or "").strip() or "暂无简介"
+
+    def _poster_source(self, candidate) -> str:
+        raw = self._candidate_raw(candidate)
+        return str(getattr(candidate, "poster", "") or raw.get("poster") or raw.get("poster_url") or "").strip()
+
+    def _ensure_poster_load(self, candidate, _view=None) -> None:
+        source = self._poster_source(candidate)
+        if not source or source in self._poster_cache or source in self._poster_loading:
+            return
+        self._poster_loading.add(source)
+        target_size = QSize(86, 122)
+
+        def load() -> None:
+            image = load_local_poster_image(source, target_size)
+            if image is None:
+                image = load_remote_poster_image(normalize_poster_url(source), target_size)
+            self.poster_loaded.emit(source, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_poster_loaded(self, source: str, image) -> None:
+        self._poster_loading.discard(source)
+        if image is not None:
+            self._poster_cache[source] = image
+        parent = self.parent()
+        viewport = parent.viewport() if isinstance(parent, QListWidget) else None
+        if viewport is not None:
+            viewport.update()
+
+
 class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
+
     candidate_selected = Signal(object)
     search_finished = Signal(int, object, str)
+    discovery_preload_finished = Signal(object, str)
     add_finished = Signal(int, object, str)
 
     def __init__(self, controller, parent=None) -> None:
@@ -47,6 +179,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self._tab_state: dict[str, dict[str, object]] = {}
         self._rendered_state_key: str | None = None
         self._render_cache: dict[str, QListWidget] = {}
+        self._preloading_state_keys: set[str] = set()
         self._result_lists: list[QListWidget] = []
         self._result_list_qss = ""
 
@@ -163,11 +296,13 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.add_button.clicked.connect(self._add_selected_candidate)
         self.close_button.clicked.connect(self.reject)
         self._connect_async_signal(self.search_finished, self._handle_search_finished)
+        self._connect_async_signal(self.discovery_preload_finished, self._handle_discovery_preload_finished)
         self._connect_async_signal(self.add_finished, self._handle_add_finished)
         self._apply_theme()
         self._sync_action_state()
         if self._discovery_mode:
-            self._activate_tab("recommendation")
+            self._activate_tab("search")
+            self._preload_initial_discovery_tabs()
         else:
             for button in self.tab_buttons:
                 button.hide()
@@ -177,6 +312,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     def _create_result_list(self) -> QListWidget:
         result_list = QListWidget(self.result_stack)
         result_list.setSpacing(10)
+        result_list.setUniformItemSizes(True)
+        result_list.setItemDelegate(FollowingDiscoveryResultDelegate(result_list))
         result_list.currentRowChanged.connect(self._handle_result_selection_changed)
         result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
         if self._result_list_qss:
@@ -188,6 +325,35 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.result_list = result_list
         self.result_stack.setCurrentWidget(result_list)
         self.result_list.setEnabled(not (self._search_in_progress or self._add_in_progress))
+
+    def _preload_initial_discovery_tabs(self) -> None:
+        self._preload_discovery_tab("trending")
+        self._preload_discovery_tab("recommendation")
+
+    def _preload_discovery_tab(self, tab_key: str) -> None:
+        state_key = self._state_key(tab_key)
+        if state_key in self._preloading_state_keys or self._tab_state.get(state_key, {}).get("loaded", False):
+            return
+        self._preloading_state_keys.add(state_key)
+        filters = self._filters_for_tab(tab_key)
+        query = self.search_edit.text().strip()
+
+        def run() -> None:
+            try:
+                result = self.controller.load_discovery_tab(
+                    tab_key,
+                    query=query,
+                    page=1,
+                    filters=filters,
+                )
+                error = ""
+            except Exception as exc:
+                result = None
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.discovery_preload_finished.emit((tab_key, state_key, result), error)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def run_search(self) -> None:
         if self._search_in_progress or self._add_in_progress:
@@ -264,6 +430,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             if not state.get("loaded", False):
                 self._clear_results()
             return
+        if state_key in self._preloading_state_keys:
+            self.status_label.setText("搜索中...")
+            return
         if not state.get("loaded", False):
             self._load_active_tab()
 
@@ -272,6 +441,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         request_id = self._search_request_id
         tab_key = self._active_tab
         state_key = self._state_key(tab_key)
+        if state_key in self._preloading_state_keys:
+            self.status_label.setText("搜索中...")
+            return
         self._set_search_loading(True)
 
         def run() -> None:
@@ -319,8 +491,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self._prepare_rendered_state_replacement(state_key)
         self.result_list.clear()
         items = list(getattr(result, "items", []) or [])
+        use_widget = self._state_tab_from_key(state_key) == "search"
         for candidate in items:
-            self._append_candidate_item(candidate)
+            self._append_candidate_item(candidate, use_widget=use_widget)
         self._rendered_state_key = state_key
         if self.result_list.count():
             self.result_list.setCurrentRow(0)
@@ -328,7 +501,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             self._sync_action_state()
         source_label = str(getattr(result, "source_label", "") or "搜索")
         fallback_reason = str(getattr(result, "fallback_reason", "") or "").strip()
-        self._set_discovery_status(source_label=source_label, item_count=len(items), fallback_reason=fallback_reason)
+        total = int(getattr(result, "total", 0) or len(items))
+        self._set_discovery_status(source_label=source_label, item_count=total, fallback_reason=fallback_reason)
 
     def _prepare_rendered_state_replacement(self, state_key: str | None) -> None:
         if state_key is None:
@@ -361,13 +535,27 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         suffix = " · 推荐不足，已补充热门内容" if fallback_reason == "recommendation-empty" else ""
         self.status_label.setText(f"{source_label} · 找到 {item_count} 个结果{suffix}")
 
-    def _append_candidate_item(self, candidate) -> None:
+    @staticmethod
+    def _state_tab_from_key(state_key: str | None) -> str:
+        if not state_key:
+            return ""
+        try:
+            payload = json.loads(state_key)
+        except (TypeError, ValueError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        return str(payload.get("tab") or "")
+
+    def _append_candidate_item(self, candidate, *, use_widget: bool = True) -> None:
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, candidate)
-        card = FollowingSearchResultCard(candidate, self.result_list)
-        item.setSizeHint(card.sizeHint())
+        item.setSizeHint(QSize(360, 164))
         self.result_list.addItem(item)
-        self.result_list.setItemWidget(item, card)
+        if use_widget:
+            card = FollowingSearchResultCard(candidate, self.result_list)
+            item.setSizeHint(card.sizeHint())
+            self.result_list.setItemWidget(item, card)
 
     def _handle_result_selection_changed(self, _row: int) -> None:
         for index in range(self.result_list.count()):
@@ -442,17 +630,33 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         if self._discovery_mode:
             tab_key, state_key, result = groups
-            self._tab_state[state_key] = {
-                "items": list(getattr(result, "items", []) or []),
-                "source_label": str(getattr(result, "source_label", "") or ""),
-                "fallback_reason": str(getattr(result, "fallback_reason", "") or ""),
-                "loaded": True,
-            }
+            self._store_discovery_state(state_key, result)
             if tab_key != self._active_tab or state_key != self._state_key(tab_key):
                 return
             self._render_discovery_result(result, state_key=state_key)
             return
         self._render_groups(groups)
+
+    def _handle_discovery_preload_finished(self, groups, error: str) -> None:
+        tab_key, state_key, result = groups
+        self._preloading_state_keys.discard(state_key)
+        if error:
+            if tab_key == self._active_tab and state_key == self._state_key(tab_key):
+                self.status_label.setText(f"搜索失败: {error}")
+            return
+        self._store_discovery_state(state_key, result)
+        if tab_key == self._active_tab and state_key == self._state_key(tab_key):
+            self._render_discovery_result(result, state_key=state_key)
+
+    def _store_discovery_state(self, state_key: str, result) -> None:
+        items = list(getattr(result, "items", []) or [])
+        self._tab_state[state_key] = {
+            "items": items,
+            "total": int(getattr(result, "total", 0) or len(items)),
+            "source_label": str(getattr(result, "source_label", "") or ""),
+            "fallback_reason": str(getattr(result, "fallback_reason", "") or ""),
+            "loaded": True,
+        }
 
     def active_tab_button(self) -> QPushButton | None:
         return self._tab_buttons_by_key.get(self._active_tab)
@@ -577,7 +781,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         if self._restore_rendered_state(state_key):
             self._set_discovery_status(
                 source_label=str(state.get("source_label", "") or "搜索"),
-                item_count=len(cached_items),
+                item_count=int(state.get("total") or len(cached_items)),
                 fallback_reason=str(state.get("fallback_reason", "") or ""),
             )
             return
@@ -587,6 +791,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                 (),
                 {
                     "items": cached_items,
+                    "total": int(state.get("total") or len(cached_items)),
                     "source_label": state.get("source_label", ""),
                     "fallback_reason": state.get("fallback_reason", ""),
                 },

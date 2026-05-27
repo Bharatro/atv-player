@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import time
 from dataclasses import dataclass, replace
@@ -54,6 +55,8 @@ class FollowingDetailView:
 
 
 class FollowingController:
+    _RECOMMENDATION_SEED_LIMIT = 8
+
     def __init__(
         self,
         repository,
@@ -70,6 +73,7 @@ class FollowingController:
         self._now = now or (lambda: int(time.time()))
         self._discovery_service = discovery_service
         self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
+        self._discovery_memory_cache: dict[str, DiscoveryResult] = {}
 
     def search_media(self, keyword: str, *, year: str = ""):
         url_candidate = self.candidate_from_url(keyword)
@@ -95,12 +99,20 @@ class FollowingController:
         if self._discovery_service is None:
             raise RuntimeError("TMDB discovery unavailable")
         normalized_tab = str(tab_key or "").strip() or "recommendation"
+        filters = dict(filters or {})
+        cache_key = self._discovery_memory_cache_key(normalized_tab, page=page, filters=filters)
+        if cache_key:
+            cached = self._discovery_memory_cache.get(cache_key)
+            if cached is not None:
+                return self._clone_discovery_result(cached)
         if normalized_tab == "recommendation":
-            return self._load_recommendation_result(page=page)
+            result = self._load_recommendation_result(page=page)
+            self._store_discovery_memory_cache(cache_key, result)
+            return self._clone_discovery_result(result)
         if normalized_tab == "search":
             groups = self.search_media(
                 query,
-                year=str((filters or {}).get("year") or ""),
+                year=str(filters.get("year") or ""),
             )
             items = [
                 self._discovery_item_from_candidate(candidate)
@@ -109,27 +121,50 @@ class FollowingController:
             ]
             return DiscoveryResult(items=items, total=len(items), source_label="搜索")
         if normalized_tab == "trending":
-            return self._discovery_service.trending(
+            result = self._discovery_service.trending(
                 DiscoveryQuery(
                     kind="trending",
-                    media_type=str((filters or {}).get("media_type") or "tv"),
-                    list_key=str((filters or {}).get("list_key") or "trending_week"),
+                    media_type=str(filters.get("media_type") or "tv"),
+                    list_key=str(filters.get("list_key") or "trending_week"),
                     page=page,
                 )
             )
+            self._store_discovery_memory_cache(cache_key, result)
+            return self._clone_discovery_result(result)
         if normalized_tab == "discover":
-            return self._discovery_service.discover(
+            result = self._discovery_service.discover(
                 DiscoveryQuery(
                     kind="discover",
-                    media_type=str((filters or {}).get("media_type") or "tv"),
-                    sort_by=str((filters or {}).get("sort_by") or ""),
-                    year=str((filters or {}).get("year") or ""),
-                    with_genres=str((filters or {}).get("with_genres") or ""),
-                    with_origin_country=str((filters or {}).get("with_origin_country") or ""),
+                    media_type=str(filters.get("media_type") or "tv"),
+                    sort_by=str(filters.get("sort_by") or ""),
+                    year=str(filters.get("year") or ""),
+                    with_genres=str(filters.get("with_genres") or ""),
+                    with_origin_country=str(filters.get("with_origin_country") or ""),
                     page=page,
                 )
             )
+            self._store_discovery_memory_cache(cache_key, result)
+            return self._clone_discovery_result(result)
         raise RuntimeError(f"unsupported discovery tab: {normalized_tab}")
+
+    def _discovery_memory_cache_key(self, tab_key: str, *, page: int, filters: dict[str, str]) -> str:
+        normalized_tab = str(tab_key or "").strip() or "recommendation"
+        if normalized_tab == "search":
+            return ""
+        payload = {
+            "tab": normalized_tab,
+            "page": int(page or 1),
+            "filters": {str(key): str(value) for key, value in sorted(filters.items())},
+        }
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    def _store_discovery_memory_cache(self, cache_key: str, result: DiscoveryResult) -> None:
+        if cache_key:
+            self._discovery_memory_cache[cache_key] = self._clone_discovery_result(result)
+
+    @staticmethod
+    def _clone_discovery_result(result: DiscoveryResult) -> DiscoveryResult:
+        return replace(result, items=list(result.items or []))
 
     def _discovery_item_from_candidate(self, candidate) -> DiscoveryItem:
         raw = dict(getattr(candidate, "raw", {}) or {})
@@ -153,7 +188,7 @@ class FollowingController:
         )
 
     def _load_recommendation_result(self, *, page: int) -> DiscoveryResult:
-        seeds = self._build_recommendation_seeds(limit=30)
+        seeds = self._build_recommendation_seeds(limit=self._RECOMMENDATION_SEED_LIMIT)
         favorite_provider_ids = set()
         if self._favorite_tmdb_binding_repository is not None and hasattr(
             self._favorite_tmdb_binding_repository, "load_recent"
@@ -372,6 +407,7 @@ class FollowingController:
             raise RuntimeError("追更保存失败")
         snapshot.following_id = record_id
         self._repository.save_detail_snapshot(record_id, snapshot)
+        self._discovery_memory_cache.clear()
         return saved
 
     def _merge_existing_candidate_state(
