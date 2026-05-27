@@ -637,6 +637,34 @@ def test_following_progress_dialog_uses_selected_completed_season_latest(qtbot) 
     assert dialog.episode_spin.value() == 24
 
 
+def test_following_progress_dialog_can_mark_global_latest_when_future_season_selected(qtbot) -> None:
+    dialog = FollowingProgressDialog(
+        current_season_number=0,
+        current_episode=0,
+        latest_season_number=1,
+        latest_episode=26,
+        total_episodes=26,
+        seasons=[
+            FollowingSeason(season_number=1, title="第一季", episode_count=26),
+            FollowingSeason(season_number=2, title="第二季", episode_count=27),
+        ],
+        episodes=[
+            FollowingEpisode(episode_number=index, season_number=1)
+            for index in range(1, 27)
+        ],
+        selected_season_number=2,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.season_spin.value() == 2
+    assert dialog.mark_latest_button.text() == "设为最新 (S1E26)"
+
+    dialog._set_to_latest()
+
+    assert dialog.season_spin.value() == 1
+    assert dialog.episode_spin.value() == 26
+
+
 def test_following_detail_page_progress_dialog_keeps_record_latest_season_when_selected_season_has_same_episode_number(
     qtbot,
     monkeypatch,

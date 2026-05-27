@@ -160,6 +160,8 @@ class FollowingProgressDialog(ThemedDialogBase):
         self._global_latest_episode = latest_episode
         self._latest_season_number = latest_season_number
         self._latest_episode = self._latest_episode_for_season(initial_season_number)
+        self._mark_latest_season_number = self._latest_season_number
+        self._mark_latest_episode = self._latest_episode
         self._total_episodes = resolve_display_total_episodes(
             total_episodes=self._total_episodes_for_season(
                 initial_season_number,
@@ -263,6 +265,14 @@ class FollowingProgressDialog(ThemedDialogBase):
         season_number = int(self.season_spin.value())
         self._latest_season_number = season_number
         self._latest_episode = self._latest_episode_for_season(season_number)
+        self._mark_latest_season_number = season_number
+        self._mark_latest_episode = self._latest_episode
+        if self._mark_latest_episode <= 0:
+            global_latest_season = max(0, int(self._global_latest_season_number or 0))
+            global_latest_episode = self._latest_episode_for_season(global_latest_season)
+            if global_latest_season > 0 and global_latest_episode > 0:
+                self._mark_latest_season_number = global_latest_season
+                self._mark_latest_episode = global_latest_episode
         self._total_episodes = resolve_display_total_episodes(
             total_episodes=self._total_episodes_for_season(season_number, fallback_total=0),
             latest_episode=self._latest_episode,
@@ -285,12 +295,12 @@ class FollowingProgressDialog(ThemedDialogBase):
         self.info_label.setVisible(bool(info_parts))
         latest_pair_text = (
             "设为最新 "
-            f"({format_progress_episode('', season_number, self._latest_episode, fallback_season=season_number).strip()})"
-            if self._latest_episode > 0
+            f"({format_progress_episode('', self._mark_latest_season_number, self._mark_latest_episode, fallback_season=self._mark_latest_season_number).strip()})"
+            if self._mark_latest_episode > 0
             else ""
         )
         self.mark_latest_button.setText(latest_pair_text)
-        self.mark_latest_button.setVisible(self._latest_episode > 0)
+        self.mark_latest_button.setVisible(self._mark_latest_episode > 0)
 
     def _normalize_latest_episode(
         self,
@@ -362,8 +372,10 @@ class FollowingProgressDialog(ThemedDialogBase):
         self._refresh_latest_controls()
 
     def _set_to_latest(self) -> None:
-        self.season_spin.setValue(self._latest_season_number or self.season_spin.value())
-        self.episode_spin.setValue(self._latest_episode)
+        season_number = self._mark_latest_season_number or self.season_spin.value()
+        episode_number = self._mark_latest_episode
+        self.season_spin.setValue(season_number)
+        self.episode_spin.setValue(episode_number)
 
     def _accept(self) -> None:
         self.accepted_season_number = int(self.season_spin.value())
