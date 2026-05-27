@@ -64,6 +64,9 @@ class FollowingSearchResultCard(QFrame):
             QLabel[resultTitle="true"] {{
                 font-size: 16px;
                 font-weight: 600;
+                line-height: 1;
+                padding: 0;
+                margin: 0;
             }}
             QLabel[resultMeta="true"] {{
                 color: {tokens.text_secondary};
@@ -89,7 +92,7 @@ class FollowingSearchResultCard(QFrame):
                 color: {tokens.text_secondary};
                 background: {tokens.panel_alt_bg};
                 border: 1px solid {tokens.border_subtle};
-                border-radius: 12px;
+                border-radius: 10px;
             }}
             """
         )
@@ -103,27 +106,25 @@ class FollowingSearchResultCard(QFrame):
         self.rating_label.setHidden(not self.rating_label.text().strip())
 
         self.meta_label.setProperty("resultMeta", True)
-        self.meta_label.setWordWrap(True)
-
-        self.overview_label.setProperty("resultOverview", True)
-        self.overview_label.setWordWrap(True)
-        self.overview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         title_row = QHBoxLayout()
-        title_row.setSpacing(8)
+        title_row.setSpacing(6)
+        title_row.setContentsMargins(0, 0, 0, 0)
         title_row.addWidget(self.title_label, 1)
-        title_row.addWidget(self.rating_label, 0, Qt.AlignmentFlag.AlignTop)
+        title_row.addWidget(self.meta_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addWidget(self.rating_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text_layout = QVBoxLayout()
-        text_layout.setSpacing(6)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
         text_layout.addLayout(title_row)
-        text_layout.addWidget(self.meta_label)
         text_layout.addWidget(self.overview_label, 1)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(14)
-        layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+        self.setMinimumHeight(132 + 16)
+        layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(text_layout, 1)
         self._apply_overview_clamp()
 
@@ -191,9 +192,9 @@ class FollowingSearchResultCard(QFrame):
             return
 
         metrics = self.overview_label.fontMetrics()
-        max_lines = 3
+        max_lines = 6
         line_height = metrics.lineSpacing()
-        self.overview_label.setFixedHeight(line_height * max_lines)
+        self.overview_label.setMinimumHeight(line_height * max_lines)
         lines: list[str] = []
         current = ""
         text = self._overview_full_text.replace("\r\n", "\n").replace("\r", "\n")

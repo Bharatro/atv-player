@@ -73,7 +73,7 @@ class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
         content_right = rect.right() - 16
         rating = self._rating_text(candidate)
         rating_rect = QRect(content_right - 48, rect.top() + 16, 44, 22) if rating else QRect()
-        title_right = rating_rect.left() - 8 if rating else content_right
+        meta = self._meta_text(candidate)
 
         title_font = QFont(option.font)
         title_font.setPointSize(max(title_font.pointSize(), 11))
@@ -81,8 +81,21 @@ class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
         painter.setFont(title_font)
         painter.setPen(tokens.text_primary)
         title = str(getattr(candidate, "title", "") or "未命名条目")
+
+        title_full = f"{title}  {meta}" if meta else title
+        title_right = rating_rect.left() - 8 if rating else content_right
         title_rect = QRect(content_left, rect.top() + 16, max(40, title_right - content_left), 24)
-        painter.drawText(title_rect, Qt.TextFlag.TextSingleLine, title)
+
+        if meta:
+            painter.drawText(title_rect, Qt.TextFlag.TextSingleLine, title + "  ")
+            title_width = painter.fontMetrics().horizontalAdvance(title + "  ")
+            normal_font = QFont(option.font)
+            painter.setFont(normal_font)
+            painter.setPen(tokens.text_secondary)
+            meta_rect = QRect(content_left + title_width, rect.top() + 16, max(40, title_right - content_left - title_width), 24)
+            painter.drawText(meta_rect, Qt.TextFlag.TextSingleLine, meta)
+        else:
+            painter.drawText(title_rect, Qt.TextFlag.TextSingleLine, title)
 
         if rating:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -94,11 +107,9 @@ class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
         normal_font = QFont(option.font)
         painter.setFont(normal_font)
         painter.setPen(tokens.text_secondary)
-        meta = self._meta_text(candidate)
-        painter.drawText(QRect(content_left, rect.top() + 48, max(40, content_right - content_left), 22), meta)
 
         overview = self._overview_text(candidate)
-        overview_rect = QRect(content_left, rect.top() + 78, max(40, content_right - content_left), 58)
+        overview_rect = QRect(content_left, rect.top() + 44, max(40, content_right - content_left), 76)
         painter.drawText(
             overview_rect,
             Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextSingleLine,
@@ -550,7 +561,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
     def _append_candidate_item(self, candidate, *, use_widget: bool = True) -> None:
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, candidate)
-        item.setSizeHint(QSize(360, 164))
+        item.setSizeHint(QSize(360, 148))
         self.result_list.addItem(item)
         if use_widget:
             card = FollowingSearchResultCard(candidate, self.result_list)
