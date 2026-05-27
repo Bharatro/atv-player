@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import threading
+from dataclasses import replace
 
 import shiboken6
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
@@ -134,50 +135,57 @@ class FollowingProgressDialog(ThemedDialogBase):
         total_episodes: int,
         seasons: list[FollowingSeason],
         episodes: list[FollowingEpisode],
+        selected_season_number: int = 0,
         parent: QWidget | None = None
     ) -> None:
         super().__init__(title="设置追更进度", parent=parent)
+        self._episodes = list(episodes)
         self._episode_counts = self._build_episode_counts(
             seasons=seasons,
-            episodes=episodes,
+            episodes=self._episodes,
             fallback_season=max(current_season_number, latest_season_number, 1),
         )
+        initial_season_number = self._initial_season_number(
+            selected_season_number=selected_season_number,
+            current_season_number=current_season_number,
+            latest_season_number=latest_season_number,
+        )
+        current_episode = self._normalize_progress_episode(
+            season_number=initial_season_number,
+            episode_number=current_episode if current_season_number == initial_season_number else 0,
+            episodes=self._episodes,
+            overflow_value=0,
+        )
+        self._global_latest_season_number = latest_season_number
+        self._global_latest_episode = latest_episode
         self._latest_season_number = latest_season_number
-        self._latest_episode = latest_episode
+        self._latest_episode = self._latest_episode_for_season(initial_season_number)
         self._total_episodes = resolve_display_total_episodes(
-            total_episodes=total_episodes,
-            latest_episode=latest_episode,
+            total_episodes=self._total_episodes_for_season(
+                initial_season_number,
+                fallback_total=total_episodes,
+            ),
+            latest_episode=self._latest_episode,
             completion_state=FollowingCompletionState.COMPLETED,
         )
-        self.accepted_season_number = current_season_number
+        self.accepted_season_number = initial_season_number
         self.accepted_episode = current_episode
 
         layout = self.content_layout()
         layout.setSpacing(14)
 
-        info_parts = []
-        latest_text = format_progress_episode(
-            "最新",
-            latest_season_number,
-            latest_episode,
-            fallback_season=latest_season_number,
-        )
-        if latest_text and self._total_episodes > 0:
-            info_parts.append(f"{latest_text} / 总 {self._total_episodes}")
-        elif latest_text:
-            info_parts.append(latest_text)
-        elif self._total_episodes > 0:
-            info_parts.append(f"总 {self._total_episodes}")
-        if info_parts:
-            info_label = QLabel("  ·  ".join(info_parts), self)
-            layout.addWidget(info_label)
+        self.info_label = QLabel("", self)
+        layout.addWidget(self.info_label)
 
         row = QHBoxLayout()
         row.addWidget(QLabel("第", self))
         self.season_spin = QSpinBox(self)
         self.season_spin.setRange(self._season_minimum(), self._season_maximum())
-        self.season_spin.setValue(max(self._season_minimum(), current_season_number or self._season_minimum()))
-        self.season_spin.setSpecialValueText("特别篇")
+        self.season_spin.setValue(
+            max(self._season_minimum(), initial_season_number or self._season_minimum())
+        )
+        if self._season_minimum() <= 0:
+            self.season_spin.setSpecialValueText("特别篇")
         row.addWidget(self.season_spin)
         row.addWidget(QLabel("季", self))
         row.addWidget(QLabel("看到第", self))
@@ -188,20 +196,13 @@ class FollowingProgressDialog(ThemedDialogBase):
         row.addStretch(1)
         layout.addLayout(row)
 
+        self.mark_latest_button = QPushButton("", self)
+        self.mark_latest_button.clicked.connect(self._set_to_latest)
+        layout.addWidget(self.mark_latest_button)
+
         self.season_spin.valueChanged.connect(self._handle_season_changed)
-        self._update_episode_range(current_season_number, preferred_episode=current_episode)
-
-        latest_pair_text = (
-            "设为最新 "
-            f"({format_progress_episode('', latest_season_number, latest_episode, fallback_season=latest_season_number).strip()})"
-            if latest_episode > 0
-            else ""
-        )
-
-        if latest_episode > 0:
-            mark_btn = QPushButton(latest_pair_text, self)
-            mark_btn.clicked.connect(self._set_to_latest)
-            layout.addWidget(mark_btn)
+        self._update_episode_range(initial_season_number, preferred_episode=current_episode)
+        self._refresh_latest_controls()
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -228,6 +229,114 @@ class FollowingProgressDialog(ThemedDialogBase):
         counts = {group.season_number: group.episode_count for group in groups}
         return counts or {fallback_season or 1: 0}
 
+    def _initial_season_number(
+        self,
+        *,
+        selected_season_number: int,
+        current_season_number: int,
+        latest_season_number: int,
+    ) -> int:
+        for season_number in (selected_season_number, current_season_number, latest_season_number):
+            normalized = max(0, int(season_number or 0))
+            if normalized in self._episode_counts:
+                return normalized
+        return self._season_minimum()
+
+    def _total_episodes_for_season(self, season_number: int, *, fallback_total: int) -> int:
+        count = int(self._episode_counts.get(int(season_number), 0) or 0)
+        return count if count > 0 else max(0, int(fallback_total or 0))
+
+    def _latest_episode_for_season(self, season_number: int) -> int:
+        normalized_season = max(0, int(season_number or 0))
+        normalized_global_season = max(0, int(self._global_latest_season_number or 0))
+        if normalized_season > 0 and normalized_global_season > 0 and normalized_season < normalized_global_season:
+            return max(0, int(self._episode_counts.get(normalized_season, 0) or 0))
+        if normalized_season != normalized_global_season:
+            return 0
+        return self._normalize_latest_episode(
+            latest_season_number=normalized_season,
+            latest_episode=self._global_latest_episode,
+            episodes=self._episodes,
+        )
+
+    def _refresh_latest_controls(self) -> None:
+        season_number = int(self.season_spin.value())
+        self._latest_season_number = season_number
+        self._latest_episode = self._latest_episode_for_season(season_number)
+        self._total_episodes = resolve_display_total_episodes(
+            total_episodes=self._total_episodes_for_season(season_number, fallback_total=0),
+            latest_episode=self._latest_episode,
+            completion_state=FollowingCompletionState.COMPLETED,
+        )
+        info_parts = []
+        latest_text = format_progress_episode(
+            "最新",
+            season_number,
+            self._latest_episode,
+            fallback_season=season_number,
+        )
+        if latest_text and self._total_episodes > 0:
+            info_parts.append(f"{latest_text} / 总 {self._total_episodes}")
+        elif latest_text:
+            info_parts.append(latest_text)
+        elif self._total_episodes > 0:
+            info_parts.append(f"总 {self._total_episodes}")
+        self.info_label.setText("  ·  ".join(info_parts))
+        self.info_label.setVisible(bool(info_parts))
+        latest_pair_text = (
+            "设为最新 "
+            f"({format_progress_episode('', season_number, self._latest_episode, fallback_season=season_number).strip()})"
+            if self._latest_episode > 0
+            else ""
+        )
+        self.mark_latest_button.setText(latest_pair_text)
+        self.mark_latest_button.setVisible(self._latest_episode > 0)
+
+    def _normalize_latest_episode(
+        self,
+        *,
+        latest_season_number: int,
+        latest_episode: int,
+        episodes: list[FollowingEpisode],
+    ) -> int:
+        return self._normalize_progress_episode(
+            season_number=latest_season_number,
+            episode_number=latest_episode,
+            episodes=episodes,
+            overflow_value=None,
+        )
+
+    def _normalize_progress_episode(
+        self,
+        *,
+        season_number: int,
+        episode_number: int,
+        episodes: list[FollowingEpisode],
+        overflow_value: int | None,
+    ) -> int:
+        normalized_season = max(0, int(season_number or 0))
+        normalized_episode = max(0, int(episode_number or 0))
+        if normalized_season <= 0 or normalized_episode <= 0:
+            return normalized_episode
+        season_count = int(self._episode_counts.get(normalized_season, 0) or 0)
+        if season_count <= 0:
+            return normalized_episode
+        local_numbers = [
+            int(episode.episode_number or 0)
+            for episode in episodes
+            if int(episode.episode_number or 0) > 0
+            and (
+                int(episode.season_number or 0) or normalized_season
+            ) == normalized_season
+            and not episode.is_special
+        ]
+        if not local_numbers:
+            return normalized_episode
+        local_latest = max(local_numbers)
+        if normalized_episode > local_latest and local_latest >= season_count:
+            return local_latest if overflow_value is None else max(0, int(overflow_value))
+        return normalized_episode
+
     def _season_minimum(self) -> int:
         return min(self._episode_counts) if self._episode_counts else 0
 
@@ -250,6 +359,7 @@ class FollowingProgressDialog(ThemedDialogBase):
 
     def _handle_season_changed(self, value: int) -> None:
         self._update_episode_range(int(value))
+        self._refresh_latest_controls()
 
     def _set_to_latest(self) -> None:
         self.season_spin.setValue(self._latest_season_number or self.season_spin.value())
@@ -542,23 +652,24 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     def _render(
         self, record: FollowingRecord, snapshot: FollowingDetailSnapshot
     ) -> None:
+        display_record = _normalized_detail_progress_record(record, snapshot)
         self.status_label.setText("")
-        self.title_label.setText(record.title)
-        self.meta_label.setText(_meta_text(record, snapshot))
+        self.title_label.setText(display_record.title)
+        self.meta_label.setText(_meta_text(display_record, snapshot))
         self._render_metadata_bundle(snapshot)
-        self._render_poster_carousel(record, snapshot)
+        self._render_poster_carousel(display_record, snapshot)
         groups = build_episode_season_groups(
             snapshot.episodes,
             seasons=snapshot.seasons,
-            fallback_season=record.season_number,
+            fallback_season=display_record.season_number,
         )
-        latest_season_number = _detail_latest_season_number(record, snapshot)
+        latest_season_number = _detail_latest_season_number(display_record, snapshot)
         self.episode_browser.set_content(
             groups=groups,
-            current_season_number=record.current_season_number,
-            current_episode=record.current_episode,
+            current_season_number=display_record.current_season_number,
+            current_episode=display_record.current_episode,
             selected_season_number=self._selected_season_number,
-            latest_episode=record.latest_episode,
+            latest_episode=display_record.latest_episode,
             latest_season_number=latest_season_number,
             next_episode=snapshot.next_episode,
         )
@@ -820,7 +931,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     def _open_progress_dialog(self) -> None:
         if self.current_following_id <= 0 or self.current_view is None:
             return
-        record = self.current_view.record
+        record = _normalized_detail_progress_record(
+            self.current_view.record,
+            self.current_view.snapshot,
+        )
         current_season_number = resolve_progress_season(
             record.current_season_number,
             record.current_episode,
@@ -835,6 +949,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             total_episodes=record.total_episodes,
             seasons=list(self.current_view.snapshot.seasons or []),
             episodes=list(self.current_view.snapshot.episodes or []),
+            selected_season_number=self._selected_season_number,
             parent=self,
         )
         if dialog.exec() != 1:
@@ -857,6 +972,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             current_season_number=season_number,
             current_episode=episode_number,
             position_seconds=0,
+            allow_regression=True,
         )
         self.load_record(self.current_following_id)
         self.status_label.setText(message)
@@ -1113,6 +1229,14 @@ def _detail_latest_season_number(
     if snapshot is None:
         return base
 
+    if base > 0 and latest_episode > 0:
+        for season in snapshot.seasons:
+            if (
+                int(season.season_number or 0) == base
+                and int(season.episode_count or 0) >= latest_episode
+            ):
+                return base
+
     exact_match_seasons = [
         int(episode.season_number)
         for episode in snapshot.episodes
@@ -1152,6 +1276,83 @@ def _display_total_episodes(
         total_episodes=record.total_episodes,
         latest_episode=record.latest_episode,
         completion_state=completion_state,
+    )
+
+
+def _normalize_loaded_season_episode(
+    *,
+    season_number: int,
+    episode_number: int,
+    seasons: list[FollowingSeason],
+    episodes: list[FollowingEpisode],
+    overflow_value: int | None,
+) -> int:
+    normalized_season = max(0, int(season_number or 0))
+    normalized_episode = max(0, int(episode_number or 0))
+    if normalized_season <= 0 or normalized_episode <= 0:
+        return normalized_episode
+
+    groups = build_episode_season_groups(
+        episodes,
+        seasons=seasons,
+        fallback_season=normalized_season,
+    )
+    group = next(
+        (item for item in groups if item.season_number == normalized_season),
+        None,
+    )
+    if group is None or group.episode_count <= 0:
+        return normalized_episode
+    local_numbers = [
+        int(episode.episode_number or 0)
+        for episode in group.episodes
+        if int(episode.episode_number or 0) > 0 and not episode.is_special
+    ]
+    if not local_numbers:
+        return normalized_episode
+    local_latest = max(local_numbers)
+    if normalized_episode > local_latest and local_latest >= group.episode_count:
+        return local_latest if overflow_value is None else max(0, int(overflow_value))
+    return normalized_episode
+
+
+def _normalized_detail_progress_record(
+    record: FollowingRecord,
+    snapshot: FollowingDetailSnapshot | None,
+) -> FollowingRecord:
+    if snapshot is None:
+        return record
+    current_season_number = resolve_progress_season(
+        record.current_season_number,
+        record.current_episode,
+        fallback_season=record.season_number,
+    )
+    latest_season_number = _detail_latest_season_number(record, snapshot)
+    current_episode = _normalize_loaded_season_episode(
+        season_number=current_season_number,
+        episode_number=record.current_episode,
+        seasons=list(snapshot.seasons or []),
+        episodes=list(snapshot.episodes or []),
+        overflow_value=0,
+    )
+    latest_episode = _normalize_loaded_season_episode(
+        season_number=latest_season_number,
+        episode_number=record.latest_episode,
+        seasons=list(snapshot.seasons or []),
+        episodes=list(snapshot.episodes or []),
+        overflow_value=None,
+    )
+    if (
+        current_season_number == record.current_season_number
+        and current_episode == record.current_episode
+        and latest_episode == record.latest_episode
+    ):
+        return record
+    return replace(
+        record,
+        current_season_number=current_season_number,
+        current_episode=current_episode,
+        latest_episode=latest_episode,
     )
 
 

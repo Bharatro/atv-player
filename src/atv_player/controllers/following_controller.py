@@ -617,6 +617,7 @@ class FollowingController:
         current_season_number: int = 0,
         current_episode: int,
         position_seconds: int,
+        allow_regression: bool = False,
     ) -> None:
         record = self._repository.get(following_id)
         if current_season_number <= 0:
@@ -627,7 +628,7 @@ class FollowingController:
                     fallback_season=getattr(record, "season_number", 0) if record is not None else 0,
                 )
             )
-        if record is not None and compare_progress(
+        if not allow_regression and record is not None and compare_progress(
             current_season_number,
             current_episode,
             record.current_season_number,
@@ -1070,6 +1071,79 @@ class FollowingController:
             completion_state=completion_state,
         )
 
+    @staticmethod
+    def _normalize_loaded_season_episode(
+        *,
+        season_number: int,
+        episode_number: int,
+        snapshot: FollowingDetailSnapshot,
+        overflow_value: int | None,
+    ) -> int:
+        normalized_season = max(0, int(season_number or 0))
+        normalized_episode = max(0, int(episode_number or 0))
+        if normalized_season <= 0 or normalized_episode <= 0:
+            return normalized_episode
+        season_count = 0
+        for season in snapshot.seasons:
+            if int(season.season_number or 0) == normalized_season:
+                season_count = max(0, int(season.episode_count or 0))
+                break
+        if season_count <= 0:
+            return normalized_episode
+        local_numbers = [
+            int(episode.episode_number or 0)
+            for episode in snapshot.episodes
+            if int(episode.episode_number or 0) > 0
+            and not episode.is_special
+            and (
+                int(episode.season_number or 0) or normalized_season
+            ) == normalized_season
+        ]
+        if not local_numbers:
+            return normalized_episode
+        local_latest = max(local_numbers)
+        if normalized_episode > local_latest and local_latest >= season_count:
+            return local_latest if overflow_value is None else max(0, int(overflow_value))
+        return normalized_episode
+
+    def _normalized_progress_record(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot | None,
+    ) -> FollowingRecord:
+        if snapshot is None:
+            return record
+        current_season_number = resolve_progress_season(
+            record.current_season_number,
+            record.current_episode,
+            fallback_season=record.season_number,
+        )
+        latest_season_number = self._latest_season_number(record, snapshot)
+        current_episode = self._normalize_loaded_season_episode(
+            season_number=current_season_number,
+            episode_number=record.current_episode,
+            snapshot=snapshot,
+            overflow_value=0,
+        )
+        latest_episode = self._normalize_loaded_season_episode(
+            season_number=latest_season_number,
+            episode_number=record.latest_episode,
+            snapshot=snapshot,
+            overflow_value=None,
+        )
+        if (
+            current_season_number == record.current_season_number
+            and current_episode == record.current_episode
+            and latest_episode == record.latest_episode
+        ):
+            return record
+        return replace(
+            record,
+            current_season_number=current_season_number,
+            current_episode=current_episode,
+            latest_episode=latest_episode,
+        )
+
     def _progress_text(
         self,
         record: FollowingRecord,
@@ -1077,6 +1151,7 @@ class FollowingController:
         snapshot: FollowingDetailSnapshot | None = None,
         completion_state: str | None = None,
     ) -> str:
+        record = self._normalized_progress_record(record, snapshot)
         parts = []
         resolved_completion_state = completion_state or self._completion_state(record, snapshot)
         display_total = self._display_total_episodes(record, completion_state=resolved_completion_state)

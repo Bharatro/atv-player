@@ -14,6 +14,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
 )
 from atv_player.metadata.models import MetadataMatch, MetadataRecord
 from atv_player.metadata.providers.tmdb import TMDBProvider
@@ -1064,6 +1065,50 @@ def test_build_snapshot_from_record_uses_last_episode_to_air_for_latest_and_tota
 
     assert following.latest_episode == 1201
     assert following.total_episodes == 1201
+
+
+def test_build_snapshot_from_record_normalizes_global_tmdb_latest() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:256783:season:2",
+        title="成何体统 第二季",
+        tmdb_id="256783",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {
+                        "episode_number": index,
+                        "season_number": 2,
+                        "name": f"第 {index} 集",
+                    }
+                    for index in range(1, 25)
+                ],
+            },
+            {
+                "label": "seasons",
+                "value": [
+                    {"season_number": 2, "name": "第二季", "episode_count": 24}
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {
+                    "episode_number": 112,
+                    "season_number": 2,
+                    "air_date": "2026-06-21",
+                },
+            },
+        ],
+    )
+
+    following, snapshot = build_snapshot_from_record(record, now=300, media_kind="anime")
+
+    assert following.latest_episode == 24
+    assert following.total_episodes == 24
+    assert snapshot.seasons == [
+        FollowingSeason(season_number=2, title="第二季", episode_count=24)
+    ]
 
 
 def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_for_ongoing_series() -> None:

@@ -271,9 +271,11 @@ class FakeController:
         current_season_number: int,
         current_episode: int,
         position_seconds: int,
+        allow_regression: bool = False,
     ) -> None:
         del position_seconds
         self.progress_updates.append((following_id, current_season_number, current_episode))
+        self.allow_regression = allow_regression
 
 
 def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_platforms(qtbot) -> None:
@@ -385,8 +387,6 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     from unittest.mock import patch
 
     from atv_player.ui.following_detail_page import FollowingProgressDialog
-
-    original_exec = FollowingProgressDialog.exec
 
     def fake_exec(self_dialog):
         self_dialog.accepted_season_number = 1
@@ -577,14 +577,16 @@ def test_following_detail_page_progress_dialog_uses_snapshot_latest_season(qtbot
     page.set_progress_button.click()
 
     assert captured == {
-        "latest_season_number": 23,
-        "latest_episode": 1163,
+        "latest_season_number": 15,
+        "latest_episode": 100,
         "season_maximum": 23,
-        "set_latest_text": "设为最新 (S23E1163)",
+        "set_latest_text": "设为最新 (S15E100)",
     }
 
 
-def test_following_progress_dialog_hides_incomparable_total_count(qtbot) -> None:
+def test_following_progress_dialog_normalizes_global_latest_to_loaded_season_episode(
+    qtbot,
+) -> None:
     dialog = FollowingProgressDialog(
         current_season_number=0,
         current_episode=0,
@@ -592,14 +594,189 @@ def test_following_progress_dialog_hides_incomparable_total_count(qtbot) -> None
         latest_episode=112,
         total_episodes=24,
         seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=24)],
-        episodes=[FollowingEpisode(episode_number=index, season_number=2) for index in range(1, 25)],
+        episodes=[
+            FollowingEpisode(episode_number=index, season_number=2)
+            for index in range(1, 25)
+        ],
     )
     qtbot.addWidget(dialog)
 
     label_text = " ".join(label.text() for label in dialog.findChildren(QLabel))
 
-    assert "最新 S2E112" in label_text
-    assert "总 24" not in label_text
+    assert "最新 S2E24 / 总 24" in label_text
+    assert dialog._latest_episode == 24
+    dialog._set_to_latest()
+    assert dialog.episode_spin.value() == 24
+
+
+def test_following_progress_dialog_uses_selected_completed_season_latest(qtbot) -> None:
+    dialog = FollowingProgressDialog(
+        current_season_number=1,
+        current_episode=0,
+        latest_season_number=2,
+        latest_episode=20,
+        total_episodes=24,
+        seasons=[
+            FollowingSeason(season_number=1, title="第一季", episode_count=24),
+            FollowingSeason(season_number=2, title="第二季", episode_count=20),
+        ],
+        episodes=[
+            FollowingEpisode(episode_number=index, season_number=1)
+            for index in range(1, 25)
+        ],
+        selected_season_number=1,
+    )
+    qtbot.addWidget(dialog)
+
+    label_text = " ".join(label.text() for label in dialog.findChildren(QLabel))
+
+    assert dialog.season_spin.text() == "1"
+    assert "最新 S1E24 / 总 24" in label_text
+    dialog._set_to_latest()
+    assert dialog.season_spin.value() == 1
+    assert dialog.episode_spin.value() == 24
+
+
+def test_following_detail_page_progress_dialog_keeps_record_latest_season_when_selected_season_has_same_episode_number(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class CurrentSeasonOnlyController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="成何体统 第二季",
+                    provider="tmdb",
+                    provider_id="tv:256783",
+                    season_number=2,
+                    current_season_number=0,
+                    current_episode=0,
+                    latest_episode=20,
+                    total_episodes=24,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=1, title="第一季", episode_count=24),
+                        FollowingSeason(season_number=2, title="第二季", episode_count=20),
+                    ],
+                    episodes=[
+                        FollowingEpisode(episode_number=index, season_number=1)
+                        for index in range(1, 25)
+                    ],
+                ),
+            )
+
+    captured: dict[str, object] = {}
+
+    def fake_exec(self_dialog):
+        captured["latest_season_number"] = self_dialog._latest_season_number
+        captured["latest_episode"] = self_dialog._latest_episode
+        captured["info_text"] = self_dialog.info_label.text()
+        captured["set_latest_text"] = self_dialog.mark_latest_button.text()
+        return 0
+
+    monkeypatch.setattr(
+        "atv_player.ui.following_detail_page.FollowingProgressDialog.exec",
+        fake_exec,
+    )
+
+    page = FollowingDetailPage(CurrentSeasonOnlyController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    page.set_progress_button.click()
+
+    assert captured == {
+        "latest_season_number": 1,
+        "latest_episode": 24,
+        "info_text": "最新 S1E24 / 总 24",
+        "set_latest_text": "设为最新 (S1E24)",
+    }
+
+
+def test_following_progress_dialog_normalizes_global_current_to_unwatched(
+    qtbot,
+) -> None:
+    dialog = FollowingProgressDialog(
+        current_season_number=2,
+        current_episode=112,
+        latest_season_number=2,
+        latest_episode=24,
+        total_episodes=24,
+        seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=24)],
+        episodes=[
+            FollowingEpisode(episode_number=index, season_number=2)
+            for index in range(1, 25)
+        ],
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.episode_spin.value() == 0
+    dialog.episode_spin.setValue(12)
+    dialog._accept()
+
+    assert dialog.accepted_season_number == 2
+    assert dialog.accepted_episode == 12
+
+
+def test_following_detail_page_manual_progress_save_allows_regression(qtbot) -> None:
+    controller = FakeController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    page._save_following_progress(
+        season_number=1,
+        episode_number=12,
+        message="已保存追更进度",
+    )
+
+    assert controller.progress_updates[-1] == (1, 1, 12)
+    assert controller.allow_regression is True
+
+
+def test_following_detail_page_normalizes_global_current_episode_in_meta(qtbot) -> None:
+    class SeasonLocalController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="成何体统 第二季",
+                    provider="tmdb",
+                    provider_id="tv:256783:season:2",
+                    season_number=2,
+                    current_season_number=2,
+                    current_episode=112,
+                    latest_episode=112,
+                    total_episodes=24,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(
+                            season_number=2,
+                            title="第二季",
+                            episode_count=24,
+                        ),
+                    ],
+                    episodes=[
+                        FollowingEpisode(episode_number=index, season_number=2)
+                        for index in range(1, 25)
+                    ],
+                ),
+            )
+
+    page = FollowingDetailPage(SeasonLocalController())
+    qtbot.addWidget(page)
+    page.load_record(1)
+
+    assert "S2E112" not in page.meta_label.text()
+    assert "看到 S2E24" not in page.meta_label.text()
+    assert "最新 S2E24" in page.meta_label.text()
 
 
 def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None:

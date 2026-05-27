@@ -282,6 +282,41 @@ def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object
     return 0
 
 
+def _season_local_latest_episode(
+    raw_episodes: list[dict[str, object]],
+    raw_seasons: list[dict[str, object]],
+    *,
+    season_number: int,
+    latest_episode: int,
+) -> int:
+    normalized_season = _to_int(season_number)
+    normalized_latest = _to_int(latest_episode)
+    if normalized_season <= 0 or normalized_latest <= 0:
+        return 0
+
+    season_episode_count = 0
+    for raw_season in raw_seasons:
+        if _to_int(raw_season.get("season_number")) == normalized_season:
+            season_episode_count = _to_int(raw_season.get("episode_count"))
+            break
+    if season_episode_count <= 0:
+        return 0
+
+    local_numbers = {
+        episode.episode_number
+        for episode in (_episode_from_raw(item) for item in raw_episodes)
+        if episode.episode_number > 0
+        and not episode.is_special
+        and (episode.season_number or normalized_season) == normalized_season
+    }
+    if not local_numbers:
+        return 0
+    local_latest = max(local_numbers)
+    if normalized_latest > local_latest and local_latest >= season_episode_count:
+        return local_latest
+    return 0
+
+
 def _next_episode_to_air_from_detail_fields(
     detail_fields: list[dict[str, object]],
 ) -> FollowingEpisode | None:
@@ -707,6 +742,14 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
     next_episode = _next_episode_to_air_from_detail_fields(detail_fields)
     ongoing = next_episode is not None or _has_future_episode(raw_episodes, now=now)
+    season_local_latest = _season_local_latest_episode(
+        raw_episodes,
+        raw_seasons,
+        season_number=season_number,
+        latest_episode=last_ep_to_air,
+    )
+    if season_local_latest > 0:
+        last_ep_to_air = season_local_latest
     if last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:

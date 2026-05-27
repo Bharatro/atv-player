@@ -371,6 +371,42 @@ def test_following_controller_record_playback_progress_ignores_older_episode_rep
     assert loaded.position_seconds == 50
 
 
+def test_following_controller_manual_progress_allows_older_episode(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="成何体统 第二季",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:256783",
+            season_number=2,
+            current_season_number=2,
+            current_episode=112,
+            position_seconds=50,
+            latest_episode=24,
+            total_episodes=24,
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 100)
+
+    controller.record_playback_progress(
+        following_id,
+        current_season_number=2,
+        current_episode=12,
+        position_seconds=0,
+        allow_regression=True,
+    )
+
+    loaded = repo.get(following_id)
+    assert loaded is not None
+    assert loaded.current_season_number == 2
+    assert loaded.current_episode == 12
+    assert loaded.position_seconds == 0
+
+
 def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     service = FakeTMDBUrlSearchService()
@@ -783,6 +819,41 @@ def test_following_controller_card_does_not_mark_cross_season_ongoing_series_com
 
     assert cards[0].progress_text == "看到 S15E581 · 最新 S23E1163"
     assert cards[0].update_text == "有 582 集更新"
+
+
+def test_following_controller_card_treats_out_of_range_season_current_as_unwatched(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="成何体统 第二季",
+            provider="tmdb",
+            provider_id="tv:256783",
+            season_number=2,
+            current_season_number=2,
+            current_episode=112,
+            latest_episode=112,
+            total_episodes=24,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=24)],
+            episodes=[
+                FollowingEpisode(season_number=2, episode_number=index)
+                for index in range(1, 25)
+            ],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert "S2E112" not in cards[0].progress_text
+    assert "看到 S2E24" not in cards[0].progress_text
+    assert "最新 S2E24" in cards[0].progress_text
 
 
 def test_following_controller_adds_from_player_and_updates_progress(tmp_path: Path) -> None:
