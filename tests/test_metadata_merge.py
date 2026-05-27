@@ -108,11 +108,7 @@ def test_merge_metadata_uses_youku_metadata_for_empty_fields() -> None:
     assert vod.vod_director == "导演甲"
     assert vod.type_name == "剧情 / 悬疑"
     assert vod.vod_area == "中国大陆"
-    assert [(field.label, field.value) for field in vod.detail_fields[:2]] == [
-        ("更新状态", "更新至第8集"),
-        ("优酷标签", "独播"),
-    ]
-    assert vod.detail_fields[2].label == "官方链接"
+    assert [(field.label, field.value) for field in vod.detail_fields] == [("官方链接", "优酷")]
 
 
 def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_official_douban_overview_and_rating() -> None:
@@ -390,6 +386,32 @@ def test_merge_metadata_deduplicates_same_official_platform_with_different_label
         ("官方链接", "腾讯视频"),
         ("TMDB ID", "323238"),
     ]
+
+
+def test_merge_metadata_hides_raw_douban_official_links_from_detail_fields() -> None:
+    vod = VodItem(vod_id="v1", vod_name="都市古医仙")
+    record = MetadataRecord(
+        provider="official_douban",
+        provider_id="38481841",
+        title="都市古医仙",
+        douban_id=38481841,
+        detail_fields=[
+            {
+                "label": "official_links",
+                "value": [
+                    {
+                        "label": "腾讯视频",
+                        "provider": "tencent",
+                        "url": "https://v.qq.com/x/cover/mzc00200iwr7bnw/p4102ik3bko.html",
+                    }
+                ],
+            }
+        ],
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["official_douban"])
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == []
 
 
 def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> None:
