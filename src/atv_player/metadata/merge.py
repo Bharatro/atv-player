@@ -17,7 +17,18 @@ _FIELD_PROVIDER_PRIORITY = {
     "year": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
     "actors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
     "directors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
-    "genres": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "genres": [
+        "tmdb",
+        "official_douban",
+        "local_douban",
+        "remote_douban",
+        "douban",
+        "bangumi",
+        "iqiyi",
+        "sohu",
+        "plugin",
+        "youku",
+    ],
     "country": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
     "language": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
     "douban_id": ["official_douban", "local_douban", "douban", "plugin", "iqiyi"],
@@ -35,6 +46,16 @@ _OVERVIEW_PROVIDER_PRIORITY = {
     "remote_douban": 7,
     "plugin": 8,
     "youku": 9,
+}
+_AUTHORITATIVE_GENRE_PROVIDERS = {
+    "tmdb",
+    "official_douban",
+    "local_douban",
+    "remote_douban",
+    "douban",
+}
+_LOW_VALUE_PROVIDER_GENRES = {
+    "youku": {"电视剧", "剧集"},
 }
 
 _TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban", "sohu"}
@@ -121,6 +142,12 @@ def _can_override(vod: VodItem, field_name: str, provider: str) -> bool:
     current = vod.metadata_field_sources.get(field_name, "")
     if not current:
         return True
+    if (
+        field_name == "genres"
+        and current in _AUTHORITATIVE_GENRE_PROVIDERS
+        and provider not in _AUTHORITATIVE_GENRE_PROVIDERS
+    ):
+        return False
     return _provider_rank(field_name, provider) <= _provider_rank(field_name, current)
 
 
@@ -133,6 +160,17 @@ def _can_override_overview(vod: VodItem, record: MetadataRecord) -> bool:
 
 def _set_field_source(vod: VodItem, field_name: str, provider: str) -> None:
     vod.metadata_field_sources[field_name] = provider
+
+
+def _record_genres_for_merge(record: MetadataRecord) -> list[str]:
+    genres = [
+        str(item).strip()
+        for item in list(record.genres or [])
+        if str(item).strip()
+    ]
+    if len(genres) == 1 and genres[0] in _LOW_VALUE_PROVIDER_GENRES.get(record.provider, set()):
+        return []
+    return genres
 
 
 def _tmdb_media_type(record: MetadataRecord) -> str:
@@ -446,8 +484,9 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
     if record.year and (not vod.vod_year or _can_override(vod, "year", record.provider)):
         vod.vod_year = record.year
         _set_field_source(vod, "year", record.provider)
-    if record.genres and (not vod.type_name or _can_override(vod, "genres", record.provider)):
-        vod.type_name = " / ".join(record.genres)
+    record_genres = _record_genres_for_merge(record)
+    if record_genres and (not vod.type_name or _can_override(vod, "genres", record.provider)):
+        vod.type_name = " / ".join(record_genres)
         _set_field_source(vod, "genres", record.provider)
     if record.country and (not vod.vod_area or _can_override(vod, "country", record.provider)):
         vod.vod_area = record.country
@@ -530,8 +569,9 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
     if not vod.vod_year and record.year:
         vod.vod_year = record.year
         _set_field_source(vod, "year", record.provider)
-    if not vod.type_name and record.genres:
-        vod.type_name = " / ".join(record.genres)
+    record_genres = _record_genres_for_merge(record)
+    if not vod.type_name and record_genres:
+        vod.type_name = " / ".join(record_genres)
         _set_field_source(vod, "genres", record.provider)
     if not vod.vod_area and record.country:
         vod.vod_area = record.country
@@ -595,7 +635,7 @@ def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
         vod.vod_name = record.title
     _sync_poster_candidates(vod, primary=record.poster)
     vod.vod_year = record.year
-    vod.type_name = " / ".join(record.genres)
+    vod.type_name = " / ".join(_record_genres_for_merge(record))
     vod.vod_area = record.country
     vod.vod_lang = record.language
     vod.vod_director = ",".join(record.directors)

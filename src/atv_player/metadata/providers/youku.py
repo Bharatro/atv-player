@@ -14,11 +14,12 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 class YoukuMetadataProvider:
     name = "youku"
     _SEARCH_URL = "https://search.youku.com/api/search"
-    _CACHE_VERSION = "metadata-v2"
+    _CACHE_VERSION = "metadata-v3"
     _SEARCH_USER_AGENT = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     )
+    _LIVE_ACTION_CHANNEL_ONLY_GENRES = {"电视剧", "剧集"}
 
     def __init__(self, get=httpx.get) -> None:
         self._get = get
@@ -253,6 +254,7 @@ class YoukuMetadataProvider:
         feature = self._feature_metadata(payload.get("feature"))
         if not genres and feature.get("genre"):
             genres = [str(feature["genre"])]
+        genres = self._filter_live_action_channel_only_genres(genres)
         badges = self._tokens_from_values(
             payload.get("cornerMark"),
             payload.get("corner_mark"),
@@ -340,6 +342,11 @@ class YoukuMetadataProvider:
                     output.append(normalized)
                     seen.add(normalized)
         return output
+
+    def _filter_live_action_channel_only_genres(self, genres: list[str]) -> list[str]:
+        if len(genres) == 1 and genres[0] in self._LIVE_ACTION_CHANNEL_ONLY_GENRES:
+            return []
+        return genres
 
     def _people_values(self, value: object) -> list[str]:
         text = self._text_value(value)

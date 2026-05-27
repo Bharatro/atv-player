@@ -196,7 +196,7 @@ def test_youku_metadata_provider_search_maps_real_program_card_metadata() -> Non
     assert record.country == "中国"
     assert record.directors == ["王之"]
     assert record.actors == ["潘粤明", "王鹤棣", "任敏", "姜珮瑶"]
-    assert record.genres == ["电视剧"]
+    assert record.genres == []
     assert {"label": "更新状态", "value": "28集全"} in record.detail_fields
     assert {"label": "优酷标签", "value": "独播"} in record.detail_fields
 
@@ -206,9 +206,9 @@ def test_youku_metadata_provider_versions_search_and_detail_cache_keys() -> None
 
     assert provider.search_cache_key(MetadataQuery(title="黑夜告白", year="2026")) == (
         "黑夜告白",
-        "2026#metadata-v2",
+        "2026#metadata-v3",
     )
     assert (
         provider.detail_cache_key("https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html")
-        == "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html:metadata-v2"
+        == "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html:metadata-v3"
     )

@@ -434,6 +434,60 @@ def test_merge_metadata_prefers_bangumi_text_fields_but_keeps_tmdb_poster() -> N
     assert vod.vod_pic == "https://img.tmdb/poster.jpg"
 
 
+def test_merge_metadata_keeps_tmdb_genres_over_site_provider() -> None:
+    vod = VodItem(vod_id="v1", vod_name="雨霖铃")
+    tmdb = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:254486",
+        genres=["剧情", "武侠", "古装"],
+    )
+    iqiyi = MetadataRecord(
+        provider="iqiyi",
+        provider_id="iqiyi:1",
+        genres=["电视剧"],
+    )
+
+    merge_metadata_record(vod, tmdb, provider_priority=["tmdb"])
+    merge_metadata_record(vod, iqiyi, provider_priority=["iqiyi"])
+
+    assert vod.type_name == "剧情 / 武侠 / 古装"
+    assert vod.metadata_field_sources["genres"] == "tmdb"
+
+
+def test_merge_metadata_allows_tmdb_genres_to_replace_site_supplement() -> None:
+    vod = VodItem(vod_id="v1", vod_name="雨霖铃")
+    iqiyi = MetadataRecord(
+        provider="iqiyi",
+        provider_id="iqiyi:1",
+        genres=["电视剧"],
+    )
+    tmdb = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:254486",
+        genres=["剧情", "武侠", "古装"],
+    )
+
+    merge_metadata_record(vod, iqiyi, provider_priority=["iqiyi"])
+    merge_metadata_record(vod, tmdb, provider_priority=["tmdb"])
+
+    assert vod.type_name == "剧情 / 武侠 / 古装"
+    assert vod.metadata_field_sources["genres"] == "tmdb"
+
+
+def test_fill_missing_metadata_ignores_youku_live_action_channel_genre() -> None:
+    vod = VodItem(vod_id="v1", vod_name="雨霖铃")
+    youku = MetadataRecord(
+        provider="youku",
+        provider_id="https://v.youku.com/v_show/id_demo.html",
+        genres=["电视剧"],
+    )
+
+    fill_missing_metadata_record(vod, youku)
+
+    assert vod.type_name == ""
+    assert "genres" not in vod.metadata_field_sources
+
+
 def test_merge_metadata_promotes_higher_priority_poster_and_keeps_previous_candidate() -> None:
     vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_pic="https://img.site/poster.jpg")
     record = MetadataRecord(
