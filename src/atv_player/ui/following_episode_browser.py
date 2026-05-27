@@ -414,11 +414,9 @@ class EpisodeItemDelegate(QStyledItemDelegate):
                 status_text,
                 padding_x=metrics.badge_padding_x,
             ) + 8
-        painter.drawText(
-            title_line_rect.adjusted(0, 0, -badge_width, 0),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
-            title,
-        )
+        title_flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap
+        title_draw_rect = title_line_rect.adjusted(0, 0, -badge_width, 0)
+        painter.drawText(title_draw_rect, title_flags, title)
         if status_text:
             badge_text_width = _status_badge_width(
                 painter,
@@ -439,7 +437,12 @@ class EpisodeItemDelegate(QStyledItemDelegate):
                 radius=max(8, metrics.badge_height // 2),
             )
 
-        meta_y = title_line_rect.bottom() + 6
+        meta_y = _episode_meta_y(
+            font_metrics=painter.fontMetrics(),
+            title_rect=title_draw_rect,
+            title=title,
+            gap=2,
+        )
         if is_special and "特别篇" not in meta_text:
             meta_text = " · ".join([part for part in (meta_text, "特别篇") if part])
 
@@ -1215,6 +1218,16 @@ def _card_metrics_for_mode(mode: str) -> EpisodeCardMetrics:
         EpisodeDisplayMode.POSTER: _card_metrics_for_columns(2),
         EpisodeDisplayMode.COMPACT: _card_metrics_for_columns(3),
     }.get(mode, _card_metrics_for_columns(1))
+
+
+def _episode_meta_y(*, font_metrics, title_rect: QRect, title: str, gap: int) -> int:
+    title_bounds = font_metrics.boundingRect(
+        title_rect,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+        title,
+    )
+    title_bottom = min(title_rect.bottom(), title_bounds.bottom())
+    return max(title_rect.top(), title_bottom) + max(0, int(gap))
 
 
 def _overview_max_height(columns: int) -> int:

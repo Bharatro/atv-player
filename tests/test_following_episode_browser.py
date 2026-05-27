@@ -1,7 +1,8 @@
 from datetime import date
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QFontMetrics, QImage
+from PySide6.QtWidgets import QLabel
 
 from atv_player.following_models import (
     FollowingEpisode,
@@ -20,6 +21,7 @@ from atv_player.ui.following_episode_browser import (
     STATUS_TEXT_ROLE,
     WATCHED_ROLE,
     _card_metrics_for_columns,
+    _episode_meta_y,
     build_episode_season_groups,
 )
 
@@ -493,6 +495,25 @@ def test_following_episode_browser_keeps_thumbnail_size_constant_across_columns(
 
     assert (full.thumbnail_width, full.thumbnail_height) == (poster.thumbnail_width, poster.thumbnail_height)
     assert (poster.thumbnail_width, poster.thumbnail_height) == (compact.thumbnail_width, compact.thumbnail_height)
+
+
+def test_episode_meta_y_tracks_actual_single_line_title_height(qtbot) -> None:
+    label = QLabel()
+    qtbot.addWidget(label)
+    metrics = QFontMetrics(label.font())
+    title_rect = label.rect()
+    title_rect.setWidth(240)
+    title_rect.setHeight(_card_metrics_for_columns(1).title_height)
+
+    meta_y = _episode_meta_y(
+        font_metrics=metrics,
+        title_rect=title_rect,
+        title="24. 一昂不只是 一昂",
+        gap=2,
+    )
+
+    assert meta_y < title_rect.bottom()
+    assert meta_y <= metrics.lineSpacing() + 4
 
 
 def test_following_episode_browser_clicking_card_emits_episode_activated(qtbot) -> None:
