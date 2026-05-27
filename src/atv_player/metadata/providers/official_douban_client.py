@@ -37,8 +37,15 @@ class LocalDoubanClient:
         "www.iqiyi.com": ("iqiyi", "爱奇艺"),
         "m.iqiyi.com": ("iqiyi", "爱奇艺"),
         "www.bilibili.com": ("bilibili", "B站"),
+        "m.bilibili.com": ("bilibili", "哔哩哔哩"),
         "www.mgtv.com": ("mgtv", "芒果TV"),
         "tv.sohu.com": ("sohu", "搜狐视频"),
+    }
+    _OFFICIAL_LINK_SOURCE_IDS = {
+        "1": ("tencent", "腾讯视频"),
+        "3": ("youku", "优酷视频"),
+        "8": ("bilibili", "哔哩哔哩"),
+        "9": ("iqiyi", "爱奇艺"),
     }
     _OFFICIAL_LINK_SOURCE_KEYS = {
         "qq": ("tencent", "腾讯视频"),
@@ -240,9 +247,61 @@ class LocalDoubanClient:
         return "", ""
 
     @classmethod
+    def _append_official_link(cls, links: list[dict[str, str]], link: dict[str, str]) -> None:
+        provider = str(link.get("provider") or "").strip()
+        if not provider:
+            return
+        url = str(link.get("url") or "").strip()
+        label = str(link.get("label") or "").strip()
+        for existing in links:
+            if existing.get("provider") != provider:
+                continue
+            if url and not existing.get("url"):
+                existing["url"] = url
+            if label and not existing.get("label"):
+                existing["label"] = label
+            return
+        links.append({"provider": provider, "label": label, "url": url})
+
+    @classmethod
+    def _unwrap_douban_play_link(cls, url: str) -> str:
+        candidate = unescape(str(url or "").strip())
+        if not candidate:
+            return ""
+        parsed = urlparse(candidate)
+        host = (parsed.hostname or "").lower().strip(".")
+        if host in {"douban.com", "www.douban.com"} and parsed.path.startswith("/link2/"):
+            linked = parse_qs(parsed.query).get("url", [""])[0].strip()
+            return unescape(linked)
+        return candidate
+
+    @classmethod
+    def _extract_source_play_links(cls, text: str) -> list[dict[str, str]]:
+        links: list[dict[str, str]] = []
+        for source_match in re.finditer(r"sources\[(\d+)\]\s*=\s*\[", text, flags=re.IGNORECASE):
+            source_id = source_match.group(1)
+            end = text.find("];", source_match.end())
+            if end < 0:
+                continue
+            block = text[source_match.end() : end]
+            play_match = re.search(
+                r"""\bplay_link\s*:\s*(["'])(.*?)\1""",
+                block,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if play_match is None:
+                continue
+            url = cls._unwrap_douban_play_link(play_match.group(2))
+            provider, label = cls._OFFICIAL_LINK_SOURCE_IDS.get(source_id, ("", ""))
+            if not provider:
+                provider, label = cls._official_link_provider(url)
+            if provider:
+                links.append({"provider": provider, "label": label, "url": url})
+        return links
+
+    @classmethod
     def _extract_official_links(cls, text: str) -> list[dict[str, str]]:
         links: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
         for match in re.finditer(
             r"(<a\b[^>]*>)(.*?)</a>",
             text,
@@ -264,11 +323,9 @@ class LocalDoubanClient:
             if url.lower().startswith("javascript:"):
                 url = ""
             label = label or default_label
-            key = (provider, url)
-            if key in seen:
-                continue
-            links.append({"provider": provider, "label": label, "url": url})
-            seen.add(key)
+            cls._append_official_link(links, {"provider": provider, "label": label, "url": url})
+        for link in cls._extract_source_play_links(text):
+            cls._append_official_link(links, link)
         return links
 
     def get_detail(self, douban_id: int | str) -> dict[str, object] | None:

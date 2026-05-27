@@ -9,7 +9,7 @@ from atv_player.metadata.providers.official_douban_client import DoubanBlockedEr
 
 class OfficialDoubanProvider:
     name = "official_douban"
-    _DETAIL_CACHE_VERSION = "playbtn-v2"
+    _DETAIL_CACHE_VERSION = "sources-v3"
 
     def __init__(self, local_client) -> None:
         self._local_client = local_client

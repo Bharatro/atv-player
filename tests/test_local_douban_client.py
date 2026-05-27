@@ -274,3 +274,71 @@ def test_local_douban_client_parses_douban_playbtn_vendor_entries() -> None:
         {"provider": "youku", "label": "优酷视频", "url": ""},
         {"provider": "iqiyi", "label": "爱奇艺", "url": ""},
     ]
+
+
+def test_local_douban_client_parses_douban_sources_play_links() -> None:
+    html = """
+    <html>
+      <head><title>名侦探柯南 (豆瓣)</title></head>
+      <body>
+        <span property="v:itemreviewed">名侦探柯南</span>
+        <span class="year">(1996)</span>
+        <div class="gray_ad">
+          <ul class="bs">
+            <li><a class="playBtn" data-cn="腾讯视频" data-source="1" href="javascript: void 0;">腾讯视频</a></li>
+            <li><a class="playBtn" data-cn="哔哩哔哩" data-source="8" href="javascript: void 0;">哔哩哔哩</a></li>
+            <li><a class="playBtn" data-cn="优酷视频" data-source="3" href="javascript: void 0;">优酷视频</a></li>
+            <li><a class="playBtn" data-cn="爱奇艺" data-source="9" href="javascript: void 0;">爱奇艺</a></li>
+          </ul>
+        </div>
+        <script>
+          var sources = {};
+          sources[1] = [{
+            play_link: "https://www.douban.com/link2/?url=https%3A%2F%2Fv.qq.com%2Fx%2Fcover%2F53q0eh78q97e4d1%2Fx00174aq5no.html%3Fptag%3Dnewdouban.cartoon&amp;subtype=1&amp;type=online-video",
+            ep: "1"
+          }];
+          sources[8] = [{
+            play_link: "https://www.douban.com/link2/?url=https%3A%2F%2Fm.bilibili.com%2Fbangumi%2Fplay%2Fep323085%3Fbsource%3Ddoubanh5&amp;subtype=8&amp;type=online-video",
+            ep: "1"
+          }];
+          sources[3] = [{
+            play_link: "https://www.douban.com/link2/?url=https%3A%2F%2Fm.youku.com%2Falipay_video%2Fid_XMzk1NjM1MjAw.html%3Frefer%3Desfhz_operation.xuka.xj_00003036_000000_FNZfau_19010900&amp;subtype=3&amp;type=online-video",
+            ep: "1"
+          }];
+          sources[9] = [{
+            play_link: "https://www.douban.com/link2/?url=http%3A%2F%2Fwww.iqiyi.com%2Fv_19rrnfnjyw.html%3Fvfm%3Dm_331_dbdy%26fv%3D4904d94982104144a1548dd9040df241&amp;subtype=9&amp;type=online-video",
+            ep: "1"
+          }];
+        </script>
+      </body>
+    </html>
+    """
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=html)),
+    )
+
+    detail = client.get_detail("1463371")
+
+    assert detail is not None
+    assert detail["official_links"] == [
+        {
+            "provider": "tencent",
+            "label": "腾讯视频",
+            "url": "https://v.qq.com/x/cover/53q0eh78q97e4d1/x00174aq5no.html?ptag=newdouban.cartoon",
+        },
+        {
+            "provider": "bilibili",
+            "label": "哔哩哔哩",
+            "url": "https://m.bilibili.com/bangumi/play/ep323085?bsource=doubanh5",
+        },
+        {
+            "provider": "youku",
+            "label": "优酷视频",
+            "url": "https://m.youku.com/alipay_video/id_XMzk1NjM1MjAw.html?refer=esfhz_operation.xuka.xj_00003036_000000_FNZfau_19010900",
+        },
+        {
+            "provider": "iqiyi",
+            "label": "爱奇艺",
+            "url": "http://www.iqiyi.com/v_19rrnfnjyw.html?vfm=m_331_dbdy&fv=4904d94982104144a1548dd9040df241",
+        },
+    ]
