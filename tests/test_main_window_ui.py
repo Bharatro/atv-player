@@ -11,10 +11,13 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
-from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.following_controller import FollowingDetailView
-from atv_player.controllers.player_controller import PlayerSession
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.controllers.player_controller import PlayerController, PlayerSession
+from atv_player.danmaku.models import (
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
 from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord
 from atv_player.models import (
     AppConfig,
@@ -22,11 +25,12 @@ from atv_player.models import (
     FavoriteRecord,
     HistoryRecord,
     OpenPlayerRequest,
-    PlayItem,
     PlaybackDetailField,
     PlaybackDetailFieldAction,
+    PlayItem,
     VodItem,
 )
+from atv_player.player.startup import PlaybackStartupStage
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.ui.main_window import (
     MainWindow,
@@ -423,6 +427,46 @@ def test_main_window_matches_player_following_by_external_ids(qtbot) -> None:
 
     assert following.deleted == [7]
     assert following.add_from_player_calls == []
+
+
+def test_main_window_adds_failed_player_item_without_marking_current_episode(qtbot) -> None:
+    class AddTrackingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.add_from_player_calls: list[dict[str, object]] = []
+
+        def add_from_player(self, **kwargs) -> None:
+            self.add_from_player_calls.append(kwargs)
+
+    following = AddTrackingFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(title="第112集", url="https://media.example/112.m3u8", vod_id="vod-1")
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="vod-1", vod_name="成何体统第二季"),
+            playlist=[item],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="browse",
+            source_key="",
+        ),
+        _startup_state=SimpleNamespace(stage=PlaybackStartupStage.FAILED),
+        video=SimpleNamespace(position_seconds=lambda: 0),
+    )
+
+    window._toggle_player_item_following(item)
+
+    assert following.add_from_player_calls
+    assert following.add_from_player_calls[0]["mark_current_episode"] is False
 
 
 def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> None:

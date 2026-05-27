@@ -1,5 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QLabel
 
 from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.following_models import (
@@ -18,6 +19,7 @@ from atv_player.ui.following_detail_page import (
     FollowingDetailPage,
     FollowingEpisodePreviewDialog,
     FollowingPersonCard,
+    FollowingProgressDialog,
     QDesktopServices,
     _person_avatar,
 )
@@ -580,6 +582,24 @@ def test_following_detail_page_progress_dialog_uses_snapshot_latest_season(qtbot
         "season_maximum": 23,
         "set_latest_text": "设为最新 (S23E1163)",
     }
+
+
+def test_following_progress_dialog_hides_incomparable_total_count(qtbot) -> None:
+    dialog = FollowingProgressDialog(
+        current_season_number=0,
+        current_episode=0,
+        latest_season_number=2,
+        latest_episode=112,
+        total_episodes=24,
+        seasons=[FollowingSeason(season_number=2, title="第二季", episode_count=24)],
+        episodes=[FollowingEpisode(episode_number=index, season_number=2) for index in range(1, 25)],
+    )
+    qtbot.addWidget(dialog)
+
+    label_text = " ".join(label.text() for label in dialog.findChildren(QLabel))
+
+    assert "最新 S2E112" in label_text
+    assert "总 24" not in label_text
 
 
 def test_following_detail_page_loads_unloaded_season_on_selection(qtbot) -> None:

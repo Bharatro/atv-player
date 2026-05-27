@@ -31,6 +31,7 @@ from atv_player.following_models import (
     format_progress_episode,
     progress_at_or_beyond,
     provider_priority_for_media_kind,
+    resolve_display_total_episodes,
     resolve_following_completion_state,
     resolve_new_episode_count,
     resolve_progress_season,
@@ -517,11 +518,13 @@ class FollowingController:
         source_key: str,
         position_seconds: int,
         playlist: list[PlayItem] | None = None,
+        mark_current_episode: bool = True,
     ) -> FollowingRecord:
         now = self._now()
         playlist_items = list(playlist or [item])
         playlist_numbers = self._playlist_episode_numbers(playlist_items)
-        episode_number = self._playlist_position(item, playlist_items) or infer_playlist_episode_number(item, playlist_items) or 0
+        inferred_episode_number = self._playlist_position(item, playlist_items) or infer_playlist_episode_number(item, playlist_items) or 0
+        episode_number = inferred_episode_number if mark_current_episode else 0
         provider_id = f"{source_kind}:{source_key}:{vod.vod_id or item.vod_id or item.media_title or item.title}"
         external_ids = self._external_ids_from_vod(vod, item)
         metadata_raw_episodes = self._metadata_raw_episodes_from_vod(vod)
@@ -559,7 +562,7 @@ class FollowingController:
             ],
             current_season_number=resolve_progress_season(season_number, episode_number, fallback_season=season_number),
             current_episode=episode_number,
-            position_seconds=position_seconds,
+            position_seconds=position_seconds if mark_current_episode else 0,
             latest_episode=latest_episode,
             previous_latest_episode=latest_episode,
             total_episodes=total_episodes,
@@ -573,7 +576,7 @@ class FollowingController:
             ),
             created_at=now,
             updated_at=now,
-            last_played_at=now,
+            last_played_at=now if mark_current_episode else 0,
             next_check_after=now,
         )
         if record.watched_latest_episode:
@@ -1061,13 +1064,11 @@ class FollowingController:
 
     @staticmethod
     def _display_total_episodes(record: FollowingRecord, *, completion_state: str) -> int:
-        total = max(0, int(record.total_episodes or 0))
-        latest = max(0, int(record.latest_episode or 0))
-        if total <= 0:
-            return 0
-        if completion_state == FollowingCompletionState.COMPLETED or latest <= 0 or total > latest:
-            return total
-        return 0
+        return resolve_display_total_episodes(
+            total_episodes=record.total_episodes,
+            latest_episode=record.latest_episode,
+            completion_state=completion_state,
+        )
 
     def _progress_text(
         self,

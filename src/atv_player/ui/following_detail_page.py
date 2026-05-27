@@ -31,6 +31,7 @@ from atv_player.following_models import (
     FollowingSeason,
     format_progress_episode,
     progress_at_or_beyond,
+    resolve_display_total_episodes,
     resolve_following_completion_state,
     resolve_progress_season,
 )
@@ -143,7 +144,11 @@ class FollowingProgressDialog(ThemedDialogBase):
         )
         self._latest_season_number = latest_season_number
         self._latest_episode = latest_episode
-        self._total_episodes = total_episodes
+        self._total_episodes = resolve_display_total_episodes(
+            total_episodes=total_episodes,
+            latest_episode=latest_episode,
+            completion_state=FollowingCompletionState.COMPLETED,
+        )
         self.accepted_season_number = current_season_number
         self.accepted_episode = current_episode
 
@@ -157,12 +162,12 @@ class FollowingProgressDialog(ThemedDialogBase):
             latest_episode,
             fallback_season=latest_season_number,
         )
-        if latest_text and total_episodes > 0:
-            info_parts.append(f"{latest_text} / 总 {total_episodes}")
+        if latest_text and self._total_episodes > 0:
+            info_parts.append(f"{latest_text} / 总 {self._total_episodes}")
         elif latest_text:
             info_parts.append(latest_text)
-        elif total_episodes > 0:
-            info_parts.append(f"总 {total_episodes}")
+        elif self._total_episodes > 0:
+            info_parts.append(f"总 {self._total_episodes}")
         if info_parts:
             info_label = QLabel("  ·  ".join(info_parts), self)
             layout.addWidget(info_label)
@@ -1139,21 +1144,15 @@ def _display_total_episodes(
     record: FollowingRecord,
     snapshot: FollowingDetailSnapshot | None = None,
 ) -> int:
-    total = max(0, int(record.total_episodes or 0))
-    latest = max(0, int(record.latest_episode or 0))
-    if total <= 0:
-        return 0
     completion_state = resolve_following_completion_state(
         episodes=snapshot.episodes if snapshot is not None else [],
         next_episode=snapshot.next_episode if snapshot is not None else None,
     )
-    if (
-        completion_state == FollowingCompletionState.COMPLETED
-        or latest <= 0
-        or total > latest
-    ):
-        return total
-    return 0
+    return resolve_display_total_episodes(
+        total_episodes=record.total_episodes,
+        latest_episode=record.latest_episode,
+        completion_state=completion_state,
+    )
 
 
 def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None = None) -> str:

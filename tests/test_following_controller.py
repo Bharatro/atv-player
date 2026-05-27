@@ -828,6 +828,30 @@ def test_following_controller_adds_from_player_and_updates_progress(tmp_path: Pa
     assert snapshot.episodes[0].title == "风起"
 
 
+def test_following_controller_add_from_player_can_skip_initial_watched_progress(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+    vod = VodItem(vod_id="vod-1", vod_name="成何体统第二季")
+    item = PlayItem(title="第112集", url="https://media.example/112.m3u8", media_title="成何体统第二季", vod_id="vod-1")
+
+    record = controller.add_from_player(
+        vod=vod,
+        item=item,
+        source_kind="browse",
+        source_key="",
+        position_seconds=0,
+        playlist=[item],
+        mark_current_episode=False,
+    )
+
+    loaded = repo.get(record.id)
+    assert loaded is not None
+    assert loaded.current_episode == 0
+    assert loaded.position_seconds == 0
+    assert loaded.latest_episode == 112
+    assert loaded.watched_latest_episode is False
+
+
 def test_following_controller_uses_playlist_count_for_latest_and_metadata_count_for_total(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)

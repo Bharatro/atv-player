@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import inspect
 import json
 import platform
@@ -12,8 +13,25 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal, QSize, QPoint, QEvent, QRect
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QGuiApplication, QKeySequence, QShortcut, QMouseEvent
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDesktopServices,
+    QGuiApplication,
+    QKeySequence,
+    QMouseEvent,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -37,32 +55,37 @@ from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
 from atv_player.following_progress import resolve_following_playback_progress
 from atv_player.log_store import AppLogFilter
-from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import (
     AppConfig,
     FavoriteRecord,
     HistoryRecord,
     OpenPlayerRequest,
-    PlayItem,
     PlaybackDetailFieldAction,
+    PlayItem,
     VodItem,
 )
 from atv_player.paths import app_cache_dir, app_data_dir
-from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.player.startup import PlaybackStartupStage
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.browse_page import BrowsePage
+from atv_player.ui.favorites_page import FavoritesPage
 from atv_player.ui.following_detail_page import FollowingDetailPage
 from atv_player.ui.following_page import FollowingPage
-from atv_player.ui.help_dialog import ShortcutHelpDialog, shortcut_entries_for, show_shortcut_help_dialog
-from atv_player.ui.icon_cache import load_tinted_icon
-from atv_player.ui.plugin_actions import PluginActions
-from atv_player.ui.poster_grid_page import PosterGridPage
-from atv_player.ui.favorites_page import FavoritesPage
+from atv_player.ui.help_dialog import (
+    ShortcutHelpDialog,
+    shortcut_entries_for,
+    show_shortcut_help_dialog,
+)
 from atv_player.ui.history_page import HistoryPage
+from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
+from atv_player.ui.player_window import PlayerWindow
+from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
-from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
+from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.theme import (
     build_navigation_tabbar_qss,
@@ -4134,6 +4157,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 position_seconds = int(video.position_seconds() or 0)
             except Exception:
                 position_seconds = 0
+        mark_current_episode = self._player_window_reached_playing()
         self._following_controller.add_from_player(
             vod=self.player_window.session.vod,
             item=item,
@@ -4141,8 +4165,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             source_key=source_key,
             position_seconds=position_seconds,
             playlist=list(getattr(self.player_window.session, "playlist", []) or []),
+            mark_current_episode=mark_current_episode,
         )
         self.following_page.load_page()
+
+    def _player_window_reached_playing(self) -> bool:
+        if self.player_window is None:
+            return False
+        startup_state = getattr(self.player_window, "_startup_state", None)
+        stage = getattr(startup_state, "stage", None)
+        if stage is None:
+            return True
+        return stage is PlaybackStartupStage.PLAYING or str(stage) == str(PlaybackStartupStage.PLAYING)
 
     def _report_player_item_following_progress(
         self,

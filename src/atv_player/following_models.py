@@ -255,6 +255,27 @@ class FollowingCompletionState:
     ONGOING = "ongoing"
 
 
+def resolve_display_total_episodes(
+    *,
+    total_episodes: int,
+    latest_episode: int,
+    completion_state: str,
+) -> int:
+    total = max(0, int(total_episodes or 0))
+    latest = max(0, int(latest_episode or 0))
+    if total <= 0:
+        return 0
+    if latest > total:
+        return 0
+    if (
+        completion_state == FollowingCompletionState.COMPLETED
+        or latest <= 0
+        or total > latest
+    ):
+        return total
+    return 0
+
+
 def _episode_air_date(value: str) -> date | None:
     text = str(value or "").strip()
     if not text:
