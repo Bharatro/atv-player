@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QStackedWidget,
     QWidget,
 )
 
@@ -44,6 +45,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         )
         self._active_tab = "search"
         self._tab_state: dict[str, dict[str, object]] = {}
+        self._rendered_state_key: str | None = None
+        self._render_cache: dict[str, QListWidget] = {}
+        self._result_lists: list[QListWidget] = []
+        self._result_list_qss = ""
 
         host = self.content_widget()
         layout = self.content_layout()
@@ -70,8 +75,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         search_row = QGridLayout()
         search_row.setHorizontalSpacing(6)
         search_row.setVerticalSpacing(6)
-        search_row.addWidget(QLabel("标题", host), 0, 0)
-        search_row.addWidget(QLabel("年份", host), 0, 1)
+        self.search_title_label = QLabel("标题", host)
+        self.search_year_label = QLabel("年份", host)
+        search_row.addWidget(self.search_title_label, 0, 0)
+        search_row.addWidget(self.search_year_label, 0, 1)
         self.search_edit = QLineEdit(host)
         self.search_edit.setPlaceholderText("搜索标题或粘贴 Bangumi / 豆瓣 / TMDB 链接")
         search_row.addWidget(self.search_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
@@ -124,9 +131,11 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         discover_filters_layout.addWidget(self.discover_year_combo)
         layout.addWidget(self.discover_filters_widget)
 
-        self.result_list = QListWidget(host)
-        self.result_list.setSpacing(10)
-        layout.addWidget(self.result_list, 1)
+        self.result_stack = QStackedWidget(host)
+        self._default_result_list = self._create_result_list()
+        self.result_list = self._default_result_list
+        self.result_stack.addWidget(self.result_list)
+        layout.addWidget(self.result_stack, 1)
 
         self.status_label = QLabel("请输入标题搜索可追更媒体", host)
         layout.addWidget(self.status_label)
@@ -151,8 +160,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.discover_media_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
         self.discover_sort_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
         self.discover_year_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
-        self.result_list.currentRowChanged.connect(self._handle_result_selection_changed)
-        self.result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
         self.add_button.clicked.connect(self._add_selected_candidate)
         self.close_button.clicked.connect(self.reject)
         self._connect_async_signal(self.search_finished, self._handle_search_finished)
@@ -166,6 +173,21 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                 button.hide()
             self.trending_filters_widget.hide()
             self.discover_filters_widget.hide()
+
+    def _create_result_list(self) -> QListWidget:
+        result_list = QListWidget(self.result_stack)
+        result_list.setSpacing(10)
+        result_list.currentRowChanged.connect(self._handle_result_selection_changed)
+        result_list.itemDoubleClicked.connect(lambda _item: self._add_selected_candidate())
+        if self._result_list_qss:
+            result_list.setStyleSheet(self._result_list_qss)
+        self._result_lists.append(result_list)
+        return result_list
+
+    def _set_active_result_list(self, result_list: QListWidget) -> None:
+        self.result_list = result_list
+        self.result_stack.setCurrentWidget(result_list)
+        self.result_list.setEnabled(not (self._search_in_progress or self._add_in_progress))
 
     def run_search(self) -> None:
         if self._search_in_progress or self._add_in_progress:
@@ -211,6 +233,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _clear_results(self) -> None:
         self.groups = []
+        self._set_active_result_list(self._default_result_list)
+        self._rendered_state_key = None
         self.result_list.clear()
         self._sync_action_state()
 
@@ -223,15 +247,18 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         if button is not None:
             button.setChecked(True)
         search_visible = normalized_tab == "search"
+        self.search_title_label.setVisible(search_visible)
+        self.search_year_label.setVisible(search_visible)
         self.search_edit.setVisible(search_visible)
         self.search_year_edit.setVisible(search_visible)
         self.search_button.setVisible(search_visible)
         self.trending_filters_widget.setVisible(normalized_tab == "trending")
         self.discover_filters_widget.setVisible(normalized_tab == "discover")
-        state = self._tab_state.get(self._state_key(normalized_tab), {})
+        state_key = self._state_key(normalized_tab)
+        state = self._tab_state.get(state_key, {})
         cached_items = list(state.get("items", []) or [])
         if state.get("loaded", False):
-            self._render_cached_state(state, cached_items)
+            self._render_cached_state(state_key, state, cached_items)
         if normalized_tab == "search":
             self.status_label.setText("输入标题或粘贴链接搜索可追更媒体")
             if not state.get("loaded", False):
@@ -266,6 +293,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _render_groups(self, groups) -> None:
         self.groups = list(groups or [])
+        self._set_active_result_list(self._default_result_list)
+        self._rendered_state_key = None
         self.result_list.clear()
         total = 0
         for group in self.groups:
@@ -285,20 +314,52 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             self._sync_action_state()
         self.status_label.setText(f"找到 {total} 个结果" if total else "没有找到可加入追更的结果")
 
-    def _render_discovery_result(self, result) -> None:
+    def _render_discovery_result(self, result, *, state_key: str | None = None) -> None:
         self.groups = []
+        self._prepare_rendered_state_replacement(state_key)
         self.result_list.clear()
         items = list(getattr(result, "items", []) or [])
         for candidate in items:
             self._append_candidate_item(candidate)
+        self._rendered_state_key = state_key
         if self.result_list.count():
             self.result_list.setCurrentRow(0)
         else:
             self._sync_action_state()
         source_label = str(getattr(result, "source_label", "") or "搜索")
         fallback_reason = str(getattr(result, "fallback_reason", "") or "").strip()
+        self._set_discovery_status(source_label=source_label, item_count=len(items), fallback_reason=fallback_reason)
+
+    def _prepare_rendered_state_replacement(self, state_key: str | None) -> None:
+        if state_key is None:
+            self._set_active_result_list(self._default_result_list)
+            self._rendered_state_key = None
+            return
+        result_list = self._render_cache.get(state_key)
+        if result_list is None:
+            result_list = self._create_result_list()
+            self._render_cache[state_key] = result_list
+            self.result_stack.addWidget(result_list)
+        self._set_active_result_list(result_list)
+        self._rendered_state_key = state_key
+
+    def _restore_rendered_state(self, state_key: str) -> bool:
+        result_list = self._render_cache.get(state_key)
+        if result_list is None:
+            return False
+        self._set_active_result_list(result_list)
+        self._rendered_state_key = state_key
+        if self.result_list.count():
+            if self.result_list.currentRow() < 0:
+                self.result_list.setCurrentRow(0)
+            self._handle_result_selection_changed(self.result_list.currentRow())
+        else:
+            self._sync_action_state()
+        return True
+
+    def _set_discovery_status(self, *, source_label: str, item_count: int, fallback_reason: str) -> None:
         suffix = " · 推荐不足，已补充热门内容" if fallback_reason == "recommendation-empty" else ""
-        self.status_label.setText(f"{source_label} · 找到 {len(items)} 个结果{suffix}")
+        self.status_label.setText(f"{source_label} · 找到 {item_count} 个结果{suffix}")
 
     def _append_candidate_item(self, candidate) -> None:
         item = QListWidgetItem()
@@ -389,7 +450,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             }
             if tab_key != self._active_tab or state_key != self._state_key(tab_key):
                 return
-            self._render_discovery_result(result)
+            self._render_discovery_result(result, state_key=state_key)
             return
         self._render_groups(groups)
 
@@ -465,7 +526,9 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             background: {tokens.menu_hover_bg};
         }}
         """
-        self.result_list.setStyleSheet(list_qss)
+        self._result_list_qss = list_qss
+        for result_list in self._result_lists:
+            result_list.setStyleSheet(list_qss)
         self.status_label.setStyleSheet(
             "background: transparent;"
             f"color: {tokens.text_secondary};"
@@ -477,7 +540,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         state = self._tab_state.get(self._state_key(tab_key), {})
         cached_items = list(state.get("items", []) or [])
         if state.get("loaded", False):
-            self._render_cached_state(state, cached_items)
+            self._render_cached_state(self._state_key(tab_key), state, cached_items)
             return
         self._load_active_tab()
 
@@ -510,7 +573,14 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             payload = {"tab": normalized_tab, "filters": self._filters_for_tab(normalized_tab)}
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
-    def _render_cached_state(self, state: dict[str, object], cached_items: list[object]) -> None:
+    def _render_cached_state(self, state_key: str, state: dict[str, object], cached_items: list[object]) -> None:
+        if self._restore_rendered_state(state_key):
+            self._set_discovery_status(
+                source_label=str(state.get("source_label", "") or "搜索"),
+                item_count=len(cached_items),
+                fallback_reason=str(state.get("fallback_reason", "") or ""),
+            )
+            return
         self._render_discovery_result(
             type(
                 "CachedResult",
@@ -520,5 +590,6 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                     "source_label": state.get("source_label", ""),
                     "fallback_reason": state.get("fallback_reason", ""),
                 },
-            )()
+            )(),
+            state_key=state_key,
         )

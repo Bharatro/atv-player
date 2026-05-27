@@ -3,8 +3,9 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel, QWidget
 
+import atv_player.ui.following_search_dialog as following_search_dialog_module
 from atv_player.controllers.following_controller import FollowingController
 from atv_player.following_repository import FollowingRepository
 from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
@@ -316,6 +317,28 @@ def test_following_search_dialog_search_year_field_is_only_visible_on_search_tab
     assert dialog.search_year_edit.isHidden() is False
 
 
+def test_following_search_dialog_search_field_labels_only_visible_on_search_tab(qtbot) -> None:
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            return DiscoveryResult(items=[], total=0, source_label=tab_key)
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    field_labels = [label for label in dialog.findChildren(QLabel) if label.text() in {"标题", "年份"}]
+
+    assert {label.text() for label in field_labels} == {"标题", "年份"}
+    assert all(label.isHidden() for label in field_labels)
+
+    dialog._activate_tab("search")
+
+    assert all(not label.isHidden() for label in field_labels)
+
+
 def test_following_search_dialog_switching_to_search_preserves_url_direct_path(qtbot) -> None:
     candidate = DiscoveryItem(
         provider="tmdb",
@@ -501,6 +524,80 @@ def test_following_search_dialog_switching_back_to_loaded_tab_reuses_cached_resu
     dialog._activate_tab("recommendation")
 
     assert dialog.result_list.itemWidget(dialog.result_list.item(0)).title_label.text() == "Gen V"
+
+
+def test_following_search_dialog_switching_back_to_loaded_tab_reuses_rendered_cards(qtbot, monkeypatch) -> None:
+    recommendation_items = [
+        DiscoveryItem(
+            provider="tmdb",
+            provider_id=f"tv:recommendation-{index}",
+            tmdb_id=f"recommendation-{index}",
+            media_type="tv",
+            title=f"推荐 {index}",
+            year="2024",
+            source_label="推荐",
+        )
+        for index in range(2)
+    ]
+    trending_items = [
+        DiscoveryItem(
+            provider="tmdb",
+            provider_id=f"tv:trending-{index}",
+            tmdb_id=f"trending-{index}",
+            media_type="tv",
+            title=f"热门 {index}",
+            year="2024",
+            source_label="热门",
+        )
+        for index in range(2)
+    ]
+    created_cards: list[str] = []
+
+    class CountingCard(QWidget):
+        def __init__(self, candidate, parent=None) -> None:
+            super().__init__(parent)
+            self.candidate = candidate
+            self.selected = False
+            created_cards.append(candidate.provider_id)
+
+        def set_selected(self, selected: bool) -> None:
+            self.selected = selected
+
+    class Controller:
+        def load_discovery_tab(self, tab_key: str, **kwargs):
+            if tab_key == "trending":
+                return DiscoveryResult(items=trending_items, total=2, source_label="热门")
+            return DiscoveryResult(items=recommendation_items, total=2, source_label="推荐")
+
+        def add_candidate(self, selected, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(following_search_dialog_module, "FollowingSearchResultCard", CountingCard)
+    dialog = FollowingSearchDialog(Controller())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    qtbot.waitUntil(lambda: dialog.result_list.count() == 2)
+    assert created_cards == ["tv:recommendation-0", "tv:recommendation-1"]
+
+    dialog._activate_tab("trending")
+    qtbot.waitUntil(lambda: dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).provider_id == "tv:trending-0")
+    assert created_cards == [
+        "tv:recommendation-0",
+        "tv:recommendation-1",
+        "tv:trending-0",
+        "tv:trending-1",
+    ]
+
+    dialog._activate_tab("recommendation")
+
+    assert dialog.result_list.item(0).data(Qt.ItemDataRole.UserRole).provider_id == "tv:recommendation-0"
+    assert created_cards == [
+        "tv:recommendation-0",
+        "tv:recommendation-1",
+        "tv:trending-0",
+        "tv:trending-1",
+    ]
 
 
 def test_following_search_dialog_trending_filters_change_request_parameters(qtbot) -> None:
