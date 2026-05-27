@@ -21559,11 +21559,11 @@ def test_player_window_title_bar_close_button_quits_application(qtbot, monkeypat
     assert config.last_active_window == "player"
 
 
-def test_player_window_hides_title_bar_maximize_button(qtbot) -> None:
+def test_player_window_shows_title_bar_maximize_button(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window.title_bar().maximize_button.isHidden() is True
+    assert window.title_bar().maximize_button.isHidden() is False
 
 
 def visible_shortcut_help_dialogs() -> list[QDialog]:
