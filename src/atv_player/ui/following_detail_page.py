@@ -613,8 +613,8 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.cast_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cast_scroll.setWidget(self._cast_container)
-        self.cast_scroll.setMinimumHeight(248)
-        self.cast_scroll.setMaximumHeight(296)
+        self.cast_scroll.setMinimumHeight(270)
+        self.cast_scroll.setMaximumHeight(300)
 
         self.episodes_section = QFrame(content)
         self.episodes_section.setObjectName("followingDetailEpisodesSection")
