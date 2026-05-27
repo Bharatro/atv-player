@@ -480,6 +480,66 @@ def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_sna
     assert "tmdb" in view.snapshot.metadata_bundle.source_snapshots
 
 
+def test_following_controller_load_detail_attaches_bangumi_bundle_from_external_id() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.record = FollowingRecord(
+                id=1,
+                title="牧神记",
+                media_kind="anime",
+                provider="player",
+                provider_id="player:source:vod-1",
+                external_ids={"bangumi": "521431"},
+            )
+            self.snapshot = FollowingDetailSnapshot(following_id=1)
+            self.saved_snapshot = None
+
+        def get(self, following_id: int):
+            assert following_id == 1
+            return self.record
+
+        def get_detail_snapshot(self, following_id: int):
+            assert following_id == 1
+            return self.snapshot
+
+        def save_detail_snapshot(
+            self,
+            following_id: int,
+            snapshot: FollowingDetailSnapshot,
+        ) -> None:
+            assert following_id == 1
+            self.snapshot = snapshot
+            self.saved_snapshot = snapshot
+
+    class SearchService:
+        def detail_record(self, candidate):
+            assert candidate.provider == "bangumi"
+            assert candidate.provider_id == "subject:521431"
+            return MetadataRecord(
+                provider="bangumi",
+                provider_id="subject:521431",
+                title="牧神记",
+                year="2024",
+                rating="7.4",
+                overview="Bangumi简介",
+                detail_fields=[{"label": "Bangumi ID", "value": "521431"}],
+            )
+
+    repository = Repository()
+    controller = FollowingController(repository, metadata_search_service=SearchService())
+
+    view = controller.load_detail(1, refresh_if_empty=False)
+
+    assert view.snapshot.metadata_bundle is not None
+    assert "bangumi" in view.snapshot.metadata_bundle.source_snapshots
+    assert (
+        view.snapshot.metadata_bundle.source_snapshots["bangumi"].provider_id
+        == "subject:521431"
+    )
+    assert view.snapshot.metadata_bundle.merged_snapshot.ratings[0].label == "Bangumi"
+    assert repository.saved_snapshot is not None
+
+
 def test_following_controller_load_detail_saves_generated_metadata_bundle() -> None:
     class Repository:
         def __init__(self) -> None:

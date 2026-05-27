@@ -12,6 +12,7 @@ from atv_player.following_metadata import (
     FollowingMetadataGateway,
     build_following_from_metadata_candidate,
     build_following_metadata_bundle,
+    build_following_source_metadata_bundle,
     build_snapshot_from_record,
     compute_episode_counts,
     following_candidate_from_url,
@@ -664,7 +665,10 @@ class FollowingController:
             candidate = None
         include_related = True
         if candidate is None:
-            candidate = self._metadata_refresh_candidate(record)
+            candidate = (
+                self._metadata_refresh_candidate(record)
+                or self._bangumi_refresh_candidate_from_record(record)
+            )
         if candidate is None:
             raise RuntimeError("没有找到可用于更新元数据的匹配结果")
         refreshed_record, snapshot = build_following_from_metadata_candidate(
@@ -830,6 +834,27 @@ class FollowingController:
             raw=raw,
         )
 
+    def _bangumi_refresh_candidate_from_record(self, record: FollowingRecord):
+        provider_id = ""
+        if record.provider == "bangumi":
+            provider_id = record.provider_id
+        if not provider_id:
+            provider_id = str(record.external_ids.get("bangumi") or "").strip()
+        provider_id = provider_id.strip()
+        if not provider_id:
+            return None
+        if provider_id.isdigit():
+            provider_id = f"subject:{provider_id}"
+        if not provider_id.startswith("subject:"):
+            return None
+        return MetadataScrapeCandidate(
+            provider="bangumi",
+            provider_label="Bangumi",
+            provider_id=provider_id,
+            title=record.title,
+            subtitle="动漫",
+        )
+
     def _tmdb_detail_candidate_for_season(
         self,
         record: FollowingRecord,
@@ -911,7 +936,7 @@ class FollowingController:
             return snapshot
         candidate = self._tmdb_refresh_candidate_from_record(record)
         if candidate is None:
-            return snapshot
+            return self._ensure_single_source_metadata_bundle(record, snapshot, provider="bangumi")
         detail_record, _detail_error = load_candidate_detail_record_full(
             self._metadata_search_service,
             candidate,
@@ -925,6 +950,35 @@ class FollowingController:
             base_snapshot=snapshot,
             tmdb_detail_record=detail_record,
             provider_records=provider_records,
+        )
+        merged_snapshot.following_id = snapshot.following_id or record.id
+        return merged_snapshot
+
+    def _ensure_single_source_metadata_bundle(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+        *,
+        provider: str,
+    ) -> FollowingDetailSnapshot:
+        if provider != "bangumi":
+            return snapshot
+        candidate = self._bangumi_refresh_candidate_from_record(record)
+        if candidate is None:
+            return snapshot
+        detail_record, _detail_error = load_candidate_detail_record(
+            self._metadata_search_service,
+            candidate,
+        )
+        if detail_record is None:
+            return snapshot
+        _bundle, _merged_record, merged_snapshot = build_following_source_metadata_bundle(
+            base_record=record,
+            base_snapshot=snapshot,
+            provider="bangumi",
+            provider_label="Bangumi",
+            detail_record=detail_record,
+            confidence=1.0,
         )
         merged_snapshot.following_id = snapshot.following_id or record.id
         return merged_snapshot

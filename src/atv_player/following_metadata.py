@@ -1005,6 +1005,66 @@ def build_following_metadata_bundle(
     return bundle, merged_record, merged_snapshot
 
 
+def build_following_source_metadata_bundle(
+    *,
+    base_record: FollowingRecord,
+    base_snapshot: FollowingDetailSnapshot,
+    provider: str,
+    provider_label: str,
+    detail_record: MetadataRecord,
+    confidence: float = 1.0,
+) -> tuple[FollowingMetadataBundle, FollowingRecord, FollowingDetailSnapshot]:
+    now = max(int(base_snapshot.refreshed_at or 0), int(time.time()))
+    detail_following, detail_snapshot = build_snapshot_from_record(
+        detail_record,
+        now=now,
+        media_kind=base_record.media_kind,
+    )
+    field_sources = _initial_field_sources(base_record)
+    merged_record = merge_following_record(
+        base_record,
+        detail_following,
+        preserve_identity=True,
+        field_sources=field_sources,
+    )
+    merged_snapshot = merge_following_snapshot(base_snapshot, detail_snapshot)
+    source_snapshot = _source_snapshot_from_record(
+        provider,
+        provider_label,
+        detail_record,
+        confidence=confidence,
+        now=now,
+        media_kind=merged_record.media_kind,
+    )
+    ratings: list[FollowingRatingEntry] = []
+    rating = str(getattr(detail_record, "rating", "") or "").strip()
+    if rating and provider in {"bangumi", "douban", "tmdb"}:
+        ratings.append(_rating_entry(provider, _provider_rating_label(provider), rating))
+    merged_source = FollowingMetadataSourceSnapshot(
+        source_key="merged",
+        provider="merged",
+        provider_label="合并",
+        overview=merged_snapshot.overview,
+        metadata_fields=list(merged_snapshot.metadata_fields),
+        ratings=ratings,
+        playback_platforms=list(source_snapshot.playback_platforms),
+        episodes=list(merged_snapshot.episodes),
+        seasons=list(merged_snapshot.seasons),
+    )
+    source_snapshots = {
+        "merged": merged_source,
+        provider: source_snapshot,
+    }
+    bundle = FollowingMetadataBundle(
+        merged_snapshot=merged_source,
+        source_snapshots=source_snapshots,
+        available_source_keys=["merged", provider],
+        default_source_key="merged",
+    )
+    merged_snapshot.metadata_bundle = bundle
+    return bundle, merged_record, merged_snapshot
+
+
 def _metadata_fields_from_record(record) -> list[dict[str, str]]:
     fields: list[dict[str, str]] = []
     seen: set[str] = set()

@@ -87,6 +87,38 @@ def test_bangumi_provider_search_matches_name_cn_and_aliases_for_anime() -> None
     assert matches[0].raw["aliases"] == ["Sousou no Frieren", "葬送的芙莉莲", "Frieren"]
 
 
+def test_bangumi_provider_search_retries_with_year_when_title_only_misses() -> None:
+    class YearAwareBangumiClient(FakeBangumiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.keywords: list[str] = []
+
+        def search_subjects(self, keyword: str) -> list[dict[str, object]]:
+            self.keywords.append(keyword)
+            if keyword != "海贼王 1999":
+                return []
+            return [
+                {
+                    "id": 975,
+                    "type": 2,
+                    "name": "ONE PIECE",
+                    "name_cn": "海贼王",
+                    "date": "1999-10-20",
+                    "infobox": [{"key": "别名", "value": "航海王"}],
+                }
+            ]
+
+    client = YearAwareBangumiClient()
+    provider = BangumiMetadataProvider(client)
+
+    matches = provider.search(
+        MetadataQuery(title="海贼王", year="1999", category_name="动漫")
+    )
+
+    assert [match.provider_id for match in matches] == ["subject:975"]
+    assert client.keywords == ["海贼王", "海贼王 1999"]
+
+
 def test_bangumi_provider_get_detail_maps_summary_people_aliases_and_episodes() -> None:
     client = FakeBangumiClient()
     client.subject_detail = {

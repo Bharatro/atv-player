@@ -90,13 +90,26 @@ class BangumiMetadataProvider:
     def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
         return (_strip_search_season_suffix(candidate.title), _extract_year(candidate.year))
 
-    def _search_rows(self, title: str) -> list[dict[str, object]]:
-        rows = self._client.search_subjects(title)
-        if rows:
-            return rows
+    def _search_rows(self, title: str, year: str = "") -> list[dict[str, object]]:
+        candidates = [title]
         stripped = _strip_search_season_suffix(title)
         if stripped and stripped != title:
-            return self._client.search_subjects(stripped)
+            candidates.append(stripped)
+        normalized_year = _extract_year(year)
+        if normalized_year:
+            candidates.extend(
+                f"{candidate} {normalized_year}"
+                for candidate in list(candidates)
+            )
+        seen: set[str] = set()
+        for keyword in candidates:
+            keyword = keyword.strip()
+            if not keyword or keyword in seen:
+                continue
+            seen.add(keyword)
+            rows = self._client.search_subjects(keyword)
+            if rows:
+                return rows
         return []
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
@@ -105,7 +118,7 @@ class BangumiMetadataProvider:
             return []
         is_anime = is_bangumi_anime_query(candidate)
         matches: list[MetadataMatch] = []
-        for row in self._search_rows(title):
+        for row in self._search_rows(title, candidate.year):
             subject_type = int(row.get("type") or 0)
             if is_anime and subject_type != 2:
                 continue
