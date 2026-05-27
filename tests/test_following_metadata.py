@@ -230,6 +230,116 @@ def test_build_following_metadata_bundle_keeps_tmdb_platform_link_without_fake_u
     assert platform.status_text == ""
 
 
+def test_build_following_metadata_bundle_uses_douban_official_link_when_tmdb_has_no_platform() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:37854:season:1",
+        title="海贼王",
+        tmdb_id="37854",
+        genres=["动画"],
+    )
+    douban_record = MetadataRecord(
+        provider="official_douban",
+        provider_id="1453238",
+        title="航海王",
+        year="1999",
+        douban_id=1453238,
+        detail_fields=[
+            {
+                "label": "official_links",
+                "value": [
+                    {
+                        "provider": "iqiyi",
+                        "label": "爱奇艺",
+                        "url": "https://www.iqiyi.com/a_19rrhb3xvl.html",
+                    }
+                ],
+            }
+        ],
+    )
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="海贼王",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:37854",
+            external_ids={"tmdb": "37854"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (douban_record, 0.8)},
+    )
+
+    platforms = bundle.merged_snapshot.playback_platforms
+    assert len(platforms) == 1
+    assert platforms[0].provider == "iqiyi"
+    assert platforms[0].label == "爱奇艺"
+    assert platforms[0].url == "https://www.iqiyi.com/a_19rrhb3xvl.html"
+
+
+def test_build_following_metadata_bundle_keeps_douban_playbtn_platforms_without_urls() -> None:
+    from atv_player.following_metadata import build_following_metadata_bundle
+
+    tmdb_record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:30983:season:1",
+        title="名侦探柯南",
+        tmdb_id="30983",
+        genres=["动画"],
+    )
+    douban_record = MetadataRecord(
+        provider="official_douban",
+        provider_id="1463371",
+        title="名侦探柯南",
+        year="1996",
+        douban_id=1463371,
+        detail_fields=[
+            {
+                "label": "official_links",
+                "value": [
+                    {"provider": "tencent", "label": "腾讯视频", "url": ""},
+                    {"provider": "bilibili", "label": "哔哩哔哩", "url": ""},
+                    {"provider": "youku", "label": "优酷视频", "url": ""},
+                    {"provider": "iqiyi", "label": "爱奇艺", "url": ""},
+                ],
+            }
+        ],
+    )
+
+    bundle, _record, _snapshot = build_following_metadata_bundle(
+        base_record=FollowingRecord(
+            id=1,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983",
+            external_ids={"tmdb": "30983"},
+        ),
+        base_snapshot=FollowingDetailSnapshot(),
+        tmdb_detail_record=tmdb_record,
+        provider_records={"douban": (douban_record, 0.8)},
+    )
+
+    platforms = bundle.merged_snapshot.playback_platforms
+    assert [platform.provider for platform in platforms] == [
+        "tencent",
+        "bilibili",
+        "youku",
+        "iqiyi",
+    ]
+    assert [platform.label for platform in platforms] == [
+        "腾讯视频",
+        "哔哩哔哩",
+        "优酷视频",
+        "爱奇艺",
+    ]
+    assert [platform.url for platform in platforms] == ["", "", "", ""]
+
+
 def test_following_metadata_gateway_searches_platform_sources_from_tmdb_identity() -> None:
     class SearchService:
         def __init__(self) -> None:
@@ -343,6 +453,142 @@ def test_following_metadata_gateway_maps_local_douban_source_into_douban_slot() 
     assert "douban" in result
     assert result["douban"][0].provider == "local_douban"
     assert result["douban"][1] >= 0.75
+
+
+def test_following_metadata_gateway_passes_existing_douban_id_to_douban_sources() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.douban_query_ids: list[int] = []
+
+        def search(self, query, provider_filter=""):
+            if provider_filter == "official_douban":
+                self.douban_query_ids.append(query.vod_dbid)
+                if query.vod_dbid != 1463371:
+                    return []
+                return [
+                    MetadataScrapeGroup(
+                        "official_douban",
+                        "豆瓣官方",
+                        [
+                            MetadataScrapeCandidate(
+                                provider="official_douban",
+                                provider_label="豆瓣官方",
+                                provider_id="1463371",
+                                title="名侦探柯南",
+                                year="1996",
+                            )
+                        ],
+                    )
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            assert candidate.provider == "official_douban"
+            assert candidate.provider_id == "1463371"
+            return MetadataRecord(
+                provider="official_douban",
+                provider_id="1463371",
+                title="名侦探柯南",
+                year="1996",
+                douban_id=1463371,
+                detail_fields=[
+                    {
+                        "label": "official_links",
+                        "value": [
+                            {"provider": "tencent", "label": "腾讯视频", "url": ""},
+                            {"provider": "bilibili", "label": "哔哩哔哩", "url": ""},
+                            {"provider": "youku", "label": "优酷视频", "url": ""},
+                            {"provider": "iqiyi", "label": "爱奇艺", "url": ""},
+                        ],
+                    }
+                ],
+            )
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983",
+            external_ids={"tmdb": "30983", "douban": "1463371"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            title="名侦探柯南",
+            year="1996",
+            tmdb_id="30983",
+            genres=["动画"],
+        ),
+    )
+
+    assert service.douban_query_ids == [1463371]
+    assert result["douban"][0].provider == "official_douban"
+    assert result["douban"][0].detail_fields[0]["value"][0]["provider"] == "tencent"
+
+
+def test_following_metadata_gateway_does_not_search_local_douban_when_official_succeeds() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            self.calls.append(provider_filter)
+            if provider_filter != "official_douban":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    "official_douban",
+                    "豆瓣官方",
+                    [
+                        MetadataScrapeCandidate(
+                            provider="official_douban",
+                            provider_label="豆瓣官方",
+                            provider_id="1463371",
+                            title="名侦探柯南",
+                            year="1996",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                douban_id=1463371,
+            )
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="名侦探柯南",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983",
+            external_ids={"tmdb": "30983", "douban": "1463371"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:30983:season:1",
+            title="名侦探柯南",
+            year="1996",
+            tmdb_id="30983",
+            genres=["动画"],
+        ),
+    )
+
+    assert service.calls == ["official_douban", "bangumi"]
+    assert result["douban"][0].provider == "official_douban"
 
 
 def test_following_metadata_gateway_searches_only_tmdb_watch_platform_sources() -> None:
@@ -723,7 +969,7 @@ def test_following_metadata_gateway_uses_douban_official_links_to_search_playbac
         ),
     )
 
-    assert service.calls == ["official_douban", "local_douban", "douban", "tencent", "bangumi"]
+    assert service.calls == ["official_douban", "tencent", "bangumi"]
     assert result["douban"][0].provider == "official_douban"
     assert result["tencent"][0].provider == "tencent"
 

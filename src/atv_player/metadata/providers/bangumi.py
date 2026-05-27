@@ -90,7 +90,7 @@ class BangumiMetadataProvider:
     def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str] | None:
         return (_strip_search_season_suffix(candidate.title), _extract_year(candidate.year))
 
-    def _search_rows(self, title: str, year: str = "") -> list[dict[str, object]]:
+    def _search_keywords(self, title: str, year: str = "") -> list[str]:
         candidates = [title]
         stripped = _strip_search_season_suffix(title)
         if stripped and stripped != title:
@@ -101,12 +101,18 @@ class BangumiMetadataProvider:
                 f"{candidate} {normalized_year}"
                 for candidate in list(candidates)
             )
+        keywords: list[str] = []
         seen: set[str] = set()
         for keyword in candidates:
             keyword = keyword.strip()
             if not keyword or keyword in seen:
                 continue
+            keywords.append(keyword)
             seen.add(keyword)
+        return keywords
+
+    def _search_rows(self, title: str, year: str = "") -> list[dict[str, object]]:
+        for keyword in self._search_keywords(title, year):
             rows = self._client.search_subjects(keyword)
             if rows:
                 return rows
@@ -117,33 +123,36 @@ class BangumiMetadataProvider:
         if not title:
             return []
         is_anime = is_bangumi_anime_query(candidate)
-        matches: list[MetadataMatch] = []
-        for row in self._search_rows(title, candidate.year):
-            subject_type = int(row.get("type") or 0)
-            if is_anime and subject_type != 2:
-                continue
-            match_title = str(row.get("name_cn") or row.get("name") or "").strip()
-            if not match_title:
-                continue
-            raw = dict(row)
-            raw["aliases"] = _subject_aliases(raw)
-            raw["categories"] = ["动漫"] if subject_type == 2 else []
-            images = row.get("images")
-            if isinstance(images, dict):
-                poster = str(images.get("large") or images.get("common") or images.get("grid") or "").strip()
-                if poster:
-                    raw["poster_url"] = poster
-            match = MetadataMatch(
-                provider=self.name,
-                provider_id=f"subject:{row['id']}",
-                title=match_title,
-                year=_extract_year(row.get("date")),
-                raw=raw,
-            )
-            match.score = score_match(candidate, match)
-            if is_confident_match(match.score):
-                matches.append(match)
-        return sorted(matches, key=lambda item: item.score, reverse=True)
+        for keyword in self._search_keywords(title, candidate.year):
+            matches: list[MetadataMatch] = []
+            for row in self._client.search_subjects(keyword):
+                subject_type = int(row.get("type") or 0)
+                if is_anime and subject_type != 2:
+                    continue
+                match_title = str(row.get("name_cn") or row.get("name") or "").strip()
+                if not match_title:
+                    continue
+                raw = dict(row)
+                raw["aliases"] = _subject_aliases(raw)
+                raw["categories"] = ["动漫"] if subject_type == 2 else []
+                images = row.get("images")
+                if isinstance(images, dict):
+                    poster = str(images.get("large") or images.get("common") or images.get("grid") or "").strip()
+                    if poster:
+                        raw["poster_url"] = poster
+                match = MetadataMatch(
+                    provider=self.name,
+                    provider_id=f"subject:{row['id']}",
+                    title=match_title,
+                    year=_extract_year(row.get("date")),
+                    raw=raw,
+                )
+                match.score = score_match(candidate, match)
+                if is_confident_match(match.score):
+                    matches.append(match)
+            if matches:
+                return sorted(matches, key=lambda item: item.score, reverse=True)
+        return []
 
     def get_detail(self, match: MetadataMatch) -> MetadataRecord:
         subject_id = str(match.provider_id).split(":", 1)[1]

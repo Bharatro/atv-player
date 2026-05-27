@@ -4,7 +4,7 @@ import re
 
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
-from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
+from atv_player.metadata.providers.official_douban_client import DoubanBlockedError
 
 
 def clean_overview_text(value: str) -> str:

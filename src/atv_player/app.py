@@ -71,10 +71,10 @@ from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
 from atv_player.metadata.providers.bangumi_client import BangumiClient
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
 from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
-from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
-from atv_player.metadata.providers.local_douban_client import LocalDoubanClient
+from atv_player.metadata.providers.official_douban import OfficialDoubanProvider
+from atv_player.metadata.providers.official_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
-from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
+from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.metadata.providers.sohu import SohuMetadataProvider
 from atv_player.metadata.scrape import MetadataScrapeService, _match_media_kind, _query_media_kind
 from atv_player.metadata.providers.tencent import TencentMetadataProvider

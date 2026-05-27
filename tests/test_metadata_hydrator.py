@@ -4,7 +4,7 @@ from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
-from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
+from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.models import (
     PlayItem,
     PlaybackDetailField,

@@ -119,6 +119,48 @@ def test_bangumi_provider_search_retries_with_year_when_title_only_misses() -> N
     assert client.keywords == ["海贼王", "海贼王 1999"]
 
 
+def test_bangumi_provider_search_retries_with_year_after_bad_title_results() -> None:
+    class YearAwareBangumiClient(FakeBangumiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.keywords: list[str] = []
+
+        def search_subjects(self, keyword: str) -> list[dict[str, object]]:
+            self.keywords.append(keyword)
+            if keyword == "海贼王":
+                return [
+                    {
+                        "id": 1,
+                        "type": 2,
+                        "name": "Kaizoku Oujo",
+                        "name_cn": "海贼王女",
+                        "date": "2021-10-03",
+                    }
+                ]
+            if keyword == "海贼王 1999":
+                return [
+                    {
+                        "id": 975,
+                        "type": 2,
+                        "name": "ONE PIECE",
+                        "name_cn": "海贼王",
+                        "date": "1999-10-20",
+                        "infobox": [{"key": "别名", "value": "航海王"}],
+                    }
+                ]
+            return []
+
+    client = YearAwareBangumiClient()
+    provider = BangumiMetadataProvider(client)
+
+    matches = provider.search(
+        MetadataQuery(title="海贼王", year="1999", category_name="动漫")
+    )
+
+    assert [match.provider_id for match in matches] == ["subject:975"]
+    assert client.keywords == ["海贼王", "海贼王 1999"]
+
+
 def test_bangumi_provider_get_detail_maps_summary_people_aliases_and_episodes() -> None:
     client = FakeBangumiClient()
     client.subject_detail = {

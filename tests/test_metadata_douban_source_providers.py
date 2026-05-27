@@ -1,7 +1,7 @@
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
-from atv_player.metadata.providers.local_douban import OfficialDoubanProvider
-from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
-from atv_player.metadata.providers.remote_douban import LocalDoubanProvider
+from atv_player.metadata.providers.local_douban import LocalDoubanProvider
+from atv_player.metadata.providers.official_douban import OfficialDoubanProvider
+from atv_player.metadata.providers.official_douban_client import DoubanBlockedError
 
 
 class FakeLocalClient:

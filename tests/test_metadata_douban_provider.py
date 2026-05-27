@@ -1,6 +1,6 @@
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
 from atv_player.metadata.providers.douban import DoubanProvider
-from atv_player.metadata.providers.local_douban_client import DoubanBlockedError
+from atv_player.metadata.providers.official_douban_client import DoubanBlockedError
 from atv_player.models import VodItem
 
 

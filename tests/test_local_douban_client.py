@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from atv_player.metadata.providers.local_douban_client import (
+from atv_player.metadata.providers.official_douban_client import (
     DoubanBlockedError,
     DoubanRateLimitedError,
     LocalDoubanClient,
@@ -88,6 +88,42 @@ def test_local_douban_client_skips_second_request_inside_rate_limit_window() -> 
         client.search("深空彼岸")
 
     assert len(calls) == 1
+
+
+def test_local_douban_client_allows_detail_for_item_returned_by_recent_search() -> None:
+    now = 100.0
+    calls: list[str] = []
+    detail_html = """
+    <html>
+      <head><title>名侦探柯南 (豆瓣)</title></head>
+      <body>
+        <span property="v:itemreviewed">名侦探柯南</span>
+        <span class="year">(1996)</span>
+        <span property="v:summary">高中生侦探。</span>
+      </body>
+    </html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.path == "/j/subject_suggest":
+            return httpx.Response(
+                200,
+                text='[{"id":"1463371","title":"名侦探柯南","year":"1996"}]',
+            )
+        return httpx.Response(200, text=detail_html)
+
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(handler),
+        monotonic=lambda: now,
+    )
+
+    assert client.search("名侦探柯南", year="1996")[0]["id"] == "1463371"
+    detail = client.get_detail("1463371")
+
+    assert detail is not None
+    assert detail["id"] == "1463371"
+    assert len(calls) == 2
 
 
 def test_local_douban_client_allows_request_after_rate_limit_window() -> None:
@@ -187,3 +223,54 @@ def test_local_douban_client_parses_subject_detail_html() -> None:
             }
         ],
     }
+
+
+def test_local_douban_client_parses_douban_playbtn_vendor_entries() -> None:
+    html = """
+    <html>
+      <head><title>名侦探柯南 (豆瓣)</title></head>
+      <body>
+        <span property="v:itemreviewed">名侦探柯南</span>
+        <span class="year">(1996)</span>
+        <span property="v:summary">高中生侦探。</span>
+        <div class="gray_ad">
+          <h2>在哪儿看这部剧集</h2>
+          <ul class="bs">
+            <li>
+              <a class="playBtn" data-cn="腾讯视频"
+                 data-click-track="https://frodo.douban.com/rohirrim/video_tracking/click?source=qq"
+                 href="javascript: void 0;">腾讯视频</a>
+            </li>
+            <li>
+              <a class="playBtn" data-cn="哔哩哔哩"
+                 data-click-track="https://frodo.douban.com/rohirrim/video_tracking/click?source=bilibili"
+                 href="javascript: void 0;">哔哩哔哩</a>
+            </li>
+            <li>
+              <a class="playBtn" data-cn="优酷视频"
+                 data-click-track="https://frodo.douban.com/rohirrim/video_tracking/click?source=youku"
+                 href="javascript: void 0;">优酷视频</a>
+            </li>
+            <li>
+              <a class="playBtn" data-cn="爱奇艺"
+                 data-click-track="https://frodo.douban.com/rohirrim/video_tracking/click?source=iqiyi"
+                 href="javascript: void 0;">爱奇艺</a>
+            </li>
+          </ul>
+        </div>
+      </body>
+    </html>
+    """
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=html)),
+    )
+
+    detail = client.get_detail("1463371")
+
+    assert detail is not None
+    assert detail["official_links"] == [
+        {"provider": "tencent", "label": "腾讯视频", "url": ""},
+        {"provider": "bilibili", "label": "哔哩哔哩", "url": ""},
+        {"provider": "youku", "label": "优酷视频", "url": ""},
+        {"provider": "iqiyi", "label": "爱奇艺", "url": ""},
+    ]

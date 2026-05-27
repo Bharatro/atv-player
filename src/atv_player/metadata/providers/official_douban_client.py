@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from html import unescape
 from threading import Lock
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -40,6 +40,28 @@ class LocalDoubanClient:
         "www.mgtv.com": ("mgtv", "芒果TV"),
         "tv.sohu.com": ("sohu", "搜狐视频"),
     }
+    _OFFICIAL_LINK_SOURCE_KEYS = {
+        "qq": ("tencent", "腾讯视频"),
+        "tencent": ("tencent", "腾讯视频"),
+        "bilibili": ("bilibili", "哔哩哔哩"),
+        "youku": ("youku", "优酷视频"),
+        "iqiyi": ("iqiyi", "爱奇艺"),
+        "mgtv": ("mgtv", "芒果TV"),
+        "sohu": ("sohu", "搜狐视频"),
+    }
+    _OFFICIAL_LINK_LABEL_KEYS = {
+        "腾讯视频": ("tencent", "腾讯视频"),
+        "腾讯": ("tencent", "腾讯视频"),
+        "哔哩哔哩": ("bilibili", "哔哩哔哩"),
+        "b站": ("bilibili", "哔哩哔哩"),
+        "优酷视频": ("youku", "优酷视频"),
+        "优酷": ("youku", "优酷视频"),
+        "爱奇艺": ("iqiyi", "爱奇艺"),
+        "芒果tv": ("mgtv", "芒果TV"),
+        "芒果": ("mgtv", "芒果TV"),
+        "搜狐视频": ("sohu", "搜狐视频"),
+        "搜狐": ("sohu", "搜狐视频"),
+    }
     _rate_limit_lock = Lock()
     _last_allowed_at: float | None = None
 
@@ -53,6 +75,7 @@ class LocalDoubanClient:
     ) -> None:
         self._cookie = cookie.strip()
         self._monotonic = monotonic
+        self._recent_search_detail_ids: set[str] = set()
         client_kwargs = dict(
             transport=transport,
             timeout=15.0,
@@ -88,8 +111,15 @@ class LocalDoubanClient:
                 raise DoubanRateLimitedError(f"豆瓣官方请求过于频繁: {url}")
             type(self)._last_allowed_at = now
 
-    def _get_text(self, url: str, params: dict[str, object] | None = None) -> str:
-        self._ensure_rate_limit_available(url)
+    def _get_text(
+        self,
+        url: str,
+        params: dict[str, object] | None = None,
+        *,
+        skip_rate_limit: bool = False,
+    ) -> str:
+        if not skip_rate_limit:
+            self._ensure_rate_limit_available(url)
         response = self._client.get(url, params=params, headers=self._headers())
         response.raise_for_status()
         text = response.text
@@ -124,6 +154,11 @@ class LocalDoubanClient:
             if cover:
                 result["cover"] = cover
             results.append(result)
+        self._recent_search_detail_ids.update(
+            str(item.get("id") or "").strip()
+            for item in results
+            if str(item.get("id") or "").strip()
+        )
         return results
 
     @staticmethod
@@ -173,20 +208,62 @@ class LocalDoubanClient:
                 return provider_info
         return "", ""
 
+    @staticmethod
+    def _extract_attr(tag: str, name: str) -> str:
+        matched = re.search(
+            rf"""\b{re.escape(name)}\s*=\s*(["'])(.*?)\1""",
+            tag,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if matched is None:
+            return ""
+        return unescape(matched.group(2)).strip()
+
+    @classmethod
+    def _official_link_provider_from_source(cls, *values: str) -> tuple[str, str]:
+        for value in values:
+            parsed = urlparse(str(value or "").strip())
+            source = parse_qs(parsed.query).get("source", [""])[0].strip().lower()
+            if source in cls._OFFICIAL_LINK_SOURCE_KEYS:
+                return cls._OFFICIAL_LINK_SOURCE_KEYS[source]
+            normalized = str(value or "").strip().lower()
+            if normalized in cls._OFFICIAL_LINK_SOURCE_KEYS:
+                return cls._OFFICIAL_LINK_SOURCE_KEYS[normalized]
+        return "", ""
+
+    @classmethod
+    def _official_link_provider_from_label(cls, *values: str) -> tuple[str, str]:
+        for value in values:
+            normalized = re.sub(r"\s+", "", str(value or "").strip()).lower()
+            if normalized in cls._OFFICIAL_LINK_LABEL_KEYS:
+                return cls._OFFICIAL_LINK_LABEL_KEYS[normalized]
+        return "", ""
+
     @classmethod
     def _extract_official_links(cls, text: str) -> list[dict[str, str]]:
         links: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
         for match in re.finditer(
-            r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            r"(<a\b[^>]*>)(.*?)</a>",
             text,
             flags=re.IGNORECASE | re.DOTALL,
         ):
-            url = unescape(match.group(1)).strip()
+            tag = match.group(1)
+            url = cls._extract_attr(tag, "href")
+            label = cls._extract_attr(tag, "data-cn") or cls._strip_tags(match.group(2))
             provider, default_label = cls._official_link_provider(url)
             if not provider:
+                provider, default_label = cls._official_link_provider_from_source(
+                    cls._extract_attr(tag, "data-click-track"),
+                    cls._extract_attr(tag, "data-impression-track"),
+                )
+            if not provider:
+                provider, default_label = cls._official_link_provider_from_label(label)
+            if not provider:
                 continue
-            label = cls._strip_tags(match.group(2)) or default_label
+            if url.lower().startswith("javascript:"):
+                url = ""
+            label = label or default_label
             key = (provider, url)
             if key in seen:
                 continue
@@ -196,7 +273,12 @@ class LocalDoubanClient:
 
     def get_detail(self, douban_id: int | str) -> dict[str, object] | None:
         normalized_id = str(douban_id).strip()
-        text = self._get_text(self._DETAIL_URL_TEMPLATE.format(douban_id=normalized_id))
+        skip_rate_limit = normalized_id in self._recent_search_detail_ids
+        self._recent_search_detail_ids.discard(normalized_id)
+        text = self._get_text(
+            self._DETAIL_URL_TEMPLATE.format(douban_id=normalized_id),
+            skip_rate_limit=skip_rate_limit,
+        )
         name = self._extract_first(r'property="v:itemreviewed"[^>]*>([^<]+)<', text)
         if not name:
             name = self._extract_first(r"<title>\s*([^<(]+?)\s*\(", text)

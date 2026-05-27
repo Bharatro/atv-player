@@ -620,6 +620,8 @@ def iter_related_following_candidates(
         title=str(record.title or getattr(candidate, "title", "") or "").strip(),
         year=str(getattr(candidate, "year", "") or "").strip(),
         category_name=_media_kind_category(media_kind) or str(getattr(candidate, "subtitle", "") or "").strip(),
+        vod_dbid=_to_int(record.external_ids.get("douban"))
+        or (_to_int(record.provider_id) if record.provider in {"official_douban", "local_douban", "douban"} else 0),
     )
     if not query.title:
         return
@@ -632,11 +634,20 @@ def iter_related_following_candidates(
     else:
         groups = []
         for provider in source_providers:
-            for provider_filter in _source_provider_filters(provider):
-                try:
-                    groups.extend(search(query, provider_filter=provider_filter))
-                except Exception:
-                    continue
+            if provider == "douban":
+                for provider_filter in _source_provider_filters(provider):
+                    try:
+                        provider_groups = search(query, provider_filter=provider_filter)
+                    except Exception:
+                        continue
+                    groups.extend(provider_groups)
+                    if any(list(getattr(group, "items", []) or []) for group in provider_groups):
+                        break
+                continue
+            try:
+                groups.extend(search(query, provider_filter=provider))
+            except Exception:
+                continue
     for group in groups:
         for item in list(getattr(group, "items", []) or [])[:1]:
             if _candidate_key(item) == selected_key:
@@ -649,6 +660,18 @@ def _candidate_key(candidate) -> tuple[str, str]:
         str(getattr(candidate, "provider", "") or "").strip(),
         str(getattr(candidate, "provider_id", "") or "").strip(),
     )
+
+
+def _douban_id_from_following_sources(record: FollowingRecord, tmdb_record: MetadataRecord) -> int:
+    tmdb_douban_id = _to_int(getattr(tmdb_record, "douban_id", 0))
+    if tmdb_douban_id:
+        return tmdb_douban_id
+    external_douban_id = _to_int(record.external_ids.get("douban"))
+    if external_douban_id:
+        return external_douban_id
+    if record.provider in {"official_douban", "local_douban", "douban"}:
+        return _to_int(record.provider_id)
+    return 0
 
 
 def _source_provider_filters(provider: str) -> tuple[str, ...]:
@@ -1203,7 +1226,7 @@ def build_following_metadata_bundle(
         )
         if provider in {"douban", "bangumi"}:
             ratings.append(_rating_entry(provider, _provider_rating_label(provider), detail_record.rating))
-        if provider in {"bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}:
+        if provider in {"douban", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}:
             playback_platforms = _merge_playback_platform_updates(playback_platforms, detail_record)
 
     merged_source = FollowingMetadataSourceSnapshot(
@@ -1422,6 +1445,7 @@ class FollowingMetadataGateway:
             title=str(getattr(tmdb_record, "title", "") or record.title or "").strip(),
             year=str(getattr(tmdb_record, "year", "") or "").strip(),
             category_name=category_name,
+            vod_dbid=_douban_id_from_following_sources(record, tmdb_record),
         )
         source_providers = self._source_providers_for_tmdb_record(tmdb_record)
         logger.info(
@@ -1432,23 +1456,15 @@ class FollowingMetadataGateway:
             extra={"log_category": "metadata", "log_source": "app"},
         )
         for provider in source_providers:
-            candidates: list[object] = []
-            for provider_filter in self._source_provider_filters(provider):
-                try:
-                    groups = self._metadata_search_service.search(query, provider_filter=provider_filter)
-                except Exception:
-                    continue
-                candidates.extend(item for group in groups for item in list(getattr(group, "items", []) or []))
-            best = self._best_source_candidate(provider, candidates, tmdb_record)
-            if best is None:
+            source_record = self._load_source_record(
+                provider,
+                query,
+                tmdb_record=tmdb_record,
+            )
+            if source_record is None:
                 continue
-            confidence = self._source_confidence(provider, best, tmdb_record)
-            detail_record, _error = load_candidate_detail_record(self._metadata_search_service, best)
-            if detail_record is None:
-                continue
-            if not _playback_source_record_has_native_link(provider, detail_record):
-                continue
-            results[provider] = (detail_record, confidence)
+            detail_record, _confidence = source_record
+            results[provider] = source_record
             for entry in _playback_platform_entries_from_record(detail_record):
                 linked_provider = _playback_provider_key(entry.provider, entry.label, entry.url)
                 if (
@@ -1465,15 +1481,40 @@ class FollowingMetadataGateway:
                         results[linked_provider] = linked_record
         return results
 
-    def _load_single_source_record(
+    def _load_source_record(
         self,
         provider: str,
         query: MetadataQuery,
         *,
         tmdb_record: MetadataRecord,
     ) -> tuple[MetadataRecord, float] | None:
-        candidates: list[object] = []
+        if provider != "douban":
+            return self._load_single_source_record(
+                provider,
+                query,
+                tmdb_record=tmdb_record,
+            )
         for provider_filter in self._source_provider_filters(provider):
+            result = self._load_single_source_record(
+                provider,
+                query,
+                tmdb_record=tmdb_record,
+                provider_filters=(provider_filter,),
+            )
+            if result is not None:
+                return result
+        return None
+
+    def _load_single_source_record(
+        self,
+        provider: str,
+        query: MetadataQuery,
+        *,
+        tmdb_record: MetadataRecord,
+        provider_filters: tuple[str, ...] | None = None,
+    ) -> tuple[MetadataRecord, float] | None:
+        candidates: list[object] = []
+        for provider_filter in provider_filters or self._source_provider_filters(provider):
             try:
                 groups = self._metadata_search_service.search(query, provider_filter=provider_filter)
             except Exception:
