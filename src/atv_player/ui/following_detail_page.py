@@ -534,9 +534,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.current_view.snapshot,
         )
         self._render(self.current_view.record, self.current_view.snapshot)
+        is_movie = str(getattr(self.current_view.record, "provider_id", "") or "").startswith("movie:")
         if self._snapshot_needs_refresh(self.current_view.snapshot):
             self.status_label.setText("详情暂无完整数据，可手动检查更新")
-        elif self._should_load_selected_season():
+        elif not is_movie and self._should_load_selected_season():
             QTimer.singleShot(0, self._load_selected_season_if_needed)
 
     def _build_layout(self) -> None:
@@ -676,6 +677,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             fallback_season=display_record.season_number,
         )
         latest_season_number = _detail_latest_season_number(display_record, snapshot)
+        is_movie = str(getattr(record, "provider_id", "") or "").startswith("movie:")
         self.episode_browser.set_content(
             groups=groups,
             current_season_number=display_record.current_season_number,
@@ -685,6 +687,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             latest_season_number=latest_season_number,
             next_episode=snapshot.next_episode,
         )
+        self.episodes_section.setVisible(not is_movie)
         self.cast_widgets = []
         _clear_layout(self._cast_layout)
         self._pending_people = [*snapshot.cast, *snapshot.crew]
