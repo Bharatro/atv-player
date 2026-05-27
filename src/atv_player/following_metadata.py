@@ -1445,6 +1445,7 @@ class FollowingMetadataGateway:
         tmdb_record: MetadataRecord,
     ) -> dict[str, tuple[MetadataRecord, float]]:
         results: dict[str, tuple[MetadataRecord, float]] = {}
+        attempted_providers: set[str] = set()
         category_name = "动漫" if record.media_kind == "anime" or _tmdb_record_is_animation(tmdb_record) else "剧集"
         query = MetadataQuery(
             title=str(getattr(tmdb_record, "title", "") or record.title or "").strip(),
@@ -1461,6 +1462,9 @@ class FollowingMetadataGateway:
             extra={"log_category": "metadata", "log_source": "app"},
         )
         for provider in source_providers:
+            if provider in attempted_providers:
+                continue
+            attempted_providers.add(provider)
             source_record = self._load_source_record(
                 provider,
                 query,
@@ -1475,8 +1479,10 @@ class FollowingMetadataGateway:
                 if (
                     linked_provider in _PLAYBACK_SOURCE_PROVIDERS
                     and linked_provider not in results
+                    and linked_provider not in attempted_providers
                     and linked_provider != provider
                 ):
+                    attempted_providers.add(linked_provider)
                     linked_record = self._load_single_source_record(
                         linked_provider,
                         query,

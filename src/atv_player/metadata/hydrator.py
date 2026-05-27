@@ -242,9 +242,10 @@ class MetadataHydrator:
         if provider is None:
             self._binding_repository.delete(query.title, query.year)
             return None
+        detail_cache_key = self._provider_detail_cache_key(provider, binding.provider_id)
         cached = self._cache.load_detail(
             binding.provider,
-            binding.provider_id,
+            detail_cache_key,
             ttl_seconds=_DETAIL_CACHE_TTL_SECONDS,
         )
         if cached is not None:
@@ -261,12 +262,19 @@ class MetadataHydrator:
         except Exception:
             self._binding_repository.delete(query.title, query.year)
             return None
-        self._cache.save_detail(binding.provider, binding.provider_id, record)
+        self._cache.save_detail(binding.provider, detail_cache_key, record)
         return record
 
     @staticmethod
     def _provider_search_cache_key(provider: MetadataProvider, query) -> tuple[str, str]:
         return provider_search_cache_key(provider, query)
+
+    @staticmethod
+    def _provider_detail_cache_key(provider: MetadataProvider, provider_id: object) -> str:
+        detail_cache_key = getattr(provider, "detail_cache_key", None)
+        if callable(detail_cache_key):
+            return str(detail_cache_key(str(provider_id or "")))
+        return str(provider_id or "")
 
     @staticmethod
     def _score_matches(query, matches: list[MetadataMatch]) -> list[MetadataMatch]:
@@ -306,9 +314,10 @@ class MetadataHydrator:
         return self._score_matches(query, list(matches))
 
     def _load_detail_record(self, provider: MetadataProvider, match: MetadataMatch):
+        detail_cache_key = self._provider_detail_cache_key(provider, match.provider_id)
         cached = self._cache.load_detail(
             provider.name,
-            str(match.provider_id),
+            detail_cache_key,
             ttl_seconds=_DETAIL_CACHE_TTL_SECONDS,
         )
         if cached is not None and not _should_refresh_cached_detail(provider.name, cached, match):
@@ -318,7 +327,7 @@ class MetadataHydrator:
         except Exception as exc:
             logger.warning("Metadata provider detail failed provider=%s", provider.name, exc_info=exc)
             return None
-        self._cache.save_detail(provider.name, str(match.provider_id), record)
+        self._cache.save_detail(provider.name, detail_cache_key, record)
         return record
 
     def _load_bilibili_source_record(self, context: MetadataContext, query):

@@ -16,6 +16,15 @@ def test_youku_metadata_provider_search_maps_page_component_to_series_match() ->
                         "commonData": {
                             "isYouku": 1,
                             "titleDTO": {"displayName": "名侦探柯南"},
+                            "summary": "高中生侦探工藤新一被黑衣组织灌下毒药。",
+                            "posterDTO": {"url": "https://img.youku.com/conan.jpg"},
+                            "year": "1996",
+                            "area": "日本",
+                            "category": "动漫 / 推理",
+                            "director": "儿玉兼嗣",
+                            "actor": "高山南 / 山崎和佳奈",
+                            "updateNotice": "更新至第1234集",
+                            "cornerMark": "独播",
                         },
                         "componentMap": {
                             "1035": {
@@ -45,7 +54,16 @@ def test_youku_metadata_provider_search_maps_page_component_to_series_match() ->
 
     assert record.provider == "youku"
     assert record.title == "名侦探柯南"
+    assert record.year == "1996"
+    assert record.poster == "https://img.youku.com/conan.jpg"
+    assert record.overview == "高中生侦探工藤新一被黑衣组织灌下毒药。"
+    assert record.country == "日本"
+    assert record.directors == ["儿玉兼嗣"]
+    assert record.actors == ["高山南", "山崎和佳奈"]
+    assert record.genres == ["动漫", "推理"]
     assert record.detail_fields == [
+        {"label": "更新状态", "value": "更新至第1234集"},
+        {"label": "优酷标签", "value": "独播"},
         {"label": "播放链接", "value": "https://v.youku.com/v_show/id_XNjUzNDA5NDEwNA==.html"},
     ]
 
@@ -59,6 +77,11 @@ def test_youku_metadata_provider_search_maps_series_payload_to_series_match() ->
                     {
                         "videoId": "XMjQ4MTc0ODMyOA==",
                         "title": "月鳞绮纪 01",
+                        "img": "https://img.youku.com/yuelin.jpg",
+                        "desc": "一段东方幻想冒险。",
+                        "year": 2025,
+                        "area": "中国大陆",
+                        "type": "动漫",
                     }
                 ]
             },
@@ -70,3 +93,122 @@ def test_youku_metadata_provider_search_maps_series_payload_to_series_match() ->
     assert [(match.title, match.provider_id) for match in matches] == [
         ("月鳞绮纪", "https://v.youku.com/v_show/id_XMjQ4MTc0ODMyOA==.html"),
     ]
+    record = provider.get_detail(matches[0])
+    assert record.poster == "https://img.youku.com/yuelin.jpg"
+    assert record.overview == "一段东方幻想冒险。"
+    assert record.year == "2025"
+    assert record.country == "中国大陆"
+    assert record.genres == ["动漫"]
+
+
+def test_youku_metadata_provider_search_maps_nested_action_and_common_metadata() -> None:
+    provider = YoukuMetadataProvider(
+        get=lambda url, **kwargs: httpx.Response(
+            200,
+            json={
+                "pageComponentList": [
+                    {
+                        "commonData": {
+                            "titleDTO": {"displayName": "黑夜告白"},
+                            "descDTO": {"displayName": "一场跨越多年的刑侦谜案。"},
+                            "coverDTO": {"url": "https://img.youku.com/heiye.jpg"},
+                            "showYear": "2026",
+                            "areaDTO": {"displayName": "中国大陆"},
+                            "typeDTO": {"displayName": "剧集 / 悬疑"},
+                            "directorDTO": {"displayName": "导演甲"},
+                            "actorDTO": {"displayName": "潘粤明 / 王鹤棣"},
+                            "updateStatus": "更新至第4集",
+                            "leftButtonDTO": {
+                                "action": {
+                                    "value": "youku://play?source=search&vid=XNjUxODQ1MzE1Ng==&showid=dccc1a382ea3456eaa77"
+                                }
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    matches = provider.search(MetadataQuery(title="黑夜告白", year="2026", category_name="剧集"))
+
+    assert len(matches) == 1
+    assert matches[0].title == "黑夜告白"
+    assert matches[0].provider_id == "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html"
+    record = provider.get_detail(matches[0])
+    assert record.year == "2026"
+    assert record.poster == "https://img.youku.com/heiye.jpg"
+    assert record.overview == "一场跨越多年的刑侦谜案。"
+    assert record.country == "中国大陆"
+    assert record.directors == ["导演甲"]
+    assert record.actors == ["潘粤明", "王鹤棣"]
+    assert record.genres == ["剧集", "悬疑"]
+    assert {"label": "更新状态", "value": "更新至第4集"} in record.detail_fields
+
+
+def test_youku_metadata_provider_search_maps_real_program_card_metadata() -> None:
+    provider = YoukuMetadataProvider(
+        get=lambda url, **kwargs: httpx.Response(
+            200,
+            json={
+                "pageComponentList": [
+                    {
+                        "commonData": {
+                            "showId": "dccc1a382ea3456eaa77",
+                            "feature": "2026 · 电视剧 · 中国 · 28集全(完结)",
+                            "director": "导演：王之 ",
+                            "notice": "演员：潘粤明 王鹤棣 任敏 姜珮瑶 ",
+                            "stripeBottom": "28集全",
+                            "sourceName": "优酷",
+                            "isYouku": 1,
+                            "hasYouku": 1,
+                            "posterDTO": {
+                                "iconCorner": {"tagText": "独播"},
+                                "vThumbUrl": "http://r1.ykimg.com/0526000069ECA155C54E4913B6BBA904",
+                            },
+                            "leftButtonDTO": {
+                                "action": {"value": "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html"}
+                            },
+                            "titleDTO": {"displayName": "黑夜告白"},
+                        },
+                        "componentMap": {
+                            "1035": {
+                                "data": [
+                                    {
+                                        "videoId": "XNjUxODQ1MzE1Ng==",
+                                        "title": "黑夜告白 01",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    matches = provider.search(MetadataQuery(title="黑夜告白", year="2026", category_name="剧集"))
+
+    assert len(matches) == 1
+    record = provider.get_detail(matches[0])
+    assert record.year == "2026"
+    assert record.poster == "http://r1.ykimg.com/0526000069ECA155C54E4913B6BBA904"
+    assert record.country == "中国"
+    assert record.directors == ["王之"]
+    assert record.actors == ["潘粤明", "王鹤棣", "任敏", "姜珮瑶"]
+    assert record.genres == ["电视剧"]
+    assert {"label": "更新状态", "value": "28集全"} in record.detail_fields
+    assert {"label": "优酷标签", "value": "独播"} in record.detail_fields
+
+
+def test_youku_metadata_provider_versions_search_and_detail_cache_keys() -> None:
+    provider = YoukuMetadataProvider(get=lambda url, **kwargs: httpx.Response(200, json={}))
+
+    assert provider.search_cache_key(MetadataQuery(title="黑夜告白", year="2026")) == (
+        "黑夜告白",
+        "2026#metadata-v2",
+    )
+    assert (
+        provider.detail_cache_key("https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html")
+        == "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html:metadata-v2"
+    )

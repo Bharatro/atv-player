@@ -59,6 +59,54 @@ class FakeProvider:
         return self.cache_key
 
 
+def test_metadata_hydrator_uses_provider_detail_cache_key(tmp_path: Path) -> None:
+    class VersionedDetailProvider(FakeProvider):
+        def detail_cache_key(self, provider_id: str) -> str:
+            return f"{provider_id}:metadata-v2"
+
+    cache = MetadataCache(tmp_path)
+    cache.save_detail(
+        "youku",
+        "https://v.youku.com/v_show/id_old.html",
+        MetadataRecord(provider="youku", provider_id="https://v.youku.com/v_show/id_old.html", overview="旧缓存"),
+    )
+    provider = VersionedDetailProvider(
+        "youku",
+        matches=[
+            MetadataMatch(
+                provider="youku",
+                provider_id="https://v.youku.com/v_show/id_old.html",
+                title="黑夜告白",
+                score=1.0,
+            )
+        ],
+        record=MetadataRecord(
+            provider="youku",
+            provider_id="https://v.youku.com/v_show/id_old.html",
+            overview="新详情",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="黑夜告白", category_name="剧集"),
+            source_kind="plugin",
+        )
+    )
+
+    assert updated.vod_content == "新详情"
+    assert len(provider.get_detail_calls) == 1
+    assert (
+        cache.load_detail(
+            "youku",
+            "https://v.youku.com/v_show/id_old.html:metadata-v2",
+            ttl_seconds=7 * 24 * 3600,
+        )
+        is not None
+    )
+
+
 def test_metadata_hydrator_uses_douban_when_plugin_provider_returns_no_overview(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     plugin_provider = FakeProvider(

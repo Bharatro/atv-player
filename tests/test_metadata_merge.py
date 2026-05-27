@@ -79,6 +79,42 @@ def test_merge_metadata_fills_core_detail_rows_from_douban_record() -> None:
     assert vod.vod_director == "周琛"
 
 
+def test_merge_metadata_uses_youku_metadata_for_empty_fields() -> None:
+    vod = VodItem(vod_id="v1", vod_name="优酷独播剧")
+    record = MetadataRecord(
+        provider="youku",
+        provider_id="https://v.youku.com/v_show/id_demo.html",
+        title="优酷独播剧",
+        year="2026",
+        poster="https://img.youku.com/poster.jpg",
+        overview="优酷独播简介。",
+        actors=["演员甲"],
+        directors=["导演甲"],
+        genres=["剧情", "悬疑"],
+        country="中国大陆",
+        detail_fields=[
+            {"label": "更新状态", "value": "更新至第8集"},
+            {"label": "优酷标签", "value": "独播"},
+            {"label": "播放链接", "value": "https://v.youku.com/v_show/id_demo.html"},
+        ],
+    )
+
+    merge_metadata_record(vod, record, provider_priority=["youku"])
+
+    assert vod.vod_pic == "https://img.youku.com/poster.jpg"
+    assert vod.vod_year == "2026"
+    assert vod.vod_content == "优酷独播简介。"
+    assert vod.vod_actor == "演员甲"
+    assert vod.vod_director == "导演甲"
+    assert vod.type_name == "剧情 / 悬疑"
+    assert vod.vod_area == "中国大陆"
+    assert [(field.label, field.value) for field in vod.detail_fields[:2]] == [
+        ("更新状态", "更新至第8集"),
+        ("优酷标签", "独播"),
+    ]
+    assert vod.detail_fields[2].label == "官方链接"
+
+
 def test_merge_metadata_prefers_tmdb_visual_fields_but_keeps_official_douban_overview_and_rating() -> None:
     vod = VodItem(vod_id="v1", vod_name="深空彼岸", vod_content="原始简介")
     tmdb_record = MetadataRecord(

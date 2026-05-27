@@ -11,15 +11,15 @@ from atv_player.metadata.providers.douban import clean_overview_text
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, PlaybackDetailValuePart, VodItem
 
 _FIELD_PROVIDER_PRIORITY = {
-    "overview": ["iqiyi", "official_douban", "bangumi", "douban", "sohu", "tmdb", "local_douban", "plugin"],
+    "overview": ["iqiyi", "official_douban", "bangumi", "douban", "sohu", "tmdb", "local_douban", "plugin", "youku"],
     "rating": ["official_douban", "bangumi", "local_douban", "douban", "tmdb", "plugin", "iqiyi"],
-    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu"],
-    "year": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "actors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "directors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "genres": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "country": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
-    "language": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin"],
+    "poster": ["tmdb", "bangumi", "official_douban", "local_douban", "douban", "plugin", "iqiyi", "sohu", "youku"],
+    "year": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "actors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "directors": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "genres": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "country": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
+    "language": ["bangumi", "iqiyi", "sohu", "tmdb", "official_douban", "local_douban", "douban", "plugin", "youku"],
     "douban_id": ["official_douban", "local_douban", "douban", "plugin", "iqiyi"],
 }
 
@@ -34,6 +34,7 @@ _OVERVIEW_PROVIDER_PRIORITY = {
     "local_douban": 7,
     "remote_douban": 7,
     "plugin": 8,
+    "youku": 9,
 }
 
 _TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban", "sohu"}
@@ -89,6 +90,7 @@ _OFFICIAL_LINK_PROVIDER_KEYS = {
     "iqiyi": "iqiyi",
     "sohu": "sohu",
     "tencent": "tencent",
+    "youku": "youku",
 }
 
 

@@ -14,6 +14,7 @@ from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRec
 class YoukuMetadataProvider:
     name = "youku"
     _SEARCH_URL = "https://search.youku.com/api/search"
+    _CACHE_VERSION = "metadata-v2"
     _SEARCH_USER_AGENT = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -24,6 +25,12 @@ class YoukuMetadataProvider:
 
     def can_enrich(self, _context) -> bool:
         return True
+
+    def search_cache_key(self, candidate: MetadataQuery) -> tuple[str, str]:
+        return str(candidate.title or "").strip(), f"{str(candidate.year or '').strip()}#{self._CACHE_VERSION}"
+
+    def detail_cache_key(self, provider_id: str) -> str:
+        return f"{str(provider_id or '').strip()}:{self._CACHE_VERSION}"
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         title = str(candidate.title or "").strip()
@@ -72,6 +79,12 @@ class YoukuMetadataProvider:
         payload = dict(match.raw or {})
         page_url = str(match.provider_id or payload.get("provider_id") or "").strip()
         detail_fields: list[dict[str, object]] = []
+        update_text = str(payload.get("updateNotice") or payload.get("updateNotification") or "").strip()
+        if update_text:
+            detail_fields.append({"label": "更新状态", "value": update_text})
+        badges = list(payload.get("youku_badges") or [])
+        if badges:
+            detail_fields.append({"label": "优酷标签", "value": " / ".join(str(item) for item in badges if str(item).strip())})
         if page_url:
             detail_fields.append({"label": "播放链接", "value": page_url})
         return MetadataRecord(
@@ -79,8 +92,13 @@ class YoukuMetadataProvider:
             provider_id=page_url,
             title=str(payload.get("title") or match.title or "").strip(),
             year=str(payload.get("year") or match.year or "").strip(),
+            poster=str(payload.get("poster") or "").strip(),
             overview=str(payload.get("overview") or "").strip(),
+            actors=list(payload.get("actors") or []),
+            directors=list(payload.get("directors") or []),
             genres=list(payload.get("genres") or []),
+            country=str(payload.get("country") or "").strip(),
+            language=str(payload.get("language") or "").strip(),
             detail_fields=detail_fields,
         )
 
@@ -107,14 +125,13 @@ class YoukuMetadataProvider:
             title = self._series_title(common, episodes)
             if not title or not page_url:
                 continue
-            results.append(
-                {
-                    "title": title,
-                    "provider_id": page_url,
-                    "episodes": episodes,
-                    "category": "优酷",
-                }
-            )
+            results.append({
+                **self._metadata_from_payload(common),
+                "title": title,
+                "provider_id": page_url,
+                "episodes": episodes,
+                "category": "优酷",
+            })
         return results
 
     def _items_from_series_list(self, series_list: list[object]) -> list[dict[str, object]]:
@@ -127,6 +144,7 @@ class YoukuMetadataProvider:
             if title and url:
                 results.append(
                     {
+                        **self._metadata_from_payload(item),
                         "title": title,
                         "provider_id": url,
                         "episodes": [{"title": item.get("title"), "url": url}],
@@ -143,7 +161,8 @@ class YoukuMetadataProvider:
             ((common.get("leftButtonDTO") or {}).get("action") or {}).get("value"),
             common.get("action", {}).get("value") if isinstance(common.get("action"), dict) else "",
         ):
-            if "youku.com" in str(candidate or ""):
+            candidate_text = str(candidate or "")
+            if "youku.com" in candidate_text or candidate_text.startswith("youku://") or self._normalize_youku_url(candidate_text):
                 return True
         return False
 
@@ -216,7 +235,143 @@ class YoukuMetadataProvider:
         vid = parse_qs(parsed.query).get("vid", [""])[0].strip()
         if vid:
             return f"https://v.youku.com/v_show/id_{vid}.html"
+        path_match = re.search(r"/id_([^/.]+)\.html", parsed.path)
+        if path_match is not None and "youku.com" in (parsed.hostname or ""):
+            return f"https://v.youku.com/v_show/id_{path_match.group(1)}.html"
         return ""
+
+    def _metadata_from_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        genres = self._tokens_from_values(
+            payload.get("category"),
+            payload.get("type"),
+            payload.get("typeDTO"),
+            payload.get("typeName"),
+            payload.get("cateName"),
+            payload.get("tags"),
+            payload.get("tag"),
+        )
+        feature = self._feature_metadata(payload.get("feature"))
+        if not genres and feature.get("genre"):
+            genres = [str(feature["genre"])]
+        badges = self._tokens_from_values(
+            payload.get("cornerMark"),
+            payload.get("corner_mark"),
+            payload.get("badge"),
+            payload.get("badges"),
+            payload.get("mark"),
+            payload.get("tagText"),
+            (payload.get("iconCorner") or {}).get("tagText") if isinstance(payload.get("iconCorner"), dict) else "",
+            ((payload.get("posterDTO") or {}).get("iconCorner") or {}).get("tagText")
+            if isinstance(payload.get("posterDTO"), dict) and isinstance((payload.get("posterDTO") or {}).get("iconCorner"), dict)
+            else "",
+        )
+        if int(payload.get("isOnly") or 0) == 1 and "独播" not in badges:
+            badges.append("独播")
+        if int(payload.get("isExclusive") or 0) == 1 and "独家" not in badges:
+            badges.append("独家")
+        return {
+            "year": self._year_value(payload) or str(feature.get("year") or ""),
+            "poster": self._image_value(payload),
+            "overview": self._first_text(payload, ("summary", "summaryDTO", "desc", "descDTO", "description", "intro", "introduction")),
+            "country": self._first_text(payload, ("area", "areaDTO", "region", "regionDTO", "country")) or str(feature.get("country") or ""),
+            "language": self._first_text(payload, ("language", "lang")),
+            "actors": self._people_values(payload.get("actor") or payload.get("actorDTO") or payload.get("actors") or payload.get("starring") or payload.get("notice")),
+            "directors": self._people_values(payload.get("director") or payload.get("directorDTO") or payload.get("directors")),
+            "genres": genres,
+            "typeName": genres[0] if genres else "",
+            "updateNotice": self._first_text(payload, ("updateNotice", "updateNotification", "updateStatus", "stripeBottom")) or str(feature.get("status") or ""),
+            "youku_badges": badges,
+        }
+
+    def _first_text(self, payload: dict[str, object], keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = payload.get(key)
+            text = self._text_value(value)
+            if text:
+                return text
+        return ""
+
+    def _text_value(self, value: object) -> str:
+        if isinstance(value, dict):
+            for key in ("value", "displayName", "title", "name", "text", "label"):
+                text = self._text_value(value.get(key))
+                if text:
+                    return text
+            return ""
+        if isinstance(value, list):
+            return " / ".join(item for item in (self._text_value(item) for item in value) if item)
+        return str(value or "").strip()
+
+    def _image_value(self, payload: dict[str, object]) -> str:
+        for key in (
+            "poster",
+            "posterUrl",
+            "poster_url",
+            "cover",
+            "coverUrl",
+            "cover_url",
+            "img",
+            "pic",
+            "image",
+            "imageUrl",
+            "verticalPic",
+            "verticalImage",
+        ):
+            value = str(payload.get(key) or "").strip()
+            if value.startswith(("http://", "https://")):
+                return value
+        for key in ("posterDTO", "imageDTO", "coverDTO", "imgDTO", "picDTO", "screenShotDTO"):
+            value = payload.get(key)
+            if not isinstance(value, dict):
+                continue
+            for nested_key in ("url", "src", "value", "vThumbUrl", "hThumbUrl", "thumbUrl"):
+                url = str(value.get(nested_key) or "").strip()
+                if url.startswith(("http://", "https://")):
+                    return url
+        return ""
+
+    def _tokens_from_values(self, *values: object) -> list[str]:
+        output: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            for token in re.split(r"[/|、,，]", self._text_value(value)):
+                normalized = token.strip()
+                if normalized and normalized not in seen:
+                    output.append(normalized)
+                    seen.add(normalized)
+        return output
+
+    def _people_values(self, value: object) -> list[str]:
+        text = self._text_value(value)
+        text = re.sub(r"^\s*(?:导演|演员|主演)\s*[:：]\s*", "", text)
+        if " " in text and not re.search(r"[/|、,，]", text):
+            return [item for item in (part.strip() for part in text.split()) if item]
+        return self._tokens_from_values(text)
+
+    def _year_value(self, payload: dict[str, object]) -> str:
+        for key in ("year", "showYear", "releaseYear", "releaseDate", "publishTime", "pubDate"):
+            value = payload.get(key)
+            if isinstance(value, int):
+                return str(value) if 1000 <= value <= 9999 else ""
+            match = re.search(r"((?:19|20)\d{2})", str(value or ""))
+            if match is not None:
+                return match.group(1)
+        return ""
+
+    def _feature_metadata(self, value: object) -> dict[str, str]:
+        parts = [part.strip() for part in re.split(r"[·•]", str(value or "")) if part.strip()]
+        metadata: dict[str, str] = {}
+        if parts:
+            year_match = re.search(r"((?:19|20)\d{2})", parts[0])
+            if year_match is not None:
+                metadata["year"] = year_match.group(1)
+        if len(parts) >= 2:
+            metadata["genre"] = parts[1]
+        if len(parts) >= 3:
+            metadata["country"] = parts[2]
+        if len(parts) >= 4:
+            metadata["status"] = parts[3]
+        return metadata
 
     def _episode_number(self, title: object) -> int:
         match = re.search(r"(?:第\s*)?0*(\d{1,4})\s*(?:集|话|期)?\s*$", str(title or "").strip())

@@ -1065,6 +1065,86 @@ def test_following_metadata_gateway_skips_playback_source_with_foreign_playback_
     assert result["youku"][0].provider == "youku"
 
 
+def test_following_metadata_gateway_does_not_search_playback_source_twice_after_douban_link() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            del query
+            self.calls.append(provider_filter)
+            if provider_filter == "official_douban":
+                return [
+                    type(
+                        "Group",
+                        (),
+                        {
+                            "items": [
+                                MetadataScrapeCandidate(
+                                    provider="official_douban",
+                                    provider_label="豆瓣官方",
+                                    provider_id="36601371",
+                                    title="黑夜告白",
+                                    year="2026",
+                                )
+                            ]
+                        },
+                    )()
+                ]
+            if provider_filter == "youku":
+                return []
+            return []
+
+        def detail_record(self, candidate):
+            if candidate.provider == "official_douban":
+                return MetadataRecord(
+                    provider="official_douban",
+                    provider_id=candidate.provider_id,
+                    title="黑夜告白",
+                    year="2026",
+                    detail_fields=[
+                        {
+                            "label": "official_links",
+                            "value": [
+                                {"provider": "youku", "label": "优酷视频", "url": ""},
+                            ],
+                        }
+                    ],
+                )
+            raise AssertionError(f"unexpected detail provider: {candidate.provider}")
+
+    service = SearchService()
+    gateway = FollowingMetadataGateway(service)
+
+    gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="黑夜告白",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:254498",
+            external_ids={"tmdb": "254498"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:254498:season:1",
+            title="黑夜告白",
+            year="2026",
+            tmdb_id="254498",
+            detail_fields=[
+                {
+                    "label": "watch_providers",
+                    "value": [
+                        {"provider": "youku", "label": "优酷", "url": ""},
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert service.calls == ["official_douban", "youku"]
+
+
 def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
     class Repository:
         def __init__(self) -> None:
