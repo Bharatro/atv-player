@@ -457,11 +457,10 @@ class EpisodeItemDelegate(QStyledItemDelegate):
         )
 
         if overview:
-            overview_rect = QRect(
-                text_rect.left(),
-                meta_y + metrics.meta_height + 4,
-                text_rect.width(),
-                metrics.overview_height,
+            overview_rect = _episode_overview_rect(
+                text_rect=text_rect,
+                meta_y=meta_y,
+                metrics=metrics,
             )
             painter.drawText(
                 overview_rect,
@@ -1228,6 +1227,17 @@ def _episode_meta_y(*, font_metrics, title_rect: QRect, title: str, gap: int) ->
     )
     title_bottom = min(title_rect.bottom(), title_bounds.bottom())
     return max(title_rect.top(), title_bottom) + max(0, int(gap))
+
+
+def _episode_overview_rect(
+    *,
+    text_rect: QRect,
+    meta_y: int,
+    metrics: EpisodeCardMetrics,
+) -> QRect:
+    top = meta_y + metrics.meta_height + 4
+    height = max(0, text_rect.bottom() - top + 1)
+    return QRect(text_rect.left(), top, text_rect.width(), height)
 
 
 def _overview_max_height(columns: int) -> int:

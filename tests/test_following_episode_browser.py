@@ -22,6 +22,7 @@ from atv_player.ui.following_episode_browser import (
     WATCHED_ROLE,
     _card_metrics_for_columns,
     _episode_meta_y,
+    _episode_overview_rect,
     build_episode_season_groups,
 )
 
@@ -514,6 +515,37 @@ def test_episode_meta_y_tracks_actual_single_line_title_height(qtbot) -> None:
 
     assert meta_y < title_rect.bottom()
     assert meta_y <= metrics.lineSpacing() + 4
+
+
+def test_episode_overview_uses_remaining_card_height_for_single_line_titles(qtbot) -> None:
+    label = QLabel()
+    qtbot.addWidget(label)
+    font_metrics = QFontMetrics(label.font())
+    card_metrics = _card_metrics_for_columns(1)
+    text_rect = label.rect()
+    text_rect.setWidth(560)
+    text_rect.setHeight(
+        card_metrics.item_height
+        - 8
+        - (card_metrics.outer_margin_y * 2)
+    )
+    title_rect = text_rect.adjusted(0, 0, 0, 0)
+    title_rect.setHeight(card_metrics.title_height)
+
+    meta_y = _episode_meta_y(
+        font_metrics=font_metrics,
+        title_rect=title_rect,
+        title="1. 天聚驾到真案降临",
+        gap=2,
+    )
+    overview_rect = _episode_overview_rect(
+        text_rect=text_rect,
+        meta_y=meta_y,
+        metrics=card_metrics,
+    )
+
+    assert overview_rect.height() > card_metrics.overview_height
+    assert overview_rect.bottom() <= text_rect.bottom()
 
 
 def test_following_episode_browser_clicking_card_emits_episode_activated(qtbot) -> None:
