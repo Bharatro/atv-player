@@ -83,6 +83,12 @@ _OFFICIAL_LINK_LABEL_KEYS = {
     "搜狐视频": "sohu",
     "搜狐": "sohu",
 }
+_OFFICIAL_LINK_PROVIDER_KEYS = {
+    "bilibili": "bilibili",
+    "iqiyi": "iqiyi",
+    "sohu": "sohu",
+    "tencent": "tencent",
+}
 
 
 def _provider_rank(field_name: str, provider: str) -> int:
@@ -235,7 +241,13 @@ def _canonical_official_link_url(url: object) -> str:
     if not text.startswith(("http://", "https://")):
         return ""
     parsed = urlparse(text)
-    if parsed.netloc.lower() in {"v.qq.com", "m.v.qq.com"} and parsed.path.endswith("/search_redirect.html"):
+    host = parsed.netloc.lower()
+    if host in {"v.qq.com", "m.v.qq.com"} and parsed.path.endswith("/search_redirect.html"):
+        redirected = parse_qs(parsed.query).get("url", [""])[0].strip()
+        if redirected.startswith(("http://", "https://")):
+            return redirected
+        return ""
+    if host in {"www.iqiyi.com", "m.iqiyi.com"} and parsed.path.endswith("/common/redirect.html"):
         redirected = parse_qs(parsed.query).get("url", [""])[0].strip()
         if redirected.startswith(("http://", "https://")):
             return redirected
@@ -243,9 +255,16 @@ def _canonical_official_link_url(url: object) -> str:
     return text
 
 
-def _official_link_detail_field(url: object, label: object = "") -> PlaybackDetailField | None:
+def _official_link_detail_field(
+    url: object,
+    label: object = "",
+    *,
+    expected_platform_key: str = "",
+) -> PlaybackDetailField | None:
     link = _canonical_official_link_url(url)
     if not link:
+        return None
+    if expected_platform_key and _official_link_host_key(link) != expected_platform_key:
         return None
     display_label = _official_link_label_from_url(link, label) or link
     return PlaybackDetailField(
@@ -358,9 +377,15 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, object]]:
             put_value_parts("官方链接", _watch_provider_value_parts(item.get("value")))
             continue
         if label == "播放链接":
-            official_link = _official_link_detail_field(item.get("value"))
+            expected_platform_key = _OFFICIAL_LINK_PROVIDER_KEYS.get(record.provider, "")
+            official_link = _official_link_detail_field(
+                item.get("value"),
+                expected_platform_key=expected_platform_key,
+            )
             if official_link is not None:
                 put_value_parts("官方链接", official_link.value_parts)
+                continue
+            if expected_platform_key:
                 continue
         put(label, str(item.get("value") or ""))
     return [

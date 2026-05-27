@@ -280,6 +280,45 @@ def test_fill_missing_metadata_appends_second_official_platform_link() -> None:
     ]
 
 
+def test_fill_missing_metadata_ignores_iqiyi_redirect_to_tencent_official_link() -> None:
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="腾讯结果",
+        detail_fields=[
+            PlaybackDetailField(
+                label="播放链接",
+                value="https://v.qq.com/x/cover/324olz7ilvo2j5f/i00350r6rf4.html",
+            )
+        ],
+    )
+    tmdb_record = MetadataRecord(provider="tmdb", provider_id="tv:300001", tmdb_id="300001")
+    iqiyi_record = MetadataRecord(
+        provider="iqiyi",
+        provider_id="https://www.iqiyi.com/common/redirect.html?url=https%3A%2F%2Fv.qq.com%2Fx%2Fcover%2F324olz7ilvo2j5f%2Fi00350r6rf4.html",
+        detail_fields=[
+            {
+                "label": "播放链接",
+                "value": (
+                    "https://www.iqiyi.com/common/redirect.html?"
+                    "url=https%3A%2F%2Fv.qq.com%2Fx%2Fcover%2F324olz7ilvo2j5f%2Fi00350r6rf4.html"
+                ),
+            }
+        ],
+    )
+
+    merge_metadata_record(vod, tmdb_record, provider_priority=["tmdb"])
+    fill_missing_metadata_record(vod, iqiyi_record)
+
+    assert [(field.label, field.value) for field in vod.detail_fields] == [
+        ("官方链接", "腾讯视频"),
+        ("TMDB ID", "300001"),
+    ]
+    assert vod.detail_fields[0].value_parts[0].action == PlaybackDetailFieldAction(
+        type="link",
+        value="https://v.qq.com/x/cover/324olz7ilvo2j5f/i00350r6rf4.html",
+    )
+
+
 def test_merge_metadata_deduplicates_same_official_platform_with_different_labels() -> None:
     vod = VodItem(
         vod_id="v1",
