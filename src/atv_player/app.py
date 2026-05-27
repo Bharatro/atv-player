@@ -80,6 +80,7 @@ from atv_player.metadata.scrape import MetadataScrapeService, _match_media_kind,
 from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
+from atv_player.metadata.providers.youku import YoukuMetadataProvider
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -673,6 +674,8 @@ class AppCoordinator(QObject):
             providers.append(IqiyiMetadataProvider())
         if enabled("tencent"):
             providers.append(TencentMetadataProvider())
+        if enabled("youku"):
+            providers.append(YoukuMetadataProvider())
         if enabled("official_douban") and str(config.metadata_douban_cookie or "").strip():
             local_douban_client = LocalDoubanClient(
                 cookie=config.metadata_douban_cookie,

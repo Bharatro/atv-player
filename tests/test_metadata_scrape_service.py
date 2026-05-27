@@ -116,6 +116,59 @@ def test_metadata_scrape_service_cache_only_reuses_cached_results_without_provid
     assert tmdb.search_calls == []
 
 
+def test_metadata_scrape_service_uses_provider_detail_cache_key(tmp_path: Path) -> None:
+    class VersionedDetailProvider(FakeProvider):
+        def detail_cache_key(self, provider_id: str) -> str:
+            return f"{provider_id}:playbtn-v2"
+
+    cache = MetadataCache(tmp_path)
+    cache.save_detail(
+        "official_douban",
+        "1463371",
+        MetadataRecord(
+            provider="official_douban",
+            provider_id="1463371",
+            title="旧缓存",
+        ),
+    )
+    provider = VersionedDetailProvider(
+        "official_douban",
+        record=MetadataRecord(
+            provider="official_douban",
+            provider_id="1463371",
+            title="新详情",
+            detail_fields=[
+                {
+                    "label": "official_links",
+                    "value": [{"provider": "iqiyi", "label": "爱奇艺", "url": ""}],
+                }
+            ],
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    record = service.detail_record(
+        MetadataScrapeCandidate(
+            provider="official_douban",
+            provider_label="豆瓣官方",
+            provider_id="1463371",
+            title="名侦探柯南",
+            year="1996",
+        )
+    )
+
+    assert record.title == "新详情"
+    assert len(provider.detail_calls) == 1
+    assert (
+        cache.load_detail(
+            "official_douban",
+            "1463371:playbtn-v2",
+            ttl_seconds=7 * 24 * 3600,
+        )
+        is not None
+    )
+
+
 def test_metadata_scrape_service_tencent_bypasses_stale_pre_area_box_empty_cache(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     cache.save_search("tencent", "三体", "2023", [])

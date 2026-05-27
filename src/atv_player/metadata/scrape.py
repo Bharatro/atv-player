@@ -11,7 +11,6 @@ from atv_player.metadata.async_runner import run_provider_searches
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.episode_title_resolver import (
-    METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
@@ -29,6 +28,7 @@ _PROVIDER_LABELS = {
     "local_douban": "本地豆瓣",
     "douban": "豆瓣",
     "iqiyi": "爱奇艺",
+    "youku": "优酷",
     "sohu": "搜狐视频",
     "tmdb": "TMDB",
     "plugin": "插件",
@@ -534,7 +534,13 @@ class MetadataScrapeService:
 
     def detail_record(self, candidate: MetadataScrapeCandidate):
         provider = self._providers_by_name[candidate.provider]
-        record = self._cache.load_detail(candidate.provider, candidate.provider_id, ttl_seconds=7 * 24 * 3600)
+        detail_cache_key_fn = getattr(provider, "detail_cache_key", None)
+        detail_cache_key = (
+            str(detail_cache_key_fn(candidate.provider_id))
+            if callable(detail_cache_key_fn)
+            else candidate.provider_id
+        )
+        record = self._cache.load_detail(candidate.provider, detail_cache_key, ttl_seconds=7 * 24 * 3600)
         if record is None:
             match = MetadataMatch(
                 provider=candidate.provider,
@@ -546,7 +552,7 @@ class MetadataScrapeService:
             record = provider.get_detail(match)
             if record is None:
                 raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
-            self._cache.save_detail(candidate.provider, candidate.provider_id, record)
+            self._cache.save_detail(candidate.provider, detail_cache_key, record)
         return record
 
     def detail_record_full(self, candidate: MetadataScrapeCandidate):

@@ -432,7 +432,12 @@ def build_following_from_metadata_candidate(
     use_full_detail: bool = False,
     detail_record_sink: list[MetadataRecord] | None = None,
 ) -> tuple[FollowingRecord, FollowingDetailSnapshot]:
-    candidate = hydrate_following_candidate(metadata_search_service, candidate)
+    candidate = normalize_following_candidate(candidate)
+    if not (
+        use_full_detail
+        and str(getattr(candidate, "provider", "") or "").strip() == "tmdb"
+    ):
+        candidate = hydrate_following_candidate(metadata_search_service, candidate)
     record, snapshot = build_following_from_candidate(candidate, now=now)
     field_sources = _initial_field_sources(record)
     if use_full_detail:

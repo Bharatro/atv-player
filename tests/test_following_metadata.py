@@ -1,4 +1,6 @@
 # ruff: noqa: E501
+from dataclasses import replace
+
 from atv_player.controllers.following_controller import FollowingController
 from atv_player.following_metadata import (
     FollowingMetadataGateway,
@@ -1607,6 +1609,56 @@ def test_build_following_from_tmdb_candidate_skips_bangumi_when_tmdb_is_not_anim
     )
 
     assert service.calls == ["official_douban", "local_douban", "douban"]
+
+
+def test_build_following_from_tmdb_candidate_with_full_detail_skips_pre_detail_episode_hydration() -> None:
+    selected = MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id="tv:30983:season:1",
+        title="名侦探柯南",
+        year="1996",
+        subtitle="剧集",
+        raw={"season_number": 1},
+    )
+
+    class SearchService:
+        def __init__(self) -> None:
+            self.hydrate_calls = 0
+
+        def _hydrate_tmdb_episode_candidate(self, vod, candidate):
+            del vod
+            self.hydrate_calls += 1
+            return replace(candidate, raw={**candidate.raw, "episodes": [{"episode_number": 1}]})
+
+        def detail_record_full(self, candidate):
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                tmdb_id="30983",
+                detail_fields=[
+                    {"label": "episodes", "value": [{"episode_number": 1, "name": "云霄飞车杀人事件"}]},
+                ],
+            )
+
+        def search(self, query, provider_filter=""):
+            del query, provider_filter
+            return []
+
+    service = SearchService()
+
+    record, snapshot = build_following_from_metadata_candidate(
+        selected,
+        metadata_search_service=service,
+        now=100,
+        use_full_detail=True,
+    )
+
+    assert service.hydrate_calls == 0
+    assert record.latest_episode == 1
+    assert snapshot.episodes[0].title == "云霄飞车杀人事件"
 
 
 def test_build_following_from_bangumi_candidate_prefers_tmdb_episode_details() -> None:

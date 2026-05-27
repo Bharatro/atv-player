@@ -8,6 +8,7 @@ from atv_player.metadata.providers.local_douban import LocalDoubanProvider
 from atv_player.metadata.providers.sohu import SohuMetadataProvider
 from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider
+from atv_player.metadata.providers.youku import YoukuMetadataProvider
 
 __all__ = [
     "BangumiMetadataProvider",
@@ -20,4 +21,5 @@ __all__ = [
     "SohuMetadataProvider",
     "TencentMetadataProvider",
     "TMDBProvider",
+    "YoukuMetadataProvider",
 ]

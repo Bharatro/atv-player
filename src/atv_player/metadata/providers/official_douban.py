@@ -9,12 +9,16 @@ from atv_player.metadata.providers.official_douban_client import DoubanBlockedEr
 
 class OfficialDoubanProvider:
     name = "official_douban"
+    _DETAIL_CACHE_VERSION = "playbtn-v2"
 
     def __init__(self, local_client) -> None:
         self._local_client = local_client
 
     def can_enrich(self, _context) -> bool:
         return True
+
+    def detail_cache_key(self, provider_id: str) -> str:
+        return f"{str(provider_id or '').strip()}:{self._DETAIL_CACHE_VERSION}"
 
     def search(self, candidate: MetadataQuery) -> list[MetadataMatch]:
         if candidate.vod_dbid:

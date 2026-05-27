@@ -23,6 +23,7 @@ METADATA_SOURCE_PREFERENCES = (
     SourcePreference("bilibili", "B站"),
     SourcePreference("iqiyi", "爱奇艺"),
     SourcePreference("tencent", "腾讯"),
+    SourcePreference("youku", "优酷"),
     SourcePreference("sohu", "搜狐"),
     SourcePreference("local_douban", "豆瓣"),
     SourcePreference("official_douban", "豆瓣官方"),
