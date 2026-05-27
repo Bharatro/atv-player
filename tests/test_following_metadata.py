@@ -10,7 +10,11 @@ from atv_player.following_metadata import (
     following_provider_priority,
     merge_following_snapshot,
 )
-from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord
+from atv_player.following_models import (
+    FollowingDetailSnapshot,
+    FollowingEpisode,
+    FollowingRecord,
+)
 from atv_player.metadata.models import MetadataMatch, MetadataRecord
 from atv_player.metadata.providers.tmdb import TMDBProvider
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
@@ -1000,6 +1004,39 @@ def test_build_snapshot_from_record_uses_last_episode_to_air_for_latest_and_tota
 
     assert following.latest_episode == 1201
     assert following.total_episodes == 1201
+
+
+def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_for_ongoing_series() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:37854:season:23",
+        title="航海王",
+        tmdb_id="37854",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": 1163, "season_number": 23, "name": "第 1163 集", "air_date": "2026-05-24"},
+                    {"episode_number": 1178, "season_number": 23, "name": "第 1178 集", "air_date": "2026-09-06"},
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {"episode_number": 1163, "season_number": 23, "air_date": "2026-05-24"},
+            },
+            {
+                "label": "next_episode_to_air",
+                "value": {"episode_number": 1178, "season_number": 23, "air_date": "2026-09-06"},
+            },
+        ],
+    )
+
+    following, snapshot = build_snapshot_from_record(record, now=1780070400, media_kind="anime")
+
+    assert following.latest_episode == 1163
+    assert following.total_episodes == 0
+    assert snapshot.next_episode is not None
+    assert snapshot.next_episode.episode_number == 1178
 
 
 def test_build_snapshot_from_record_uses_last_episode_air_date_for_recent_update_metadata() -> None:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import html
-import shiboken6
 import re
 import threading
 
+import shiboken6
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.following_models import (
+    FollowingCompletionState,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingEpisodeState,
@@ -30,19 +31,23 @@ from atv_player.following_models import (
     FollowingSeason,
     format_progress_episode,
     progress_at_or_beyond,
+    resolve_following_completion_state,
     resolve_progress_season,
 )
 from atv_player.models import AppConfig
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.following_episode_browser import (
     FollowingEpisodeBrowser,
     build_episode_season_groups,
 )
-from atv_player.ui.async_guard import AsyncGuardMixin
-from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+)
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
-
 
 _SEASON_PROVIDER_ID_RE = re.compile(r":season:(\d+)$")
 
@@ -1125,18 +1130,39 @@ def _detail_latest_season_number(
     )
     if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
         snapshot_seasons.append(int(snapshot.next_episode.season_number))
-    if (
-        latest_episode > 0
-        and int(record.total_episodes or 0) > 0
-        and latest_episode >= int(record.total_episodes or 0)
-        and snapshot_seasons
-    ):
+    if latest_episode > 0 and snapshot_seasons:
         return max(snapshot_seasons)
     return base
 
 
+def _display_total_episodes(
+    record: FollowingRecord,
+    snapshot: FollowingDetailSnapshot | None = None,
+) -> int:
+    total = max(0, int(record.total_episodes or 0))
+    latest = max(0, int(record.latest_episode or 0))
+    if total <= 0:
+        return 0
+    completion_state = resolve_following_completion_state(
+        episodes=snapshot.episodes if snapshot is not None else [],
+        next_episode=snapshot.next_episode if snapshot is not None else None,
+    )
+    if (
+        completion_state == FollowingCompletionState.COMPLETED
+        or latest <= 0
+        or total > latest
+    ):
+        return total
+    return 0
+
+
 def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None = None) -> str:
     episode_parts = []
+    completion_state = resolve_following_completion_state(
+        episodes=snapshot.episodes if snapshot is not None else [],
+        next_episode=snapshot.next_episode if snapshot is not None else None,
+    )
+    display_total = _display_total_episodes(record, snapshot)
     current_season_number = resolve_progress_season(
         record.current_season_number,
         record.current_episode,
@@ -1145,22 +1171,25 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
     latest_season_number = _detail_latest_season_number(record, snapshot)
     completed = False
     if (
-        record.total_episodes > 0
-        and record.latest_episode >= record.total_episodes
+        display_total > 0
+        and completion_state == FollowingCompletionState.COMPLETED
+        and record.latest_episode >= display_total
         and progress_at_or_beyond(
             current_season_number,
             record.current_episode,
             latest_season_number,
-            record.total_episodes,
+            display_total,
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
     ):
         completed = True
         if latest_season_number > 0:
-            episode_parts.extend(["已看完", f"S{latest_season_number}共 {record.total_episodes} 集", "已完结"])
+            episode_parts.extend(
+                ["已看完", f"S{latest_season_number}共 {display_total} 集", "已完结"]
+            )
         else:
-            episode_parts.extend(["已看完", f"{record.total_episodes}集", "已完结"])
+            episode_parts.extend(["已看完", f"{display_total}集", "已完结"])
     else:
         current_text = format_progress_episode(
             "看到",
@@ -1172,14 +1201,14 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
             episode_parts.append(current_text)
     if completed:
         pass
-    elif record.latest_episode > 0 and record.total_episodes > 0:
+    elif record.latest_episode > 0 and display_total > 0:
         latest_text = format_progress_episode(
             "最新",
             latest_season_number,
             record.latest_episode,
             fallback_season=record.season_number,
         )
-        episode_parts.append(f"{latest_text} / 总 {record.total_episodes}")
+        episode_parts.append(f"{latest_text} / 总 {display_total}")
     elif record.latest_episode > 0:
         episode_parts.append(
             format_progress_episode(
@@ -1189,8 +1218,8 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
                 fallback_season=record.season_number,
             )
         )
-    elif record.total_episodes > 0:
-        episode_parts.append(f"总 {record.total_episodes}")
+    elif display_total > 0:
+        episode_parts.append(f"总 {display_total}")
     parts = [
         *episode_parts,
         "有更新" if record.has_update else "",

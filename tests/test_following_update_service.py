@@ -197,6 +197,58 @@ def test_update_service_falls_back_to_bangumi_after_tmdb_failure_and_clears_stal
     assert record.homepage_prompt_pending is False
 
 
+def test_update_service_counts_absolute_episode_updates_across_seasons(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "37854"},
+            season_number=1,
+            current_season_number=15,
+            current_episode=581,
+            latest_episode=581,
+            total_episodes=0,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854:season:23",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "37854"},
+            season_number=23,
+            latest_episode=1163,
+            total_episodes=0,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            episodes=[
+                FollowingEpisode(
+                    season_number=23,
+                    episode_number=1163,
+                    air_date="2026-05-24",
+                )
+            ],
+            refreshed_at=200,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.has_update is True
+    assert record.new_episode_count == 582
+
+
 def test_update_service_prefers_tmdb_first_when_tmdb_id_exists(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(

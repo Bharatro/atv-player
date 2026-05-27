@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from atv_player.controllers.following_controller import FollowingController
+from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
@@ -9,9 +10,9 @@ from atv_player.following_models import (
     FollowingMetadataSourceSnapshot,
     FollowingPlaybackPlatformEntry,
     FollowingRecord,
+    FollowingSeason,
 )
 from atv_player.following_repository import FollowingRepository
-from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
 from atv_player.metadata.models import MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
@@ -749,6 +750,39 @@ def test_following_controller_omits_unknown_episode_counts_from_card(tmp_path: P
     assert cards[0].progress_text == "看到 S1E127"
     assert "最新 0" not in cards[0].progress_text
     assert "总 0" not in cards[0].progress_text
+
+
+def test_following_controller_card_does_not_mark_cross_season_ongoing_series_completed(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854",
+            season_number=1,
+            current_season_number=15,
+            current_episode=581,
+            latest_episode=1163,
+            total_episodes=1163,
+            has_update=True,
+            new_episode_count=1163,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[FollowingSeason(season_number=23, title="第23季")],
+            episodes=[FollowingEpisode(season_number=23, episode_number=1178, air_date="2026-09-06")],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert cards[0].progress_text == "看到 S15E581 · 最新 S23E1163"
+    assert cards[0].update_text == "有 582 集更新"
 
 
 def test_following_controller_adds_from_player_and_updates_progress(tmp_path: Path) -> None:

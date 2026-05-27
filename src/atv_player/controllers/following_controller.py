@@ -1,18 +1,18 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import ast
 import re
 import time
-import ast
 from dataclasses import dataclass, replace
 
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
     FollowingMetadataGateway,
+    build_following_from_metadata_candidate,
     build_following_metadata_bundle,
     build_snapshot_from_record,
-    build_following_from_metadata_candidate,
     compute_episode_counts,
     following_candidate_from_url,
     load_candidate_detail_record,
@@ -20,20 +20,26 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import (
-    compare_progress,
-    format_progress_episode,
     FollowingCardItem,
     FollowingCompletionState,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
     FollowingSourceBinding,
+    compare_progress,
+    format_progress_episode,
     progress_at_or_beyond,
     provider_priority_for_media_kind,
     resolve_following_completion_state,
+    resolve_new_episode_count,
     resolve_progress_season,
 )
-from atv_player.metadata.discovery import DiscoveryItem, DiscoveryQuery, DiscoveryResult, RecommendationSeed
+from atv_player.metadata.discovery import (
+    DiscoveryItem,
+    DiscoveryQuery,
+    DiscoveryResult,
+    RecommendationSeed,
+)
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
@@ -411,27 +417,37 @@ class FollowingController:
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         records, total = self._repository.load_page(page=page, size=size, keyword=keyword, only_updates=only_updates)
-        cards = [
-            FollowingCardItem(
-                record=record,
-                display_title=record.title,
-                subtitle=record.provider or record.media_kind,
-                progress_text=self._progress_text(record),
-                update_text=self._update_text(record),
-                updated_hint=record.has_update,
-                error_text=record.last_error,
+        cards = []
+        for record in records:
+            snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
+            completion_state = self._completion_state(record, snapshot)
+            cards.append(
+                FollowingCardItem(
+                    record=record,
+                    display_title=record.title,
+                    subtitle=record.provider or record.media_kind,
+                    progress_text=self._progress_text(record, snapshot=snapshot, completion_state=completion_state),
+                    update_text=self._update_text(record, completion_state=completion_state),
+                    updated_hint=record.has_update,
+                    error_text=record.last_error,
+                )
             )
-            for record in records
-        ]
         return cards, total
 
-    def _update_text(self, record: FollowingRecord) -> str:
+    def _update_text(self, record: FollowingRecord, *, completion_state: str | None = None) -> str:
         if record.has_update:
-            return f"有 {record.new_episode_count} 集更新"
-        return "已完结" if self._completion_state(record) == FollowingCompletionState.COMPLETED else "连载中"
+            count = resolve_new_episode_count(
+                has_update=True,
+                current_episode=record.current_episode,
+                latest_episode=record.latest_episode,
+                fallback_count=record.new_episode_count,
+            )
+            return f"有 {count} 集更新"
+        resolved = completion_state or self._completion_state(record)
+        return "已完结" if resolved == FollowingCompletionState.COMPLETED else "连载中"
 
-    def _completion_state(self, record: FollowingRecord) -> str:
-        snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
+    def _completion_state(self, record: FollowingRecord, snapshot: FollowingDetailSnapshot | None = None) -> str:
+        snapshot = snapshot or self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
         return resolve_following_completion_state(
             episodes=snapshot.episodes,
             next_episode=snapshot.next_episode,
@@ -664,10 +680,21 @@ class FollowingController:
         refreshed_record.position_seconds = record.position_seconds
         new_latest = max(refreshed_record.latest_episode, record.latest_episode)
         new_total = max(refreshed_record.total_episodes, record.total_episodes)
+        refreshed_completion_state = resolve_following_completion_state(
+            episodes=snapshot.episodes,
+            next_episode=snapshot.next_episode,
+        )
+        if (
+            refreshed_completion_state != FollowingCompletionState.COMPLETED
+            and new_total > 0
+            and new_latest > 0
+            and new_total <= new_latest
+        ):
+            new_total = 0
         refreshed_record.latest_episode = new_latest
         refreshed_record.previous_latest_episode = record.previous_latest_episode
         refreshed_record.total_episodes = new_total
-        latest_season_number = refreshed_record.season_number or record.season_number
+        latest_season_number = self._latest_season_number(refreshed_record, snapshot)
         has_update = not progress_at_or_beyond(
             record.current_season_number,
             record.current_episode,
@@ -676,14 +703,11 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
-        if has_update and latest_season_number == resolve_progress_season(
-            record.current_season_number,
-            record.current_episode,
-            fallback_season=record.season_number,
-        ):
-            new_episode_count = max(new_latest - max(record.current_episode, 0), 0)
-        else:
-            new_episode_count = new_latest if has_update else 0
+        new_episode_count = resolve_new_episode_count(
+            has_update=has_update,
+            current_episode=record.current_episode,
+            latest_episode=new_latest,
+        )
         homepage_prompt_pending = record.homepage_prompt_pending and has_update
         refreshed_record.has_update = has_update
         refreshed_record.new_episode_count = new_episode_count
@@ -711,6 +735,7 @@ class FollowingController:
         self._repository.update_check_state(
             following_id,
             latest_episode=new_latest,
+            latest_season_number=latest_season_number,
             total_episodes=new_total,
             checked_at=record.last_checked_at,
             next_check_after=record.next_check_after,
@@ -956,33 +981,72 @@ class FollowingController:
             )
         return replace(merged, episodes=episodes)
 
-    def _progress_text(self, record: FollowingRecord) -> str:
+    def _latest_season_number(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot | None = None,
+    ) -> int:
+        base = resolve_progress_season(
+            record.season_number,
+            record.latest_episode,
+            fallback_season=record.season_number,
+        )
+        if snapshot is None:
+            return base
+        snapshot_seasons = [int(season.season_number) for season in snapshot.seasons if int(season.season_number or 0) > 0]
+        snapshot_seasons.extend(
+            int(episode.season_number)
+            for episode in snapshot.episodes
+            if int(episode.season_number or 0) > 0 and not episode.is_special
+        )
+        if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
+            snapshot_seasons.append(int(snapshot.next_episode.season_number))
+        if record.latest_episode > 0 and snapshot_seasons:
+            return max(snapshot_seasons)
+        return base
+
+    @staticmethod
+    def _display_total_episodes(record: FollowingRecord, *, completion_state: str) -> int:
+        total = max(0, int(record.total_episodes or 0))
+        latest = max(0, int(record.latest_episode or 0))
+        if total <= 0:
+            return 0
+        if completion_state == FollowingCompletionState.COMPLETED or latest <= 0 or total > latest:
+            return total
+        return 0
+
+    def _progress_text(
+        self,
+        record: FollowingRecord,
+        *,
+        snapshot: FollowingDetailSnapshot | None = None,
+        completion_state: str | None = None,
+    ) -> str:
         parts = []
+        resolved_completion_state = completion_state or self._completion_state(record, snapshot)
+        display_total = self._display_total_episodes(record, completion_state=resolved_completion_state)
         current_season_number = resolve_progress_season(
             record.current_season_number,
             record.current_episode,
             fallback_season=record.season_number,
         )
-        latest_season_number = resolve_progress_season(
-            record.season_number,
-            record.latest_episode,
-            fallback_season=record.season_number,
-        )
+        latest_season_number = self._latest_season_number(record, snapshot)
         if (
-            record.total_episodes > 0
-            and record.latest_episode >= record.total_episodes
+            display_total > 0
+            and resolved_completion_state == FollowingCompletionState.COMPLETED
+            and record.latest_episode >= display_total
             and progress_at_or_beyond(
                 current_season_number,
                 record.current_episode,
                 latest_season_number,
-                record.total_episodes,
+                display_total,
                 current_fallback_season=record.season_number,
                 latest_fallback_season=latest_season_number,
             )
         ):
             if latest_season_number > 0:
-                return f"已看完 · S{latest_season_number}共 {record.total_episodes} 集 · 已完结"
-            return f"已看完 · {record.total_episodes}集 · 已完结"
+                return f"已看完 · S{latest_season_number}共 {display_total} 集 · 已完结"
+            return f"已看完 · {display_total}集 · 已完结"
         current_text = format_progress_episode(
             "看到",
             current_season_number,
@@ -991,14 +1055,14 @@ class FollowingController:
         )
         if current_text:
             parts.append(current_text)
-        if record.latest_episode > 0 and record.total_episodes > 0:
+        if record.latest_episode > 0 and display_total > 0:
             latest_text = format_progress_episode(
                 "最新",
                 latest_season_number,
                 record.latest_episode,
                 fallback_season=record.season_number,
             )
-            parts.append(f"{latest_text} / 总 {record.total_episodes}")
+            parts.append(f"{latest_text} / 总 {display_total}")
         elif record.latest_episode > 0:
             parts.append(
                 format_progress_episode(
@@ -1008,8 +1072,8 @@ class FollowingController:
                     fallback_season=record.season_number,
                 )
             )
-        elif record.total_episodes > 0:
-            parts.append(f"总 {record.total_episodes}")
+        elif display_total > 0:
+            parts.append(f"总 {display_total}")
         return " · ".join(parts) if parts else "进度未知"
 
     def _snapshot_needs_refresh(self, snapshot: FollowingDetailSnapshot) -> bool:

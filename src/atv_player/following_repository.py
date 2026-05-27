@@ -597,6 +597,7 @@ class FollowingRepository:
         new_episode_count: int,
         homepage_prompt_pending: bool,
         last_error: str,
+        latest_season_number: int = 0,
     ) -> None:
         with self._connect() as conn:
             row = conn.execute(
@@ -609,13 +610,14 @@ class FollowingRepository:
             previous = int(row[1] or 0)
             current_season_number = int(row[2] or 0)
             current_episode = int(row[3] or 0)
+            resolved_latest_season = int(latest_season_number or 0) or previous_season_number
             watched_latest = progress_at_or_beyond(
                 current_season_number,
                 current_episode,
-                previous_season_number,
+                resolved_latest_season,
                 latest_episode,
                 current_fallback_season=previous_season_number,
-                latest_fallback_season=previous_season_number,
+                latest_fallback_season=resolved_latest_season,
             )
             conn.execute(
                 """

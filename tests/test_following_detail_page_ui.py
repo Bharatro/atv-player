@@ -381,6 +381,7 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert page.status_label.text() == "元数据已更新"
 
     from unittest.mock import patch
+
     from atv_player.ui.following_detail_page import FollowingProgressDialog
 
     original_exec = FollowingProgressDialog.exec
@@ -1101,6 +1102,49 @@ def test_following_detail_page_renders_completed_progress_text(qtbot) -> None:
 
     assert "已看完 · S1共 24 集 · 已完结" in page.meta_label.text()
     assert "最新 24 / 总 24" not in page.meta_label.text()
+
+
+def test_following_detail_page_does_not_mark_cross_season_ongoing_series_completed(
+    qtbot,
+) -> None:
+    class OngoingController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="航海王",
+                    provider="tmdb",
+                    provider_id="tv:37854",
+                    season_number=1,
+                    current_season_number=15,
+                    current_episode=581,
+                    latest_episode=1163,
+                    total_episodes=1163,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[FollowingSeason(season_number=23, title="第23季")],
+                    episodes=[
+                        FollowingEpisode(
+                            season_number=23,
+                            episode_number=1178,
+                            air_date="2026-09-06",
+                        )
+                    ],
+                ),
+            )
+
+    page = FollowingDetailPage(OngoingController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert "看到 S15E581" in page.meta_label.text()
+    assert "最新 S23E1163" in page.meta_label.text()
+    assert "总 1163" not in page.meta_label.text()
+    assert "已看完" not in page.meta_label.text()
+    assert "已完结" not in page.meta_label.text()
 
 
 def test_following_detail_page_does_not_auto_refresh_when_people_missing_avatars(qtbot) -> None:

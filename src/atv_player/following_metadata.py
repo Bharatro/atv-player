@@ -218,6 +218,18 @@ def compute_episode_counts(raw_episodes: list[dict[str, object]], *, now: int | 
     return (max(aired_numbers) if aired_numbers else 0, len(set(normal_numbers)))
 
 
+def _has_future_episode(raw_episodes: list[dict[str, object]], *, now: int | None) -> bool:
+    today = datetime.fromtimestamp(now if now is not None else int(time.time()), BEIJING_TZ).date()
+    for raw in raw_episodes:
+        episode = _episode_from_raw(raw)
+        if episode.is_special or episode.episode_number <= 0:
+            continue
+        air_date = _air_date(episode.air_date)
+        if air_date is not None and air_date > today:
+            return True
+    return False
+
+
 def _media_kind_from_provider(provider: str, subtitle: object = "") -> str:
     subtitle_text = str(subtitle or "").lower()
     if provider == "bangumi" or any(marker in subtitle_text for marker in ("动漫", "动画", "anime")):
@@ -694,10 +706,13 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     latest, total = compute_episode_counts(raw_episodes, now=now)
     last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
     next_episode = _next_episode_to_air_from_detail_fields(detail_fields)
+    ongoing = next_episode is not None or _has_future_episode(raw_episodes, now=now)
     if last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:
-        total = last_ep_to_air
+        total = 0 if ongoing else last_ep_to_air
+    if ongoing and total > 0 and latest > 0 and total <= latest:
+        total = 0
     normalized_kind = media_kind or _media_kind_from_provider(provider)
     following = FollowingRecord(
         id=0,

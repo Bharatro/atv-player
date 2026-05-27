@@ -227,6 +227,22 @@ def progress_at_or_beyond(
     ) >= 0
 
 
+def resolve_new_episode_count(
+    *,
+    has_update: bool,
+    current_episode: int,
+    latest_episode: int,
+    fallback_count: int = 0,
+) -> int:
+    if not has_update:
+        return 0
+    normalized_latest = max(0, int(latest_episode or 0))
+    normalized_current = max(0, int(current_episode or 0))
+    if normalized_latest > normalized_current > 0:
+        return normalized_latest - normalized_current
+    return max(0, int(fallback_count or 0), normalized_latest)
+
+
 class FollowingEpisodeState:
     WATCHED = "watched"
     RELEASED = "released"

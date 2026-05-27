@@ -9,10 +9,12 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
+    FollowingCompletionState,
     FollowingRecord,
     FollowingUpdateResult,
     progress_at_or_beyond,
     resolve_following_completion_state,
+    resolve_new_episode_count,
     resolve_progress_season,
 )
 from atv_player.time_utils import beijing_timezone
@@ -87,19 +89,33 @@ class FollowingUpdateService(QObject):
                 or latest_from_snapshot
                 or record.latest_episode
             )
+            completion_state = resolve_following_completion_state(
+                episodes=snapshot.episodes,
+                next_episode=snapshot.next_episode,
+                today=datetime.fromtimestamp(now, BEIJING_TZ).date(),
+            )
             total = (
                 refreshed_record.total_episodes
                 or total_from_snapshot
                 or record.total_episodes
             )
+            if (
+                completion_state != FollowingCompletionState.COMPLETED
+                and total > 0
+                and latest > 0
+                and total <= latest
+            ):
+                total = 0
             snapshot_seasons = [
                 episode.season_number
                 for episode in snapshot.episodes
                 if episode.season_number > 0 and not episode.is_special
             ]
+            if snapshot.next_episode is not None and snapshot.next_episode.season_number > 0:
+                snapshot_seasons.append(snapshot.next_episode.season_number)
             latest_season_number = (
-                refreshed_record.season_number
-                or (max(snapshot_seasons) if snapshot_seasons else 0)
+                (max(snapshot_seasons) if snapshot_seasons else 0)
+                or refreshed_record.season_number
                 or record.season_number
             )
             current_season_number = resolve_progress_season(
@@ -115,10 +131,11 @@ class FollowingUpdateService(QObject):
                 current_fallback_season=record.season_number,
                 latest_fallback_season=latest_season_number,
             )
-            if has_update and latest_season_number == current_season_number:
-                new_count = max(latest - max(record.current_episode, 0), 0)
-            else:
-                new_count = latest if has_update else 0
+            new_count = resolve_new_episode_count(
+                has_update=has_update,
+                current_episode=record.current_episode,
+                latest_episode=latest,
+            )
             caught_up = record.watched_latest_episode or progress_at_or_beyond(
                 current_season_number,
                 record.current_episode,
@@ -133,6 +150,7 @@ class FollowingUpdateService(QObject):
             self._repository.update_check_state(
                 record.id,
                 latest_episode=latest,
+                latest_season_number=latest_season_number,
                 total_episodes=total,
                 checked_at=now,
                 next_check_after=now + self.next_interval_seconds(),
@@ -144,11 +162,6 @@ class FollowingUpdateService(QObject):
             if snapshot.episodes or snapshot.overview:
                 snapshot.following_id = record.id
                 self._repository.save_detail_snapshot(record.id, snapshot)
-            completion_state = resolve_following_completion_state(
-                episodes=snapshot.episodes,
-                next_episode=snapshot.next_episode,
-                today=datetime.fromtimestamp(now, BEIJING_TZ).date(),
-            )
             return FollowingUpdateResult(
                 record_id=record.id,
                 checked=True,
