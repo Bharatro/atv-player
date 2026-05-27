@@ -43,7 +43,7 @@ from atv_player.metadata.discovery import (
     DiscoveryResult,
     RecommendationSeed,
 )
-from atv_player.metadata.models import MetadataQuery
+from atv_player.metadata.models import MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
 
@@ -703,7 +703,7 @@ class FollowingController:
         candidate = self._tmdb_refresh_candidate_from_record(record)
         if self._should_skip_tmdb_refresh_without_known_season(record):
             candidate = None
-        include_related = True
+        include_related = False
         if candidate is None:
             candidate = (
                 self._metadata_refresh_candidate(record)
@@ -711,6 +711,7 @@ class FollowingController:
             )
         if candidate is None:
             raise RuntimeError("没有找到可用于更新元数据的匹配结果")
+        detail_records: list[MetadataRecord] = []
         refreshed_record, snapshot = build_following_from_metadata_candidate(
             candidate,
             metadata_search_service=self._metadata_search_service,
@@ -718,6 +719,7 @@ class FollowingController:
             media_kind=record.media_kind,
             include_related=include_related,
             use_full_detail=True,
+            detail_record_sink=detail_records,
         )
         refreshed_record.current_episode = record.current_episode
         refreshed_record.current_season_number = record.current_season_number
@@ -764,9 +766,11 @@ class FollowingController:
             current_fallback_season=record.season_number,
             latest_fallback_season=latest_season_number,
         )
+        refreshes_tmdb_candidate = str(getattr(candidate, "provider", "") or "").strip() == "tmdb"
         should_force_bundle_refresh = existing_snapshot is not None and existing_snapshot.metadata_bundle is not None
         if (
-            should_force_bundle_refresh
+            refreshes_tmdb_candidate
+            or should_force_bundle_refresh
             or existing_snapshot is None
             or self._snapshot_needs_refresh(existing_snapshot)
         ):
@@ -774,6 +778,7 @@ class FollowingController:
                 refreshed_record,
                 snapshot,
                 force=should_force_bundle_refresh,
+                tmdb_detail_record=detail_records[0] if refreshes_tmdb_candidate and detail_records else None,
             )
         self._repository.update_metadata(following_id, refreshed_record)
         self._repository.update_check_state(
@@ -810,7 +815,7 @@ class FollowingController:
             title=record.title,
             category_name="动漫" if record.media_kind == "anime" else record.media_kind,
         )
-        groups = self._metadata_search_service.search(query)
+        groups = self._metadata_search_service.search(query, provider_filter="tmdb")
         candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
         if not candidates:
             return None
@@ -971,16 +976,19 @@ class FollowingController:
         snapshot: FollowingDetailSnapshot,
         *,
         force: bool = False,
+        tmdb_detail_record: MetadataRecord | None = None,
     ) -> FollowingDetailSnapshot:
         if snapshot.metadata_bundle is not None and not force:
             return snapshot
         candidate = self._tmdb_refresh_candidate_from_record(record)
-        if candidate is None:
+        if candidate is None and tmdb_detail_record is None:
             return self._ensure_single_source_metadata_bundle(record, snapshot, provider="bangumi")
-        detail_record, _detail_error = load_candidate_detail_record_full(
-            self._metadata_search_service,
-            candidate,
-        )
+        detail_record = tmdb_detail_record
+        if detail_record is None:
+            detail_record, _detail_error = load_candidate_detail_record_full(
+                self._metadata_search_service,
+                candidate,
+            )
         if detail_record is None:
             return snapshot
         gateway = FollowingMetadataGateway(self._metadata_search_service)

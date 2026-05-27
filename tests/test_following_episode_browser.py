@@ -261,6 +261,37 @@ def test_episode_list_model_falls_back_to_nearest_future_air_date_when_next_epis
     assert model.data(model.index(1, 0), STATUS_ROLE) == FollowingEpisodeState.PENDING
 
 
+def test_following_episode_browser_marks_completed_visible_season_released_when_global_latest_is_previous_season(qtbot) -> None:
+    browser = FollowingEpisodeBrowser(initial_grid_columns=1)
+    qtbot.addWidget(browser)
+    episodes = [
+        FollowingEpisode(episode_number=index, season_number=2, title=f"S2E{index}")
+        for index in range(1, 53)
+    ]
+
+    browser.set_content(
+        groups=build_episode_season_groups(
+            episodes,
+            seasons=[
+                FollowingSeason(season_number=1, title="第一季", episode_count=26),
+                FollowingSeason(season_number=2, title="第二季", episode_count=52),
+            ],
+            fallback_season=1,
+        ),
+        current_episode=0,
+        current_season_number=0,
+        selected_season_number=2,
+        latest_episode=26,
+        latest_season_number=1,
+        next_episode=None,
+    )
+
+    index = browser.episode_model.index(51, 0)
+
+    assert browser.episode_model.data(index, STATUS_ROLE) == FollowingEpisodeState.RELEASED
+    assert browser.episode_model.data(index, STATUS_TEXT_ROLE) == "已更新"
+
+
 def test_episode_thumbnail_store_refreshes_only_matching_rows() -> None:
     store = EpisodeThumbnailStore()
     model = EpisodeListModel()

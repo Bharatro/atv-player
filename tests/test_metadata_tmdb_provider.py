@@ -570,6 +570,58 @@ def test_tmdb_provider_get_detail_full_does_not_copy_homepage_to_other_network_p
     ]
 
 
+def test_tmdb_provider_get_detail_full_does_not_copy_shared_country_link_to_other_platforms() -> None:
+    client = FakeTMDBClient()
+    client.tv_detail = {
+        "id": 243224,
+        "name": "凡人修仙传",
+        "overview": "剧集简介",
+        "networks": [
+            {"id": 1024, "name": "Youku", "origin_country": "CN"},
+        ],
+        "watch/providers": {
+            "results": {
+                "CN": {
+                    "link": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                    "flatrate": [
+                        {"provider_name": "iQiyi"},
+                        {"provider_name": "Tencent Video"},
+                        {"provider_name": "Youku"},
+                    ],
+                }
+            }
+        },
+        "first_air_date": "2025-07-27",
+        "genres": [{"name": "剧情"}],
+        "credits": {},
+        "alternative_titles": {"results": []},
+        "external_ids": {},
+    }
+    client.tv_season_detail = {
+        "season_number": 1,
+        "overview": "第一季简介",
+        "episodes": [],
+    }
+    provider = TMDBProvider(client)
+
+    record = provider.get_detail_full(
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:243224:season:1",
+            title="凡人修仙传",
+        )
+    )
+
+    watch_providers = _detail_field_value(record, "watch_providers")
+    assert watch_providers == [
+        {
+            "provider": "youku",
+            "label": "优酷",
+            "url": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+        }
+    ]
+
+
 def test_tmdb_provider_get_detail_returns_empty_rating_for_invalid_vote_average() -> None:
     client = FakeTMDBClient()
     client.tv_detail = {

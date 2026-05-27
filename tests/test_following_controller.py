@@ -75,36 +75,39 @@ class FakeFollowingMetadataRefreshService:
 
     def search(self, query, provider_filter=""):
         assert query.title == "仙逆"
-        if provider_filter:
-            return []
-        return [
-            MetadataScrapeGroup(
-                provider="bangumi",
-                provider_label="Bangumi",
-                items=[
-                    MetadataScrapeCandidate(
-                        provider="bangumi",
-                        provider_label="Bangumi",
-                        provider_id="subject:1",
-                        title="仙逆",
-                        subtitle="动漫",
-                    )
-                ],
-            ),
-            MetadataScrapeGroup(
-                provider="tmdb",
-                provider_label="TMDB",
-                items=[
-                    MetadataScrapeCandidate(
-                        provider="tmdb",
-                        provider_label="TMDB",
-                        provider_id="tv:236534:season:1",
-                        title="仙逆",
-                        subtitle="剧集",
-                    )
-                ],
-            ),
-        ]
+        if provider_filter == "tmdb":
+            return [
+                MetadataScrapeGroup(
+                    provider="tmdb",
+                    provider_label="TMDB",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="tmdb",
+                            provider_label="TMDB",
+                            provider_id="tv:236534:season:1",
+                            title="仙逆",
+                            subtitle="剧集",
+                        )
+                    ],
+                )
+            ]
+        if provider_filter == "bangumi":
+            return [
+                MetadataScrapeGroup(
+                    provider="bangumi",
+                    provider_label="Bangumi",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="bangumi",
+                            provider_label="Bangumi",
+                            provider_id="subject:1",
+                            title="仙逆",
+                            subtitle="动漫",
+                        )
+                    ],
+                )
+            ]
+        return []
 
     def detail_record(self, candidate):
         self.detail_provider_ids.append((candidate.provider, candidate.provider_id))
@@ -128,6 +131,7 @@ class FakeFollowingMetadataRefreshService:
             tmdb_id="236534",
             actors=["史泽鲲"],
             directors=["导演"],
+            genres=["动画"],
             detail_fields=[
                 {
                     "label": "episodes",
@@ -147,11 +151,13 @@ class FakeFollowingMetadataRefreshService:
 class FakeTMDBIdRefreshService:
     def __init__(self) -> None:
         self.search_calls = 0
+        self.search_provider_filters: list[str] = []
         self.full_detail_provider_ids: list[str] = []
 
     def search(self, query, provider_filter=""):
-        del query, provider_filter
+        del query
         self.search_calls += 1
+        self.search_provider_filters.append(provider_filter)
         return []
 
     def detail_record_full(self, candidate):
@@ -1150,7 +1156,7 @@ def test_following_controller_refreshes_live_action_avatars_from_existing_tmdb_i
     refreshed = controller.refresh_metadata(record_id)
 
     snapshot = repo.get_detail_snapshot(record_id)
-    assert service.search_calls == 1
+    assert service.search_provider_filters == ["official_douban", "local_douban", "douban"]
     assert service.full_detail_provider_ids == ["tv:272432:season:1"]
     assert refreshed.snapshot.cast[0]["avatar"] == "/wang.jpg"
     assert snapshot is not None
@@ -1264,7 +1270,6 @@ def test_following_controller_refresh_metadata_rebuilds_existing_metadata_bundle
     platforms = refreshed.snapshot.metadata_bundle.merged_snapshot.playback_platforms
     assert [(item.provider, item.url) for item in platforms] == [
         ("iqiyi", "https://www.iqiyi.com/a_1euk1nkfz9l.html"),
-        ("tencent", "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html"),
     ]
 
 

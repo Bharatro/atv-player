@@ -380,6 +380,7 @@ def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, s
     country = (watch_payload or {}).get("results", {}).get("CN") if isinstance(watch_payload, dict) else None
     if isinstance(country, dict):
         shared_link = str(country.get("link") or country.get("url") or "").strip()
+        shared_link_provider = _tmdb_platform_key_from_homepage(shared_link)
         for bucket in ("flatrate", "free", "ads", "buy", "rent"):
             providers = country.get(bucket)
             if not isinstance(providers, list):
@@ -401,7 +402,7 @@ def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, s
                 explicit_url = str(item.get("url") or item.get("link") or "").strip()
                 if explicit_url:
                     current["url"] = explicit_url
-                elif not current["url"] and shared_link:
+                elif not current["url"] and shared_link and shared_link_provider == provider:
                     current["url"] = shared_link
     homepage = str(payload.get("homepage") or "").strip()
     homepage_provider = _tmdb_platform_key_from_homepage(homepage)
@@ -415,7 +416,7 @@ def _tmdb_watch_provider_entries(payload: dict[str, object]) -> list[dict[str, s
             }
         elif not str(current.get("url") or "").strip():
             current["url"] = homepage
-    return list(entries.values())
+    return [entry for entry in entries.values() if str(entry.get("url") or "").strip()]
 
 
 class TMDBProvider:

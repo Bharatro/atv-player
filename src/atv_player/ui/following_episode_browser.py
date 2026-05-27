@@ -902,13 +902,14 @@ class FollowingEpisodeBrowser(QWidget):
         )
 
     def _apply_group(self, group: EpisodeSeasonGroup, *, restore_state: bool) -> None:
+        latest_season_number, latest_episode = self._effective_latest_progress_for_group(group)
         self.episode_model.set_episodes(
             group.episodes,
             current_episode=self._current_episode,
             current_season_number=self._current_season_number,
             visible_season_number=group.season_number,
-            latest_episode=self._latest_episode,
-            latest_season_number=self._latest_season_number,
+            latest_episode=latest_episode,
+            latest_season_number=latest_season_number,
             next_episode=self._next_episode,
         )
         self._current_group = group
@@ -995,6 +996,25 @@ class FollowingEpisodeBrowser(QWidget):
             episode_count=max(0, int(group.episode_count or 0)),
         )
 
+    def _effective_latest_progress_for_group(self, group: EpisodeSeasonGroup) -> tuple[int, int]:
+        latest_season_number = self._latest_season_number
+        latest_episode = self._latest_episode
+        group_season = max(0, int(group.season_number or 0))
+        local_latest = _completed_group_latest_episode(
+            group,
+            next_episode=self._next_episode,
+            today=datetime.now(BEIJING_TZ).date(),
+        )
+        if group_season <= 0 or local_latest <= 0:
+            return latest_season_number, latest_episode
+        if latest_season_number <= 0 or latest_episode <= 0:
+            return group_season, local_latest
+        if group_season == latest_season_number:
+            return latest_season_number, max(latest_episode, local_latest)
+        if group_season > latest_season_number:
+            return group_season, local_latest
+        return latest_season_number, latest_episode
+
     def _rebuild_episode_cards(self, episodes: list[FollowingEpisode]) -> None:
         _clear_layout(self.episode_grid_layout)
         for column in range(self.episode_grid_layout.columnCount()):
@@ -1036,12 +1056,16 @@ class FollowingEpisodeBrowser(QWidget):
 
     def status_for_episode(self, episode: FollowingEpisode) -> str:
         visible_season_number = self._current_group.season_number if self._current_group is not None else 0
+        latest_season_number = self._latest_season_number
+        latest_episode = self._latest_episode
+        if self._current_group is not None:
+            latest_season_number, latest_episode = self._effective_latest_progress_for_group(self._current_group)
         return resolve_following_episode_state(
             episode=episode,
             current_season_number=self._current_season_number,
             current_episode=self._current_episode,
-            latest_season_number=self._latest_season_number,
-            latest_episode=self._latest_episode,
+            latest_season_number=latest_season_number,
+            latest_episode=latest_episode,
             visible_season_number=visible_season_number,
             next_episode=self._next_episode,
         )
@@ -1109,6 +1133,48 @@ def _episode_air_date(value: str) -> datetime.date | None:
         return datetime.strptime(text[:10], "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def _completed_group_latest_episode(
+    group: EpisodeSeasonGroup,
+    *,
+    next_episode: FollowingEpisode | None,
+    today,
+) -> int:
+    group_season = max(0, int(group.season_number or 0))
+    episode_count = max(0, int(group.episode_count or 0))
+    if group_season <= 0 or episode_count <= 0:
+        return 0
+    season_air_date = _episode_air_date(group.air_date)
+    if season_air_date is not None and season_air_date > today:
+        return 0
+    if next_episode is not None:
+        next_season = resolve_progress_season(
+            next_episode.season_number,
+            next_episode.episode_number,
+            fallback_season=group_season,
+        )
+        if next_season == group_season:
+            return 0
+    normal_numbers: set[int] = set()
+    for episode in group.episodes:
+        if episode.is_special or episode.episode_number <= 0:
+            continue
+        episode_season = resolve_progress_season(
+            episode.season_number,
+            episode.episode_number,
+            fallback_season=group_season,
+        )
+        if episode_season != group_season:
+            continue
+        air_date = _episode_air_date(episode.air_date)
+        if air_date is not None and air_date > today:
+            return 0
+        normal_numbers.add(int(episode.episode_number))
+    if len(normal_numbers) < episode_count:
+        return 0
+    local_latest = max(normal_numbers) if normal_numbers else 0
+    return local_latest if local_latest >= episode_count else 0
 
 
 def _nearest_future_episode(

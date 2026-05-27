@@ -345,7 +345,7 @@ def test_following_metadata_gateway_maps_local_douban_source_into_douban_slot() 
     assert result["douban"][1] >= 0.75
 
 
-def test_following_metadata_gateway_searches_playback_sources_beyond_tmdb_watch_platforms() -> None:
+def test_following_metadata_gateway_searches_only_tmdb_watch_platform_sources() -> None:
     class SearchService:
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -428,10 +428,99 @@ def test_following_metadata_gateway_searches_playback_sources_beyond_tmdb_watch_
     )
 
     assert "iqiyi" in service.calls
-    assert "tencent" in service.calls
-    assert set(result) <= {"douban", "bangumi", "bilibili", "iqiyi", "tencent", "youku", "mgtv", "sohu"}
+    assert "tencent" not in service.calls
+    assert "bangumi" not in service.calls
+    assert set(result) <= {"douban", "iqiyi"}
     assert result["iqiyi"][0].provider == "iqiyi"
-    assert result["tencent"][0].provider == "tencent"
+
+
+def test_following_metadata_gateway_skips_playback_source_with_foreign_playback_link() -> None:
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            self.calls.append(provider_filter)
+            if provider_filter == "iqiyi":
+                return [
+                    type(
+                        "Group",
+                        (),
+                        {
+                            "items": [
+                                MetadataScrapeCandidate(
+                                    provider="iqiyi",
+                                    provider_label="爱奇艺",
+                                    provider_id="https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                                    title=query.title,
+                                    year=query.year,
+                                )
+                            ]
+                        },
+                    )()
+                ]
+            if provider_filter == "youku":
+                return [
+                    type(
+                        "Group",
+                        (),
+                        {
+                            "items": [
+                                MetadataScrapeCandidate(
+                                    provider="youku",
+                                    provider_label="优酷",
+                                    provider_id="https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                                    title=query.title,
+                                    year=query.year,
+                                )
+                            ]
+                        },
+                    )()
+                ]
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    gateway = FollowingMetadataGateway(SearchService())
+
+    result = gateway.load_source_records(
+        FollowingRecord(
+            id=1,
+            title="凡人修仙传",
+            media_kind="live_action",
+            provider="tmdb",
+            provider_id="tv:243224",
+            external_ids={"tmdb": "243224"},
+        ),
+        tmdb_record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:243224:season:1",
+            title="凡人修仙传",
+            year="2025",
+            tmdb_id="243224",
+            detail_fields=[
+                {
+                    "label": "watch_providers",
+                    "value": [
+                        {
+                            "provider": "youku",
+                            "label": "优酷",
+                            "url": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                        }
+                    ],
+                }
+            ],
+        ),
+    )
+
+    assert "iqiyi" not in result
+    assert result["youku"][0].provider == "youku"
 
 
 def test_following_controller_load_detail_attaches_metadata_bundle_from_tmdb_snapshot() -> None:
@@ -796,13 +885,8 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
 
         def search(self, query, provider_filter=""):
             assert query.title == "盗妖行"
-            assert provider_filter == ""
+            assert provider_filter == "tmdb"
             return [
-                MetadataScrapeGroup(
-                    provider="iqiyi",
-                    provider_label="爱奇艺",
-                    items=[selected],
-                ),
                 MetadataScrapeGroup(
                     provider="tmdb",
                     provider_label="TMDB",
@@ -860,6 +944,129 @@ def test_build_following_from_selected_iqiyi_candidate_enriches_with_tmdb_metada
     assert record.total_episodes == 1
     assert snapshot.overview == "爱奇艺简介"
     assert snapshot.episodes[0].title == "第一集"
+
+
+def test_build_following_from_tmdb_candidate_searches_only_tmdb_platform_and_third_party_sources() -> None:
+    selected = MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id="tv:243224:season:1",
+        title="凡人修仙传",
+        year="2025",
+        subtitle="剧集",
+        raw={"season_number": 1},
+    )
+
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.detail_provider_ids: list[tuple[str, str]] = []
+
+        def search(self, query, provider_filter=""):
+            assert query.title == "凡人修仙传"
+            assert query.year == "2025"
+            self.calls.append(provider_filter)
+            if provider_filter != "youku":
+                return []
+            return [
+                MetadataScrapeGroup(
+                    provider="youku",
+                    provider_label="优酷",
+                    items=[
+                        MetadataScrapeCandidate(
+                            provider="youku",
+                            provider_label="优酷",
+                            provider_id="https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                            title="凡人修仙传",
+                            year="2025",
+                        )
+                    ],
+                )
+            ]
+
+        def detail_record(self, candidate):
+            self.detail_provider_ids.append((candidate.provider, candidate.provider_id))
+            if candidate.provider == "tmdb":
+                return MetadataRecord(
+                    provider="tmdb",
+                    provider_id="tv:243224:season:1",
+                    title="凡人修仙传",
+                    year="2025",
+                    tmdb_id="243224",
+                    genres=["动画"],
+                    detail_fields=[
+                        {
+                            "label": "watch_providers",
+                            "value": [
+                                {
+                                    "provider": "youku",
+                                    "label": "优酷",
+                                    "url": "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html",
+                                }
+                            ],
+                        }
+                    ],
+                )
+            return MetadataRecord(
+                provider=candidate.provider,
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                detail_fields=[{"label": "播放链接", "value": candidate.provider_id}],
+            )
+
+    service = SearchService()
+
+    record, _snapshot = build_following_from_metadata_candidate(
+        selected,
+        metadata_search_service=service,
+        now=100,
+    )
+
+    assert service.calls == ["official_douban", "local_douban", "douban", "bangumi", "youku"]
+    assert record.provider == "tmdb"
+    assert ("youku", "https://v.youku.com/v_show/id_XNjQ3ODgxMTc1Ng==.html") in service.detail_provider_ids
+
+
+def test_build_following_from_tmdb_candidate_skips_bangumi_when_tmdb_is_not_animation() -> None:
+    selected = MetadataScrapeCandidate(
+        provider="tmdb",
+        provider_label="TMDB",
+        provider_id="tv:243224:season:1",
+        title="凡人修仙传",
+        year="2025",
+        subtitle="剧集",
+        raw={"season_number": 1},
+    )
+
+    class SearchService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search(self, query, provider_filter=""):
+            assert query.title == "凡人修仙传"
+            self.calls.append(provider_filter)
+            return []
+
+        def detail_record(self, candidate):
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title=candidate.title,
+                year=candidate.year,
+                genres=["剧情", "Sci-Fi & Fantasy"],
+                detail_fields=[],
+            )
+
+    service = SearchService()
+
+    build_following_from_metadata_candidate(
+        selected,
+        metadata_search_service=service,
+        now=100,
+    )
+
+    assert service.calls == ["official_douban", "local_douban", "douban"]
 
 
 def test_build_following_from_bangumi_candidate_prefers_tmdb_episode_details() -> None:
