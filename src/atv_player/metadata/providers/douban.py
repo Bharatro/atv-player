@@ -34,12 +34,35 @@ def _split_people(value: object) -> list[str]:
     ]
 
 
+def _split_aliases(value: object) -> list[str]:
+    return [
+        part.strip()
+        for part in re.split(r"[/]", str(value or ""))
+        if part.strip()
+    ]
+
+
 def _official_link_detail_fields(payload: dict[str, object]) -> list[dict[str, object]]:
     links = payload.get("official_links")
     if not isinstance(links, list) or not links:
         return []
     normalized = [dict(item) for item in links if isinstance(item, dict)]
     return [{"label": "official_links", "value": normalized}] if normalized else []
+
+
+def _extra_detail_fields(payload: dict[str, object]) -> list[dict[str, object]]:
+    fields: list[dict[str, object]] = []
+    for label, key in (
+        ("编剧", "screenwriter"),
+        ("首播", "first_air_date"),
+        ("上映日期", "release_date"),
+        ("集数", "episode_count"),
+        ("片长", "duration"),
+    ):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            fields.append({"label": label, "value": value})
+    return fields
 
 
 class DoubanProvider:
@@ -127,6 +150,8 @@ class DoubanProvider:
             ],
             country=str(payload.get("country") or payload.get("region") or "").strip(),
             language=str(payload.get("language") or "").strip(),
+            aliases=_split_aliases(payload.get("aliases")),
+            imdb_id=str(payload.get("imdb_id") or "").strip(),
             douban_id=int(payload.get("id") or payload.get("dbid") or 0),
-            detail_fields=_official_link_detail_fields(payload),
+            detail_fields=[*_official_link_detail_fields(payload), *_extra_detail_fields(payload)],
         )

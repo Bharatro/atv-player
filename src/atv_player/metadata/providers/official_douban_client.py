@@ -347,6 +347,17 @@ class LocalDoubanClient:
             flags=re.IGNORECASE | re.DOTALL,
         )
         summary = self._extract_first(r'property="v:summary"[^>]*>(.*?)</span>', text)
+        info_text = self._extract_first(r'<div[^>]+id="info"[^>]*>(.*?)</div>', text)
+        if not info_text:
+            info_text = text
+        runtime_match = re.search(
+            r'property="v:runtime"[^>]*>([^<]+)<', text, flags=re.IGNORECASE
+        )
+        runtime_value = self._strip_tags(runtime_match.group(1)) if runtime_match else ""
+        first_air_date = self._extract_info_value(info_text, "首播")
+        release_date = self._extract_info_value(info_text, "上映日期")
+        episode_duration = self._extract_info_value(info_text, "单集片长")
+        movie_duration = runtime_value or self._extract_info_value(info_text, "片长")
         detail = {
             "id": normalized_id,
             "name": name,
@@ -360,6 +371,11 @@ class LocalDoubanClient:
                 text,
                 r'rel="v:directedBy"[^>]*>([^<]+)<',
             ),
+            "screenwriter": self._extract_people(
+                info_text,
+                r'<span[^>]*class="pl"[^>]*>编剧</span>\s*:?\s*.*?'
+                r'<span[^>]*class="attrs"[^>]*>(.*?)</span>',
+            ),
             "actors": self._extract_people(
                 text,
                 r'<span[^>]*class="actor"[^>]*>.*?'
@@ -368,8 +384,14 @@ class LocalDoubanClient:
             "genre": ",".join(
                 self._strip_tags(item) for item in genres if self._strip_tags(item)
             ),
-            "country": self._extract_info_value(text, "制片国家/地区"),
-            "language": self._extract_info_value(text, "语言"),
+            "country": self._extract_info_value(info_text, "制片国家/地区"),
+            "language": self._extract_info_value(info_text, "语言"),
+            "first_air_date": first_air_date,
+            "release_date": release_date,
+            "episode_count": self._extract_info_value(info_text, "集数"),
+            "duration": episode_duration or movie_duration,
+            "aliases": self._extract_info_value(info_text, "又名"),
+            "imdb_id": self._extract_info_value(info_text, "IMDb"),
             "description": self._strip_tags(summary),
             "official_links": self._extract_official_links(text),
         }

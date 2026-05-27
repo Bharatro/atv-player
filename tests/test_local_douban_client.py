@@ -210,10 +210,17 @@ def test_local_douban_client_parses_subject_detail_html() -> None:
         "cover": "https://img.example/poster.jpg",
         "dbScore": "8.1",
         "directors": "周琛",
+        "screenwriter": "",
         "actors": "梁达伟,唐雅菁",
         "genre": "动画,科幻",
         "country": "中国大陆",
         "language": "汉语普通话",
+        "first_air_date": "",
+        "release_date": "",
+        "episode_count": "",
+        "duration": "",
+        "aliases": "",
+        "imdb_id": "",
         "description": "崇尚科技修仙的新术崛起。",
         "official_links": [
             {

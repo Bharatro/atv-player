@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
-from atv_player.metadata.providers.douban import _official_link_detail_fields, _split_people, clean_overview_text
+from atv_player.metadata.providers.douban import _extra_detail_fields, _official_link_detail_fields, _split_aliases, _split_people, clean_overview_text
 from atv_player.metadata.providers.official_douban_client import DoubanBlockedError
 
 
@@ -75,6 +75,8 @@ class OfficialDoubanProvider:
             ],
             country=str(payload.get("country") or "").strip(),
             language=str(payload.get("language") or "").strip(),
+            aliases=_split_aliases(payload.get("aliases")),
+            imdb_id=str(payload.get("imdb_id") or "").strip(),
             douban_id=int(payload.get("id") or 0),
-            detail_fields=_official_link_detail_fields(payload),
+            detail_fields=[*_official_link_detail_fields(payload), *_extra_detail_fields(payload)],
         )
