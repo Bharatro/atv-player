@@ -414,6 +414,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _clear_plugin_action_buttons(self) -> None:
         while self.plugin_actions_layout.count():
             item = self.plugin_actions_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.hide()
