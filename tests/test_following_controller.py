@@ -416,7 +416,11 @@ def test_following_controller_manual_progress_allows_older_episode(tmp_path: Pat
 def test_following_controller_hydrates_tmdb_url_candidate_for_search_results(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     service = FakeTMDBUrlSearchService()
-    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+    controller = FollowingController(
+        repo,
+        metadata_search_service=service,
+        now=lambda: 100,
+    )
 
     groups = controller.search_media("https://www.themoviedb.org/tv/30983-case-closed")
 
@@ -1554,6 +1558,72 @@ def test_following_controller_load_detail_season_overrides_existing_tmdb_provide
 
     assert service.provider_ids == ["tv:76479:season:5"]
     assert [episode.season_number for episode in detail.snapshot.episodes] == [5]
+
+
+def test_following_controller_load_detail_season_loads_tmdb_specials(
+    tmp_path: Path,
+) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="黑袍纠察队",
+            media_kind="live_action",
+            season_number=1,
+            provider="tmdb",
+            provider_id="tv:76479:season:1",
+            external_ids={"tmdb": "76479"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            seasons=[
+                FollowingSeason(season_number=0, title="特别篇", episode_count=1),
+                FollowingSeason(season_number=1, title="第一季", episode_count=8),
+            ],
+            episodes=[FollowingEpisode(episode_number=1, season_number=1, title="S1E1")],
+        ),
+    )
+
+    class SpecialsSeasonService(FakeSearchService):
+        def __init__(self) -> None:
+            self.provider_ids: list[str] = []
+
+        def detail_record_full(self, candidate):
+            self.provider_ids.append(candidate.provider_id)
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id=candidate.provider_id,
+                title="黑袍纠察队",
+                tmdb_id="76479",
+                detail_fields=[
+                    {
+                        "label": "seasons",
+                        "value": [
+                            {"season_number": 0, "name": "特别篇", "episode_count": 1},
+                            {"season_number": 1, "name": "第一季", "episode_count": 8},
+                        ],
+                    },
+                    {
+                        "label": "episodes",
+                        "value": [
+                            {"episode_number": 1, "season_number": 0, "name": "花絮"},
+                        ],
+                    },
+                ],
+            )
+
+    service = SpecialsSeasonService()
+    controller = FollowingController(repo, metadata_search_service=service, now=lambda: 100)
+
+    detail = controller.load_detail_season(record_id, season_number=0)
+
+    assert service.provider_ids == ["tv:76479:season:0"]
+    assert [episode.title for episode in detail.snapshot.episodes] == ["花絮"]
+    assert [episode.season_number for episode in detail.snapshot.episodes] == [0]
+    assert [episode.is_special for episode in detail.snapshot.episodes] == [True]
 
 
 class FakeFullEpisodeRefreshService:

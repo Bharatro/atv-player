@@ -175,6 +175,10 @@ def _season_number_from_provider_id(provider_id: object) -> int:
     return _to_int(match.group(1))
 
 
+def _provider_id_has_explicit_season_zero(provider_id: object) -> bool:
+    return re.search(r":season:0$", str(provider_id or "").strip()) is not None
+
+
 def _canonical_following_provider_id(provider: object, provider_id: object) -> str:
     text = str(provider_id or "").strip()
     if str(provider or "").strip() != "tmdb":
@@ -352,6 +356,16 @@ def _episodes_with_fallback_season(
         episode = dict(raw)
         if _to_int(episode.get("season_number")) <= 0:
             episode["season_number"] = normalized_season
+        episodes.append(episode)
+    return episodes
+
+
+def _special_episodes(raw_episodes: list[dict[str, object]]) -> list[dict[str, object]]:
+    episodes: list[dict[str, object]] = []
+    for raw in raw_episodes:
+        episode = dict(raw)
+        episode["season_number"] = 0
+        episode["type"] = 1
         episodes.append(episode)
     return episodes
 
@@ -963,10 +977,13 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     raw_episodes = _episode_raw_from_detail_fields(detail_fields)
     raw_seasons = _season_raw_from_detail_fields(detail_fields)
     season_number = _season_number_from_provider_id(provider_id)
-    raw_episodes = _episodes_with_fallback_season(
-        raw_episodes,
-        season_number=season_number,
-    )
+    if _provider_id_has_explicit_season_zero(provider_id):
+        raw_episodes = _special_episodes(raw_episodes)
+    else:
+        raw_episodes = _episodes_with_fallback_season(
+            raw_episodes,
+            season_number=season_number,
+        )
     latest, total = compute_episode_counts(raw_episodes, now=now)
     series_total = _int_detail_field(detail_fields, "number_of_episodes")
     last_episode_to_air = _last_episode_to_air_from_detail_fields(detail_fields)

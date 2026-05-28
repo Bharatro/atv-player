@@ -39,6 +39,31 @@ def test_build_episode_season_groups_sorts_and_falls_back_to_single_season() -> 
     assert [episode.episode_number for episode in groups[0].episodes] == [2, 12]
 
 
+def test_build_episode_season_groups_keeps_special_episodes_in_specials() -> None:
+    episodes = [
+        FollowingEpisode(
+            episode_number=1,
+            season_number=0,
+            title="特别篇 1",
+            is_special=True,
+        ),
+        FollowingEpisode(episode_number=1, season_number=1, title="S1E1"),
+    ]
+
+    groups = build_episode_season_groups(
+        episodes,
+        seasons=[
+            FollowingSeason(season_number=0, title="特别篇", episode_count=1),
+            FollowingSeason(season_number=1, title="第一季", episode_count=1),
+        ],
+        fallback_season=1,
+    )
+
+    assert [group.season_number for group in groups] == [0, 1]
+    assert [episode.title for episode in groups[0].episodes] == ["特别篇 1"]
+    assert [episode.title for episode in groups[1].episodes] == ["S1E1"]
+
+
 def test_build_episode_season_groups_keeps_multiple_seasons_separate() -> None:
     episodes = [
         FollowingEpisode(episode_number=3, season_number=2, title="S2E3"),

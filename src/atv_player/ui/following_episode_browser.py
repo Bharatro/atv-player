@@ -113,7 +113,12 @@ def build_episode_season_groups(
     grouped_episodes: dict[int, list[FollowingEpisode]] = {}
     default_season = fallback_season if fallback_season > 0 else 1
     for episode in episodes:
-        season_number = episode.season_number if episode.season_number > 0 else default_season
+        if episode.is_special:
+            season_number = 0
+        elif episode.season_number > 0:
+            season_number = episode.season_number
+        else:
+            season_number = default_season
         grouped_episodes.setdefault(season_number, []).append(episode)
 
     groups: list[EpisodeSeasonGroup] = []
@@ -808,7 +813,7 @@ class FollowingEpisodeBrowser(QWidget):
         groups: list[EpisodeSeasonGroup],
         current_episode: int,
         current_season_number: int = 0,
-        selected_season_number: int = 0,
+        selected_season_number: int | None = None,
         latest_episode: int = 0,
         latest_season_number: int = 0,
         next_episode: FollowingEpisode | None = None,
@@ -949,10 +954,11 @@ class FollowingEpisodeBrowser(QWidget):
             QListView.ScrollHint.PositionAtCenter,
         )
 
-    def _initial_season_row(self, selected_season_number: int) -> int:
-        if selected_season_number > 0:
+    def _initial_season_row(self, selected_season_number: int | None) -> int:
+        if selected_season_number is not None:
+            selected = int(selected_season_number)
             for row, group in enumerate(self._groups):
-                if group.season_number == selected_season_number:
+                if group.season_number == selected:
                     return row
         if self._current_season_number > 0:
             for row, group in enumerate(self._groups):

@@ -928,8 +928,9 @@ class FollowingController:
         normalized, normalized_season = self._normalized_tmdb_provider_id_and_season(
             record,
             season_number=season_number,
+            allow_zero_season=True,
         )
-        if not normalized or not normalized.startswith("tv:") or normalized_season <= 0:
+        if not normalized or not normalized.startswith("tv:") or normalized_season < 0:
             return None
         return MetadataScrapeCandidate(
             provider="tmdb",
@@ -945,6 +946,7 @@ class FollowingController:
         record: FollowingRecord,
         *,
         season_number: int,
+        allow_zero_season: bool = False,
     ) -> tuple[str, int]:
         provider_id = ""
         if record.provider == "tmdb":
@@ -955,6 +957,7 @@ class FollowingController:
             provider_id,
             media_kind=record.media_kind,
             season_number=season_number,
+            allow_zero_season=allow_zero_season,
         )
         return normalized, season_number
 
@@ -964,6 +967,7 @@ class FollowingController:
         *,
         media_kind: str,
         season_number: int,
+        allow_zero_season: bool = False,
     ) -> tuple[str, int]:
         text = str(provider_id or "").strip()
         if not text:
@@ -974,10 +978,19 @@ class FollowingController:
         if text.startswith("tv:"):
             parts = text.split(":")
             if len(parts) >= 4 and parts[2] == "season":
-                resolved_season = season_number if season_number > 0 else self._to_int(parts[3])
-                if resolved_season <= 0:
+                resolved_season = (
+                    season_number
+                    if season_number > 0 or (allow_zero_season and season_number == 0)
+                    else self._to_int(parts[3])
+                )
+                if resolved_season < 0:
+                    return f"tv:{parts[1]}", 0
+                if resolved_season <= 0 and not allow_zero_season:
                     return f"tv:{parts[1]}", 0
                 return f"tv:{parts[1]}:season:{resolved_season}", resolved_season
+            if season_number > 0 or allow_zero_season:
+                requested_season = max(0, int(season_number or 0))
+                return f"{text}:season:{requested_season}", requested_season
             if season_number <= 0:
                 return text, 0
             return f"{text}:season:{season_number}", season_number
@@ -985,6 +998,9 @@ class FollowingController:
             return "", 0
         if normalized_kind == "movie" or "电影" in normalized_kind:
             return f"movie:{text}", 0
+        if season_number > 0 or allow_zero_season:
+            requested_season = max(0, int(season_number or 0))
+            return f"tv:{text}:season:{requested_season}", requested_season
         if season_number <= 0:
             return f"tv:{text}", 0
         return f"tv:{text}:season:{season_number}", season_number
