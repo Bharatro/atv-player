@@ -594,6 +594,32 @@ def test_metadata_hydrator_cleans_noisy_current_item_media_title_for_query(tmp_p
     assert updated.vod_content == "豆瓣简介"
 
 
+def test_metadata_hydrator_displays_cleaned_quality_suffix_title_after_enrichment(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "tmdb",
+        matches=[MetadataMatch(provider="tmdb", provider_id="tv:42", title="良陈美锦", year="2026", score=1.0)],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:42",
+            poster="https://img.example/poster.jpg",
+            tmdb_id="42",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="良陈美锦（臻彩）", vod_year="2026"),
+            source_kind="plugin",
+        )
+    )
+
+    assert provider.search_queries[0].title == "良陈美锦"
+    assert updated.vod_name == "良陈美锦"
+    assert updated.vod_pic == "https://img.example/poster.jpg"
+
+
 def test_metadata_hydrator_prefers_embedded_title_year_over_conflicting_vod_year(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

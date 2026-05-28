@@ -19,6 +19,7 @@ from atv_player.metadata.merge import (
     override_visual_metadata_record,
 )
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
+from atv_player.metadata.query import normalize_metadata_title
 from atv_player.models import VodItem
 
 logger = logging.getLogger(__name__)
@@ -361,6 +362,15 @@ def _plugin_platform_record_is_high_confidence(
     return _record_strongly_matches_plugin_original_people(query, match, record)
 
 
+def _sync_cleaned_query_title(vod: VodItem, query) -> None:
+    current_title = str(vod.vod_name or "").strip()
+    query_title = str(getattr(query, "title", "") or "").strip()
+    if not current_title or not query_title or current_title == query_title:
+        return
+    if normalize_metadata_title(current_title) == query_title:
+        vod.vod_name = query_title
+
+
 def _parse_year_number(value: object) -> int | None:
     match = re.search(r"(?:19|20)\d{2}", str(value or ""))
     if match is None:
@@ -631,6 +641,8 @@ class MetadataHydrator:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])
             if bound_record.title:
                 vod.vod_name = bound_record.title
+            else:
+                _sync_cleaned_query_title(vod, query)
             return vod
         primary_applied = False
         authoritative_primary_applied = False
@@ -768,6 +780,8 @@ class MetadataHydrator:
                 if _is_authoritative_douban_id_match(query, match) and record.title:
                     vod.vod_name = record.title
                     authoritative_primary_applied = True
+                else:
+                    _sync_cleaned_query_title(vod, query)
                 primary_applied = True
                 primary_kind = _record_media_kind(record) or _match_media_kind(match) or _vod_media_kind(vod)
                 continue

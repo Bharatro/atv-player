@@ -5,6 +5,10 @@ import re
 _LEADING_MEDIA_PREFIX_RE = re.compile(r"^(?:电视剧|电影|剧集|综艺|动漫|动画|番剧|纪录片)\s*[:：]\s*", re.IGNORECASE)
 _EMBEDDED_YEAR_SUFFIX_RE = re.compile(r"^(.*?[\(（]\s*(?:19|20)\d{2}\s*[\)）])(?:\s*.*)?$")
 _TRAILING_BRACKET_NOISE_RE = re.compile(r"(?:\s*[【\[].*?[】\]])+$")
+_TRAILING_PARENTHESIZED_QUALITY_RE = re.compile(
+    r"(?:\s*[\(（]\s*(?:臻彩|真彩|4K|HDR|高码率|超清|高清|蓝光)\s*[\)）])+$",
+    re.IGNORECASE,
+)
 _TRAILING_RELEASE_NOISE_RE = re.compile(
     r"(?:\s*(?:更新\d+集|更新至\d+集|更\d+集|第\d+集|4K(?:HDR\d*|HDR|60FPS)?|高码率|内嵌简中|内封简中|简中内嵌|简中|剧情|动画|动漫|番剧|剧集|电视剧|奇幻|冒险))+$",
     re.IGNORECASE,
@@ -51,6 +55,7 @@ def normalize_metadata_title(value: object) -> str:
         return year_match.group(1).strip()
 
     normalized = _TRAILING_BRACKET_NOISE_RE.sub("", normalized).strip()
+    normalized = _TRAILING_PARENTHESIZED_QUALITY_RE.sub("", normalized).strip()
     normalized = _TRAILING_RELEASE_NOISE_RE.sub("", normalized).strip()
     return normalized or text
 
