@@ -109,9 +109,32 @@ function transformAxiosData(text, options) {
   return data;
 }
 
+function hasHeader(headers, name) {
+  const lowerName = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lowerName);
+}
+
+function serializeAxiosData(data, headers) {
+  if (
+    data
+    && typeof data === "object"
+    && !(data instanceof URLSearchParams)
+    && !Buffer.isBuffer(data)
+    && !(data instanceof ArrayBuffer)
+    && !ArrayBuffer.isView(data)
+  ) {
+    if (!hasHeader(headers, "content-type")) {
+      headers["Content-Type"] = "application/json";
+    }
+    return JSON.stringify(data);
+  }
+  return data;
+}
+
 async function axiosRequest(method, url, data = null, options = {}) {
   const requestMethod = String(method || "GET").toUpperCase();
   const headers = options.headers || {};
+  const body = serializeAxiosData(data, headers);
   const timeout = Number(options.timeout || 0);
   const controller = timeout > 0 ? new AbortController() : null;
   const timeoutId = controller
@@ -121,7 +144,7 @@ async function axiosRequest(method, url, data = null, options = {}) {
     const response = await fetch(url, {
       method: requestMethod,
       headers,
-      body: ["GET", "HEAD"].includes(requestMethod) ? undefined : data,
+      body: ["GET", "HEAD"].includes(requestMethod) ? undefined : body,
       signal: controller?.signal,
     });
     const text = await response.text();
@@ -180,6 +203,20 @@ function createAxiosClient(defaultOptions = {}) {
 const axiosShim = createAxiosClient();
 axiosShim.create = createAxiosClient;
 
+function uuidV4() {
+  const nodeCrypto = require("node:crypto");
+  if (typeof nodeCrypto.randomUUID === "function") {
+    return nodeCrypto.randomUUID();
+  }
+  const bytes = nodeCrypto.randomBytes(16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const uuidShim = { v4: uuidV4 };
+
 const originalConsole = globalThis.console;
 globalThis.console = {
   log: (...items) => originalConsole.error(JSON.stringify({ level: "info", message: items.map(String).join(" ") })),
@@ -204,6 +241,7 @@ async function loadPluginModule() {
   const pluginRequireBase = createRequire(pathToFileURL(pluginPath));
   const pluginRequire = (name) => {
     if (name === "axios") return axiosShim;
+    if (name === "uuid") return uuidShim;
     return pluginRequireBase(name);
   };
   const module = { exports: {} };

@@ -557,3 +557,273 @@ module.exports = async (app, opt) => {
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_uuid_and_json_post(
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, str] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path.startswith("/apptov5/v1/config/get"):
+                payload = {
+                    "data": {
+                        "get_home_cate": [
+                            {"cate": "movie", "title": "电影", "extend": {}}
+                        ],
+                        "get_parsing": {
+                            "lists": [
+                                {
+                                    "key": "lineA",
+                                    "config": [{"type": "json", "label": "json1"}],
+                                }
+                            ]
+                        },
+                    }
+                }
+            elif self.path.startswith("/apptov5/v1/home/data"):
+                payload = {
+                    "data": {
+                        "sections": [
+                            {
+                                "items": [
+                                    {
+                                        "vod_id": "1",
+                                        "vod_name": "首页片",
+                                        "vod_pic": "mac://img.test/a.jpg",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            elif self.path.startswith("/apptov5/v1/vod/lists"):
+                payload = {
+                    "data": {
+                        "data": [
+                            {
+                                "vod_id": "cat-1",
+                                "vod_name": "分类片",
+                                "vod_pic": "mac://img.test/b.jpg",
+                            }
+                        ],
+                        "total": 21,
+                    }
+                }
+            elif self.path.startswith("/apptov5/v1/search/lists"):
+                payload = {
+                    "data": {
+                        "data": [{"vod_id": "search-1", "vod_name": "搜索片"}],
+                        "total": 1,
+                    }
+                }
+            elif self.path.startswith("/apptov5/v1/vod/getVod"):
+                payload = {
+                    "data": {
+                        "vod_id": "1",
+                        "vod_name": "详情片",
+                        "vod_play_list": [
+                            {
+                                "player_info": {"from": "lineA", "show": "线路A"},
+                                "urls": [{"name": "第1集", "url": "raw-url"}],
+                            }
+                        ],
+                    }
+                }
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            seen["content_type"] = self.headers.get("Content-Type", "")
+            seen["body"] = body
+            payload = {
+                "data": {
+                    "url": "http://media.example/a.m3u8",
+                    "UA": "App-UA",
+                }
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def log_message(self, format, *args) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host = f"http://127.0.0.1:{server.server_port}"
+
+    plugin_path = tmp_path / "ppx.cjs"
+    plugin_path.write_text(
+        """
+const axios = require("axios");
+const http = require("http");
+const https = require("https");
+const { v4: uuidv4 } = require("uuid");
+
+const _http = axios.create({
+  timeout: 15000,
+  httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false }),
+  httpAgent: new http.Agent({ keepAlive: true })
+});
+
+const ppxConfig = {
+  host: "__HOST__",
+  local_uuid: uuidv4(),
+  config: null,
+  parsing_config: {},
+  headers: { "User-Agent": "Dart/2.19", token: "token" }
+};
+
+const initConfig = async () => {
+  ppxConfig.headers["appto-local-uuid"] = ppxConfig.local_uuid;
+  const response = await _http.get(
+    `${ppxConfig.host}/apptov5/v1/config/get?p=android`,
+    { headers: ppxConfig.headers }
+  );
+  const data = response.data.data || {};
+  ppxConfig.config = data;
+  const parsingConfig = {};
+  for (const item of data.get_parsing.lists || []) {
+    parsingConfig[item.key] = item.config
+      .filter((conf) => conf.type === "json")
+      .map((conf) => conf.label);
+  }
+  ppxConfig.parsing_config = parsingConfig;
+};
+
+const getClasses = async () => {
+  if (!ppxConfig.config) await initConfig();
+  return (ppxConfig.config.get_home_cate || []).map((item) => ({
+    type_id: item.cate,
+    type_name: item.title
+  }));
+};
+
+const getHomeRecommend = async () => {
+  const response = await _http.get(`${ppxConfig.host}/apptov5/v1/home/data`);
+  return response.data.data.sections[0].items.map((item) => ({
+    ...item,
+    vod_pic: item.vod_pic.replace("mac://", "http://")
+  }));
+};
+
+const getCategoryList = async (tid, pg, extend = {}) => {
+  const params = `type_id=${tid}&area=${extend.area || ""}&page=${pg}`;
+  const response = await _http.get(`${ppxConfig.host}/apptov5/v1/vod/lists?${params}`);
+  return {
+    list: response.data.data.data,
+    page: parseInt(pg),
+    pagecount: Math.ceil(response.data.data.total / 21),
+    total: response.data.data.total
+  };
+};
+
+const searchVod = async (keyword, page = 1) => {
+  const params = `wd=${encodeURIComponent(keyword)}&page=${page}`;
+  const url = `${ppxConfig.host}/apptov5/v1/search/lists?${params}`;
+  const response = await _http.get(url);
+  return {
+    list: response.data.data.data,
+    page: parseInt(page),
+    pagecount: 1,
+    total: 1
+  };
+};
+
+const getDetail = async (id) => {
+  const response = await _http.get(`${ppxConfig.host}/apptov5/v1/vod/getVod?id=${id}`);
+  const data = response.data.data;
+  let vod_play_from = "";
+  let vod_play_url = "";
+  for (const item of data.vod_play_list || []) {
+    const urls = item.urls
+      .map((play) => `${play.name}$${item.player_info.from}@${play.url}`)
+      .join("#");
+    vod_play_from += `${item.player_info.show}$$$`;
+    vod_play_url += `${urls}$$$`;
+  }
+  return {
+    vod_id: data.vod_id,
+    vod_name: data.vod_name,
+    vod_play_from: vod_play_from.replace(/\\$\\$\\$$/, ""),
+    vod_play_url: vod_play_url.replace(/\\$\\$\\$$/, "")
+  };
+};
+
+const getPlayUrl = async (playId) => {
+  const [playfrom, rawurl] = playId.split("@");
+  const response = await _http.post(
+    `${ppxConfig.host}/apptov5/v1/parsing/proxy`,
+    { play_url: rawurl, label: ppxConfig.parsing_config[playfrom][0], key: playfrom },
+    { headers: ppxConfig.headers }
+  );
+  return {
+    parse: 0,
+    url: response.data.data.url,
+    header: { "User-Agent": response.data.data.UA }
+  };
+};
+
+const handleT4Request = async (req) => {
+  const { t, pg, wd, ids, play, extend } = req.query;
+  if (wd) return await searchVod(wd, pg);
+  if (play) return await getPlayUrl(play);
+  if (ids) return { list: [await getDetail(ids)] };
+  if (t) return await getCategoryList(t, pg, extend ? JSON.parse(extend) : {});
+  return { class: await getClasses(), list: await getHomeRecommend() };
+};
+
+const meta = { key: "皮皮虾", name: "皮皮虾T4", api: "/video/皮皮虾" };
+
+module.exports = async (app, opt) => {
+  await initConfig();
+  app.get(meta.api, async (req) => await handleT4Request(req));
+  opt.sites.push(meta);
+};
+""".strip().replace("__HOST__", host),
+        encoding="utf-8",
+    )
+
+    try:
+        spider = NodeSpider(
+            plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=6
+        )
+
+        assert spider.getName() == "皮皮虾T4"
+        assert (
+            spider.homeContent(False)["list"][0]["vod_pic"] == "http://img.test/a.jpg"
+        )
+        category = spider.categoryContent("movie", "2", False, {"area": "内地"})
+        assert category["list"][0]["vod_name"] == "分类片"
+        assert (
+            spider.searchContent("abc", False, "1")["list"][0]["vod_name"] == "搜索片"
+        )
+        detail = spider.detailContent(["1"])["list"][0]
+        assert detail["vod_play_url"] == "第1集$lineA@raw-url"
+        play = spider.playerContent("线路A", "lineA@raw-url", [])
+        assert play["url"] == "http://media.example/a.m3u8"
+        assert play["header"]["User-Agent"] == "App-UA"
+        assert seen["content_type"].startswith("application/json")
+        assert json.loads(seen["body"]) == {
+            "play_url": "raw-url",
+            "label": "json1",
+            "key": "lineA",
+        }
+        spider.destroy()
+    finally:
+        server.shutdown()
+        server.server_close()
