@@ -179,6 +179,8 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.controller = controller
         self.resize(800, 600)
         self.groups = []
+        self._unfiltered_groups: list = []
+        self._unfiltered_discovery_items: list = []
         self._search_request_id = 0
         self._add_request_id = 0
         self._search_in_progress = False
@@ -220,22 +222,31 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         search_row.setHorizontalSpacing(6)
         search_row.setVerticalSpacing(6)
         self.search_title_label = QLabel("标题", host)
+        self.search_type_label = QLabel("类型", host)
         self.search_year_label = QLabel("年份", host)
         search_row.addWidget(self.search_title_label, 0, 0)
-        search_row.addWidget(self.search_year_label, 0, 1)
+        search_row.addWidget(self.search_type_label, 0, 1)
+        search_row.addWidget(self.search_year_label, 0, 2)
         self.search_edit = QLineEdit(host)
         self.search_edit.setPlaceholderText("搜索标题或粘贴 Bangumi / 豆瓣 / TMDB 链接")
         search_row.addWidget(self.search_edit, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        self.search_type_combo = FlatComboBox(host)
+        self.search_type_combo.addItem("全部", "")
+        self.search_type_combo.addItem("电影", "movie")
+        self.search_type_combo.addItem("剧集", "tv")
+        self.search_type_combo.setFixedHeight(40)
+        self.search_type_combo.setMinimumWidth(100)
+        search_row.addWidget(self.search_type_combo, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
         self.search_year_edit = QLineEdit(host)
         self.search_year_edit.setPlaceholderText("留空不过滤")
         self.search_year_edit.setMaxLength(4)
         self.search_year_edit.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,4}"), self))
         self.search_year_edit.setFixedWidth(120)
-        search_row.addWidget(self.search_year_edit, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(self.search_year_edit, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
         self.search_button = QPushButton("搜索", host)
         self.search_button.setAutoDefault(False)
         self.search_button.setDefault(False)
-        search_row.addWidget(self.search_button, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
+        search_row.addWidget(self.search_button, 1, 3, alignment=Qt.AlignmentFlag.AlignTop)
         search_row.setColumnStretch(0, 1)
         layout.addLayout(search_row)
         self._search_row = search_row
@@ -299,6 +310,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.search_button.clicked.connect(self.run_search)
         self.search_edit.returnPressed.connect(self.run_search)
         self.search_year_edit.returnPressed.connect(self.run_search)
+        self.search_type_combo.currentIndexChanged.connect(self._apply_local_type_filter)
         self.trending_list_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("trending"))
         self.trending_media_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("trending"))
         self.discover_media_combo.currentIndexChanged.connect(lambda _index: self._handle_filter_changed("discover"))
@@ -410,10 +422,49 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _clear_results(self) -> None:
         self.groups = []
+        self._unfiltered_groups = []
+        self._unfiltered_discovery_items = []
         self._set_active_result_list(self._default_result_list)
         self._rendered_state_key = None
         self.result_list.clear()
         self._sync_action_state()
+
+    def _active_media_type(self) -> str:
+        return str(self.search_type_combo.currentData() or "").strip()
+
+    def _filter_candidates(self, candidates: list) -> list:
+        media_type = self._active_media_type()
+        if not media_type:
+            return candidates
+        prefix = f"{media_type}:"
+        return [c for c in candidates if str(getattr(c, "provider_id", "") or "").startswith(prefix)]
+
+    def _filter_groups(self, groups: list) -> list:
+        media_type = self._active_media_type()
+        if not media_type:
+            return groups
+        prefix = f"{media_type}:"
+        filtered = []
+        for group in groups:
+            items = list(getattr(group, "items", []) or [])
+            matched = [c for c in items if str(getattr(c, "provider_id", "") or "").startswith(prefix)]
+            if matched:
+                from dataclasses import replace as _replace
+                filtered.append(_replace(group, items=matched))
+        return filtered
+
+    def _apply_local_type_filter(self) -> None:
+        if self._search_in_progress or self._add_in_progress:
+            return
+        if self._discovery_mode and self._active_tab == "search" and self._unfiltered_discovery_items:
+            result = type(
+                "LocalFilterResult", (),
+                {"items": list(self._unfiltered_discovery_items), "total": len(self._unfiltered_discovery_items), "source_label": "搜索", "fallback_reason": ""},
+            )()
+            self._render_discovery_result(result, state_key=self._state_key("search"), local_filter=True)
+            return
+        if self._unfiltered_groups:
+            self._render_groups(self._unfiltered_groups, local_filter=True)
 
     def _activate_tab(self, tab_key: str) -> None:
         normalized_tab = str(tab_key or "").strip() or "recommendation"
@@ -425,8 +476,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             button.setChecked(True)
         search_visible = normalized_tab == "search"
         self.search_title_label.setVisible(search_visible)
+        self.search_type_label.setVisible(search_visible)
         self.search_year_label.setVisible(search_visible)
         self.search_edit.setVisible(search_visible)
+        self.search_type_combo.setVisible(search_visible)
         self.search_year_edit.setVisible(search_visible)
         self.search_button.setVisible(search_visible)
         self.trending_filters_widget.setVisible(normalized_tab == "trending")
@@ -474,8 +527,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _render_groups(self, groups) -> None:
-        self.groups = list(groups or [])
+    def _render_groups(self, groups, *, local_filter: bool = False) -> None:
+        if not local_filter:
+            self._unfiltered_groups = list(groups or [])
+        self.groups = self._filter_groups(list(groups or []))
         self._set_active_result_list(self._default_result_list)
         self._rendered_state_key = None
         self.result_list.clear()
@@ -497,11 +552,14 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
             self._sync_action_state()
         self.status_label.setText(f"找到 {total} 个结果" if total else "没有找到可加入追更的结果")
 
-    def _render_discovery_result(self, result, *, state_key: str | None = None) -> None:
+    def _render_discovery_result(self, result, *, state_key: str | None = None, local_filter: bool = False) -> None:
+        all_items = list(getattr(result, "items", []) or [])
+        if not local_filter:
+            self._unfiltered_discovery_items = list(all_items)
         self.groups = []
         self._prepare_rendered_state_replacement(state_key)
         self.result_list.clear()
-        items = list(getattr(result, "items", []) or [])
+        items = self._filter_candidates(all_items) if self._active_media_type() else all_items
         use_widget = self._state_tab_from_key(state_key) == "search"
         for candidate in items:
             self._append_candidate_item(candidate, use_widget=use_widget)
@@ -627,6 +685,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         busy = self._search_in_progress or self._add_in_progress
         self.search_edit.setEnabled(not busy)
         self.search_year_edit.setEnabled(not busy)
+        self.search_type_combo.setEnabled(not busy)
         self.search_button.setEnabled(not busy)
         self.result_list.setEnabled(not busy)
         self.close_button.setEnabled(not self._add_in_progress)
@@ -688,6 +747,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
         self.search_year_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=14, min_height=40))
         self.search_button.setFixedHeight(40)
         for combo in (
+            self.search_type_combo,
             self.trending_list_combo,
             self.trending_media_combo,
             self.discover_media_combo,
@@ -773,7 +833,10 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                 "year": str(self.discover_year_combo.currentData() or ""),
             }
         if normalized_tab == "search":
-            return {"year": self._validated_search_year() or ""}
+            return {
+                "year": self._validated_search_year() or "",
+                "media_type": str(self.search_type_combo.currentData() or ""),
+            }
         return {}
 
     def _state_key(self, tab_key: str) -> str:
@@ -783,6 +846,7 @@ class FollowingSearchDialog(ThemedDialogBase, AsyncGuardMixin):
                 "tab": normalized_tab,
                 "query": self.search_edit.text().strip(),
                 "year": self.search_year_edit.text().strip(),
+                "media_type": str(self.search_type_combo.currentData() or ""),
             }
         else:
             payload = {"tab": normalized_tab, "filters": self._filters_for_tab(normalized_tab)}
