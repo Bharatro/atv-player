@@ -66,7 +66,50 @@ async function http(url, options = {}) {
 globalThis.http = http;
 globalThis.req = http;
 
-async function axiosGet(url, options = {}) {
+function responseHeaders(response) {
+  const headers = Object.fromEntries(response.headers.entries());
+  const getSetCookie = response.headers.getSetCookie;
+  if (typeof getSetCookie === "function") {
+    const cookies = getSetCookie.call(response.headers);
+    if (cookies.length > 0) headers["set-cookie"] = cookies;
+  } else {
+    const cookie = response.headers.get("set-cookie");
+    if (cookie) headers["set-cookie"] = [cookie];
+  }
+  return headers;
+}
+
+function mergeOptions(defaultOptions = {}, options = {}) {
+  return {
+    ...defaultOptions,
+    ...options,
+    headers: {
+      ...(defaultOptions.headers || {}),
+      ...(options.headers || {}),
+    },
+  };
+}
+
+function transformAxiosData(text, options) {
+  let data = text;
+  const transforms = Array.isArray(options.transformResponse)
+    ? options.transformResponse
+    : [];
+  for (const transform of transforms) {
+    if (typeof transform === "function") {
+      data = transform(data);
+    }
+  }
+  if (transforms.length === 0 && options.responseType !== "text") {
+    try {
+      data = JSON.parse(text);
+    } catch {
+    }
+  }
+  return data;
+}
+
+async function axiosRequest(method, url, data = null, options = {}) {
   const headers = options.headers || {};
   const timeout = Number(options.timeout || 0);
   const controller = timeout > 0 ? new AbortController() : null;
@@ -75,39 +118,45 @@ async function axiosGet(url, options = {}) {
     : null;
   try {
     const response = await fetch(url, {
+      method,
       headers,
+      body: method === "GET" ? undefined : data,
       signal: controller?.signal,
     });
     const text = await response.text();
-    let data = text;
-    if (options.responseType !== "text") {
-      try {
-        data = JSON.parse(text);
-      } catch {
-      }
-    }
-    return {
-      data,
+    const result = {
+      data: transformAxiosData(text, options),
       status: response.status,
       statusText: response.statusText,
-      headers: Object.fromEntries(response.headers.entries()),
+      headers: responseHeaders(response),
     };
+    const validateStatus = options.validateStatus;
+    if (typeof validateStatus === "function" && !validateStatus(response.status)) {
+      const error = new Error(`Request failed with status code ${response.status}`);
+      error.response = result;
+      throw error;
+    }
+    return result;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
+async function axiosGet(url, options = {}) {
+  return axiosRequest("GET", url, null, options);
+}
+
+async function axiosPost(url, data = null, options = {}) {
+  return axiosRequest("POST", url, data, options);
+}
+
 function createAxiosClient(defaultOptions = {}) {
   return {
     get(url, options = {}) {
-      return axiosGet(url, {
-        ...defaultOptions,
-        ...options,
-        headers: {
-          ...(defaultOptions.headers || {}),
-          ...(options.headers || {}),
-        },
-      });
+      return axiosGet(url, mergeOptions(defaultOptions, options));
+    },
+    post(url, data = null, options = {}) {
+      return axiosPost(url, data, mergeOptions(defaultOptions, options));
     },
   };
 }
@@ -115,6 +164,7 @@ function createAxiosClient(defaultOptions = {}) {
 const axiosShim = {
   create: createAxiosClient,
   get: axiosGet,
+  post: axiosPost,
 };
 
 const originalConsole = globalThis.console;
@@ -195,7 +245,17 @@ async function createT4Spider(register, meta = {}) {
   const siteMeta = meta || opt.sites[0] || {};
 
   async function callRoute(query) {
-    return normalizeResult(await route.handler({ query }));
+    let sent = false;
+    let payload = null;
+    const reply = {
+      send(value) {
+        sent = true;
+        payload = value;
+        return value;
+      },
+    };
+    const result = await route.handler({ query }, reply);
+    return normalizeResult(sent ? payload : result);
   }
 
   return {
@@ -216,7 +276,7 @@ async function createT4Spider(register, meta = {}) {
       return callRoute({ wd: key, pg: String(pg || 1) });
     },
     play(flag, id) {
-      return callRoute({ play: id });
+      return callRoute({ play: id, flag, from: flag });
     },
   };
 }

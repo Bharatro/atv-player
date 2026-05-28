@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import queue
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -355,3 +357,91 @@ module.exports.META = META;
     )
     assert spider.supports_search() is True
     spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_supports_fastify_style_t4_plugin_with_axios_post(
+    tmp_path: Path,
+) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Set-Cookie", "sid=abc")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "body": body}).encode("utf-8"))
+
+        def log_message(self, format, *args) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    api_url = f"http://127.0.0.1:{server.server_port}/api"
+
+    plugin_path = tmp_path / "nongmin.cjs"
+    plugin_path.write_text(
+        """
+const axios = require("axios");
+const crypto = require("crypto");
+const https = require("https");
+
+module.exports = async (server, opt) => {
+  const SITE_NAME = "农民影视";
+  const http = axios.create({
+    timeout: 10000,
+    responseType: "text",
+    transformResponse: [(data) => data],
+    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+    validateStatus: (s) => s >= 200 && s < 400
+  });
+
+  server.get("/video/nongmin", async (req, reply) => {
+    const q = req.query || {};
+    if (q.play) {
+      return reply.send({
+        parse: 0,
+        url: `${q.flag || q.from || ""}|${q.play}`,
+        header: { post: http.post ? "yes" : "no" }
+      });
+    }
+    if (q.wd) {
+      const body = new URLSearchParams({ wd: q.wd }).toString();
+      const resp = await http.post("__API_URL__", body, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+      });
+      return reply.send({
+        list: [{
+          vod_id: crypto.createHash("md5").update(resp.data).digest("hex"),
+          vod_name: resp.headers["set-cookie"][0]
+        }]
+      });
+    }
+    return reply.send({
+      class: [{ type_id: "dianying", type_name: "电影" }],
+      list: []
+    });
+  });
+
+  opt.sites.push({ name: SITE_NAME, api: "/video/nongmin" });
+};
+""".strip().replace("__API_URL__", api_url),
+        encoding="utf-8",
+    )
+
+    try:
+        spider = NodeSpider(
+            plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=4
+        )
+
+        assert spider.getName() == "农民影视"
+        assert spider.homeContent(False)["class"][0]["type_name"] == "电影"
+        search = spider.searchContent("麦田", False, "1")
+        assert search["list"][0]["vod_name"] == "sid=abc"
+        assert spider.playerContent("线路A", "/play/1", [])["url"] == "线路A|/play/1"
+        spider.destroy()
+    finally:
+        server.shutdown()
+        server.server_close()
