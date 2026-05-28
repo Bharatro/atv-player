@@ -481,11 +481,23 @@ class FollowingController:
                 return "待播出"
             return ""
         if record.has_update:
+            snapshot = snapshot or FollowingDetailSnapshot(following_id=record.id)
+            current_season_number = resolve_progress_season(
+                record.current_season_number,
+                record.current_episode,
+                fallback_season=record.season_number,
+            )
+            latest_season_number = self._latest_season_number(record, snapshot)
             count = resolve_new_episode_count(
                 has_update=True,
+                current_season_number=current_season_number,
                 current_episode=record.current_episode,
+                latest_season_number=latest_season_number,
                 latest_episode=record.latest_episode,
                 fallback_count=record.new_episode_count,
+                total_episodes=record.total_episodes,
+                seasons=snapshot.seasons,
+                episodes=snapshot.episodes,
             )
             return f"有 {count} 集更新"
         resolved = completion_state or self._completion_state(record)

@@ -6,6 +6,7 @@ from atv_player.following_models import (
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingRecord,
+    FollowingSeason,
 )
 from atv_player.following_repository import FollowingRepository
 from atv_player.following_update_service import FollowingUpdateService
@@ -265,6 +266,124 @@ def test_update_service_counts_absolute_episode_updates_across_seasons(tmp_path:
     assert record is not None
     assert record.has_update is True
     assert record.new_episode_count == 582
+
+
+def test_update_service_counts_unwatched_local_episode_updates_across_seasons(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="五十公里桃花坞",
+            media_kind="variety",
+            provider="tmdb",
+            provider_id="tv:12345",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "12345"},
+            season_number=1,
+            current_season_number=0,
+            current_episode=0,
+            latest_episode=0,
+            total_episodes=0,
+            watched_latest_episode=False,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="五十公里桃花坞",
+            media_kind="variety",
+            provider="tmdb",
+            provider_id="tv:12345:season:6",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "12345"},
+            season_number=6,
+            latest_episode=10,
+            total_episodes=0,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            seasons=[
+                FollowingSeason(season_number=1, episode_count=60),
+                FollowingSeason(season_number=2, episode_count=60),
+                FollowingSeason(season_number=3, episode_count=60),
+                FollowingSeason(season_number=4, episode_count=60),
+                FollowingSeason(season_number=5, episode_count=60),
+                FollowingSeason(season_number=6, episode_count=10),
+            ],
+            episodes=[
+                FollowingEpisode(
+                    season_number=6,
+                    episode_number=10,
+                    air_date="2026-05-24",
+                )
+            ],
+            refreshed_at=200,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.has_update is True
+    assert record.new_episode_count == 310
+
+
+def test_update_service_counts_unwatched_tmdb_series_total_as_updates(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="流言终结者",
+            media_kind="documentary",
+            provider="tmdb",
+            provider_id="tv:1428",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "1428"},
+            season_number=1,
+            current_season_number=0,
+            current_episode=0,
+            latest_episode=0,
+            total_episodes=0,
+            watched_latest_episode=False,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="流言终结者",
+            media_kind="documentary",
+            provider="tmdb",
+            provider_id="tv:1428:season:16",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "1428"},
+            season_number=16,
+            latest_episode=8,
+            total_episodes=272,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            seasons=[FollowingSeason(season_number=16, episode_count=11)],
+            episodes=[
+                FollowingEpisode(
+                    season_number=16,
+                    episode_number=8,
+                    air_date="2018-02-07",
+                )
+            ],
+            refreshed_at=200,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.total_episodes == 272
+    assert record.has_update is True
+    assert record.new_episode_count == 272
 
 
 def test_update_service_prefers_tmdb_first_when_tmdb_id_exists(tmp_path: Path) -> None:

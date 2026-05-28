@@ -1990,6 +1990,76 @@ def test_build_snapshot_from_record_normalizes_global_tmdb_latest() -> None:
     ]
 
 
+def test_build_snapshot_from_record_stamps_tmdb_season_on_season_detail_episodes() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1428:season:15",
+        title="流言终结者 第十五季",
+        tmdb_id="1428",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": index, "name": f"第 {index} 集"}
+                    for index in range(1, 12)
+                ],
+            },
+            {
+                "label": "seasons",
+                "value": [
+                    {"season_number": 1, "name": "第 1 季", "episode_count": 11},
+                    {"season_number": 15, "name": "第 15 季", "episode_count": 11},
+                ],
+            },
+        ],
+    )
+
+    following, snapshot = build_snapshot_from_record(
+        record,
+        now=300,
+        media_kind="documentary",
+    )
+
+    assert following.season_number == 15
+    assert {episode.season_number for episode in snapshot.episodes} == {15}
+
+
+def test_build_snapshot_from_record_uses_tmdb_number_of_episodes_as_series_total() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:1428:season:16",
+        title="流言终结者 第十六季",
+        tmdb_id="1428",
+        detail_fields=[
+            {"label": "number_of_episodes", "value": "272"},
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": index, "name": f"第 {index} 集"}
+                    for index in range(1, 12)
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {
+                    "episode_number": 8,
+                    "season_number": 16,
+                    "air_date": "2018-02-07",
+                },
+            },
+        ],
+    )
+
+    following, _snapshot = build_snapshot_from_record(
+        record,
+        now=300,
+        media_kind="documentary",
+    )
+
+    assert following.latest_episode == 8
+    assert following.total_episodes == 272
+
+
 def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_for_ongoing_series() -> None:
     record = MetadataRecord(
         provider="tmdb",

@@ -362,6 +362,8 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
         "name": "低智商犯罪",
         "overview": "剧集简介",
         "first_air_date": "2026-05-04",
+        "number_of_episodes": 44,
+        "number_of_seasons": 2,
         "genres": [{"name": "犯罪"}],
         "seasons": [
             {"season_number": 1, "name": "第一季", "episode_count": 24, "poster_path": "/season1.jpg"},
@@ -397,6 +399,8 @@ def test_tmdb_provider_get_detail_full_keeps_season_episode_stills() -> None:
     assert record.detail_fields[1]["label"] == "seasons"
     assert record.detail_fields[1]["value"][0]["poster_url"] == "https://image.tmdb.org/t/p/original/season1.jpg"
     assert record.detail_fields[1]["value"][1]["poster_url"] == "https://image.tmdb.org/t/p/original/season2.jpg"
+    assert {"label": "number_of_episodes", "value": "44"} in record.detail_fields
+    assert {"label": "number_of_seasons", "value": "2"} in record.detail_fields
     assert client.calls == [("get_tv_detail_with_season", "272432", "1")]
 
 

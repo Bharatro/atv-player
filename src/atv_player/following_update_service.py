@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace as _replace
 from datetime import datetime
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from dataclasses import replace as _replace
-
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
     FollowingCompletionState,
-    FollowingDetailSnapshot,
     FollowingRecord,
     FollowingUpdateResult,
     progress_at_or_beyond,
@@ -20,9 +18,9 @@ from atv_player.following_models import (
     resolve_new_episode_count,
     resolve_progress_season,
 )
+from atv_player.time_utils import beijing_timezone
 
 _replace_snapshot = _replace
-from atv_player.time_utils import beijing_timezone
 
 BEIJING_TZ = beijing_timezone()
 NORMAL_INTERVAL_SECONDS = 6 * 3600
@@ -149,8 +147,13 @@ class FollowingUpdateService(QObject):
             )
             new_count = resolve_new_episode_count(
                 has_update=has_update,
+                current_season_number=current_season_number,
                 current_episode=record.current_episode,
+                latest_season_number=latest_season_number,
                 latest_episode=latest,
+                total_episodes=total,
+                seasons=snapshot.seasons,
+                episodes=snapshot.episodes,
             )
             caught_up = record.watched_latest_episode or progress_at_or_beyond(
                 current_season_number,

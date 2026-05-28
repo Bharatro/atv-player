@@ -35,6 +35,7 @@ from atv_player.following_models import (
     progress_at_or_beyond,
     resolve_display_total_episodes,
     resolve_following_completion_state,
+    resolve_new_episode_count,
     resolve_progress_season,
 )
 from atv_player.models import AppConfig
@@ -1299,12 +1300,17 @@ def _detail_latest_season_number(
         return base
 
     if base > 0 and latest_episode > 0:
-        for season in snapshot.seasons:
-            if (
+        base_season_has_latest = any(
+            (
                 int(season.season_number or 0) == base
                 and int(season.episode_count or 0) >= latest_episode
-            ):
-                return base
+            )
+            for season in snapshot.seasons
+        )
+        if base_season_has_latest and not (
+            record.has_update and max(0, int(record.current_episode or 0)) <= 0
+        ):
+            return base
 
     exact_match_seasons = [
         int(episode.season_number)
@@ -1319,6 +1325,30 @@ def _detail_latest_season_number(
         exact_match_seasons.append(int(snapshot.next_episode.season_number))
     if exact_match_seasons:
         return max(exact_match_seasons)
+
+    if record.has_update and max(0, int(record.current_episode or 0)) <= 0:
+        snapshot_seasons = [
+            int(season.season_number)
+            for season in snapshot.seasons
+            if int(season.season_number or 0) > 0
+        ]
+        snapshot_seasons.extend(
+            int(episode.season_number)
+            for episode in snapshot.episodes
+            if int(episode.season_number or 0) > 0
+        )
+        if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
+            snapshot_seasons.append(int(snapshot.next_episode.season_number))
+        if latest_episode > 0 and snapshot_seasons:
+            return max(max(snapshot_seasons), base)
+
+    if base > 0 and latest_episode > 0:
+        for season in snapshot.seasons:
+            if (
+                int(season.season_number or 0) == base
+                and int(season.episode_count or 0) >= latest_episode
+            ):
+                return base
 
     snapshot_seasons = [int(season.season_number) for season in snapshot.seasons if int(season.season_number or 0) > 0]
     snapshot_seasons.extend(
@@ -1500,9 +1530,37 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
         episode_parts.append(f"总 {display_total}")
     parts = [
         *episode_parts,
-        "有更新" if record.has_update else "",
+        _detail_update_text(
+            record,
+            current_season_number=current_season_number,
+            latest_season_number=latest_season_number,
+            snapshot=snapshot,
+        )
+        if record.has_update
+        else "",
     ]
     return " · ".join(part for part in parts if part)
+
+
+def _detail_update_text(
+    record: FollowingRecord,
+    *,
+    current_season_number: int,
+    latest_season_number: int,
+    snapshot: FollowingDetailSnapshot | None,
+) -> str:
+    count = resolve_new_episode_count(
+        has_update=True,
+        current_season_number=current_season_number,
+        current_episode=record.current_episode,
+        latest_season_number=latest_season_number,
+        latest_episode=record.latest_episode,
+        fallback_count=record.new_episode_count,
+        total_episodes=record.total_episodes,
+        seasons=snapshot.seasons if snapshot is not None else None,
+        episodes=snapshot.episodes if snapshot is not None else None,
+    )
+    return f"有 {count} 集更新" if count > 0 else "有更新"
 
 
 def _rating_strip_text(ratings: list[FollowingRatingEntry]) -> str:

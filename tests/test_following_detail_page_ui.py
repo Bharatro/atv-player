@@ -1372,6 +1372,131 @@ def test_following_detail_page_does_not_mark_cross_season_ongoing_series_complet
     assert "已完结" not in page.meta_label.text()
 
 
+def test_following_detail_page_counts_unwatched_local_episode_updates_across_seasons(
+    qtbot,
+) -> None:
+    class VarietyController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="五十公里桃花坞",
+                    media_kind="variety",
+                    provider="tmdb",
+                    provider_id="tv:12345",
+                    season_number=1,
+                    current_season_number=0,
+                    current_episode=0,
+                    latest_episode=10,
+                    has_update=True,
+                    new_episode_count=10,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=1, episode_count=60),
+                        FollowingSeason(season_number=2, episode_count=60),
+                        FollowingSeason(season_number=3, episode_count=60),
+                        FollowingSeason(season_number=4, episode_count=60),
+                        FollowingSeason(season_number=5, episode_count=60),
+                        FollowingSeason(season_number=6, episode_count=10),
+                    ],
+                    episodes=[FollowingEpisode(season_number=6, episode_number=10)],
+                ),
+            )
+
+    page = FollowingDetailPage(VarietyController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert "最新 S6E10" in page.meta_label.text()
+    assert "最新 S1E10" not in page.meta_label.text()
+    assert "有 310 集更新" in page.meta_label.text()
+
+
+def test_following_detail_page_uses_series_total_for_unwatched_update_count(
+    qtbot,
+) -> None:
+    class MythbustersController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="流言终结者",
+                    media_kind="documentary",
+                    provider="tmdb",
+                    provider_id="tv:1428",
+                    season_number=1,
+                    current_season_number=0,
+                    current_episode=0,
+                    latest_episode=8,
+                    total_episodes=272,
+                    has_update=True,
+                    new_episode_count=11,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[FollowingSeason(season_number=16, episode_count=11)],
+                    episodes=[FollowingEpisode(season_number=16, episode_number=8)],
+                ),
+            )
+
+    page = FollowingDetailPage(MythbustersController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert "最新 S16E8 / 总 272" in page.meta_label.text()
+    assert "有 272 集更新" in page.meta_label.text()
+
+
+def test_following_detail_page_infers_latest_season_for_unwatched_unseasoned_episodes(
+    qtbot,
+) -> None:
+    class MythbustersController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="流言终结者",
+                    media_kind="documentary",
+                    provider="tmdb",
+                    provider_id="tv:1428",
+                    season_number=1,
+                    current_season_number=0,
+                    current_episode=0,
+                    latest_episode=8,
+                    total_episodes=272,
+                    has_update=True,
+                    new_episode_count=272,
+                ),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=1, episode_count=11),
+                        FollowingSeason(season_number=16, episode_count=11),
+                    ],
+                    episodes=[
+                        FollowingEpisode(episode_number=index)
+                        for index in range(1, 12)
+                    ],
+                ),
+            )
+
+    page = FollowingDetailPage(MythbustersController())
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert "最新 S16E8 / 总 272" in page.meta_label.text()
+    assert "最新 S1E11" not in page.meta_label.text()
+    assert "有 272 集更新" in page.meta_label.text()
+
+
 def test_following_detail_page_does_not_auto_refresh_when_people_missing_avatars(qtbot) -> None:
     class NoAvatarController(FakeController):
         def __init__(self) -> None:

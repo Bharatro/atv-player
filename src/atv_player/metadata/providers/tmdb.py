@@ -778,6 +778,16 @@ class TMDBProvider:
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
         if media_type == "tv":
             detail_fields.append({"label": "seasons", "value": _season_rows(payload, poster_base_url=self._poster_base_url())})
+            number_of_episodes = str(payload.get("number_of_episodes") or "").strip()
+            if number_of_episodes:
+                detail_fields.append(
+                    {"label": "number_of_episodes", "value": number_of_episodes}
+                )
+            number_of_seasons = str(payload.get("number_of_seasons") or "").strip()
+            if number_of_seasons:
+                detail_fields.append(
+                    {"label": "number_of_seasons", "value": number_of_seasons}
+                )
             last_ep = payload.get("last_episode_to_air")
             if isinstance(last_ep, dict):
                 detail_fields.append({"label": "last_episode_to_air", "value": last_ep})
@@ -864,6 +874,16 @@ class TMDBProvider:
             season_overview = str(season_payload.get("overview") or "").strip()
             detail_fields.append({"label": "episodes", "value": list(season_payload.get("episodes") or [])})
         detail_fields.append({"label": "seasons", "value": _season_rows(payload, poster_base_url=self._poster_base_url())})
+        number_of_episodes = str(payload.get("number_of_episodes") or "").strip()
+        if number_of_episodes:
+            detail_fields.append(
+                {"label": "number_of_episodes", "value": number_of_episodes}
+            )
+        number_of_seasons = str(payload.get("number_of_seasons") or "").strip()
+        if number_of_seasons:
+            detail_fields.append(
+                {"label": "number_of_seasons", "value": number_of_seasons}
+            )
         last_ep = payload.get("last_episode_to_air")
         if isinstance(last_ep, dict):
             detail_fields.append({"label": "last_episode_to_air", "value": last_ep})

@@ -1,9 +1,9 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import logging
 import re
 import time
-import logging
 from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlparse
@@ -339,6 +339,23 @@ def _episode_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> l
     return []
 
 
+def _episodes_with_fallback_season(
+    raw_episodes: list[dict[str, object]],
+    *,
+    season_number: int,
+) -> list[dict[str, object]]:
+    normalized_season = _to_int(season_number)
+    if normalized_season <= 0:
+        return raw_episodes
+    episodes: list[dict[str, object]] = []
+    for raw in raw_episodes:
+        episode = dict(raw)
+        if _to_int(episode.get("season_number")) <= 0:
+            episode["season_number"] = normalized_season
+        episodes.append(episode)
+    return episodes
+
+
 def _season_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> list[dict[str, object]]:
     for field in detail_fields:
         if not isinstance(field, dict):
@@ -351,7 +368,9 @@ def _season_raw_from_detail_fields(detail_fields: list[dict[str, object]]) -> li
     return []
 
 
-def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object]]) -> int:
+def _last_episode_to_air_from_detail_fields(
+    detail_fields: list[dict[str, object]],
+) -> FollowingEpisode | None:
     for field in detail_fields:
         if not isinstance(field, dict):
             continue
@@ -360,7 +379,18 @@ def _last_episode_to_air_from_detail_fields(detail_fields: list[dict[str, object
         value = field.get("value")
         if not isinstance(value, dict):
             continue
-        return _to_int(value.get("episode_number"))
+        episode = _episode_from_raw(value)
+        return episode if episode.episode_number > 0 else None
+    return None
+
+
+def _int_detail_field(detail_fields: list[dict[str, object]], label: str) -> int:
+    for field in detail_fields:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("label") or "").strip() != label:
+            continue
+        return _to_int(field.get("value"))
     return 0
 
 
@@ -370,11 +400,28 @@ def _season_local_latest_episode(
     *,
     season_number: int,
     latest_episode: int,
+    latest_season_number: int = 0,
 ) -> int:
     normalized_season = _to_int(season_number)
     normalized_latest = _to_int(latest_episode)
     if normalized_season <= 0 or normalized_latest <= 0:
         return 0
+
+    normalized_latest_season = _to_int(latest_season_number)
+    local_numbers = {
+        episode.episode_number
+        for episode in (_episode_from_raw(item) for item in raw_episodes)
+        if episode.episode_number > 0
+        and not episode.is_special
+        and (episode.season_number or normalized_season) == normalized_season
+    }
+    if not local_numbers:
+        return normalized_latest if normalized_latest_season == normalized_season else 0
+    local_latest = max(local_numbers)
+    if normalized_latest_season == normalized_season:
+        if normalized_latest > local_latest:
+            return local_latest
+        return normalized_latest
 
     season_episode_count = 0
     for raw_season in raw_seasons:
@@ -384,16 +431,6 @@ def _season_local_latest_episode(
     if season_episode_count <= 0:
         return 0
 
-    local_numbers = {
-        episode.episode_number
-        for episode in (_episode_from_raw(item) for item in raw_episodes)
-        if episode.episode_number > 0
-        and not episode.is_special
-        and (episode.season_number or normalized_season) == normalized_season
-    }
-    if not local_numbers:
-        return 0
-    local_latest = max(local_numbers)
     if normalized_latest > local_latest and local_latest >= season_episode_count:
         return local_latest
     return 0
@@ -926,8 +963,16 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     raw_episodes = _episode_raw_from_detail_fields(detail_fields)
     raw_seasons = _season_raw_from_detail_fields(detail_fields)
     season_number = _season_number_from_provider_id(provider_id)
+    raw_episodes = _episodes_with_fallback_season(
+        raw_episodes,
+        season_number=season_number,
+    )
     latest, total = compute_episode_counts(raw_episodes, now=now)
-    last_ep_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
+    series_total = _int_detail_field(detail_fields, "number_of_episodes")
+    last_episode_to_air = _last_episode_to_air_from_detail_fields(detail_fields)
+    last_ep_to_air = (
+        last_episode_to_air.episode_number if last_episode_to_air is not None else 0
+    )
     next_episode = _next_episode_to_air_from_detail_fields(detail_fields)
     ongoing = next_episode is not None or _has_future_episode(raw_episodes, now=now)
     season_local_latest = _season_local_latest_episode(
@@ -935,13 +980,19 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         raw_seasons,
         season_number=season_number,
         latest_episode=last_ep_to_air,
+        latest_season_number=(
+            last_episode_to_air.season_number if last_episode_to_air is not None else 0
+        ),
     )
     if season_local_latest > 0:
         last_ep_to_air = season_local_latest
-    if last_ep_to_air > 0 and last_ep_to_air > latest:
+        latest = season_local_latest
+    elif last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:
         total = 0 if ongoing else last_ep_to_air
+    if series_total > 0:
+        total = max(total, series_total)
     if ongoing and total > 0 and latest > 0 and total <= latest:
         total = 0
     normalized_kind = media_kind or _media_kind_from_provider(provider, provider_id=provider_id)
@@ -1408,6 +1459,8 @@ def _metadata_fields_from_record(record) -> list[dict[str, str]]:
             "last_episode_to_air",
             "next_episode_to_air",
             "seasons",
+            "number_of_episodes",
+            "number_of_seasons",
             "last_air_date",
             "watch_provider_sources",
         ):

@@ -929,6 +929,117 @@ def test_following_controller_card_does_not_mark_cross_season_ongoing_series_com
     assert cards[0].update_text == "有 582 集更新"
 
 
+def test_following_controller_card_counts_unwatched_local_episode_updates_across_seasons(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="五十公里桃花坞",
+            media_kind="variety",
+            provider="tmdb",
+            provider_id="tv:12345",
+            season_number=1,
+            current_season_number=0,
+            current_episode=0,
+            latest_episode=10,
+            has_update=True,
+            new_episode_count=10,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[
+                FollowingSeason(season_number=1, episode_count=60),
+                FollowingSeason(season_number=2, episode_count=60),
+                FollowingSeason(season_number=3, episode_count=60),
+                FollowingSeason(season_number=4, episode_count=60),
+                FollowingSeason(season_number=5, episode_count=60),
+                FollowingSeason(season_number=6, episode_count=10),
+            ],
+            episodes=[FollowingEpisode(season_number=6, episode_number=10)],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert cards[0].progress_text == "最新 S6E10"
+    assert cards[0].update_text == "有 310 集更新"
+
+
+def test_following_controller_card_uses_series_total_for_unwatched_update_count(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="流言终结者",
+            media_kind="documentary",
+            provider="tmdb",
+            provider_id="tv:1428",
+            season_number=1,
+            current_season_number=0,
+            current_episode=0,
+            latest_episode=8,
+            total_episodes=272,
+            has_update=True,
+            new_episode_count=11,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[FollowingSeason(season_number=16, episode_count=11)],
+            episodes=[FollowingEpisode(season_number=16, episode_number=8)],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert cards[0].progress_text == "最新 S16E8 / 总 272"
+    assert cards[0].update_text == "有 272 集更新"
+
+
+def test_following_controller_card_infers_latest_season_for_unwatched_unseasoned_episodes(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="流言终结者",
+            media_kind="documentary",
+            provider="tmdb",
+            provider_id="tv:1428",
+            season_number=1,
+            current_season_number=0,
+            current_episode=0,
+            latest_episode=8,
+            total_episodes=272,
+            has_update=True,
+            new_episode_count=272,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[
+                FollowingSeason(season_number=1, episode_count=11),
+                FollowingSeason(season_number=16, episode_count=11),
+            ],
+            episodes=[FollowingEpisode(episode_number=index) for index in range(1, 12)],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+
+    cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert cards[0].progress_text == "最新 S16E8 / 总 272"
+    assert cards[0].update_text == "有 272 集更新"
+
+
 def test_following_controller_card_treats_out_of_range_season_current_as_unwatched(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     following_id = repo.upsert(

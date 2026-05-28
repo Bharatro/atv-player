@@ -227,17 +227,90 @@ def progress_at_or_beyond(
     ) >= 0
 
 
+def resolve_absolute_episode_count(
+    *,
+    season_number: int,
+    episode_number: int,
+    seasons: list[FollowingSeason] | None = None,
+    episodes: list[FollowingEpisode] | None = None,
+) -> int:
+    normalized_season = max(0, int(season_number or 0))
+    normalized_episode = max(0, int(episode_number or 0))
+    if normalized_season <= 0 or normalized_episode <= 0:
+        return 0
+
+    counts_by_season: dict[int, int] = {}
+    for season in seasons or []:
+        season_index = max(0, int(season.season_number or 0))
+        season_count = max(0, int(season.episode_count or 0))
+        if season_index > 0 and season_count > 0 and not season.is_special:
+            counts_by_season[season_index] = max(
+                counts_by_season.get(season_index, 0),
+                season_count,
+            )
+    for episode in episodes or []:
+        if episode.is_special:
+            continue
+        episode_index = max(0, int(episode.episode_number or 0))
+        if episode_index <= 0:
+            continue
+        season_index = max(0, int(episode.season_number or 0))
+        if season_index <= 0:
+            season_index = normalized_season
+        counts_by_season[season_index] = max(
+            counts_by_season.get(season_index, 0),
+            episode_index,
+        )
+
+    target_count = counts_by_season.get(normalized_season, 0)
+    if target_count > 0 and normalized_episode > target_count:
+        return 0
+
+    total = 0
+    for season_index in range(1, normalized_season):
+        season_count = counts_by_season.get(season_index, 0)
+        if season_count <= 0:
+            return 0
+        total += season_count
+    return total + normalized_episode
+
+
 def resolve_new_episode_count(
     *,
     has_update: bool,
     current_episode: int,
     latest_episode: int,
     fallback_count: int = 0,
+    total_episodes: int = 0,
+    current_season_number: int = 0,
+    latest_season_number: int = 0,
+    seasons: list[FollowingSeason] | None = None,
+    episodes: list[FollowingEpisode] | None = None,
 ) -> int:
     if not has_update:
         return 0
     normalized_latest = max(0, int(latest_episode or 0))
     normalized_current = max(0, int(current_episode or 0))
+    normalized_total = max(0, int(total_episodes or 0))
+    if normalized_current <= 0 and normalized_total > 0:
+        return max(normalized_total, int(fallback_count or 0))
+    if normalized_latest > 0 and (seasons or episodes):
+        latest_absolute = resolve_absolute_episode_count(
+            season_number=latest_season_number,
+            episode_number=normalized_latest,
+            seasons=seasons,
+            episodes=episodes,
+        )
+        current_absolute = resolve_absolute_episode_count(
+            season_number=current_season_number,
+            episode_number=normalized_current,
+            seasons=seasons,
+            episodes=episodes,
+        )
+        if latest_absolute > 0 and current_absolute <= 0:
+            return max(latest_absolute, int(fallback_count or 0))
+        if latest_absolute > current_absolute > 0:
+            return latest_absolute - current_absolute
     if normalized_latest > normalized_current > 0:
         return normalized_latest - normalized_current
     return max(0, int(fallback_count or 0), normalized_latest)
