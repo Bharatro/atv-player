@@ -8,6 +8,7 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -15,6 +16,7 @@ from atv_player.models import SpiderPluginConfig
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider as CompatSpider
+from atv_player.plugins.node_spider import NodeSpider
 from atv_player.plugins.spider_crypto.errors import (
     SecSpiderDecryptError,
     SecSpiderFormatError,
@@ -65,28 +67,36 @@ class SpiderPluginLoader:
         self._install_compat_modules()
         source_path = self._resolve_source_path(config, force_refresh=force_refresh)
         module_name = f"spider_plugin_{config.id}_{source_path.stem}"
-        try:
-            package_format = self._detect_package_format(source_path)
-            if package_format == "secspider/1":
-                module = self._load_secspider_module(module_name, source_path)
-            else:
-                module = self._load_plain_module(module_name, source_path)
-        except ModuleNotFoundError as exc:
-            raise ValueError(f"缺少依赖: {exc.name}") from exc
-        except SecSpiderFormatError as exc:
-            raise ValueError("插件格式不支持") from exc
-        except SecSpiderSignatureError as exc:
-            raise ValueError("插件签名校验失败") from exc
-        except SecSpiderKeyError as exc:
-            raise ValueError("插件密钥不可用") from exc
-        except SecSpiderDecryptError as exc:
-            raise ValueError("插件解密失败") from exc
-        except SecSpiderHashError as exc:
-            raise ValueError("插件源码校验失败") from exc
-        spider_cls = getattr(module, "Spider", None)
-        if spider_cls is None:
-            raise ValueError("缺少 Spider 类")
-        spider = spider_cls()
+        source_language = self._detect_source_language(source_path)
+        if source_language == "js":
+            spider = NodeSpider(
+                plugin_path=source_path,
+                cache_dir=self._cache_dir / "spider-cache",
+                plugin_id=config.id,
+            )
+        else:
+            try:
+                package_format = self._detect_package_format(source_path)
+                if package_format == "secspider/1":
+                    module = self._load_secspider_module(module_name, source_path)
+                else:
+                    module = self._load_plain_module(module_name, source_path)
+            except ModuleNotFoundError as exc:
+                raise ValueError(f"缺少依赖: {exc.name}") from exc
+            except SecSpiderFormatError as exc:
+                raise ValueError("插件格式不支持") from exc
+            except SecSpiderSignatureError as exc:
+                raise ValueError("插件签名校验失败") from exc
+            except SecSpiderKeyError as exc:
+                raise ValueError("插件密钥不可用") from exc
+            except SecSpiderDecryptError as exc:
+                raise ValueError("插件解密失败") from exc
+            except SecSpiderHashError as exc:
+                raise ValueError("插件源码校验失败") from exc
+            spider_cls = getattr(module, "Spider", None)
+            if spider_cls is None:
+                raise ValueError("缺少 Spider 类")
+            spider = spider_cls()
         initialized = False
         initialize_lock = threading.Lock()
 
@@ -104,7 +114,12 @@ class SpiderPluginLoader:
         if initialize:
             initialize_spider()
         plugin_name = str(getattr(spider, "getName", lambda: "")() or "")
-        search_enabled = type(spider).searchContent is not CompatSpider.searchContent
+        supports_search = getattr(spider, "supports_search", None)
+        search_enabled = (
+            bool(supports_search())
+            if callable(supports_search)
+            else type(spider).searchContent is not CompatSpider.searchContent
+        )
         updated_config = SpiderPluginConfig(
             id=config.id,
             source_type=config.source_type,
@@ -116,6 +131,8 @@ class SpiderPluginLoader:
             last_loaded_at=config.last_loaded_at,
             last_error=config.last_error,
             config_text=config.config_text,
+            plugin_version=config.plugin_version,
+            category_overrides_json=config.category_overrides_json,
         )
         logger.info(
             "Loaded spider plugin id=%s name=%s source_type=%s search_enabled=%s",
@@ -146,6 +163,37 @@ class SpiderPluginLoader:
             if line.startswith("//@format:"):
                 return line.removeprefix("//@format:")
         return "plain"
+
+    def _detect_source_language(self, source_path: Path) -> str:
+        suffix = source_path.suffix.lower()
+        if suffix in {".js", ".mjs"}:
+            return "js"
+        if suffix == ".py":
+            return "python"
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+        if self._detect_package_format(source_path) == "secspider/1":
+            return "python"
+        if any(marker in text for marker in ("from base.spider import Spider", "class Spider")):
+            return "python"
+        if any(marker in text for marker in ("export default", "__jsEvalReturn", "function home", "async function home")):
+            return "js"
+        raise ValueError("插件格式不支持")
+
+    def _source_cache_suffix(self, url: str, source_text: str) -> str:
+        path_suffix = Path(urlparse(url).path).suffix.lower()
+        if path_suffix in {".py", ".js", ".mjs"}:
+            return ".js" if path_suffix == ".mjs" else path_suffix
+        first_lines = "\n".join(source_text.splitlines()[:16])
+        if first_lines.strip().startswith("//@format:secspider/1"):
+            return ".py"
+        if any(marker in source_text for marker in ("from base.spider import Spider", "class Spider")):
+            return ".py"
+        if any(
+            marker in source_text
+            for marker in ("export default", "__jsEvalReturn", "function home", "async function home")
+        ):
+            return ".js"
+        raise ValueError("插件格式不支持")
 
     def _load_plain_module(self, module_name: str, source_path: Path):
         spec = importlib.util.spec_from_file_location(module_name, source_path)
@@ -199,17 +247,15 @@ class SpiderPluginLoader:
     def _resolve_source_path(self, config: SpiderPluginConfig, force_refresh: bool) -> Path:
         if config.source_type == "local":
             return Path(config.source_value)
-        cache_path = self._cache_dir / f"plugin_{config.id}.py"
-        if not force_refresh and config.cached_file_path:
-            cached = Path(config.cached_file_path)
-            if cached.is_file() and cached.stat().st_size > 0:
-                logger.info(
-                    "Use cached spider plugin id=%s path=%s",
-                    config.id,
-                    cached,
-                    extra={"log_category": "plugin", "log_source": "app"},
-                )
-                return cached
+        cached = Path(config.cached_file_path) if config.cached_file_path else None
+        if not force_refresh and cached is not None and cached.is_file() and cached.stat().st_size > 0:
+            logger.info(
+                "Use cached spider plugin id=%s path=%s",
+                config.id,
+                cached,
+                extra={"log_category": "plugin", "log_source": "app"},
+            )
+            return cached
         try:
             logger.info(
                 "Download spider plugin id=%s source=%s force_refresh=%s",
@@ -218,16 +264,23 @@ class SpiderPluginLoader:
                 force_refresh,
                 extra={"log_category": "plugin", "log_source": "app"},
             )
-            source_text = self._resolve_remote_source_text(config.source_value)
+            source_text = self._resolve_remote_source_text(config.source_value).strip("\ufeff")
+            cache_path = self._cache_dir / f"plugin_{config.id}{self._source_cache_suffix(config.source_value, source_text)}"
             cache_path.write_text(source_text, encoding="utf-8")
             return cache_path
         except Exception:
-            if cache_path.is_file() and cache_path.stat().st_size > 0:
-                logger.warning(
-                    "Spider plugin refresh failed, fallback to cache id=%s path=%s",
-                    config.id,
-                    cache_path,
-                    extra={"log_category": "plugin", "log_source": "app"},
-                )
-                return cache_path
+            fallback_paths = [
+                path
+                for path in (cached, self._cache_dir / f"plugin_{config.id}.js", self._cache_dir / f"plugin_{config.id}.py")
+                if path is not None
+            ]
+            for fallback_path in fallback_paths:
+                if fallback_path.is_file() and fallback_path.stat().st_size > 0:
+                    logger.warning(
+                        "Spider plugin refresh failed, fallback to cache id=%s path=%s",
+                        config.id,
+                        fallback_path,
+                        extra={"log_category": "plugin", "log_source": "app"},
+                    )
+                    return fallback_path
             raise
