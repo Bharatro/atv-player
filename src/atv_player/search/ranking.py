@@ -28,6 +28,11 @@ def _contains_any(text: str, values: list[str]) -> bool:
     )
 
 
+def _append_reason(reasons: list[str], reason: str) -> None:
+    if reason not in reasons:
+        reasons.append(reason)
+
+
 def rank_candidates(
     candidates: list[SmartSearchCandidate],
     intent: SmartSearchIntent,
@@ -43,23 +48,23 @@ def rank_candidates(
             normalized = str(keyword or "").strip()
             if normalized and normalized.lower() in text:
                 score += 3.0
-                reasons.append(f"{normalized}匹配")
+                _append_reason(reasons, f"{normalized}匹配")
         for genre in intent.genres:
             normalized = str(genre or "").strip()
             if normalized and normalized.lower() in text:
                 score += 4.0
-                reasons.append(f"{normalized}匹配")
+                _append_reason(reasons, f"{normalized}匹配")
         if _contains_any(text, intent.reference_titles):
             score += 5.0
-            reasons.append("与参考作品相关")
+            _append_reason(reasons, "与参考作品相关")
         if intent.rating_min and candidate.rating >= intent.rating_min:
             score += candidate.rating
-            reasons.append(f"评分 {candidate.rating:.1f}")
+            _append_reason(reasons, f"评分 {candidate.rating:.1f}")
         elif candidate.rating:
             score += candidate.rating / 3.0
         if candidate.source_label:
             score += 1.0
-            reasons.append(f"来自{candidate.source_label}")
+            _append_reason(reasons, f"来自{candidate.source_label}")
         if intent.sort_preference == "rating" and candidate.rating:
             score += candidate.rating / 2.0
         ranked.append(
