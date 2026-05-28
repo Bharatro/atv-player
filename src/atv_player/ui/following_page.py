@@ -45,13 +45,25 @@ class FollowingCardButton(QPushButton):
         self.poster_label.setFixedSize(196, 220)
         layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
         self.title_label = QLabel(item.display_title, self)
         self.title_label.setWordWrap(True)
+        title_row.addWidget(self.title_label, 1)
+        if item.subtitle:
+            self.type_label = QLabel(item.subtitle, self)
+            self.type_label.setFixedHeight(20)
+            self.type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title_row.addWidget(self.type_label)
+        else:
+            self.type_label = None
+        layout.addLayout(title_row)
+
         self.progress_label = QLabel(item.progress_text, self)
         self.update_label = QLabel(item.update_text, self)
         self.error_label = QLabel(item.error_text, self)
         self.error_label.setVisible(bool(item.error_text))
-        for label in (self.title_label, self.progress_label, self.update_label, self.error_label):
+        for label in (self.progress_label, self.update_label, self.error_label):
             label.setWordWrap(True)
             layout.addWidget(label)
         self._apply_label_styles()
@@ -81,6 +93,15 @@ class FollowingCardButton(QPushButton):
             f"color: {tokens.text_primary};"
             "font-weight: 700;"
         )
+        if self.type_label is not None:
+            self.type_label.setStyleSheet(
+                "background: transparent;"
+                f"color: {tokens.text_secondary};"
+                f"border: 1px solid {tokens.border_subtle};"
+                "border-radius: 4px;"
+                "padding: 0 4px;"
+                "font-size: 11px;"
+            )
         self.progress_label.setStyleSheet(
             "background: transparent;"
             f"color: {tokens.text_secondary};"

@@ -260,10 +260,58 @@ def _has_future_episode(raw_episodes: list[dict[str, object]], *, now: int | Non
     return False
 
 
-def _media_kind_from_provider(provider: str, subtitle: object = "") -> str:
+def _media_kind_from_provider(provider: str, subtitle: object = "", *, provider_id: str = "") -> str:
     subtitle_text = str(subtitle or "").lower()
+    if provider_id.startswith("movie:") or "电影" in subtitle_text:
+        return "movie"
     if provider == "bangumi" or any(marker in subtitle_text for marker in ("动漫", "动画", "anime")):
         return "anime"
+    if any(marker in subtitle_text for marker in ("综艺", "真人秀", "脱口秀", "variety", "reality", "talk show")):
+        return "variety"
+    if any(marker in subtitle_text for marker in ("纪录", "documentary")):
+        return "documentary"
+    return "live_action"
+
+
+def _resolve_effective_media_kind(record, snapshot=None) -> str:
+    kind = str(getattr(record, "media_kind", "") or "").strip()
+    if kind == "movie" or "电影" in kind:
+        return "movie"
+    if kind == "anime" or "动漫" in kind or "动画" in kind:
+        return "anime"
+    if kind == "variety" or "综艺" in kind or "真人秀" in kind or "脱口秀" in kind:
+        return "variety"
+    if kind == "documentary" or "纪录" in kind:
+        return "documentary"
+    provider_id = str(getattr(record, "provider_id", "") or "").strip()
+    result = _media_kind_from_provider(
+        str(getattr(record, "provider", "") or "").strip(),
+        provider_id=provider_id,
+    )
+    if result != "live_action":
+        return result
+    if snapshot is not None:
+        type_text = ""
+        for field in list(getattr(snapshot, "metadata_fields", []) or []):
+            if isinstance(field, dict) and str(field.get("label", "")).strip() == "类型":
+                type_text = str(field.get("value", "")).lower()
+                break
+        if not type_text:
+            bundle = getattr(snapshot, "metadata_bundle", None)
+            if bundle is not None:
+                merged = getattr(bundle, "merged_snapshot", None)
+                if merged is not None:
+                    for field in list(getattr(merged, "metadata_fields", []) or []):
+                        if isinstance(field, dict) and str(field.get("label", "")).strip() == "类型":
+                            type_text = str(field.get("value", "")).lower()
+                            break
+                    if not type_text:
+                        for genre in list(getattr(merged, "genres", []) or []):
+                            type_text += str(genre).lower() + " "
+        if any(m in type_text for m in ("综艺", "真人秀", "脱口秀")):
+            return "variety"
+        if any(m in type_text for m in ("纪录", "documentary")):
+            return "documentary"
     return "live_action"
 
 
@@ -271,6 +319,8 @@ def _media_kind_category(media_kind: str) -> str:
     return {
         "anime": "动漫",
         "movie": "电影",
+        "variety": "综艺",
+        "documentary": "纪录片",
         "live_action": "剧集",
     }.get(media_kind, "")
 
@@ -396,7 +446,7 @@ def build_following_from_candidate(candidate, *, now: int) -> tuple[FollowingRec
     raw_next_episode = raw.get("next_episode_to_air")
     latest, total = compute_episode_counts(raw_episodes, now=now)
     season_number = _to_int(raw.get("season_number")) or _season_number_from_provider_id(provider_id)
-    media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""))
+    media_kind = _media_kind_from_provider(provider, getattr(candidate, "subtitle", ""), provider_id=provider_id)
     record = FollowingRecord(
         id=0,
         title=str(getattr(candidate, "title", "") or "").strip(),
@@ -620,6 +670,7 @@ def iter_related_following_candidates(
     media_kind = record.media_kind or _media_kind_from_provider(
         str(getattr(candidate, "provider", "") or "").strip(),
         getattr(candidate, "subtitle", ""),
+        provider_id=str(getattr(candidate, "provider_id", "") or "").strip(),
     )
     query = MetadataQuery(
         title=str(record.title or getattr(candidate, "title", "") or "").strip(),
@@ -887,7 +938,7 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
         total = 0 if ongoing else last_ep_to_air
     if ongoing and total > 0 and latest > 0 and total <= latest:
         total = 0
-    normalized_kind = media_kind or _media_kind_from_provider(provider)
+    normalized_kind = media_kind or _media_kind_from_provider(provider, provider_id=provider_id)
     following = FollowingRecord(
         id=0,
         title=str(getattr(record, "title", "") or "").strip(),

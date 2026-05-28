@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.following_metadata import _resolve_effective_media_kind
 from atv_player.following_models import (
     FollowingCompletionState,
     FollowingDetailSnapshot,
@@ -380,6 +381,45 @@ class FollowingProgressDialog(ThemedDialogBase):
     def _accept(self) -> None:
         self.accepted_season_number = int(self.season_spin.value())
         self.accepted_episode = int(self.episode_spin.value())
+        self.accept()
+
+
+class MovieProgressDialog(ThemedDialogBase):
+    def __init__(self, *, is_watched: bool, parent: QWidget | None = None) -> None:
+        super().__init__(title="设置观影状态", parent=parent)
+        self.accepted_episode = 0
+        layout = self.content_layout()
+        layout.setSpacing(14)
+        btn_row = QHBoxLayout()
+        self._unwatched_btn = QPushButton("未观看", self)
+        self._watched_btn = QPushButton("已观看", self)
+        if is_watched:
+            self._watched_btn.setProperty("class", "accent")
+        else:
+            self._unwatched_btn.setProperty("class", "accent")
+        self._unwatched_btn.clicked.connect(self._select_unwatched)
+        self._watched_btn.clicked.connect(self._select_watched)
+        btn_row.addWidget(self._unwatched_btn)
+        btn_row.addWidget(self._watched_btn)
+        layout.addLayout(btn_row)
+
+        ok_row = QHBoxLayout()
+        ok_row.addStretch(1)
+        ok_btn = QPushButton("确定", self)
+        ok_btn.clicked.connect(self.accept)
+        ok_row.addWidget(ok_btn)
+        layout.addLayout(ok_row)
+
+    def _select_unwatched(self) -> None:
+        self.accepted_episode = 0
+        self._unwatched_btn.setProperty("class", "accent")
+        self._watched_btn.setProperty("class", "")
+        self.accept()
+
+    def _select_watched(self) -> None:
+        self.accepted_episode = 1
+        self._watched_btn.setProperty("class", "accent")
+        self._unwatched_btn.setProperty("class", "")
         self.accept()
 
 
@@ -950,6 +990,17 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             self.current_view.record,
             self.current_view.snapshot,
         )
+        if _resolve_effective_media_kind(record, self.current_view.snapshot) == "movie":
+            is_watched = record.current_episode > 0 or record.last_played_at > 0
+            dialog = MovieProgressDialog(is_watched=is_watched, parent=self)
+            if dialog.exec() != 1:
+                return
+            self._save_following_progress(
+                season_number=0,
+                episode_number=dialog.accepted_episode,
+                message="已保存观影状态",
+            )
+            return
         current_season_number = resolve_progress_season(
             record.current_season_number,
             record.current_episode,
@@ -1372,6 +1423,15 @@ def _normalized_detail_progress_record(
 
 
 def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None = None) -> str:
+    if _resolve_effective_media_kind(record, snapshot) == "movie":
+        parts = []
+        if record.current_episode > 0 or record.last_played_at > 0:
+            parts.append("已观看")
+        else:
+            parts.append("未观看")
+        if record.has_update:
+            parts.append("有更新")
+        return " · ".join(parts)
     episode_parts = []
     completion_state = resolve_following_completion_state(
         episodes=snapshot.episodes if snapshot is not None else [],

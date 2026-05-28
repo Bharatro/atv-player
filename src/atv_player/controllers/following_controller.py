@@ -11,6 +11,8 @@ from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
     FollowingMetadataGateway,
+    _media_kind_category,
+    _resolve_effective_media_kind,
     build_following_from_metadata_candidate,
     build_following_metadata_bundle,
     build_following_source_metadata_bundle,
@@ -459,20 +461,25 @@ class FollowingController:
         for record in records:
             snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
             completion_state = self._completion_state(record, snapshot)
+            effective_kind = _resolve_effective_media_kind(record, snapshot)
             cards.append(
                 FollowingCardItem(
                     record=record,
                     display_title=record.title,
-                    subtitle=record.provider or record.media_kind,
-                    progress_text=self._progress_text(record, snapshot=snapshot, completion_state=completion_state),
-                    update_text=self._update_text(record, completion_state=completion_state),
+                    subtitle=_media_kind_category(effective_kind),
+                    progress_text=self._progress_text(record, snapshot=snapshot, completion_state=completion_state, media_kind=effective_kind),
+                    update_text=self._update_text(record, completion_state=completion_state, snapshot=snapshot, media_kind=effective_kind),
                     updated_hint=record.has_update,
                     error_text=record.last_error,
                 )
             )
         return cards, total
 
-    def _update_text(self, record: FollowingRecord, *, completion_state: str | None = None) -> str:
+    def _update_text(self, record: FollowingRecord, *, completion_state: str | None = None, snapshot: FollowingDetailSnapshot | None = None, media_kind: str = "") -> str:
+        if media_kind == "movie":
+            if snapshot is not None and snapshot.next_episode is not None:
+                return "待播出"
+            return ""
         if record.has_update:
             count = resolve_new_episode_count(
                 has_update=True,
@@ -1194,7 +1201,10 @@ class FollowingController:
         *,
         snapshot: FollowingDetailSnapshot | None = None,
         completion_state: str | None = None,
+        media_kind: str = "",
     ) -> str:
+        if media_kind == "movie":
+            return "已观看" if record.current_episode > 0 or record.last_played_at > 0 else "未观看"
         record = self._normalized_progress_record(record, snapshot)
         parts = []
         resolved_completion_state = completion_state or self._completion_state(record, snapshot)
