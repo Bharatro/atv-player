@@ -125,24 +125,6 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert command[-1] == str(build.ENTRYPOINT)
 
 
-@pytest.mark.parametrize("target_platform,separator", [("linux", ":"), ("macos", ":"), ("windows", ";")])
-def test_build_pyinstaller_command_collects_js_bridge_assets(
-    monkeypatch, tmp_path, target_platform: str, separator: str
-) -> None:
-    runtime_path = tmp_path / "runtime-lib"
-    runtime_path.write_bytes(b"lib")
-    monkeypatch.setattr(build, "find_libmpv", lambda platform: [(runtime_path, ".")])
-
-    command = build.build_pyinstaller_command(target_platform)
-
-    add_data_values = [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--add-data"
-    ]
-    assert f"{build.JS_BRIDGE_DIR}{separator}atv_player/plugins/js_bridge" in add_data_values
-
-
 def test_build_pyinstaller_command_windows_uses_onefile_mode(monkeypatch, tmp_path) -> None:
     dll_path = tmp_path / "libmpv-2.dll"
     dll_path.write_bytes(b"dll")

@@ -16,7 +16,6 @@ RUNTIME_VERSION_FILENAME = "_build_version.txt"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "src" / "atv_player" / "main.py"
 ICONS_DIR = PROJECT_ROOT / "src" / "atv_player" / "icons"
-JS_BRIDGE_DIR = PROJECT_ROOT / "src" / "atv_player" / "plugins" / "js_bridge"
 PACKAGING_ICONS_DIR = PROJECT_ROOT / "packaging" / "icons"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
@@ -278,8 +277,6 @@ def build_pyinstaller_command(
         [
             "--add-data",
             data_mapping(ICONS_DIR, "atv_player/icons", target.platform_id),
-            "--add-data",
-            data_mapping(JS_BRIDGE_DIR, "atv_player/plugins/js_bridge", target.platform_id),
             "--add-binary",
             data_mapping(find_libmpv(target.platform_id)[0][0], ".", target.platform_id),
         ]

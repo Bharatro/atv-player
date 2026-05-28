@@ -1,5 +1,4 @@
 import logging
-import shutil
 import threading
 import time
 from pathlib import Path
@@ -891,48 +890,6 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
-
-
-@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_controller_maps_node_spider_detail_and_player_content(tmp_path: Path) -> None:
-    plugin_path = tmp_path / "controller-plugin.mjs"
-    plugin_path.write_text(
-        """
-export default {
-  home() { return { class: [{ type_id: "tv", type_name: "剧集" }], list: [] } },
-  category(tid, pg) { return { list: [{ vod_id: "/detail/1", vod_name: "剧集1", vod_pic: "poster" }], total: 1 } },
-  detail(id) {
-    return {
-      list: [{
-        vod_id: id,
-        vod_name: "JS剧集",
-        vod_pic: "poster-detail",
-        vod_play_from: "备用线$$$极速线",
-        vod_play_url: "第1集$/play/1#第2集$https://media.example/2.m3u8$$$第3集$/play/3"
-      }]
-    }
-  },
-  play(flag, id) { return { parse: 0, url: `https://stream.example${id}.m3u8`, header: { Referer: "https://site.example" } } }
-}
-""".strip(),
-        encoding="utf-8",
-    )
-    from atv_player.plugins.node_spider import NodeSpider
-
-    spider = NodeSpider(plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=77)
-    controller = SpiderPluginController(spider, plugin_name="JS剧集", search_enabled=False)
-
-    request = controller.build_request("/detail/1")
-
-    assert request.vod.vod_name == "JS剧集"
-    assert request.playlists[0][0].title == "第1集"
-    assert request.playlists[0][0].vod_id == "/play/1"
-    assert request.playlists[0][1].url == "https://media.example/2.m3u8"
-    assert request.playback_loader is not None
-    request.playback_loader(request.playlists[0][0])
-    assert request.playlists[0][0].url == "https://stream.example/play/1.m3u8"
-    assert request.playlists[0][0].headers["Referer"] == "https://site.example"
-    spider.destroy()
 
 
 def test_controller_build_request_maps_absolute_subt_into_external_subtitles() -> None:

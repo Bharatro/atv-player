@@ -172,34 +172,6 @@ def test_plugin_manager_dialog_hides_maximize_button(qtbot) -> None:
     assert dialog.title_bar().maximize_button.isHidden() is True
 
 
-def test_plugin_manager_copy_mentions_javascript(qtbot) -> None:
-    dialog = PluginManagerDialog(FakePluginManager())
-    qtbot.addWidget(dialog)
-
-    assert "Python/JavaScript" in dialog.warning_label.text()
-
-
-def test_plugin_manager_local_picker_accepts_js(qtbot, monkeypatch) -> None:
-    dialog = PluginManagerDialog(FakePluginManager())
-    qtbot.addWidget(dialog)
-    seen: dict[str, str] = {}
-
-    def fake_get_open_file_name(parent, title, directory, file_filter):
-        seen["title"] = title
-        seen["filter"] = file_filter
-        return "/tmp/plugin.js", ""
-
-    monkeypatch.setattr(
-        "atv_player.ui.plugin_manager_dialog.QFileDialog.getOpenFileName",
-        fake_get_open_file_name,
-    )
-
-    assert dialog._pick_local_plugin_path() == "/tmp/plugin.js"
-    assert seen["title"] == "选择爬虫插件"
-    assert "*.js" in seen["filter"]
-    assert "*.py" in seen["filter"]
-
-
 def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
