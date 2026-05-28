@@ -4521,6 +4521,55 @@ def test_advanced_settings_dialog_masks_ai_api_key(qtbot) -> None:
     assert dialog.ai_api_key_edit.echoMode() == QLineEdit.EchoMode.Password
 
 
+def test_app_coordinator_injects_smart_search_controller_when_ai_enabled(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeSignal:
+        def connect(self, callback) -> None:
+            del callback
+
+    class CapturingMainWindow:
+        def __init__(self, *args, **kwargs) -> None:
+            captured.update(kwargs)
+            self.logout_requested = FakeSignal()
+
+        def show(self) -> None:
+            pass
+
+    monkeypatch.setattr(app_module, "MainWindow", CapturingMainWindow)
+    monkeypatch.setattr(
+        app_module,
+        "ApiClient",
+        lambda *args, **kwargs: ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        ),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            token="token",
+            ai_enabled=True,
+            ai_base_url="https://api.example.com/v1",
+            ai_api_key="sk-test",
+            ai_chat_model="model-a",
+        )
+    )
+    coordinator = app_module.AppCoordinator(repo)
+
+    coordinator._show_main()
+
+    assert captured["smart_search_controller"] is not None
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 

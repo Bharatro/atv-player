@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
+from atv_player.ai import AIProviderConfig, OpenAICompatibleClient, SmartSearchIntentParser
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
 from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
@@ -93,6 +94,7 @@ from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.playback_parsers import BuiltInPlaybackParserService
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.proxy.server import LocalHlsProxyServer
+from atv_player.search import SmartSearchController
 from atv_player.yt_dlp_service import YtdlpPlaybackService
 from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
@@ -512,6 +514,33 @@ class AppCoordinator(QObject):
                 bypass_rules=list(config.network_proxy_bypass_rules),
                 proxy_rules=list(config.network_proxy_rules),
             )
+        )
+
+    def _build_smart_search_controller(
+        self,
+        config: AppConfig,
+        *,
+        favorites_controller=None,
+        following_controller=None,
+        history_controller=None,
+    ):
+        if not config.ai_enabled:
+            return None
+        provider_config = AIProviderConfig(
+            base_url=config.ai_base_url,
+            api_key=config.ai_api_key,
+            chat_model=config.ai_chat_model,
+            timeout_seconds=config.ai_request_timeout_seconds,
+        )
+        if not provider_config.is_complete:
+            return None
+        client = OpenAICompatibleClient(provider_config)
+        parser = SmartSearchIntentParser(client)
+        return SmartSearchController(
+            intent_parser=parser,
+            favorites_controller=favorites_controller,
+            following_controller=following_controller,
+            history_controller=history_controller,
         )
 
     def _proxy_http_get(self):
@@ -1888,6 +1917,12 @@ class AppCoordinator(QObject):
                 discovery_service=following_discovery_service,
                 favorite_tmdb_binding_repository=self._favorite_tmdb_binding_repository,
             )
+        smart_search_controller = self._build_smart_search_controller(
+            config,
+            favorites_controller=favorites_controller,
+            following_controller=following_controller,
+            history_controller=history_controller,
+        )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
@@ -1950,6 +1985,7 @@ class AppCoordinator(QObject):
             m3u8_ad_filter=self._m3u8_ad_filter,
             playback_parser_service=self._playback_parser_service,
             yt_dlp_service=self._yt_dlp_service,
+            smart_search_controller=smart_search_controller,
             youtube_category_text_loader=self._api_client.get_text if self._api_client is not None else None,
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,

@@ -1320,6 +1320,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             m3u8_ad_filter=None,
             playback_parser_service=None,
             yt_dlp_service=None,
+            smart_search_controller=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
             danmaku_controller_factory=None,
@@ -1335,6 +1336,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
+        self._smart_search_controller = smart_search_controller
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
         self._danmaku_controller_factory = danmaku_controller_factory
@@ -1641,6 +1643,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     "盘搜",
                     self.pansou_page,
                     self.pansou_controller,
+                    global_search_only=True,
+                )
+            )
+        if self._smart_search_controller is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition(
+                    "smart:search",
+                    "智能匹配",
+                    PosterGridPage(
+                        self._smart_search_controller,
+                        click_action="open",
+                        search_enabled=False,
+                    ),
+                    self._smart_search_controller,
                     global_search_only=True,
                 )
             )

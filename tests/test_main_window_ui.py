@@ -1192,6 +1192,15 @@ class SearchableResolveController(SearchableController):
         return self.resolved_path
 
 
+class SmartSearchGlobalController:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.calls.append((keyword, page))
+        return [VodItem(vod_id="smart-1", vod_name="黑镜", vod_remarks="科幻匹配")], 1
+
+
 def _vod(name: str, vod_id: str | None = None, remarks: str = "") -> VodItem:
     return VodItem(vod_id=vod_id or name, vod_name=name, vod_pic="", vod_remarks=remarks)
 
@@ -3265,6 +3274,33 @@ def test_main_window_global_search_includes_playback_history_results(qtbot) -> N
     assert history.load_calls == [(1, 100, "庆余年")]
     assert window.global_history_page.table.item(0, 0).text() == "庆余年"
     assert window.global_history_page.table.item(0, 5).text() == "电报影视"
+
+
+def test_global_search_includes_smart_match_tab_when_controller_present(qtbot) -> None:
+    smart_controller = SmartSearchGlobalController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        telegram_controller=SearchableController([]),
+        smart_search_controller=smart_controller,
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("类似黑镜的高分科幻")
+    window._start_global_search()
+
+    qtbot.waitUntil(lambda: smart_controller.calls == [("类似黑镜的高分科幻", 1)], timeout=1000)
+    qtbot.waitUntil(
+        lambda: any(
+            window.nav_tabs.tabText(i) == "智能匹配(1)"
+            for i in range(window.nav_tabs.count())
+        ),
+        timeout=1000,
+    )
 
 
 def test_main_window_global_search_history_result_opens_existing_history_route(qtbot, monkeypatch) -> None:
