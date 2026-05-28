@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-
 _VALID_MODES = {"title_search", "smart_discovery"}
 _VALID_SORTS = {"rating", "popularity", "recent", "relevance"}
 
@@ -39,6 +38,10 @@ def _string_list(value: object) -> list[str]:
 
 
 def _int_value(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if not isinstance(value, int | float | str):
+        return 0
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -46,6 +49,10 @@ def _int_value(value: object) -> int:
 
 
 def _float_value(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if not isinstance(value, int | float | str):
+        return 0.0
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -83,9 +90,10 @@ class SmartSearchIntentParser:
                         "role": "system",
                         "content": (
                             "你是影视搜索意图解析器。只输出 JSON，不要输出解释。"
-                            "字段包含 mode, media_types, genres, mood, countries, languages, "
-                            "year_min, year_max, rating_min, max_runtime_minutes, keywords, "
-                            "reference_titles, negative_keywords, sort_preference。"
+                            "字段包含 mode, media_types, genres, mood, countries, "
+                            "languages, year_min, year_max, rating_min, "
+                            "max_runtime_minutes, keywords, reference_titles, "
+                            "negative_keywords, sort_preference。"
                         ),
                     },
                     {"role": "user", "content": normalized_query},

@@ -51,8 +51,18 @@ def test_rank_candidates_filters_negative_keywords() -> None:
         negative_keywords=["恐怖"],
     )
     candidates = [
-        SmartSearchCandidate(source_kind="favorite", source_label="我的收藏", vod_id="1", title="轻松恐怖片"),
-        SmartSearchCandidate(source_kind="favorite", source_label="我的收藏", vod_id="2", title="轻松喜剧"),
+        SmartSearchCandidate(
+            source_kind="favorite",
+            source_label="我的收藏",
+            vod_id="1",
+            title="轻松恐怖片",
+        ),
+        SmartSearchCandidate(
+            source_kind="favorite",
+            source_label="我的收藏",
+            vod_id="2",
+            title="轻松喜剧",
+        ),
     ]
 
     ranked = rank_candidates(candidates, intent)

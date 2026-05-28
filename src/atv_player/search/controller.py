@@ -6,7 +6,6 @@ from atv_player.models import HistoryRecord, VodItem
 from atv_player.search.models import SmartSearchCandidate
 from atv_player.search.ranking import rank_candidates
 
-
 _RATING_RE = re.compile(r"(?<!\d)([0-9](?:\.[0-9])?|10(?:\.0)?)(?!\d)")
 
 

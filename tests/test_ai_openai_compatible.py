@@ -6,7 +6,10 @@ import httpx
 import pytest
 
 from atv_player.ai.models import AIProviderConfig
-from atv_player.ai.openai_compatible import OpenAICompatibleClient, OpenAICompatibleError
+from atv_player.ai.openai_compatible import (
+    OpenAICompatibleClient,
+    OpenAICompatibleError,
+)
 
 
 def test_chat_completion_posts_to_normalized_v1_endpoint() -> None:
@@ -18,7 +21,11 @@ def test_chat_completion_posts_to_normalized_v1_endpoint() -> None:
         captured["json"] = json.loads(request.read().decode("utf-8"))
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": "{\"mode\":\"smart_discovery\"}"}}]},
+            json={
+                "choices": [
+                    {"message": {"content": "{\"mode\":\"smart_discovery\"}"}}
+                ]
+            },
         )
 
     client = OpenAICompatibleClient(

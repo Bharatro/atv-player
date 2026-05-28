@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from atv_player.ai.search_intent import SmartSearchIntent
-from atv_player.models import FavoriteCardItem, FavoriteRecord, HistoryRecord
+from atv_player.models import FavoriteCardItem, FavoriteRecord
 from atv_player.search.controller import SmartSearchController
 
 
