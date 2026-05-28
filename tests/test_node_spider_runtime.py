@@ -445,3 +445,115 @@ module.exports = async (server, opt) => {
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_callable_axios_instance(
+    tmp_path: Path,
+) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(f"posted:{body}".encode())
+
+        def log_message(self, format, *args) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    api_url = f"http://127.0.0.1:{server.server_port}/search"
+
+    plugin_path = tmp_path / "nmdvd-callable.cjs"
+    plugin_path.write_text(
+        """
+const axios = require("axios");
+const crypto = require("crypto");
+const https = require("https");
+const http = require("http");
+
+const httpClient = axios.create({
+  timeout: 15000,
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false })
+});
+
+const request = async (url, options = {}) => {
+  const response = await httpClient({
+    url,
+    method: options.method || "GET",
+    headers: options.headers || {},
+    data: options.data || undefined,
+    responseType: options.responseType || "text",
+    maxRedirects: 5
+  });
+  return response;
+};
+
+const handleT4Request = async (req) => {
+  const { t, pg, wd, ids, play, extend } = req.query;
+  if (wd) {
+    const response = await request("__API_URL__", {
+      method: "POST",
+      data: `wd=${encodeURIComponent(wd)}&submit=`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }
+    });
+    return {
+      list: [{
+        vod_id: crypto.createHash("md5").update(response.data).digest("hex"),
+        vod_name: response.data
+      }]
+    };
+  }
+  if (play) return { parse: 0, url: play };
+  if (ids) return { list: [{ vod_id: ids, vod_name: "详情" }] };
+  if (t) {
+    const extendParams = extend ? JSON.parse(extend) : {};
+    return {
+      list: [{ vod_id: `${t}-${pg}-${extendParams.area || "none"}` }]
+    };
+  }
+  return {
+    class: [{ type_id: "dianying", type_name: "电影" }],
+    list: []
+  };
+};
+
+const meta = {
+  key: "农民影视",
+  name: "农民影视",
+  api: "/video/nmdvd"
+};
+
+module.exports = async (app, opt) => {
+  app.get(meta.api, async (req, reply) => {
+    const result = await handleT4Request(req);
+    return result;
+  });
+  opt.sites.push(meta);
+};
+""".strip().replace("__API_URL__", api_url),
+        encoding="utf-8",
+    )
+
+    try:
+        spider = NodeSpider(
+            plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=5
+        )
+
+        assert spider.getName() == "农民影视"
+        assert spider.homeContent(False)["class"][0]["type_name"] == "电影"
+        search = spider.searchContent("麦田", False, "1")
+        assert search["list"][0]["vod_name"] == "posted:wd=%E9%BA%A6%E7%94%B0&submit="
+        category = spider.categoryContent("dianying", "2", False, {"area": "内地"})
+        assert category["list"][0]["vod_id"] == "dianying-2-内地"
+        assert spider.detailContent(["/detail/1"])["list"][0]["vod_name"] == "详情"
+        assert spider.playerContent("默认", "/play/1", [])["url"] == "/play/1"
+        spider.destroy()
+    finally:
+        server.shutdown()
+        server.server_close()

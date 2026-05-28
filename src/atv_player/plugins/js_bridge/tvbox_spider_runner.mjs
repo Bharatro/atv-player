@@ -110,6 +110,7 @@ function transformAxiosData(text, options) {
 }
 
 async function axiosRequest(method, url, data = null, options = {}) {
+  const requestMethod = String(method || "GET").toUpperCase();
   const headers = options.headers || {};
   const timeout = Number(options.timeout || 0);
   const controller = timeout > 0 ? new AbortController() : null;
@@ -118,9 +119,9 @@ async function axiosRequest(method, url, data = null, options = {}) {
     : null;
   try {
     const response = await fetch(url, {
-      method,
+      method: requestMethod,
       headers,
-      body: method === "GET" ? undefined : data,
+      body: ["GET", "HEAD"].includes(requestMethod) ? undefined : data,
       signal: controller?.signal,
     });
     const text = await response.text();
@@ -150,22 +151,34 @@ async function axiosPost(url, data = null, options = {}) {
   return axiosRequest("POST", url, data, options);
 }
 
-function createAxiosClient(defaultOptions = {}) {
-  return {
-    get(url, options = {}) {
-      return axiosGet(url, mergeOptions(defaultOptions, options));
-    },
-    post(url, data = null, options = {}) {
-      return axiosPost(url, data, mergeOptions(defaultOptions, options));
-    },
-  };
+async function axiosFromConfig(defaultOptions, configOrUrl, options = {}) {
+  if (typeof configOrUrl === "string") {
+    return axiosGet(configOrUrl, mergeOptions(defaultOptions, options));
+  }
+  const config = mergeOptions(defaultOptions, configOrUrl || {});
+  return axiosRequest(
+    config.method || "GET",
+    config.url,
+    config.data ?? null,
+    config
+  );
 }
 
-const axiosShim = {
-  create: createAxiosClient,
-  get: axiosGet,
-  post: axiosPost,
-};
+function createAxiosClient(defaultOptions = {}) {
+  const client = (configOrUrl, options = {}) => {
+    return axiosFromConfig(defaultOptions, configOrUrl, options);
+  };
+  client.get = (url, options = {}) => {
+    return axiosGet(url, mergeOptions(defaultOptions, options));
+  };
+  client.post = (url, data = null, options = {}) => {
+    return axiosPost(url, data, mergeOptions(defaultOptions, options));
+  };
+  return client;
+}
+
+const axiosShim = createAxiosClient();
+axiosShim.create = createAxiosClient;
 
 const originalConsole = globalThis.console;
 globalThis.console = {
@@ -266,8 +279,9 @@ async function createT4Spider(register, meta = {}) {
       return callRoute({});
     },
     category(tid, pg, filter, extend) {
-      const ext = Buffer.from(JSON.stringify(extend || {})).toString("base64");
-      return callRoute({ t: tid, pg: String(pg || 1), ext });
+      const extendText = JSON.stringify(extend || {});
+      const ext = Buffer.from(extendText).toString("base64");
+      return callRoute({ t: tid, pg: String(pg || 1), ext, extend: extendText });
     },
     detail(id) {
       return callRoute({ ids: id });
