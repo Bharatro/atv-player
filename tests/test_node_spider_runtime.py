@@ -827,3 +827,151 @@ module.exports = async (app, opt) => {
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_bundled_cheerio(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "cheerio-plugin.cjs"
+    plugin_path.write_text(
+        """
+const cheerio = require("cheerio");
+
+const meta = { name: "片库不夜版", api: "/video/panku" };
+
+module.exports = async (app, opt) => {
+  app.get(meta.api, async () => {
+    const $ = cheerio.load(`
+      <div class="item">
+        <a href="/detail/1" title="片库影片">
+          <img data-original="//img.example/a.jpg">
+          <span class="pic-text">更新至1集</span>
+        </a>
+      </div>
+    `);
+    return {
+      class: [{ type_id: "movie", type_name: "电影" }],
+      list: [{
+        vod_id: $(".item a").attr("href"),
+        vod_name: $(".item a").attr("title"),
+        vod_pic: $(".item img").attr("data-original"),
+        vod_remarks: $(".pic-text").text()
+      }]
+    };
+  });
+  opt.sites.push(meta);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=7
+    )
+
+    assert spider.getName() == "片库不夜版"
+    home = spider.homeContent(False)
+    assert home["list"][0] == {
+        "vod_id": "/detail/1",
+        "vod_name": "片库影片",
+        "vod_pic": "//img.example/a.jpg",
+        "vod_remarks": "更新至1集",
+    }
+    spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_server_log_info(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "log-info-plugin.cjs"
+    plugin_path.write_text(
+        """
+const meta = { name: "日志插件", api: "/video/log" };
+
+module.exports = async (server, opt) => {
+  const log = {};
+  log.info = (...args) => server.log.info(args.join(" "));
+  log.info("初始化", "成功");
+  server.get(meta.api, async () => ({ class: [], list: [] }));
+  opt.sites.push(meta);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=8
+    )
+
+    assert spider.getName() == "日志插件"
+    assert spider.homeContent(False) == {"class": [], "list": []}
+    spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_registered_with_post(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "post-plugin.cjs"
+    plugin_path.write_text(
+        """
+const meta = { name: "POST插件", api: "/video/post" };
+
+module.exports = async (app, opt) => {
+  app.post(meta.api, async (req) => {
+    if (req.query.wd) {
+      return { list: [{ vod_id: req.query.wd, vod_name: req.query.wd }] };
+    }
+    return { class: [{ type_id: "movie", type_name: "电影" }], list: [] };
+  });
+  opt.sites.push(meta);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=9
+    )
+
+    assert spider.getName() == "POST插件"
+    assert spider.homeContent(False)["class"][0]["type_name"] == "电影"
+    assert spider.searchContent("abc", False, "1")["list"][0]["vod_name"] == "abc"
+    spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_object_default_route_registrar(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "object-default-plugin.cjs"
+    plugin_path.write_text(
+        """
+const META = { name: "对象默认插件", api: "/video/object-default" };
+
+async function lightpandaRoutes(fastify, opt) {
+  fastify.get("/api/admin/lightpanda/status", async () => ({ ok: true }));
+  fastify.get(META.api, async (req) => {
+    if (req.query.ids) {
+      return { list: [{ vod_id: req.query.ids, vod_name: "详情" }] };
+    }
+    return { class: [{ type_id: "movie", type_name: "电影" }], list: [] };
+  });
+  opt.sites.push(META);
+}
+
+module.exports = { default: lightpandaRoutes, META };
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=10
+    )
+
+    assert spider.getName() == "对象默认插件"
+    assert spider.homeContent(False)["class"][0]["type_name"] == "电影"
+    assert spider.detailContent(["abc"])["list"][0]["vod_name"] == "详情"
+    spider.destroy()

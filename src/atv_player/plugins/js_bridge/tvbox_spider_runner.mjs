@@ -202,6 +202,7 @@ function createAxiosClient(defaultOptions = {}) {
 
 const axiosShim = createAxiosClient();
 axiosShim.create = createAxiosClient;
+const cheerioShim = await import(new URL("./lib/cheerio.min.js", import.meta.url));
 
 function uuidV4() {
   const nodeCrypto = require("node:crypto");
@@ -220,6 +221,7 @@ const uuidShim = { v4: uuidV4 };
 const originalConsole = globalThis.console;
 globalThis.console = {
   log: (...items) => originalConsole.error(JSON.stringify({ level: "info", message: items.map(String).join(" ") })),
+  info: (...items) => originalConsole.error(JSON.stringify({ level: "info", message: items.map(String).join(" ") })),
   warn: (...items) => originalConsole.error(JSON.stringify({ level: "warning", message: items.map(String).join(" ") })),
   error: (...items) => originalConsole.error(JSON.stringify({ level: "error", message: items.map(String).join(" ") })),
 };
@@ -241,6 +243,7 @@ async function loadPluginModule() {
   const pluginRequireBase = createRequire(pathToFileURL(pluginPath));
   const pluginRequire = (name) => {
     if (name === "axios") return axiosShim;
+    if (name === "cheerio") return cheerioShim;
     if (name === "uuid") return uuidShim;
     return pluginRequireBase(name);
   };
@@ -279,6 +282,20 @@ function normalizeResult(value) {
   return value;
 }
 
+function looksLikeT4Registrar(fn, source) {
+  if (typeof fn !== "function") return false;
+  if (fn.length >= 2) return true;
+  return [
+    "app.get",
+    "app.post",
+    "server.get",
+    "server.post",
+    "fastify.get",
+    "fastify.post",
+    "opt.sites",
+  ].some((marker) => source.includes(marker));
+}
+
 async function createT4Spider(register, meta = {}) {
   const routes = [];
   const opt = { sites: [] };
@@ -287,13 +304,21 @@ async function createT4Spider(register, meta = {}) {
     get(api, handler) {
       routes.push({ api, handler });
     },
+    post(api, handler) {
+      routes.push({ api, handler });
+    },
   };
   await register(app, opt);
-  const route = routes[0];
+  const siteMeta = meta || opt.sites[0] || {};
+  const route = (
+    routes.find((item) => item.api === siteMeta.api)
+    || routes.find((item) => item.api === opt.sites[0]?.api)
+    || routes.find((item) => String(item.api || "").startsWith("/video/"))
+    || routes[0]
+  );
   if (!route || typeof route.handler !== "function") {
     throw new Error("T4 JavaScript plugin did not register a route");
   }
-  const siteMeta = meta || opt.sites[0] || {};
 
   async function callRoute(query) {
     let sent = false;
@@ -339,15 +364,19 @@ let spider = null;
 if (
   loadedPlugin.isCommonJS
   && typeof loadedPlugin.exported === "function"
-  && (
-    loadedPlugin.exported.length >= 2
-    || loadedPlugin.source.includes("app.get")
-    || loadedPlugin.source.includes("opt.sites")
-  )
+  && looksLikeT4Registrar(loadedPlugin.exported, loadedPlugin.source)
 ) {
   spider = await createT4Spider(
     loadedPlugin.exported,
     loadedPlugin.exported.META || pluginModule.META
+  );
+} else if (
+  loadedPlugin.isCommonJS
+  && looksLikeT4Registrar(pluginModule.default, loadedPlugin.source)
+) {
+  spider = await createT4Spider(
+    pluginModule.default,
+    pluginModule.META || loadedPlugin.exported.META
   );
 } else if (typeof pluginModule.__jsEvalReturn === "function") {
   spider = await pluginModule.__jsEvalReturn();
