@@ -1292,6 +1292,9 @@ def _detail_latest_season_number(
         latest_episode,
         fallback_season=record.season_number,
     )
+    current_season = max(0, int(record.current_season_number or 0))
+    if current_season > base:
+        base = current_season
     if snapshot is None:
         return base
 
@@ -1326,7 +1329,7 @@ def _detail_latest_season_number(
     if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
         snapshot_seasons.append(int(snapshot.next_episode.season_number))
     if latest_episode > 0 and snapshot_seasons:
-        return max(snapshot_seasons)
+        return max(max(snapshot_seasons), base)
     return base
 
 

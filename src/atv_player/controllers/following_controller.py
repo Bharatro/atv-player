@@ -1100,6 +1100,9 @@ class FollowingController:
             record.latest_episode,
             fallback_season=record.season_number,
         )
+        current_season = max(0, int(record.current_season_number or 0))
+        if current_season > base:
+            base = current_season
         if snapshot is None:
             return base
         snapshot_seasons = [int(season.season_number) for season in snapshot.seasons if int(season.season_number or 0) > 0]
@@ -1111,7 +1114,7 @@ class FollowingController:
         if snapshot.next_episode is not None and int(snapshot.next_episode.season_number or 0) > 0:
             snapshot_seasons.append(int(snapshot.next_episode.season_number))
         if record.latest_episode > 0 and snapshot_seasons:
-            return max(snapshot_seasons)
+            return max(max(snapshot_seasons), base)
         return base
 
     @staticmethod
