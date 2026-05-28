@@ -7,9 +7,12 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from dataclasses import replace as _replace
+
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
     FollowingCompletionState,
+    FollowingDetailSnapshot,
     FollowingRecord,
     FollowingUpdateResult,
     progress_at_or_beyond,
@@ -17,6 +20,8 @@ from atv_player.following_models import (
     resolve_new_episode_count,
     resolve_progress_season,
 )
+
+_replace_snapshot = _replace
 from atv_player.time_utils import beijing_timezone
 
 BEIJING_TZ = beijing_timezone()
@@ -67,6 +72,7 @@ class FollowingUpdateService(QObject):
 
     def _check_one(self, record: FollowingRecord, *, now: int) -> FollowingUpdateResult:
         last_error = ""
+        record_has_tmdb_anchor = bool(record.external_ids.get("tmdb"))
         for provider in self._provider_order(record):
             if not provider:
                 continue
@@ -75,6 +81,7 @@ class FollowingUpdateService(QObject):
             except Exception as exc:
                 last_error = str(exc)
                 continue
+            is_tmdb_fallback = record_has_tmdb_anchor and provider != "tmdb"
             raw_episodes = [
                 {
                     "episode_number": episode.episode_number,
@@ -106,11 +113,20 @@ class FollowingUpdateService(QObject):
                 and total <= latest
             ):
                 total = 0
+            if is_tmdb_fallback:
+                latest = max(latest, record.latest_episode)
+                if record.total_episodes > 0:
+                    total = max(total, record.total_episodes)
             snapshot_seasons = [
+                season.season_number
+                for season in snapshot.seasons
+                if season.season_number > 0
+            ]
+            snapshot_seasons.extend(
                 episode.season_number
                 for episode in snapshot.episodes
                 if episode.season_number > 0 and not episode.is_special
-            ]
+            )
             if snapshot.next_episode is not None and snapshot.next_episode.season_number > 0:
                 snapshot_seasons.append(snapshot.next_episode.season_number)
             latest_season_number = (
@@ -145,7 +161,7 @@ class FollowingUpdateService(QObject):
                 latest_fallback_season=record.season_number,
             )
             homepage_prompt = bool(has_update and caught_up and record.prompt_snoozed_until <= now)
-            if self._has_metadata_update(refreshed_record):
+            if not is_tmdb_fallback and self._has_metadata_update(refreshed_record):
                 self._repository.update_metadata(record.id, refreshed_record)
             self._repository.update_check_state(
                 record.id,
@@ -159,9 +175,16 @@ class FollowingUpdateService(QObject):
                 homepage_prompt_pending=homepage_prompt,
                 last_error="",
             )
-            if snapshot.episodes or snapshot.overview:
-                snapshot.following_id = record.id
-                self._repository.save_detail_snapshot(record.id, snapshot)
+            if not is_tmdb_fallback and (snapshot.episodes or snapshot.overview or snapshot.seasons):
+                if snapshot.seasons and not snapshot.episodes and not snapshot.overview:
+                    existing_snapshot = self._repository.get_detail_snapshot(record.id)
+                    if existing_snapshot is not None and not existing_snapshot.seasons:
+                        existing_snapshot = _replace_snapshot(existing_snapshot, seasons=snapshot.seasons)
+                        existing_snapshot.following_id = record.id
+                        self._repository.save_detail_snapshot(record.id, existing_snapshot)
+                else:
+                    snapshot.following_id = record.id
+                    self._repository.save_detail_snapshot(record.id, snapshot)
             return FollowingUpdateResult(
                 record_id=record.id,
                 checked=True,

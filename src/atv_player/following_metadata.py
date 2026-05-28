@@ -642,7 +642,7 @@ def _refresh_tmdb_counts_only(metadata_search_service, record: FollowingRecord, 
     detail_record, detail_error = load_candidate_detail_record_full(metadata_search_service, candidate)
     if detail_record is None:
         raise RuntimeError(detail_error or "tmdb returned no following detail")
-    refreshed_record, _snapshot = build_snapshot_from_record(
+    refreshed_record, snapshot = build_snapshot_from_record(
         detail_record,
         now=now,
         media_kind=record.media_kind,
@@ -655,7 +655,11 @@ def _refresh_tmdb_counts_only(metadata_search_service, record: FollowingRecord, 
             previous_latest_episode=refreshed_record.latest_episode,
             total_episodes=refreshed_record.total_episodes,
         ),
-        FollowingDetailSnapshot(),
+        FollowingDetailSnapshot(
+            seasons=snapshot.seasons,
+            next_episode=snapshot.next_episode,
+            refreshed_at=snapshot.refreshed_at,
+        ),
     )
 
 
