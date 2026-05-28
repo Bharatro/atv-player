@@ -79,6 +79,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
         self.appearance_tab = QWidget()
         self.metadata_tab = QWidget()
+        self.ai_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
         self.youtube_tab = QWidget()
@@ -104,6 +105,21 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.tmdb_api_key_edit.setPlaceholderText("填写 TMDB API Key")
         self.bangumi_access_token_edit = QLineEdit()
         self.bangumi_access_token_edit.setPlaceholderText("可选；留空时使用匿名访问")
+        self.ai_group = QGroupBox("AI 智能功能")
+        self.ai_enabled_checkbox = QCheckBox("启用智能搜索")
+        self.ai_base_url_edit = QLineEdit()
+        self.ai_base_url_edit.setPlaceholderText("例如 https://api.openai.com/v1")
+        self.ai_api_key_edit = QLineEdit()
+        self.ai_api_key_edit.setPlaceholderText("填写 API Key")
+        self.ai_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_chat_model_edit = QLineEdit()
+        self.ai_chat_model_edit.setPlaceholderText("例如 gpt-4o-mini")
+        self.ai_timeout_edit = QLineEdit()
+        self.ai_timeout_edit.setPlaceholderText("5 - 120")
+        self.ai_privacy_label = QLabel(
+            "启用后，搜索文本会发送到你配置的 AI 服务商；媒体库、播放历史、收藏列表和 API Key 不会随搜索请求发送。"
+        )
+        self.ai_privacy_label.setWordWrap(True)
         self.network_proxy_group = QGroupBox("网络代理配置")
         self.network_proxy_mode_combo = FlatComboBox()
         self.network_proxy_mode_combo.addItem("直连", "direct")
@@ -252,6 +268,11 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
+        self.ai_enabled_checkbox.setChecked(config.ai_enabled)
+        self.ai_base_url_edit.setText(config.ai_base_url)
+        self.ai_api_key_edit.setText(config.ai_api_key)
+        self.ai_chat_model_edit.setText(config.ai_chat_model)
+        self.ai_timeout_edit.setText(str(config.ai_request_timeout_seconds))
         self.network_proxy_mode_combo.setCurrentIndex(
             max(0, self.network_proxy_mode_combo.findData(config.network_proxy_mode))
         )
@@ -330,6 +351,18 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         metadata_tab_layout.addWidget(self.metadata_source_group)
         metadata_tab_layout.addWidget(self.danmaku_source_group)
         metadata_tab_layout.addStretch(1)
+
+        ai_layout = QFormLayout()
+        ai_layout.addRow(self.ai_enabled_checkbox)
+        ai_layout.addRow("API 地址", self.ai_base_url_edit)
+        ai_layout.addRow("API Key", self.ai_api_key_edit)
+        ai_layout.addRow("Chat 模型", self.ai_chat_model_edit)
+        ai_layout.addRow("请求超时", self.ai_timeout_edit)
+        ai_layout.addRow("隐私", self.ai_privacy_label)
+        self.ai_group.setLayout(ai_layout)
+        ai_tab_layout = QVBoxLayout(self.ai_tab)
+        ai_tab_layout.addWidget(self.ai_group)
+        ai_tab_layout.addStretch(1)
 
         network_proxy_layout = QFormLayout()
         network_proxy_layout.addRow("代理模式", self.network_proxy_mode_combo)
@@ -410,6 +443,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
+        self.settings_tabs.addTab(self.ai_tab, "AI")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
         self.settings_tabs.addTab(self.cache_tab, "缓存管理")
         self.settings_tabs.addTab(self.logs_tab, "日志")
@@ -463,6 +497,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         for edit in (
             self.tmdb_api_key_edit,
             self.bangumi_access_token_edit,
+            self.ai_base_url_edit,
+            self.ai_api_key_edit,
+            self.ai_chat_model_edit,
+            self.ai_timeout_edit,
             self.network_proxy_url_edit,
             self.youtube_category_source_edit,
             self.youtube_category_local_path_edit,
@@ -851,6 +889,30 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             "\n".join(normalized_lines),
         )
 
+    def _validated_ai_values(self) -> tuple[bool, str, str, str, int] | None:
+        enabled = self.ai_enabled_checkbox.isChecked()
+        base_url = self.ai_base_url_edit.text().strip().rstrip("/")
+        api_key = self.ai_api_key_edit.text().strip()
+        model = self.ai_chat_model_edit.text().strip()
+        try:
+            timeout = int(self.ai_timeout_edit.text().strip() or "30")
+        except ValueError:
+            QMessageBox.warning(self, "AI 请求超时无效", "AI 请求超时必须是整数")
+            return None
+        if timeout < 5 or timeout > 120:
+            QMessageBox.warning(self, "AI 请求超时无效", "AI 请求超时必须在 5 到 120 秒之间")
+            return None
+        if enabled and not base_url:
+            QMessageBox.warning(self, "AI API 地址无效", "启用智能搜索需要填写 API 地址")
+            return None
+        if enabled and not api_key:
+            QMessageBox.warning(self, "AI API Key 无效", "启用智能搜索需要填写 API Key")
+            return None
+        if enabled and not model:
+            QMessageBox.warning(self, "AI Chat 模型无效", "启用智能搜索需要填写 Chat 模型")
+            return None
+        return enabled, base_url, api_key, model, timeout
+
     def _save(self) -> None:
         proxy_values = self._validated_network_proxy_values()
         if proxy_values is None:
@@ -863,6 +925,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return
         playback_values = self._validated_playback_values()
         if playback_values is None:
+            return
+        ai_values = self._validated_ai_values()
+        if ai_values is None:
             return
         self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
         self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
@@ -881,6 +946,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
+        (
+            self._config.ai_enabled,
+            self._config.ai_base_url,
+            self._config.ai_api_key,
+            self._config.ai_chat_model,
+            self._config.ai_request_timeout_seconds,
+        ) = ai_values
         self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules, self._config.network_proxy_rules = proxy_values
         (
             self._config.youtube_cookie_browser,

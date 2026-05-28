@@ -4480,6 +4480,47 @@ def test_advanced_settings_dialog_restores_bilibili_grouped_playlist_tree_enable
     assert dialog.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked() is True
 
 
+def test_advanced_settings_dialog_saves_ai_provider_settings(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    saved: list[tuple[bool, str, str, str, int]] = []
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(
+            (
+                config.ai_enabled,
+                config.ai_base_url,
+                config.ai_api_key,
+                config.ai_chat_model,
+                config.ai_request_timeout_seconds,
+            )
+        ),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.ai_enabled_checkbox.setChecked(True)
+    dialog.ai_base_url_edit.setText(" https://api.example.com/v1/ ")
+    dialog.ai_api_key_edit.setText(" sk-test ")
+    dialog.ai_chat_model_edit.setText(" gpt-4o-mini ")
+    dialog.ai_timeout_edit.setText("45")
+    dialog._save()
+
+    assert saved == [(True, "https://api.example.com/v1", "sk-test", "gpt-4o-mini", 45)]
+
+
+def test_advanced_settings_dialog_masks_ai_api_key(qtbot) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(ai_api_key="sk-test"), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.ai_api_key_edit.text() == "sk-test"
+    assert dialog.ai_api_key_edit.echoMode() == QLineEdit.EchoMode.Password
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 
