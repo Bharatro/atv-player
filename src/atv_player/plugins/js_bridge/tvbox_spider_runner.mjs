@@ -66,6 +66,57 @@ async function http(url, options = {}) {
 globalThis.http = http;
 globalThis.req = http;
 
+async function axiosGet(url, options = {}) {
+  const headers = options.headers || {};
+  const timeout = Number(options.timeout || 0);
+  const controller = timeout > 0 ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), timeout)
+    : null;
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: controller?.signal,
+    });
+    const text = await response.text();
+    let data = text;
+    if (options.responseType !== "text") {
+      try {
+        data = JSON.parse(text);
+      } catch {
+      }
+    }
+    return {
+      data,
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function createAxiosClient(defaultOptions = {}) {
+  return {
+    get(url, options = {}) {
+      return axiosGet(url, {
+        ...defaultOptions,
+        ...options,
+        headers: {
+          ...(defaultOptions.headers || {}),
+          ...(options.headers || {}),
+        },
+      });
+    },
+  };
+}
+
+const axiosShim = {
+  create: createAxiosClient,
+  get: axiosGet,
+};
+
 const originalConsole = globalThis.console;
 globalThis.console = {
   log: (...items) => originalConsole.error(JSON.stringify({ level: "info", message: items.map(String).join(" ") })),
@@ -73,20 +124,47 @@ globalThis.console = {
   error: (...items) => originalConsole.error(JSON.stringify({ level: "error", message: items.map(String).join(" ") })),
 };
 
-const pluginModule = await import(pathToFileURL(pluginPath).href);
-let spider = null;
-if (typeof pluginModule.__jsEvalReturn === "function") {
-  spider = await pluginModule.__jsEvalReturn();
-} else if (typeof pluginModule.default === "function") {
-  spider = await pluginModule.default();
-} else if (pluginModule.default) {
-  spider = pluginModule.default;
-} else {
-  spider = pluginModule;
-}
+async function loadPluginModule() {
+  const fs = require("node:fs");
+  const source = fs.readFileSync(pluginPath, "utf-8");
+  const suffix = path.extname(pluginPath).toLowerCase();
+  const isCommonJS = suffix === ".cjs" || source.includes("module.exports");
+  if (!isCommonJS) {
+    return {
+      namespace: await import(pathToFileURL(pluginPath).href),
+      exported: null,
+      source,
+      isCommonJS: false,
+    };
+  }
 
-if (!spider || typeof spider !== "object") {
-  throw new Error("JavaScript plugin did not export a spider object");
+  const pluginRequireBase = createRequire(pathToFileURL(pluginPath));
+  const pluginRequire = (name) => {
+    if (name === "axios") return axiosShim;
+    return pluginRequireBase(name);
+  };
+  const module = { exports: {} };
+  const wrapper = new Function(
+    "require",
+    "module",
+    "exports",
+    "__filename",
+    "__dirname",
+    source
+  );
+  wrapper(
+    pluginRequire,
+    module,
+    module.exports,
+    pluginPath,
+    path.dirname(pluginPath)
+  );
+  return {
+    namespace: { default: module.exports, ...module.exports },
+    exported: module.exports,
+    source,
+    isCommonJS: true,
+  };
 }
 
 function normalizeResult(value) {
@@ -98,6 +176,79 @@ function normalizeResult(value) {
     }
   }
   return value;
+}
+
+async function createT4Spider(register, meta = {}) {
+  const routes = [];
+  const opt = { sites: [] };
+  const app = {
+    log: console,
+    get(api, handler) {
+      routes.push({ api, handler });
+    },
+  };
+  await register(app, opt);
+  const route = routes[0];
+  if (!route || typeof route.handler !== "function") {
+    throw new Error("T4 JavaScript plugin did not register a route");
+  }
+  const siteMeta = meta || opt.sites[0] || {};
+
+  async function callRoute(query) {
+    return normalizeResult(await route.handler({ query }));
+  }
+
+  return {
+    getName() {
+      return siteMeta.name || opt.sites[0]?.name || "";
+    },
+    home() {
+      return callRoute({});
+    },
+    category(tid, pg, filter, extend) {
+      const ext = Buffer.from(JSON.stringify(extend || {})).toString("base64");
+      return callRoute({ t: tid, pg: String(pg || 1), ext });
+    },
+    detail(id) {
+      return callRoute({ ids: id });
+    },
+    search(key, quick, pg) {
+      return callRoute({ wd: key, pg: String(pg || 1) });
+    },
+    play(flag, id) {
+      return callRoute({ play: id });
+    },
+  };
+}
+
+const loadedPlugin = await loadPluginModule();
+const pluginModule = loadedPlugin.namespace;
+let spider = null;
+if (
+  loadedPlugin.isCommonJS
+  && typeof loadedPlugin.exported === "function"
+  && (
+    loadedPlugin.exported.length >= 2
+    || loadedPlugin.source.includes("app.get")
+    || loadedPlugin.source.includes("opt.sites")
+  )
+) {
+  spider = await createT4Spider(
+    loadedPlugin.exported,
+    loadedPlugin.exported.META || pluginModule.META
+  );
+} else if (typeof pluginModule.__jsEvalReturn === "function") {
+  spider = await pluginModule.__jsEvalReturn();
+} else if (typeof pluginModule.default === "function") {
+  spider = await pluginModule.default();
+} else if (pluginModule.default) {
+  spider = pluginModule.default;
+} else {
+  spider = pluginModule;
+}
+
+if (!spider || typeof spider !== "object") {
+  throw new Error("JavaScript plugin did not export a spider object");
 }
 
 async function callMethod(method, args) {

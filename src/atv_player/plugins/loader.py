@@ -166,7 +166,7 @@ class SpiderPluginLoader:
 
     def _detect_source_language(self, source_path: Path) -> str:
         suffix = source_path.suffix.lower()
-        if suffix in {".js", ".mjs"}:
+        if suffix in {".js", ".mjs", ".cjs"}:
             return "js"
         if suffix == ".py":
             return "python"
@@ -175,14 +175,25 @@ class SpiderPluginLoader:
             return "python"
         if any(marker in text for marker in ("from base.spider import Spider", "class Spider")):
             return "python"
-        if any(marker in text for marker in ("export default", "__jsEvalReturn", "function home", "async function home")):
+        if any(
+            marker in text
+            for marker in (
+                "export default",
+                "__jsEvalReturn",
+                "function home",
+                "async function home",
+                "module.exports",
+                "app.get(",
+                "opt.sites",
+            )
+        ):
             return "js"
         raise ValueError("插件格式不支持")
 
     def _source_cache_suffix(self, url: str, source_text: str) -> str:
         path_suffix = Path(urlparse(url).path).suffix.lower()
-        if path_suffix in {".py", ".js", ".mjs"}:
-            return ".js" if path_suffix == ".mjs" else path_suffix
+        if path_suffix in {".py", ".js", ".mjs", ".cjs"}:
+            return ".js" if path_suffix in {".mjs", ".cjs"} else path_suffix
         first_lines = "\n".join(source_text.splitlines()[:16])
         if first_lines.strip().startswith("//@format:secspider/1"):
             return ".py"
@@ -190,7 +201,15 @@ class SpiderPluginLoader:
             return ".py"
         if any(
             marker in source_text
-            for marker in ("export default", "__jsEvalReturn", "function home", "async function home")
+            for marker in (
+                "export default",
+                "__jsEvalReturn",
+                "function home",
+                "async function home",
+                "module.exports",
+                "app.get(",
+                "opt.sites",
+            )
         ):
             return ".js"
         raise ValueError("插件格式不支持")

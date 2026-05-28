@@ -534,6 +534,20 @@ export default {
 }
 """
 
+T4_PLUGIN_SOURCE = """
+const axios = require("axios");
+
+const META = { name: "酷我听书", api: "/video/KuWoTS" };
+
+module.exports = async (app, opt) => {
+  const client = axios.create({ timeout: 1000 });
+  app.get(META.api, async () => ({ class: [], list: client ? [] : [] }));
+  opt.sites.push(META);
+};
+
+module.exports.META = META;
+"""
+
 
 def test_loader_loads_local_js_plugin_with_node_runtime(monkeypatch, tmp_path: Path) -> None:
     plugin_path = tmp_path / "js-plugin.js"
@@ -647,6 +661,48 @@ def test_loader_detects_suffixless_remote_js_source(monkeypatch, tmp_path: Path)
     loaded = loader.load(config, force_refresh=True)
 
     assert loaded.config.cached_file_path.endswith("plugin_53.js")
+
+
+def test_loader_detects_suffixless_remote_t4_commonjs_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeNodeSpider:
+        def __init__(self, plugin_path, cache_dir, plugin_id):
+            self.plugin_path = Path(plugin_path)
+
+        def init(self, extend=""):
+            return None
+
+        def getName(self):
+            return "酷我听书"
+
+        def supports_search(self):
+            return True
+
+    monkeypatch.setattr("atv_player.plugins.loader.NodeSpider", FakeNodeSpider)
+
+    def fake_get(url: str, **kwargs) -> httpx.Response:
+        return httpx.Response(
+            200, text=T4_PLUGIN_SOURCE, request=httpx.Request("GET", url)
+        )
+
+    loader = SpiderPluginLoader(
+        cache_dir=tmp_path / "cache",
+        get=fake_get,
+    )
+    config = SpiderPluginConfig(
+        id=55,
+        source_type="remote",
+        source_value="https://example.com/t4",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "酷我听书"
+    assert loaded.config.cached_file_path.endswith("plugin_55.js")
 
 
 def test_loader_disables_search_for_js_plugin_without_search_method(monkeypatch, tmp_path: Path) -> None:

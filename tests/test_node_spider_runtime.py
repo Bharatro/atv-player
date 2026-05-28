@@ -254,3 +254,104 @@ export function __jsEvalReturn() {
     assert spider.getName() == "缓存:abc"
     assert spider.homeContent(False)["list"][0]["vod_name"] == "首页"
     spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_loads_t4_commonjs_route_plugin(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "t4-plugin.cjs"
+    plugin_path.write_text(
+        """
+const axios = require("axios");
+const http = require("http");
+const https = require("https");
+
+const client = axios.create({
+  timeout: 1000,
+  httpAgent: new http.Agent({ keepAlive: true }),
+  httpsAgent: new https.Agent({ rejectUnauthorized: false })
+});
+
+const META = {
+  key: "KuWoTS",
+  name: "酷我听书",
+  type: 4,
+  api: "/video/KuWoTS",
+  searchable: 2,
+  quickSearch: 0,
+  filterable: 1
+};
+
+module.exports = async (app, opt) => {
+  app.get(META.api, async (req) => {
+    const { ids, play, wd, t, pg, ext } = req.query;
+    if (play) {
+      return { parse: 0, url: play, header: { "User-Agent": "demo" } };
+    }
+    if (ids) {
+      return {
+        list: [{
+          vod_id: ids,
+          vod_name: "详情",
+          vod_play_from: "kuwo",
+          vod_play_url: "第1集$http://play.example/a.mp3"
+        }]
+      };
+    }
+    if (wd) {
+      return {
+        list: [{ vod_id: `search-${wd}-${pg}`, vod_name: wd }],
+        page: Number(pg),
+        total: 1
+      };
+    }
+    if (t) {
+      const filters = JSON.parse(Buffer.from(ext, "base64").toString());
+      return {
+        list: [{
+          vod_id: `${t}-${pg}-${filters.class}-${filters.vip}`,
+          vod_name: "分类"
+        }],
+        page: Number(pg),
+        total: 1
+      };
+    }
+    return {
+      class: [{ type_id: "2", type_name: "有声小说" }],
+      filters: {
+        "2": [{
+          key: "class",
+          name: "类型",
+          value: [{ n: "都市传说", v: "42" }]
+        }]
+      },
+      list: [{
+        vod_id: "album-1",
+        vod_name: "首页",
+        vod_remarks: client ? "ok" : "bad"
+      }]
+    };
+  });
+  opt.sites.push(META);
+};
+
+module.exports.META = META;
+""".strip(),
+        encoding="utf-8",
+    )
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=3
+    )
+
+    assert spider.getName() == "酷我听书"
+    assert spider.homeContent(False)["class"][0]["type_name"] == "有声小说"
+    category = spider.categoryContent("2", "3", False, {"class": "44", "vip": "0"})
+    assert category["list"][0]["vod_id"] == "2-3-44-0"
+    assert spider.detailContent(["album-1"])["list"][0]["vod_play_from"] == "kuwo"
+    search = spider.searchContent("abc", False, "2")
+    assert search["list"][0]["vod_id"] == "search-abc-2"
+    assert (
+        spider.playerContent("kuwo", "http://play.example/a.mp3", [])["url"]
+        == "http://play.example/a.mp3"
+    )
+    assert spider.supports_search() is True
+    spider.destroy()
