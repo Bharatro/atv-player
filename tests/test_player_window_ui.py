@@ -8096,6 +8096,35 @@ def test_player_window_inlines_collection_level_detail_fields_into_metadata_text
     assert "播放: 12万" in window.metadata_view.toPlainText()
 
 
+def test_player_window_hides_internal_episode_count_detail_fields_from_cached_metadata(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="series-1",
+            vod_name="入侵 第一季",
+            type_name="剧情",
+            vod_content="简介文本",
+            detail_fields=[
+                PlaybackDetailField(label="TMDB ID", value="34541"),
+                PlaybackDetailField(label="number_of_episodes", value="12"),
+                PlaybackDetailField(label="number_of_seasons", value="2"),
+            ],
+        ),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    metadata_text = window.metadata_view.toPlainText()
+    assert "TMDB ID: 34541" in metadata_text
+    assert "number_of_episodes" not in metadata_text
+    assert "number_of_seasons" not in metadata_text
+
+
 def test_player_window_omits_inline_detail_field_lines_when_no_fields_exist(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -18922,6 +18951,57 @@ def test_player_window_async_metadata_hydration_updates_metadata_scrape_dialog_t
 
     assert window._metadata_scrape_title_edit.text() == corrected_title
     assert window._metadata_scrape_year_edit.text() == "2026"
+
+
+def test_player_window_async_metadata_hydration_preserves_season_marked_media_title_for_scrape(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    original_title = "入侵 第一季"
+    corrected_title = "入侵"
+    service = FakeMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name=original_title, vod_year="2021"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4", media_title=original_title)],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name=corrected_title,
+            vod_year="2021",
+            vod_content="TMDB简介",
+            metadata_field_sources={"overview": "tmdb"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
+    assert window.session.playlist[0].media_title == original_title
+
+    window._open_metadata_scrape_dialog()
+
+    assert window._metadata_scrape_title_edit.text() == original_title
+    assert window._metadata_scrape_year_edit.text() == "2021"
 
 
 def test_player_window_async_metadata_hydration_updates_danmaku_source_dialog_title(qtbot) -> None:

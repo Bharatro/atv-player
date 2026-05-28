@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
+_TV_SEARCH_CACHE_VERSION = "tv-season-year-v3"
+
 _CHINESE_DIGIT_VALUES = {
     "零": 0,
     "一": 1,
@@ -300,6 +302,22 @@ def _split_names(values: list[object] | None) -> list[str]:
     return [str(value or "").strip() for value in values or [] if str(value or "").strip()]
 
 
+def _person_name_tokens(value: object) -> set[str]:
+    if isinstance(value, list):
+        values = value
+    else:
+        values = re.split(r"[,/|、]", str(value or ""))
+    return {
+        re.sub(
+            r"[\s\-_:.：,，/\\|·•'\"`()（）《》【】\[\]]+",
+            "",
+            str(item or "").strip().lower(),
+        )
+        for item in values
+        if str(item or "").strip()
+    } - {""}
+
+
 _TMDB_PLATFORM_LABELS = {
     "bilibili": "B站",
     "iqiyi": "爱奇艺",
@@ -448,14 +466,15 @@ class TMDBProvider:
         year = candidate.year
         if media_type == "tv":
             title = _strip_search_season_suffix(title)
-            if _title_has_season_marker(candidate.title):
+            title = f"{title}\x1f{_TV_SEARCH_CACHE_VERSION}"
+            if _title_has_season_marker(candidate.title) and extract_season_number(candidate.title) != 1:
                 year = ""
         return (title, year)
 
     def _search_year(self, media_type: str, candidate: MetadataQuery) -> str:
         if media_type != "tv":
             return candidate.year
-        if _title_has_season_marker(candidate.title):
+        if _title_has_season_marker(candidate.title) and extract_season_number(candidate.title) != 1:
             return ""
         return candidate.year
 
@@ -496,6 +515,45 @@ class TMDBProvider:
             return 0
         episodes = payload.get("episodes")
         return 1 if isinstance(episodes, list) and len(episodes) > 0 else 0
+
+    def _tv_original_people_match_score(
+        self,
+        candidate: MetadataQuery,
+        item: dict[str, object],
+    ) -> int:
+        query_directors = _person_name_tokens(candidate.vod_director)
+        query_actors = _person_name_tokens(candidate.vod_actor)
+        if not query_directors and not query_actors:
+            return 0
+        tmdb_id = str(item.get("id") or "").strip()
+        if not tmdb_id:
+            return 0
+        try:
+            payload = self._client.get_tv_detail(tmdb_id) or {}
+        except Exception:
+            return 0
+        credits = payload.get("aggregate_credits") or payload.get("credits") or {}
+        cast = credits.get("cast") if isinstance(credits, dict) else []
+        crew = credits.get("crew") if isinstance(credits, dict) else []
+        actor_names = _person_name_tokens(
+            [
+                cast_item.get("name")
+                for cast_item in cast or []
+                if isinstance(cast_item, dict)
+            ]
+        )
+        director_names = _person_name_tokens(
+            [
+                crew_item.get("name")
+                for crew_item in crew or []
+                if isinstance(crew_item, dict)
+                and _tmdb_crew_job(crew_item).lower() == "director"
+            ]
+        )
+        return (
+            len(query_directors & director_names) * 3
+            + len(query_actors & actor_names)
+        )
 
     def _select_best_tv_match(
         self,
@@ -549,6 +607,7 @@ class TMDBProvider:
             base_match = 1 if query_base and item_base == query_base else 0
             category_preference = self._tv_category_preference(candidate, item)
             season_coverage = self._tv_season_coverage(item, candidate.title)
+            people_match_score = self._tv_original_people_match_score(candidate, item)
             year_closeness = self._tv_year_closeness(candidate, item)
             ranked.append(
                 (
@@ -556,8 +615,9 @@ class TMDBProvider:
                         exact_query_match,
                         exact_search_match,
                         base_match,
-                        category_preference,
                         season_coverage,
+                        people_match_score,
+                        category_preference,
                         year_closeness,
                     ),
                     match,
@@ -704,6 +764,7 @@ class TMDBProvider:
                         (
                             1 if _normalize_title(item_title) == _normalize_title(candidate.title) else 0,
                             1 if _normalize_title(item_title) == _normalize_title(search_title) else 0,
+                            self._tv_original_people_match_score(candidate, item),
                             self._tv_category_preference(candidate, item),
                             self._tv_season_coverage(item, candidate.title),
                             self._tv_year_closeness(candidate, item),

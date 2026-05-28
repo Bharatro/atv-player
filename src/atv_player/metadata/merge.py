@@ -67,6 +67,8 @@ _FOREIGN_SCRIPT_PATTERN = re.compile(r"[\u3040-\u30ff\u0400-\u04ff\u1100-\u11ff\
 _INTERNAL_STRUCTURED_DETAIL_LABELS = {
     "episodes",
     "seasons",
+    "number_of_episodes",
+    "number_of_seasons",
     "last_episode_to_air",
     "next_episode_to_air",
     "last_air_date",
@@ -75,7 +77,6 @@ _INTERNAL_STRUCTURED_DETAIL_LABELS = {
 _HIDDEN_DETAIL_LABELS = {
     "official_links",
     "优酷标签",
-    "更新状态",
 }
 _OFFICIAL_LINK_HOST_LABELS = {
     "v.qq.com": "腾讯视频",
@@ -418,6 +419,8 @@ def _record_detail_fields(record: MetadataRecord) -> list[dict[str, object]]:
         label = _clean_detail_text(item.get("label"))
         normalized_label = label.lower()
         if label in _HIDDEN_DETAIL_LABELS or normalized_label in _HIDDEN_DETAIL_LABELS:
+            continue
+        if record.provider == "youku" and label == "更新状态":
             continue
         if record.provider == "tmdb" and normalized_label in _INTERNAL_STRUCTURED_DETAIL_LABELS:
             continue

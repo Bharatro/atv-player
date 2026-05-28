@@ -75,6 +75,7 @@ from atv_player.metadata.dialog_cache import (
     load_cached_metadata_scrape_dialog_state,
     save_cached_metadata_scrape_dialog_state,
 )
+from atv_player.metadata.matching import normalize_match_title, strip_match_season_suffix
 from atv_player.metadata.models import MetadataContext, MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
@@ -189,6 +190,7 @@ _BILIBILI_BVID_RE = re.compile(r"^BV[0-9A-Za-z]+$")
 _BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
 _BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
 _BILIBILI_IDENTITY_DETAIL_LABELS = {"bvid", "season id"}
+_HIDDEN_METADATA_DETAIL_LABELS = {"number_of_episodes", "number_of_seasons"}
 logger = logging.getLogger(__name__)
 
 
@@ -2185,17 +2187,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return []
         if self.session.show_original_metadata and self.session.original_vod is not None:
-            return list(self.session.original_vod.detail_fields)
+            return self._visible_metadata_detail_fields(self.session.original_vod.detail_fields)
         if self._is_bilibili_metadata_session():
             item_fields = []
             if 0 <= self.current_index < len(self.session.playlist):
                 item_fields = self.session.playlist[self.current_index].detail_fields
-            return self._merge_bilibili_collection_detail_fields(item_fields)
+            return self._visible_metadata_detail_fields(self._merge_bilibili_collection_detail_fields(item_fields))
         if 0 <= self.current_index < len(self.session.playlist):
             item_fields = self.session.playlist[self.current_index].detail_fields
             if item_fields:
-                return list(item_fields)
-        return list(self.session.vod.detail_fields)
+                return self._visible_metadata_detail_fields(item_fields)
+        return self._visible_metadata_detail_fields(self.session.vod.detail_fields)
+
+    def _visible_metadata_detail_fields(self, fields: list[PlaybackDetailField]) -> list[PlaybackDetailField]:
+        return [
+            field
+            for field in fields
+            if field.label.strip().lower() not in _HIDDEN_METADATA_DETAIL_LABELS
+        ]
 
     def _is_bilibili_metadata_session(self) -> bool:
         if self.session is None:
@@ -4633,15 +4642,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         for item in self.session.playlist:
             media_title = str(item.media_title or "").strip()
             if not media_title or media_title in stale_titles:
-                item.media_title = corrected_title
+                if not self._should_preserve_season_marked_title(media_title, corrected_title):
+                    item.media_title = corrected_title
             danmaku_title = str(item.danmaku_search_title or "").strip()
             if item.danmaku_search_query_overridden:
                 continue
             if not danmaku_title or danmaku_title in stale_titles:
+                if self._should_preserve_season_marked_title(danmaku_title, corrected_title):
+                    continue
                 item.danmaku_search_title = corrected_title
                 item.danmaku_search_query = " ".join(
-                    part for part in (corrected_title, str(item.danmaku_search_episode or "").strip()) if part
+                    part
+                    for part in (
+                        corrected_title,
+                        str(item.danmaku_search_episode or "").strip(),
+                    )
+                    if part
                 ).strip()
+
+    def _should_preserve_season_marked_title(self, current_title: str, corrected_title: str) -> bool:
+        current_text = str(current_title or "").strip()
+        corrected_text = str(corrected_title or "").strip()
+        if not current_text or not corrected_text:
+            return False
+        stripped = strip_match_season_suffix(current_text)
+        if stripped == current_text:
+            return False
+        return normalize_match_title(stripped) == normalize_match_title(corrected_text)
 
     def _should_restart_episode_title_enhancement(self, previous_vod: VodItem, updated_vod: VodItem) -> bool:
         if self.session is None or self.session.episode_title_enhancer is None:

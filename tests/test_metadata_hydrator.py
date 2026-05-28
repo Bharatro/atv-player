@@ -1,10 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from atv_player.metadata.bindings import MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataRecord
 from atv_player.metadata.providers.local_douban import LocalDoubanProvider
+from atv_player.metadata.providers.tmdb import TMDBProvider
 from atv_player.models import (
     PlayItem,
     PlaybackDetailField,
@@ -57,6 +60,49 @@ class FakeProvider:
         if self.cache_key is None:
             return None
         return self.cache_key
+
+
+class FakeTMDBClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def image_base(self, _kind: str) -> str:
+        return "https://image.tmdb.org/t/p/original"
+
+    def search_movie(self, title: str, year: str = "") -> list[dict]:
+        self.calls.append(("search_movie", title, year))
+        return []
+
+    def search_tv(self, title: str, year: str = "") -> list[dict]:
+        self.calls.append(("search_tv", title, year))
+        if title == "入侵":
+            return [
+                {"id": 127235, "name": "入侵", "first_air_date": "2021-10-22"}
+            ]
+        return []
+
+    def get_tv_detail(self, tmdb_id: str | int) -> dict:
+        self.calls.append(("get_tv_detail", str(tmdb_id), ""))
+        return {
+            "id": int(tmdb_id),
+            "name": "入侵",
+            "first_air_date": "2021-10-22",
+            "genres": [{"name": "科幻"}],
+            "aggregate_credits": {},
+            "alternative_titles": {"results": []},
+            "external_ids": {},
+        }
+
+    def get_tv_season_detail(
+        self,
+        tmdb_id: str | int,
+        season_number: int,
+    ) -> dict:
+        self.calls.append(("get_tv_season_detail", str(tmdb_id), str(season_number)))
+        return {
+            "season_number": season_number,
+            "episodes": [{"episode_number": 1, "name": "第1集"}],
+        }
 
 
 def test_metadata_hydrator_uses_provider_detail_cache_key(tmp_path: Path) -> None:
@@ -1145,6 +1191,359 @@ def test_metadata_hydrator_uses_provider_specific_search_cache_key(tmp_path: Pat
     assert provider.search_calls == 1
 
 
+def test_metadata_hydrator_ignores_unversioned_tmdb_season_search_cache(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cache.save_search(
+        "tmdb",
+        "入侵",
+        "",
+        [
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:34541:season:1",
+                title="入侵",
+                year="2021",
+                raw={"season_number": 1},
+            )
+        ],
+    )
+    cache.save_search(
+        "tmdb",
+        "入侵\x1ftv-people-v2",
+        "",
+        [
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:34541:season:1",
+                title="入侵",
+                year="2011",
+                raw={"season_number": 1},
+            )
+        ],
+    )
+    client = FakeTMDBClient()
+    provider = TMDBProvider(client)
+    hydrator = MetadataHydrator(cache=cache, providers=[provider])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(
+                vod_id="v1",
+                vod_name="入侵 第一季",
+                vod_year="2021",
+                category_name="剧集",
+            ),
+            source_kind="plugin",
+        )
+    )
+
+    assert ("search_tv", "入侵", "2021") in client.calls
+    assert ("get_tv_detail", "127235", "") in client.calls
+    assert any(
+        field.label == "TMDB ID" and field.value == "127235"
+        for field in updated.detail_fields
+    )
+
+
+def test_metadata_hydrator_skips_candidate_conflicting_with_plugin_people_and_country(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    wrong_douban = FakeProvider(
+        "local_douban",
+        matches=[
+            MetadataMatch(
+                provider="local_douban",
+                provider_id="35196748",
+                title="入侵",
+                year="2021",
+                score=1.3,
+            )
+        ],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="35196748",
+            title="入侵",
+            year="2021",
+            genres=["动作", "科幻"],
+            country="澳大利亚",
+            language="英语",
+            directors=["Luke Sparke"],
+            actors=["郑肯"],
+            douban_id=35196748,
+            overview="错误电影简介",
+        ),
+    )
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:127235:season:1",
+                title="入侵",
+                year="2021",
+                score=1.0,
+                raw={"season_number": 1},
+            )
+        ],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:127235:season:1",
+            title="入侵",
+            year="2021",
+            genres=["剧情", "科幻"],
+            country="美国",
+            language="日语",
+            directors=["雅各布·维尔布鲁根"],
+            actors=["忽那汐里"],
+            tmdb_id="127235",
+            overview="正确剧集简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[wrong_douban, tmdb])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(
+                vod_id="v1",
+                vod_name="入侵 第一季",
+                vod_year="2021",
+                type_name="剧情,科幻,奇幻",
+                vod_area="美国",
+                vod_lang="英语,日语,普什图语",
+                vod_director="阿曼达·马尔萨利斯,杰米·佩恩,雅各布·维尔布鲁根",
+                vod_actor="Tara Moayedi,艾奇·罗伯逊,忽那汐里,比利·巴瑞特",
+            ),
+            source_kind="plugin",
+        )
+    )
+
+    assert wrong_douban.get_detail_calls
+    assert updated.vod_area == "美国"
+    assert updated.vod_director == "雅各布·维尔布鲁根"
+    assert updated.vod_actor == "忽那汐里"
+    assert updated.dbid == 0
+    assert any(field.label == "TMDB ID" and field.value == "127235" for field in updated.detail_fields)
+
+
+def test_metadata_hydrator_skips_low_confidence_platform_metadata_for_plugin_source(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:127235:season:1",
+                title="入侵",
+                year="2021",
+                score=1.0,
+                raw={"season_number": 1},
+            )
+        ],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:127235:season:1",
+            title="入侵",
+            year="2021",
+            poster="https://image.tmdb.org/t/p/original/invasion.jpg",
+            tmdb_id="127235",
+        ),
+    )
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="https://v.qq.com/x/cover/wrong.html",
+                title="入侵 第一季",
+                year="2021",
+                score=1.6,
+            )
+        ],
+        record=MetadataRecord(
+            provider="tencent",
+            provider_id="https://v.qq.com/x/cover/wrong.html",
+            title="入侵 第一季",
+            year="2021",
+            overview="腾讯错误简介",
+            language="日语",
+            directors=["杰米·佩恩", "雅各布·维尔布鲁根"],
+            actors=["艾奇·罗伯逊", "忽那汐里", "沙米尔·安德森"],
+            detail_fields=[{"label": "播放链接", "value": "https://v.qq.com/x/cover/wrong.html"}],
+        ),
+    )
+    youku = FakeProvider(
+        "youku",
+        matches=[
+            MetadataMatch(
+                provider="youku",
+                provider_id="https://v.youku.com/v_show/id_wrong.html",
+                title="入侵 第一季",
+                year="2021",
+                score=1.5,
+            )
+        ],
+        record=MetadataRecord(
+            provider="youku",
+            provider_id="https://v.youku.com/v_show/id_wrong.html",
+            title="入侵 第一季",
+            year="2021",
+            detail_fields=[{"label": "播放链接", "value": "https://v.youku.com/v_show/id_wrong.html"}],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tencent, youku, tmdb])
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="入侵 第一季",
+        vod_year="2021",
+        type_name="剧情,科幻,奇幻",
+        vod_area="美国",
+        vod_lang="英语,日语,普什图语",
+        vod_director="阿曼达·马尔萨利斯,杰米·佩恩,雅各布·维尔布鲁根",
+        vod_actor="Tara Moayedi,艾奇·罗伯逊,Daisuke Tsuji,忽那汐里,比利·巴瑞特,英迪娅·布朗,帕迪·赫兰德,Cache Vanderpuye,伊川东吾,Louis Toghill,汤姆·库伦,马克斯·芬查姆,印第安·简·弗朗西斯,Aiyana Goodfellow,艾萨克·赫斯利普,伊斯拉·约翰斯顿,斯坦利·莱恩,诺亚·比恩,迈克尔·哈尔尼,森尚子,伊莲娜·艾尔米纳斯,艾米莉·奥尔索斯,沙米尔·安德森,莫·巴艾尔,汤姆·布里特尼,黛比·坎贝尔,Talia Cuomo,格什菲·法拉哈尼",
+        vod_content="插件原始简介",
+    )
+
+    updated = hydrator.hydrate(MetadataContext(vod=vod, source_kind="plugin"))
+
+    assert updated.vod_pic == "https://image.tmdb.org/t/p/original/invasion.jpg"
+    assert updated.vod_lang == "英语,日语,普什图语"
+    assert updated.vod_director == "阿曼达·马尔萨利斯,杰米·佩恩,雅各布·维尔布鲁根"
+    assert updated.vod_actor == vod.vod_actor
+    assert updated.vod_content == "插件原始简介"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("TMDB ID", "127235")]
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "provider_id"),
+    [
+        ("iqiyi", "https://www.iqiyi.com/v_wrong.html"),
+        ("tencent", "https://v.qq.com/x/cover/wrong.html"),
+        ("youku", "https://v.youku.com/v_show/id_wrong.html"),
+        ("bilibili", "https://www.bilibili.com/bangumi/play/ss999"),
+        ("mgtv", "https://www.mgtv.com/b/1/2.html"),
+        ("sohu", "http://tv.sohu.com/v/wrong.html"),
+    ],
+)
+def test_metadata_hydrator_skips_low_confidence_streaming_platform_metadata_for_plugin_source(
+    tmp_path: Path,
+    provider_name: str,
+    provider_id: str,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:127235:season:1",
+                title="入侵",
+                year="2021",
+                score=1.0,
+                raw={"season_number": 1},
+            )
+        ],
+        record=MetadataRecord(
+            provider="tmdb",
+            provider_id="tv:127235:season:1",
+            title="入侵",
+            year="2021",
+            poster="https://image.tmdb.org/t/p/original/invasion.jpg",
+            tmdb_id="127235",
+        ),
+    )
+    platform = FakeProvider(
+        provider_name,
+        matches=[
+            MetadataMatch(
+                provider=provider_name,
+                provider_id=provider_id,
+                title="入侵 第一季",
+                year="2021",
+                score=1.6,
+            )
+        ],
+        record=MetadataRecord(
+            provider=provider_name,
+            provider_id=provider_id,
+            title="入侵 第一季",
+            year="2021",
+            overview="平台错误简介",
+            language="日语",
+            directors=["杰米·佩恩", "雅各布·维尔布鲁根"],
+            actors=["艾奇·罗伯逊", "忽那汐里", "沙米尔·安德森"],
+            detail_fields=[{"label": "播放链接", "value": provider_id}],
+        ),
+    )
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="入侵 第一季",
+        vod_year="2021",
+        type_name="剧情,科幻,奇幻",
+        vod_area="美国",
+        vod_lang="英语,日语,普什图语",
+        vod_director="阿曼达·马尔萨利斯,杰米·佩恩,雅各布·维尔布鲁根",
+        vod_actor="Tara Moayedi,艾奇·罗伯逊,Daisuke Tsuji,忽那汐里,比利·巴瑞特,英迪娅·布朗,帕迪·赫兰德,Cache Vanderpuye,伊川东吾,Louis Toghill,汤姆·库伦,马克斯·芬查姆,印第安·简·弗朗西斯,Aiyana Goodfellow,艾萨克·赫斯利普,伊斯拉·约翰斯顿,斯坦利·莱恩,诺亚·比恩,迈克尔·哈尔尼,森尚子,伊莲娜·艾尔米纳斯,艾米莉·奥尔索斯,沙米尔·安德森,莫·巴艾尔,汤姆·布里特尼,黛比·坎贝尔,Talia Cuomo,格什菲·法拉哈尼",
+        vod_content="插件原始简介",
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[platform, tmdb])
+
+    updated = hydrator.hydrate(MetadataContext(vod=vod, source_kind="plugin"))
+
+    assert updated.vod_pic == "https://image.tmdb.org/t/p/original/invasion.jpg"
+    assert updated.vod_lang == "英语,日语,普什图语"
+    assert updated.vod_director == "阿曼达·马尔萨利斯,杰米·佩恩,雅各布·维尔布鲁根"
+    assert updated.vod_actor == vod.vod_actor
+    assert updated.vod_content == "插件原始简介"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("TMDB ID", "127235")]
+
+
+def test_metadata_hydrator_allows_platform_metadata_when_plugin_source_has_same_platform_link(
+    tmp_path: Path,
+) -> None:
+    cache = MetadataCache(tmp_path)
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="https://v.qq.com/x/cover/right.html",
+                title="入侵 第一季",
+                year="2021",
+                score=1.2,
+            )
+        ],
+        record=MetadataRecord(
+            provider="tencent",
+            provider_id="https://v.qq.com/x/cover/right.html",
+            title="入侵 第一季",
+            year="2021",
+            overview="腾讯简介",
+            language="日语",
+            directors=["杰米·佩恩"],
+            actors=["艾奇·罗伯逊"],
+            detail_fields=[{"label": "播放链接", "value": "https://v.qq.com/x/cover/right.html"}],
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tencent])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(
+                vod_id="https://v.qq.com/x/cover/right.html",
+                vod_name="入侵 第一季",
+                vod_year="2021",
+                vod_lang="英语,日语,普什图语",
+            ),
+            source_kind="plugin",
+        )
+    )
+
+    assert updated.vod_lang == "日语"
+    assert updated.vod_director == "杰米·佩恩"
+    assert updated.vod_actor == "艾奇·罗伯逊"
+    assert updated.vod_content == "腾讯简介"
+    assert [(field.label, field.value) for field in updated.detail_fields] == [("官方链接", "腾讯视频")]
+
+
 def test_metadata_hydrator_prefers_manual_binding_before_provider_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     bindings = MetadataBindingRepository(tmp_path / "app.db")
@@ -1269,6 +1668,56 @@ def test_metadata_hydrator_manual_binding_blocks_other_provider_overrides(tmp_pa
     assert updated.vod_remarks == "9.2"
     assert douban.search_calls == 0
     assert douban.get_detail_calls == []
+
+
+def test_metadata_hydrator_discards_first_season_tmdb_binding_when_year_conflicts_and_searches_again(tmp_path: Path) -> None:
+    class MultiDetailProvider(FakeProvider):
+        def get_detail(self, match: MetadataMatch) -> MetadataRecord:
+            self.get_detail_calls.append(match)
+            if match.provider_id == "tv:34541:season:1":
+                return MetadataRecord(
+                    provider="tmdb",
+                    provider_id="tv:34541:season:1",
+                    title="入侵",
+                    year="2011",
+                    tmdb_id="34541",
+                )
+            return MetadataRecord(
+                provider="tmdb",
+                provider_id="tv:127235:season:1",
+                title="入侵",
+                year="2021",
+                tmdb_id="127235",
+            )
+
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "app.db")
+    bindings.save("入侵 第一季", "2021", provider="tmdb", provider_id="tv:34541:season:1")
+    tmdb = MultiDetailProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:127235:season:1",
+                title="入侵",
+                year="2021",
+                score=1.0,
+                raw={"season_number": 1},
+            )
+        ],
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="入侵 第一季", vod_year="2021", category_name="剧集"),
+            source_kind="plugin",
+        )
+    )
+
+    assert bindings.load("入侵 第一季", "2021") is None
+    assert tmdb.search_calls == 1
+    assert any(field.label == "TMDB ID" and field.value == "127235" for field in updated.detail_fields)
 
 
 def test_metadata_hydrator_manual_binding_survives_noisy_title_with_embedded_year(tmp_path: Path) -> None:

@@ -3,13 +3,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import replace
+from urllib.parse import urlparse
 
+from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
 from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
-from atv_player.metadata.matching import is_confident_match, score_match
+from atv_player.metadata.matching import is_confident_match, normalize_match_title, score_match, strip_match_season_suffix
 from atv_player.metadata.merge import (
     choose_preferred_title,
     fill_missing_metadata_record,
@@ -28,12 +30,21 @@ _LOCAL_DOUBAN_PRIME_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
 _REMOTE_AUTO_SEARCH_IGNORE_DBID_SOURCE_KINDS = {"telegram", "emby", "jellyfin"}
 _LOCAL_DOUBAN_PROVIDER_NAMES = {"local_douban", "remote_douban"}
 _DOUBAN_ID_PROVIDER_NAMES = {"official_douban", "local_douban", "douban"}
+_PLUGIN_PLATFORM_HIGH_CONFIDENCE_REQUIRED_PROVIDERS = {
+    "bilibili",
+    "iqiyi",
+    "mgtv",
+    "sohu",
+    "tencent",
+    "youku",
+}
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "古装", "短剧")
 _MOVIE_MARKERS = ("电影", "影片", "movie")
 _AUTHORITATIVE_ID_MATCH_SCORE = 2.0
 _BILIBILI_SS_ID_RE = re.compile(r"^ss(\d+)$", re.IGNORECASE)
 _BILIBILI_SEASON_ID_RE = re.compile(r"^season\$(\d+)$", re.IGNORECASE)
+_TMDB_SEASON_PROVIDER_ID_RE = re.compile(r"^tv:[^:]+:season:(\d+)$")
 
 
 def _iter_category_values(value: object) -> list[str]:
@@ -46,6 +57,29 @@ def _iter_category_values(value: object) -> list[str]:
         return values
     text = str(value or "").strip()
     return [text] if text else []
+
+
+def _iter_delimited_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return _iter_delimited_values(value.get("value"))
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_iter_delimited_values(item))
+        return values
+    return [
+        token.strip()
+        for token in re.split(r"[,/|、，]", str(value or ""))
+        if token.strip()
+    ]
+
+
+def _normalized_detail_tokens(value: object) -> set[str]:
+    return {
+        normalized
+        for token in _iter_delimited_values(value)
+        if (normalized := normalize_match_title(token))
+    }
 
 
 def _classify_media_kind(*values: object) -> str:
@@ -164,6 +198,194 @@ def _should_promote_sohu_record(match: MetadataMatch) -> bool:
     return bool(dict(match.raw or {}).get("sohu_preferred_over_tmdb"))
 
 
+def _record_conflicts_with_plugin_original(query, record: MetadataRecord) -> bool:
+    if str(getattr(query, "source_kind", "") or "").strip() != "plugin":
+        return False
+    query_people = _normalized_detail_tokens(getattr(query, "vod_director", ""))
+    query_people.update(_normalized_detail_tokens(getattr(query, "vod_actor", "")))
+    record_people = _normalized_detail_tokens(record.directors)
+    record_people.update(_normalized_detail_tokens(record.actors))
+    if not query_people or not record_people or query_people & record_people:
+        return False
+    query_countries = _normalized_detail_tokens(getattr(query, "vod_area", ""))
+    record_countries = _normalized_detail_tokens(record.country)
+    return bool(query_countries and record_countries and not (query_countries & record_countries))
+
+
+def _year_values_compatible(left: object, right: object) -> bool:
+    left_year = _parse_year_number(left)
+    right_year = _parse_year_number(right)
+    if left_year is None or right_year is None:
+        return True
+    return abs(left_year - right_year) < 2
+
+
+def _title_values_strongly_aligned(query_title: object, match: MetadataMatch, record: MetadataRecord) -> bool:
+    normalized_query = normalize_match_title(query_title)
+    candidates = [match.title, record.title, record.original_title]
+    if any(normalized_query and normalized_query == normalize_match_title(candidate) for candidate in candidates):
+        return True
+    query_base = normalize_match_title(strip_match_season_suffix(query_title))
+    return bool(
+        query_base
+        and any(
+            query_base == normalize_match_title(strip_match_season_suffix(candidate))
+            for candidate in candidates
+            if str(candidate or "").strip()
+        )
+    )
+
+
+def _record_strongly_matches_plugin_original_people(query, match: MetadataMatch, record: MetadataRecord) -> bool:
+    if not _title_values_strongly_aligned(query.title, match, record):
+        return False
+    if not _year_values_compatible(query.year, match.year or record.year):
+        return False
+    query_countries = _normalized_detail_tokens(getattr(query, "vod_area", ""))
+    record_countries = _normalized_detail_tokens(record.country)
+    if query_countries and record_countries and not (query_countries & record_countries):
+        return False
+
+    query_people = _normalized_detail_tokens(getattr(query, "vod_director", ""))
+    query_people.update(_normalized_detail_tokens(getattr(query, "vod_actor", "")))
+    record_people = _normalized_detail_tokens(record.directors)
+    record_people.update(_normalized_detail_tokens(record.actors))
+    if not query_people or not record_people:
+        return False
+    overlap = query_people & record_people
+    required_overlap = min(3, len(query_people))
+    if len(overlap) < required_overlap:
+        return False
+    record_coverage = len(overlap) / len(record_people)
+    query_coverage = len(overlap) / len(query_people)
+    return record_coverage >= 0.8 and query_coverage >= 0.6
+
+
+def _canonical_identity_url(value: object) -> str:
+    text = str(value or "").strip()
+    if not text.startswith(("http://", "https://")):
+        return ""
+    parsed = urlparse(text)
+    host = parsed.netloc.lower()
+    path = re.sub(r"/+$", "", parsed.path)
+    if not host or not path:
+        return ""
+    return f"{host}{path}"
+
+
+def _iter_detail_field_identity_values(fields: object):
+    for field in list(fields or []):
+        yield getattr(field, "value", "")
+        for part in list(getattr(field, "value_parts", []) or []):
+            yield getattr(part, "label", "")
+            action = getattr(part, "action", None)
+            if action is not None:
+                yield getattr(action, "value", "")
+
+
+def _context_identity_urls(context: MetadataContext) -> set[str]:
+    vod = context.vod
+    values: list[object] = [
+        context.source_key,
+        vod.vod_id,
+        vod.vod_play_url,
+        vod.path,
+    ]
+    values.extend(_iter_detail_field_identity_values(vod.detail_fields))
+    current_item = context.current_item
+    if current_item is not None:
+        values.extend(
+            [
+                current_item.url,
+                current_item.original_url,
+                current_item.vod_id,
+                current_item.path,
+                current_item.play_source,
+            ]
+        )
+        values.extend(_iter_detail_field_identity_values(current_item.detail_fields))
+    return {url for value in values if (url := _canonical_identity_url(value))}
+
+
+def _record_identity_urls(match: MetadataMatch, record: MetadataRecord) -> set[str]:
+    values: list[object] = [match.provider_id, record.provider_id]
+    for item in list(record.detail_fields or []):
+        if isinstance(item, dict):
+            values.append(item.get("value"))
+            for part in list(item.get("value_parts") or []):
+                values.append(getattr(part, "label", ""))
+                action = getattr(part, "action", None)
+                if action is not None:
+                    values.append(getattr(action, "value", ""))
+    return {url for value in values if (url := _canonical_identity_url(value))}
+
+
+def _record_has_authoritative_identity_match(context: MetadataContext, record: MetadataRecord) -> bool:
+    vod = context.vod
+    if record.douban_id and int(getattr(vod, "dbid", 0) or 0) == record.douban_id:
+        return True
+    existing_ids: dict[str, set[str]] = {"TMDB ID": set(), "IMDb ID": set()}
+    for field in list(getattr(vod, "detail_fields", []) or []):
+        label = str(getattr(field, "label", "") or "").strip()
+        if label in existing_ids:
+            existing_ids[label].add(str(getattr(field, "value", "") or "").strip())
+    return bool(
+        (record.tmdb_id and str(record.tmdb_id) in existing_ids["TMDB ID"])
+        or (record.imdb_id and str(record.imdb_id) in existing_ids["IMDb ID"])
+    )
+
+
+def _plugin_query_has_original_metadata_anchors(query) -> bool:
+    return any(
+        str(getattr(query, field_name, "") or "").strip()
+        for field_name in ("vod_area", "vod_lang", "vod_director", "vod_actor")
+    )
+
+
+def _plugin_platform_record_is_high_confidence(
+    context: MetadataContext,
+    query,
+    match: MetadataMatch,
+    record: MetadataRecord,
+) -> bool:
+    if str(getattr(query, "source_kind", "") or "").strip() != "plugin":
+        return True
+    if record.provider not in _PLUGIN_PLATFORM_HIGH_CONFIDENCE_REQUIRED_PROVIDERS:
+        return True
+    if not _plugin_query_has_original_metadata_anchors(query):
+        return True
+    if _context_identity_urls(context) & _record_identity_urls(match, record):
+        return True
+    if _record_has_authoritative_identity_match(context, record):
+        return True
+    return _record_strongly_matches_plugin_original_people(query, match, record)
+
+
+def _parse_year_number(value: object) -> int | None:
+    match = re.search(r"(?:19|20)\d{2}", str(value or ""))
+    if match is None:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+
+def _tmdb_first_season_binding_year_conflicts(query, provider_id: object, record: MetadataRecord) -> bool:
+    if record.provider != "tmdb":
+        return False
+    provider_id_text = str(provider_id or record.provider_id or "").strip()
+    match = _TMDB_SEASON_PROVIDER_ID_RE.match(provider_id_text)
+    if match is None or match.group(1) != "1":
+        return False
+    query_season = extract_season_number(getattr(query, "title", ""))
+    if query_season not in (None, 1):
+        return False
+    query_year = _parse_year_number(getattr(query, "year", ""))
+    record_year = _parse_year_number(record.year)
+    return bool(query_year is not None and record_year is not None and abs(query_year - record_year) >= 2)
+
+
 def _is_authoritative_douban_id_match(query, match: MetadataMatch) -> bool:
     vod_dbid = int(getattr(query, "vod_dbid", 0) or 0)
     if vod_dbid <= 0:
@@ -226,21 +448,30 @@ class MetadataHydrator:
         if self._binding_repository is None:
             return None
         binding = None
+        binding_key: tuple[object, object] | None = None
         if query.source_kind == "bilibili":
             season_binding_title = bilibili_season_binding_title(_bilibili_season_id_from_vod(context.vod))
             if season_binding_title:
                 binding = self._binding_repository.load(season_binding_title, "")
+                if binding is not None:
+                    binding_key = (season_binding_title, "")
         if binding is None:
             binding = self._binding_repository.load(query.title, query.year)
+            if binding is not None:
+                binding_key = (query.title, query.year)
         if binding is None and query.source_kind == "bilibili" and not str(query.year or "").strip():
             load_by_title = getattr(self._binding_repository, "load_by_title", None)
             if callable(load_by_title):
                 binding = load_by_title(query.title)
+                if binding is not None:
+                    binding_key = (binding.normalized_title, binding.normalized_year)
         if binding is None:
             return None
+        if binding_key is None:
+            binding_key = (query.title, query.year)
         provider = self._providers_by_name.get(binding.provider)
         if provider is None:
-            self._binding_repository.delete(query.title, query.year)
+            self._binding_repository.delete(*binding_key)
             return None
         detail_cache_key = self._provider_detail_cache_key(provider, binding.provider_id)
         cached = self._cache.load_detail(
@@ -249,6 +480,10 @@ class MetadataHydrator:
             ttl_seconds=_DETAIL_CACHE_TTL_SECONDS,
         )
         if cached is not None:
+            if _tmdb_first_season_binding_year_conflicts(query, binding.provider_id, cached):
+                self._binding_repository.delete(*binding_key)
+                self._cache.delete_detail(binding.provider, detail_cache_key)
+                return None
             return cached
         try:
             record = provider.get_detail(
@@ -260,7 +495,10 @@ class MetadataHydrator:
                 )
             )
         except Exception:
-            self._binding_repository.delete(query.title, query.year)
+            self._binding_repository.delete(*binding_key)
+            return None
+        if _tmdb_first_season_binding_year_conflicts(query, binding.provider_id, record):
+            self._binding_repository.delete(*binding_key)
             return None
         self._cache.save_detail(binding.provider, detail_cache_key, record)
         return record
@@ -505,6 +743,25 @@ class MetadataHydrator:
                 continue
             record = self._load_detail_record(provider, match)
             if record is None:
+                continue
+            if not _plugin_platform_record_is_high_confidence(context, query, match, record):
+                logger.info(
+                    "Skip low-confidence plugin platform metadata provider=%s title=%s score=%s",
+                    provider.name,
+                    record.title or match.title,
+                    match.score,
+                    extra={"log_category": "metadata", "log_source": "app"},
+                )
+                continue
+            if _record_conflicts_with_plugin_original(query, record):
+                logger.info(
+                    "Skip metadata record conflicting with plugin original details "
+                    "provider=%s title=%s country=%s",
+                    provider.name,
+                    record.title,
+                    record.country,
+                    extra={"log_category": "metadata", "log_source": "app"},
+                )
                 continue
             if not primary_applied:
                 merge_metadata_record(vod, record, provider_priority=[item.name for item in self._providers])

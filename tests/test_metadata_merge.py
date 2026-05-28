@@ -197,6 +197,8 @@ def test_merge_metadata_converts_tmdb_watch_providers_to_visible_official_links(
                 ],
             },
             {"label": "seasons", "value": [{"season_number": 1, "episode_count": 37}]},
+            {"label": "number_of_episodes", "value": "12"},
+            {"label": "number_of_seasons", "value": "2"},
             {"label": "last_episode_to_air", "value": {"episode_number": 27}},
             {"label": "next_episode_to_air", "value": {"episode_number": 28}},
             {"label": "last_air_date", "value": "2026-05-23"},

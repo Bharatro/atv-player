@@ -6,8 +6,10 @@ class FakeTMDBClient:
     def __init__(self) -> None:
         self.movie_search_results: list[dict] = []
         self.tv_search_results: list[dict] = []
+        self.tv_search_results_by_key: dict[tuple[str, str], list[dict]] = {}
         self.movie_detail: dict = {}
         self.tv_detail: dict = {}
+        self.tv_details_by_key: dict[str, dict] = {}
         self.tv_season_detail: dict = {}
         self.tv_season_details_by_key: dict[tuple[str, int], dict] = {}
         self.calls: list[tuple[str, str, str]] = []
@@ -21,6 +23,9 @@ class FakeTMDBClient:
 
     def search_tv(self, title: str, year: str = "") -> list[dict]:
         self.calls.append(("search_tv", title, year))
+        keyed = self.tv_search_results_by_key.get((title, year))
+        if keyed is not None:
+            return list(keyed)
         return list(self.tv_search_results)
 
     def get_movie_detail(self, tmdb_id: str | int) -> dict:
@@ -29,6 +34,9 @@ class FakeTMDBClient:
 
     def get_tv_detail(self, tmdb_id: str | int) -> dict:
         self.calls.append(("get_tv_detail", str(tmdb_id), ""))
+        keyed = self.tv_details_by_key.get(str(tmdb_id))
+        if keyed is not None:
+            return dict(keyed)
         return dict(self.tv_detail)
 
     def get_tv_detail_with_season(self, tmdb_id: str | int, *, season_number: int | None = None) -> dict:
@@ -131,7 +139,7 @@ def test_tmdb_provider_falls_back_to_first_tv_result_when_exact_title_match_is_m
             raw={"season_number": 1},
         )
     ]
-    assert client.calls == [("search_tv", "七王国的骑士", ""), ("get_tv_season_detail", "314", "1")]
+    assert client.calls == [("search_tv", "七王国的骑士", "2025"), ("get_tv_season_detail", "314", "1")]
 
 
 def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_first_air_date() -> None:
@@ -152,6 +160,32 @@ def test_tmdb_provider_accepts_tv_result_when_query_year_differs_from_series_fir
         )
     ]
     assert client.calls == [("search_tv", "掩耳盗邻", ""), ("get_tv_season_detail", "42", "2")]
+
+
+def test_tmdb_provider_uses_year_for_first_season_search_to_avoid_older_same_title_result() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results_by_key = {
+        ("入侵", ""): [{"id": 34541, "name": "入侵", "first_air_date": "2011-04-06"}],
+        ("入侵", "2021"): [{"id": 127235, "name": "入侵", "first_air_date": "2021-10-22"}],
+    }
+    client.tv_season_details_by_key = {
+        ("127235", 1): {"episodes": [{"episode_number": 1}]},
+    }
+    provider = TMDBProvider(client)
+
+    matches = provider.search(MetadataQuery(title="入侵 第一季", year="2021", category_name="剧集"))
+
+    assert matches == [
+        MetadataMatch(
+            provider="tmdb",
+            provider_id="tv:127235:season:1",
+            title="入侵",
+            year="2021",
+            score=1.0,
+            raw={"season_number": 1},
+        )
+    ]
+    assert client.calls == [("search_tv", "入侵", "2021"), ("get_tv_season_detail", "127235", "1")]
 
 
 def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_without_category() -> None:
@@ -177,9 +211,22 @@ def test_tmdb_provider_prefers_tv_search_for_titles_with_season_marker_even_with
 def test_tmdb_provider_search_cache_key_ignores_year_for_season_marked_tv_titles() -> None:
     provider = TMDBProvider(FakeTMDBClient())
 
-    assert provider.search_cache_key(MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧")) == (
-        "掩耳盗邻",
+    assert provider.search_cache_key(
+        MetadataQuery(title="掩耳盗邻第二季", year="2026", category_name="电视剧")
+    ) == (
+        "掩耳盗邻\x1ftv-season-year-v3",
         "",
+    )
+
+
+def test_tmdb_provider_search_cache_key_keeps_year_for_first_season_titles() -> None:
+    provider = TMDBProvider(FakeTMDBClient())
+
+    assert provider.search_cache_key(
+        MetadataQuery(title="入侵 第一季", year="2021", category_name="剧集")
+    ) == (
+        "入侵\x1ftv-season-year-v3",
+        "2021",
     )
 
 
@@ -257,6 +304,57 @@ def test_tmdb_provider_prefers_candidate_with_requested_season_when_same_title_r
     )
     assert ("get_tv_season_detail", "280632", "2") in client.calls
     assert ("get_tv_season_detail", "256783", "2") in client.calls
+
+
+def test_tmdb_provider_prefers_tv_result_matching_original_cast_and_directors() -> None:
+    client = FakeTMDBClient()
+    client.tv_search_results = [
+        {"id": 34541, "name": "入侵", "first_air_date": "2021-10-22"},
+        {"id": 127235, "name": "入侵", "first_air_date": "2021-10-22"},
+    ]
+    client.tv_season_details_by_key = {
+        ("34541", 1): {"episodes": [{"episode_number": 1}]},
+        ("127235", 1): {"episodes": [{"episode_number": 1}]},
+    }
+    client.tv_details_by_key = {
+        "34541": {
+            "id": 34541,
+            "name": "入侵",
+            "aggregate_credits": {
+                "cast": [{"name": "无关演员", "roles": [{"character": "A"}]}],
+                "crew": [{"name": "无关导演", "jobs": [{"job": "Director"}]}],
+            },
+            "genres": [{"name": "剧情"}],
+            "alternative_titles": {"results": []},
+            "external_ids": {},
+        },
+        "127235": {
+            "id": 127235,
+            "name": "入侵",
+            "aggregate_credits": {
+                "cast": [{"name": "忽那汐里", "roles": [{"character": "Mitsuki"}]}],
+                "crew": [
+                    {"name": "雅各布·维尔布鲁根", "jobs": [{"job": "Director"}]}
+                ],
+            },
+            "genres": [{"name": "剧情"}],
+            "alternative_titles": {"results": []},
+            "external_ids": {},
+        },
+    }
+    provider = TMDBProvider(client)
+
+    matches = provider.search(
+        MetadataQuery(
+            title="入侵 第一季",
+            year="2021",
+            category_name="剧集",
+            vod_actor="Tara Moayedi,忽那汐里,比利·巴瑞特",
+            vod_director="阿曼达·马尔萨利斯,雅各布·维尔布鲁根",
+        )
+    )
+
+    assert matches[0].provider_id == "tv:127235:season:1"
 
 
 def test_tmdb_provider_search_all_preserves_overview_rating_and_poster_metadata() -> None:
