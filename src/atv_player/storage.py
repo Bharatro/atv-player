@@ -111,6 +111,26 @@ def _normalize_global_search_history(value: object) -> list[str]:
     return history[:_GLOBAL_SEARCH_HISTORY_LIMIT]
 
 
+def _normalize_ai_base_url(value: object) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _normalize_ai_secret(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_ai_model(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_ai_timeout(value: object) -> int:
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError):
+        return 30
+    return max(5, min(timeout, 120))
+
+
 def _normalize_disabled_provider_ids(value: object, valid_ids: set[str]) -> list[str]:
     if isinstance(value, str):
         try:
@@ -404,6 +424,11 @@ class SettingsRepository:
                     last_selected_category_id TEXT NOT NULL DEFAULT '',
                     global_search_history TEXT NOT NULL DEFAULT '[]',
                     global_search_hot_source TEXT NOT NULL DEFAULT '360',
+                    ai_enabled INTEGER NOT NULL DEFAULT 0,
+                    ai_base_url TEXT NOT NULL DEFAULT '',
+                    ai_api_key TEXT NOT NULL DEFAULT '',
+                    ai_chat_model TEXT NOT NULL DEFAULT '',
+                    ai_request_timeout_seconds INTEGER NOT NULL DEFAULT 30,
                     following_episode_display_mode TEXT NOT NULL DEFAULT 'poster',
                     following_episode_grid_columns INTEGER NOT NULL DEFAULT 1
                 )
@@ -673,6 +698,26 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN global_search_hot_source TEXT NOT NULL DEFAULT '360'"
                 )
+            if "ai_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 0"
+                )
+            if "ai_base_url" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''"
+                )
+            if "ai_api_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''"
+                )
+            if "ai_chat_model" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_chat_model TEXT NOT NULL DEFAULT ''"
+                )
+            if "ai_request_timeout_seconds" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_request_timeout_seconds INTEGER NOT NULL DEFAULT 30"
+                )
             if "following_episode_display_mode" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN following_episode_display_mode TEXT NOT NULL DEFAULT 'poster'"
@@ -758,13 +803,18 @@ class SettingsRepository:
                     last_selected_category_id,
                     global_search_history,
                     global_search_hot_source,
+                    ai_enabled,
+                    ai_base_url,
+                    ai_api_key,
+                    ai_chat_model,
+                    ai_request_timeout_seconds,
                     following_episode_display_mode,
                     following_episode_grid_columns
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360', 'poster', 1
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -845,6 +895,11 @@ class SettingsRepository:
                     last_selected_category_id,
                     global_search_history,
                     global_search_hot_source,
+                    ai_enabled,
+                    ai_base_url,
+                    ai_api_key,
+                    ai_chat_model,
+                    ai_request_timeout_seconds,
                     following_episode_display_mode,
                     following_episode_grid_columns
                 FROM app_config
@@ -923,6 +978,11 @@ class SettingsRepository:
             last_selected_category_id,
             global_search_history,
             global_search_hot_source,
+            ai_enabled,
+            ai_base_url,
+            ai_api_key,
+            ai_chat_model,
+            ai_request_timeout_seconds,
             following_episode_display_mode,
             following_episode_grid_columns,
         ) = row
@@ -1011,6 +1071,11 @@ class SettingsRepository:
             last_selected_category_id=last_selected_category_id,
             global_search_history=_normalize_global_search_history(global_search_history),
             global_search_hot_source=str(global_search_hot_source or "360").strip() or "360",
+            ai_enabled=bool(ai_enabled),
+            ai_base_url=_normalize_ai_base_url(ai_base_url),
+            ai_api_key=_normalize_ai_secret(ai_api_key),
+            ai_chat_model=_normalize_ai_model(ai_chat_model),
+            ai_request_timeout_seconds=_normalize_ai_timeout(ai_request_timeout_seconds),
             following_episode_display_mode=_normalize_following_episode_display_mode(
                 following_episode_display_mode
             ),
@@ -1099,6 +1164,11 @@ class SettingsRepository:
                     last_selected_category_id = ?,
                     global_search_history = ?,
                     global_search_hot_source = ?,
+                    ai_enabled = ?,
+                    ai_base_url = ?,
+                    ai_api_key = ?,
+                    ai_chat_model = ?,
+                    ai_request_timeout_seconds = ?,
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?
                 WHERE id = 1
@@ -1186,6 +1256,11 @@ class SettingsRepository:
                     config.last_selected_category_id,
                     json.dumps(_normalize_global_search_history(config.global_search_history), ensure_ascii=False),
                     str(config.global_search_hot_source or "360").strip() or "360",
+                    int(config.ai_enabled),
+                    _normalize_ai_base_url(config.ai_base_url),
+                    _normalize_ai_secret(config.ai_api_key),
+                    _normalize_ai_model(config.ai_chat_model),
+                    _normalize_ai_timeout(config.ai_request_timeout_seconds),
                     _normalize_following_episode_display_mode(config.following_episode_display_mode),
                     _normalize_following_episode_grid_columns(
                         config.following_episode_grid_columns

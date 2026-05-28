@@ -2482,3 +2482,52 @@ def test_settings_repository_defaults_missing_bilibili_grouped_playlist_tree_ena
     loaded = SettingsRepository(db_path).load_config()
 
     assert loaded.bilibili_grouped_playlist_tree_enabled is False
+
+
+def test_app_config_defaults_ai_settings_disabled() -> None:
+    config = AppConfig()
+
+    assert config.ai_enabled is False
+    assert config.ai_base_url == ""
+    assert config.ai_api_key == ""
+    assert config.ai_chat_model == ""
+    assert config.ai_request_timeout_seconds == 30
+
+
+def test_settings_repository_saves_ai_provider_config(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.ai_enabled = True
+    config.ai_base_url = "https://api.example.com/v1"
+    config.ai_api_key = "sk-test"
+    config.ai_chat_model = "gpt-4o-mini"
+    config.ai_request_timeout_seconds = 45
+
+    repo.save_config(config)
+    saved = SettingsRepository(tmp_path / "app.db").load_config()
+
+    assert saved.ai_enabled is True
+    assert saved.ai_base_url == "https://api.example.com/v1"
+    assert saved.ai_api_key == "sk-test"
+    assert saved.ai_chat_model == "gpt-4o-mini"
+    assert saved.ai_request_timeout_seconds == 45
+
+
+def test_settings_repository_normalizes_ai_values(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            ai_enabled=True,
+            ai_base_url=" https://api.example.com/v1/ ",
+            ai_api_key=" sk-test ",
+            ai_chat_model=" gpt-4o-mini ",
+            ai_request_timeout_seconds=999,
+        )
+    )
+
+    saved = repo.load_config()
+
+    assert saved.ai_base_url == "https://api.example.com/v1"
+    assert saved.ai_api_key == "sk-test"
+    assert saved.ai_chat_model == "gpt-4o-mini"
+    assert saved.ai_request_timeout_seconds == 120

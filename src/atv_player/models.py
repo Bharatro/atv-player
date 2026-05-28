@@ -92,6 +92,11 @@ class AppConfig:
     last_selected_category_id: str = ""
     global_search_history: list[str] = field(default_factory=list)
     global_search_hot_source: str = "360"
+    ai_enabled: bool = False
+    ai_base_url: str = ""
+    ai_api_key: str = ""
+    ai_chat_model: str = ""
+    ai_request_timeout_seconds: int = 30
     following_episode_display_mode: str = "poster"
     following_episode_grid_columns: int = 1
 
