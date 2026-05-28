@@ -100,8 +100,12 @@ class NodeSpider:
         )
         self._stdout_lines = queue.Queue()
         self._stderr_lines = queue.Queue()
-        threading.Thread(target=self._read_stdout, args=(self._process,), daemon=True).start()
-        threading.Thread(target=self._read_stderr, args=(self._process,), daemon=True).start()
+        threading.Thread(
+            target=self._read_stdout, args=(self._process,), daemon=True
+        ).start()
+        threading.Thread(
+            target=self._read_stderr, args=(self._process,), daemon=True
+        ).start()
         return self._process
 
     def _read_stdout(self, process: subprocess.Popen[str]) -> None:
@@ -123,7 +127,11 @@ class NodeSpider:
             self._request_id += 1
             request_id = self._request_id
             process.stdin.write(
-                json.dumps({"id": request_id, "method": method, "args": list(args)}, ensure_ascii=False) + "\n"
+                json.dumps(
+                    {"id": request_id, "method": method, "args": list(args)},
+                    ensure_ascii=False,
+                )
+                + "\n"
             )
             process.stdin.flush()
             try:
@@ -136,9 +144,13 @@ class NodeSpider:
                 raise RuntimeError(error)
             response = json.loads(line)
             if response.get("id") != request_id:
-                raise RuntimeError(f"JavaScript 插件响应 id 不匹配: {response.get('id')}")
+                raise RuntimeError(
+                    f"JavaScript 插件响应 id 不匹配: {response.get('id')}"
+                )
             if not response.get("ok"):
-                raise RuntimeError(str(response.get("error") or "JavaScript 插件调用失败"))
+                raise RuntimeError(
+                    str(response.get("error") or "JavaScript 插件调用失败")
+                )
             return response.get("result")
 
     def _latest_stderr(self) -> str:
