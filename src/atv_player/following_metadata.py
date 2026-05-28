@@ -308,6 +308,8 @@ def _resolve_effective_media_kind(record, snapshot=None) -> str:
                     if not type_text:
                         for genre in list(getattr(merged, "genres", []) or []):
                             type_text += str(genre).lower() + " "
+        if any(m in type_text for m in _TMDB_ANIMATION_TOKENS):
+            return "anime"
         if any(m in type_text for m in ("综艺", "真人秀", "脱口秀")):
             return "variety"
         if any(m in type_text for m in ("纪录", "documentary")):
