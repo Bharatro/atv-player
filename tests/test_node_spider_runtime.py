@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import shutil
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,63 @@ def test_node_spider_raises_bridge_error(monkeypatch, tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="boom"):
         spider.homeContent(False)
+
+
+pytestmark_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+
+
+@pytestmark_node
+def test_node_bridge_loads_default_export_fixture(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "default-plugin.mjs"
+    plugin_path.write_text(
+        """
+export default {
+  init(ext) { this.ext = ext },
+  getName() { return `默认:${this.ext}` },
+  home(filter) { return { class: [{ type_id: "hot", type_name: "热门" }], list: [] } },
+  category(tid, pg, filter, extend) { return { list: [{ vod_id: `${tid}-${pg}`, vod_name: "分类" }], total: 1 } },
+  detail(id) { return { list: [{ vod_id: id, vod_name: "详情", vod_play_from: "默认线", vod_play_url: "第1集$/play/1" }] } },
+  search(key, quick, pg) { return { list: [{ vod_id: key, vod_name: key }], total: 1 } },
+  play(flag, id, vipFlags) { return { parse: 0, url: `https://media.example${id}.m3u8`, header: { Referer: "https://site.example" } } }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    spider = NodeSpider(plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=1)
+
+    spider.init("ext")
+
+    assert spider.getName() == "默认:ext"
+    assert spider.homeContent(False)["class"][0]["type_name"] == "热门"
+    assert spider.categoryContent("hot", "2", False, {})["list"][0]["vod_id"] == "hot-2"
+    assert spider.detailContent(["abc"])["list"][0]["vod_name"] == "详情"
+    assert spider.searchContent("关键字", False, "1")["list"][0]["vod_name"] == "关键字"
+    assert spider.playerContent("默认线", "/play/1", [])["url"] == "https://media.example/play/1.m3u8"
+    spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_loads_js_eval_return_fixture_and_local_cache(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "eval-plugin.mjs"
+    plugin_path.write_text(
+        """
+export function __jsEvalReturn() {
+  return {
+    init(ext) { local.set("rule", "ext", ext) },
+    getName() { return `缓存:${local.get("rule", "ext")}` },
+    home() { return JSON.stringify({ class: [], list: [{ vod_id: "1", vod_name: "首页" }] }) },
+    category() { return { list: [], total: 0 } },
+    detail(id) { return { list: [{ vod_id: id, vod_name: "详情", vod_play_from: "默认", vod_play_url: "正片$https://media.example/a.m3u8" }] } },
+    play(flag, id) { return { parse: 0, url: id } }
+  }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    spider = NodeSpider(plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=2)
+
+    spider.init("abc")
+
+    assert spider.getName() == "缓存:abc"
+    assert spider.homeContent(False)["list"][0]["vod_name"] == "首页"
+    spider.destroy()
