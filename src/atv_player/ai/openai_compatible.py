@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from atv_player.ai.models import AICompletionResult, AIError, AIProviderConfig
+
+logger = logging.getLogger(__name__)
+_LOG_EXTRA = {"log_category": "ai", "log_source": "app"}
 
 
 class OpenAICompatibleError(AIError):
@@ -36,6 +42,18 @@ def _sanitize_message(message: str, api_key: str) -> str:
     return sanitized
 
 
+def _endpoint_summary(url: str) -> str:
+    parsed = urlsplit(str(url or ""))
+    if not parsed.netloc:
+        return ""
+    path = parsed.path.rstrip("/")
+    return f"{parsed.hostname or parsed.netloc}{path}"
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.perf_counter() - started_at) * 1000))
+
+
 class OpenAICompatibleClient:
     def __init__(
         self,
@@ -65,17 +83,34 @@ class OpenAICompatibleClient:
             payload["response_format"] = dict(response_format)
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        completion_url = _completion_url(self._config.base_url)
+        endpoint = _endpoint_summary(completion_url)
+        logger.info(
+            "AI chat_completion request started model=%s endpoint=%s",
+            payload["model"],
+            endpoint,
+            extra=_LOG_EXTRA,
+        )
+        started_at = time.perf_counter()
         try:
             with httpx.Client(
                 timeout=self._config.timeout_seconds,
                 transport=self._transport,
             ) as client:
                 response = client.post(
-                    _completion_url(self._config.base_url),
+                    completion_url,
                     headers={"Authorization": f"Bearer {self._config.api_key.strip()}"},
                     json=payload,
                 )
                 response.raise_for_status()
+            logger.info(
+                "AI chat_completion request succeeded model=%s endpoint=%s status=%s elapsed_ms=%s",
+                payload["model"],
+                endpoint,
+                response.status_code,
+                _elapsed_ms(started_at),
+                extra=_LOG_EXTRA,
+            )
         except httpx.HTTPStatusError as exc:
             body = _sanitize_message(exc.response.text, self._config.api_key)
             raise OpenAICompatibleError(

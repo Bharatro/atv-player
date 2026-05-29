@@ -146,3 +146,40 @@ def test_chat_completion_raises_sanitized_error_without_api_key() -> None:
 
     assert "401" in str(exc_info.value)
     assert "sk-test" not in str(exc_info.value)
+
+
+def test_chat_completion_logs_success_without_prompt_or_api_key(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "secret-response"}}]},
+        )
+
+    client = OpenAICompatibleClient(
+        AIProviderConfig(
+            base_url="https://user:pass@api.example.com/v1?token=secret-query",
+            api_key="sk-test",
+            chat_model="model-a",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with caplog.at_level("INFO", logger="atv_player.ai.openai_compatible"):
+        client.chat_completion(messages=[{"role": "user", "content": "secret prompt"}])
+
+    messages = [record.getMessage() for record in caplog.records]
+    joined = "\n".join(messages)
+    assert "AI chat_completion request started" in joined
+    assert "AI chat_completion request succeeded" in joined
+    assert "model-a" in joined
+    assert "api.example.com/v1" in joined
+    assert "status=200" in joined
+    assert "elapsed_ms=" in joined
+    assert "secret prompt" not in joined
+    assert "secret-response" not in joined
+    assert "sk-test" not in joined
+    assert "user:pass" not in joined
+    assert "secret-query" not in joined
+    for record in caplog.records:
+        assert getattr(record, "log_category", "") == "ai"
+        assert getattr(record, "log_source", "") == "app"
