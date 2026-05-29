@@ -11,6 +11,7 @@
 - 继续保留“搜索播放”作为重新查找片源的入口。
 - 打开直接播放来源后，继续依赖现有本地播放历史恢复播放位置、分集和线路。
 - 播放窗口更新播放记录时，同步更新追更记录。
+- 切换到其他来源默认播放较早集数时，不覆盖最近播放来源绑定；只有当前播放集数达到追更当前进度或更靠后时才更新绑定。
 - 播放源列表显示出更多集数时，可以前进更新追更记录里的 `latest_episode`，不做回退。
 
 ## Non-Goals
@@ -26,7 +27,7 @@
 复用现有追更和播放历史边界：
 
 - `FollowingSourceBinding` 继续作为追更与内部播放源的绑定模型，只需要 `source_kind`、`source_key`、`vod_id` 参与本次直接播放。
-- `FollowingController` 增加面向播放器的绑定更新入口。它根据追更 id 更新或置顶匹配的 `source_bindings`，并在播放源最新集数大于现有值时更新 `latest_episode`。
+- `FollowingController` 增加面向播放器的绑定更新入口。它根据追更 id 更新或置顶匹配的 `source_bindings`，但只有当前播放进度不早于追更当前进度时才更新最近播放绑定；播放源最新集数大于现有值时更新 `latest_episode`。
 - `MainWindow._report_player_item_following_progress()` 在播放器满足进度上报阈值后，继续更新观看进度，并同步上次播放来源绑定。
 - `FollowingDetailPage` 增加直接播放信号和按钮状态。存在可用绑定时按钮可点；不存在绑定时保留“搜索播放”作为主要可用路径。
 - `MainWindow` 处理追更直接播放信号，根据绑定调用现有来源控制器的 `build_request` 或 `build_request_from_detail`，再交给现有 `_start_open_request()`。
@@ -40,8 +41,9 @@
 2. 播放窗口调用追更进度 reporter。
 3. `MainWindow` 找到匹配追更记录。
 4. `FollowingController` 更新当前观看进度。
-5. `FollowingController` 保存最近播放来源绑定：`source_kind`、`source_key`、`vod_id`。
-6. 如果当前播放列表推断出的最高集数大于追更现有 `latest_episode`，更新 `latest_episode` 并计算更新状态。
+5. `FollowingController` 判断当前播放集数是否达到追更当前进度；例如已在来源 1 看到第 20 集，切到来源 2 默认播放第 1 集时，不更新最近播放来源绑定。
+6. 判断通过后，`FollowingController` 保存最近播放来源绑定：`source_kind`、`source_key`、`vod_id`。
+7. 如果当前播放列表推断出的最高集数大于追更现有 `latest_episode`，更新 `latest_episode` 并计算更新状态。
 
 追更详情直接播放：
 
@@ -67,6 +69,8 @@
 Focused tests should cover:
 
 - repository/controller updates source binding with only `source_kind`、`source_key`、`vod_id`。
+- controller does not update source binding when a newly switched source is playing an earlier episode than the current following progress.
+- controller updates source binding when the newly switched source reaches the current following progress or a later episode.
 - controller updates playback-source latest episode only when it advances.
 - main window progress reporter updates both progress and source binding.
 - following detail page emits direct-play request while preserving search-play.
