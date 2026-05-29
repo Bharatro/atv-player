@@ -4570,6 +4570,34 @@ def test_app_coordinator_injects_smart_search_controller_when_ai_enabled(monkeyp
     assert captured["smart_search_controller"] is not None
 
 
+def test_app_coordinator_builds_ai_enrichment_service_when_configured(tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "settings.db")
+    config = repo.load_config()
+    config.ai_enabled = True
+    config.ai_base_url = "https://api.example.com"
+    config.ai_api_key = "key"
+    config.ai_chat_model = "model"
+    repo.save_config(config)
+    coordinator = app_module.AppCoordinator(repo)
+
+    service = coordinator._build_ai_enrichment_service(config)
+
+    assert service is not None
+
+
+def test_app_coordinator_skips_ai_enrichment_service_when_incomplete(tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "settings.db")
+    config = repo.load_config()
+    config.ai_enabled = True
+    config.ai_base_url = ""
+    config.ai_api_key = "key"
+    config.ai_chat_model = "model"
+    repo.save_config(config)
+    coordinator = app_module.AppCoordinator(repo)
+
+    assert coordinator._build_ai_enrichment_service(config) is None
+
+
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
 
@@ -8239,6 +8267,32 @@ def test_app_coordinator_metadata_factories_support_bilibili_pgc_ids(tmp_path, m
 
     assert callable(hydrate)
     assert scrape_service is not None
+
+
+def test_app_coordinator_injects_ai_enrichment_into_metadata_scrape_factory(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                ai_enabled=True,
+                ai_base_url="https://api.example.com",
+                ai_api_key="key",
+                ai_chat_model="model",
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    ai_service = object()
+    monkeypatch.setattr(coordinator, "_build_ai_enrichment_service", lambda config: ai_service)
+    monkeypatch.setattr(coordinator, "_build_metadata_providers", lambda **kwargs: [])
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    factory = coordinator._build_metadata_scrape_service_factory(object())
+    service = factory(source_kind="browse", vod=VodItem(vod_id="1", vod_name="x"))
+
+    assert service._ai_enrichment_service is ai_service
 
 
 def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_field(tmp_path, monkeypatch) -> None:
