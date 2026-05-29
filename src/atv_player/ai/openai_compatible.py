@@ -149,23 +149,53 @@ class OpenAICompatibleClient:
         base_url = self._config.base_url
         if not base_url.strip() or not api_key:
             raise OpenAICompatibleError("AI API 配置不完整")
+        models_url = _models_url(base_url)
+        endpoint = _endpoint_summary(models_url)
+        logger.info(
+            "AI list_models request started endpoint=%s",
+            endpoint,
+            extra=_LOG_EXTRA,
+        )
+        started_at = time.perf_counter()
         try:
             with httpx.Client(
                 timeout=self._config.timeout_seconds,
                 transport=self._transport,
             ) as client:
                 response = client.get(
-                    _models_url(base_url),
+                    models_url,
                     headers={"Authorization": f"Bearer {api_key}"},
                 )
                 response.raise_for_status()
+            logger.info(
+                "AI list_models request succeeded endpoint=%s status=%s elapsed_ms=%s",
+                endpoint,
+                response.status_code,
+                _elapsed_ms(started_at),
+                extra=_LOG_EXTRA,
+            )
         except httpx.HTTPStatusError as exc:
             body = _sanitize_message(exc.response.text, api_key)
+            logger.warning(
+                "AI list_models request failed endpoint=%s status=%s elapsed_ms=%s error=%s",
+                endpoint,
+                exc.response.status_code,
+                _elapsed_ms(started_at),
+                body,
+                extra=_LOG_EXTRA,
+            )
             raise OpenAICompatibleError(
                 f"AI 模型列表请求失败: HTTP {exc.response.status_code} {body}"
             ) from exc
         except httpx.HTTPError as exc:
             message = _sanitize_message(str(exc), api_key)
+            logger.warning(
+                "AI list_models request failed endpoint=%s status= elapsed_ms=%s error=%s",
+                endpoint,
+                _elapsed_ms(started_at),
+                message,
+                extra=_LOG_EXTRA,
+            )
             raise OpenAICompatibleError(f"AI 模型列表请求失败: {message}") from exc
         data = response.json()
         items = data.get("data") if isinstance(data, dict) else None
