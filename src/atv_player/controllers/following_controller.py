@@ -7,6 +7,7 @@ import re
 import time
 from dataclasses import dataclass, replace
 
+from atv_player.ai.enrichment import FollowingDetailSummaryInput
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
 from atv_player.following_metadata import (
@@ -24,6 +25,7 @@ from atv_player.following_metadata import (
     merge_following_snapshot,
 )
 from atv_player.following_models import (
+    FollowingAISummary,
     FollowingCardItem,
     FollowingCompletionState,
     FollowingDetailSnapshot,
@@ -68,6 +70,7 @@ class FollowingController:
         now=None,
         discovery_service=None,
         favorite_tmdb_binding_repository=None,
+        ai_enrichment_service=None,
     ) -> None:
         self._repository = repository
         self._metadata_search_service = metadata_search_service
@@ -75,6 +78,7 @@ class FollowingController:
         self._now = now or (lambda: int(time.time()))
         self._discovery_service = discovery_service
         self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
+        self._ai_enrichment_service = ai_enrichment_service
         self._discovery_memory_cache: dict[str, DiscoveryResult] = {}
 
     def search_media(self, keyword: str, *, year: str = ""):
@@ -531,7 +535,59 @@ class FollowingController:
             save_snapshot = getattr(self._repository, "save_detail_snapshot", None)
             if callable(save_snapshot):
                 save_snapshot(following_id, snapshot)
+        snapshot = self._with_ai_summary(record, snapshot)
         return FollowingDetailView(record=record, snapshot=snapshot)
+
+    def _with_ai_summary(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> FollowingDetailSnapshot:
+        if self._ai_enrichment_service is None:
+            return snapshot
+        summarize = getattr(self._ai_enrichment_service, "summarize_following_detail", None)
+        if not callable(summarize):
+            return snapshot
+        next_episode = snapshot.next_episode
+        try:
+            result = summarize(
+                FollowingDetailSummaryInput(
+                    title=record.title,
+                    media_kind=record.media_kind,
+                    current_episode=record.current_episode,
+                    latest_episode=record.latest_episode,
+                    total_episodes=record.total_episodes,
+                    overview=snapshot.overview,
+                    next_episode_title="" if next_episode is None else next_episode.title,
+                    next_episode_air_date="" if next_episode is None else next_episode.air_date,
+                    metadata_fields=[
+                        {
+                            "label": str(item.get("label", "")),
+                            "value": str(item.get("value", "")),
+                        }
+                        for item in snapshot.metadata_fields[:12]
+                    ],
+                )
+            )
+        except Exception:
+            return snapshot
+        summary = str(getattr(result, "summary", "") or "").strip()
+        highlights = [
+            str(item or "").strip()
+            for item in getattr(result, "highlights", []) or []
+            if str(item or "").strip()
+        ][:3]
+        next_hint = str(getattr(result, "next_hint", "") or "").strip()
+        if not summary and not highlights and not next_hint:
+            return snapshot
+        return replace(
+            snapshot,
+            ai_summary=FollowingAISummary(
+                summary=summary,
+                highlights=highlights,
+                next_hint=next_hint,
+            ),
+        )
 
     def load_detail_season(self, following_id: int, *, season_number: int) -> FollowingDetailView:
         record = self._repository.get(following_id)
