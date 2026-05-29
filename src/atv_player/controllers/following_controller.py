@@ -763,6 +763,57 @@ class FollowingController:
             last_played_at=self._now(),
         )
 
+    def record_playback_source(
+        self,
+        following_id: int,
+        *,
+        source_kind: str,
+        source_key: str = "",
+        vod_id: str,
+        current_season_number: int,
+        current_episode: int,
+        playlist_latest_episode: int = 0,
+    ) -> None:
+        record = self._repository.get(following_id)
+        if record is None:
+            return
+        normalized_kind = str(source_kind or "").strip()
+        normalized_key = str(source_key or "").strip()
+        normalized_vod_id = str(vod_id or "").strip()
+        if not normalized_kind or not normalized_vod_id:
+            return
+        can_update_binding = compare_progress(
+            current_season_number,
+            current_episode,
+            record.current_season_number,
+            record.current_episode,
+            current_fallback_season=record.season_number,
+            target_fallback_season=record.season_number,
+        ) >= 0
+        bindings = list(record.source_bindings or [])
+        if can_update_binding:
+            new_binding = FollowingSourceBinding(
+                source_kind=normalized_kind,
+                source_key=normalized_key,
+                vod_id=normalized_vod_id,
+            )
+            bindings = [
+                binding
+                for binding in bindings
+                if not (
+                    binding.source_kind == new_binding.source_kind
+                    and binding.source_key == new_binding.source_key
+                    and binding.vod_id == new_binding.vod_id
+                )
+            ]
+            bindings.insert(0, new_binding)
+        self._repository.update_playback_source_state(
+            following_id,
+            source_bindings=bindings,
+            latest_episode=max(record.latest_episode, int(playlist_latest_episode or 0)),
+            updated_at=self._now(),
+        )
+
     def clear_homepage_prompt(self, following_id: int) -> None:
         self._repository.clear_homepage_prompt(following_id)
 

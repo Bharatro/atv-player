@@ -12,6 +12,7 @@ from atv_player.following_models import (
     FollowingPlaybackPlatformEntry,
     FollowingRecord,
     FollowingSeason,
+    FollowingSourceBinding,
 )
 from atv_player.following_repository import FollowingRepository
 from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
@@ -1817,3 +1818,79 @@ def test_following_controller_can_skip_ai_summary_on_detail_load(tmp_path: Path)
 
     assert ai.inputs == []
     assert view.snapshot.ai_summary is None
+
+
+def test_following_controller_updates_recent_playback_binding_when_progress_reaches_current(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 500)
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            provider="player",
+            provider_id="browse::vod-1",
+            source_bindings=[
+                FollowingSourceBinding(source_kind="browse", source_key="", vod_id="vod-1")
+            ],
+            current_season_number=1,
+            current_episode=20,
+            latest_episode=20,
+        )
+    )
+
+    controller.record_playback_source(
+        record_id,
+        source_kind="telegram",
+        source_key="",
+        vod_id="tg-vod-1",
+        current_season_number=1,
+        current_episode=20,
+        playlist_latest_episode=24,
+    )
+
+    loaded = repo.get(record_id)
+    assert loaded is not None
+    assert [(b.source_kind, b.source_key, b.vod_id) for b in loaded.source_bindings[:2]] == [
+        ("telegram", "", "tg-vod-1"),
+        ("browse", "", "vod-1"),
+    ]
+    assert loaded.latest_episode == 24
+    assert loaded.has_update is True
+    assert loaded.new_episode_count == 4
+
+
+def test_following_controller_keeps_binding_when_switched_source_is_behind_current_progress(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 500)
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            provider="player",
+            provider_id="browse::vod-1",
+            source_bindings=[
+                FollowingSourceBinding(source_kind="browse", source_key="", vod_id="vod-1")
+            ],
+            current_season_number=1,
+            current_episode=20,
+            latest_episode=20,
+        )
+    )
+
+    controller.record_playback_source(
+        record_id,
+        source_kind="telegram",
+        source_key="",
+        vod_id="tg-vod-1",
+        current_season_number=1,
+        current_episode=1,
+        playlist_latest_episode=24,
+    )
+
+    loaded = repo.get(record_id)
+    assert loaded is not None
+    assert [(b.source_kind, b.source_key, b.vod_id) for b in loaded.source_bindings] == [
+        ("browse", "", "vod-1")
+    ]
+    assert loaded.latest_episode == 24
+    assert loaded.has_update is True

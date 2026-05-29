@@ -585,6 +585,47 @@ class FollowingRepository:
                 ),
             )
 
+    def update_playback_source_state(
+        self,
+        following_id: int,
+        *,
+        source_bindings: list[FollowingSourceBinding],
+        latest_episode: int,
+        updated_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT latest_episode, current_episode FROM following WHERE id = ?",
+                (following_id,),
+            ).fetchone()
+            if row is None:
+                return
+            previous_latest = int(row[0] or 0)
+            current_episode = int(row[1] or 0)
+            normalized_latest = max(previous_latest, int(latest_episode or 0))
+            latest_advanced = normalized_latest > previous_latest
+            has_update = normalized_latest > current_episode
+            new_episode_count = max(0, normalized_latest - current_episode)
+            conn.execute(
+                """
+                UPDATE following
+                SET source_bindings_json = ?, latest_episode = ?,
+                    has_update = CASE WHEN ? THEN 1 ELSE has_update END,
+                    new_episode_count = CASE WHEN ? THEN ? ELSE new_episode_count END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    _json_dumps([_binding_to_dict(binding) for binding in source_bindings]),
+                    normalized_latest,
+                    1 if has_update else 0,
+                    1 if latest_advanced else 0,
+                    new_episode_count,
+                    updated_at,
+                    following_id,
+                ),
+            )
+
     def update_check_state(
         self,
         following_id: int,
