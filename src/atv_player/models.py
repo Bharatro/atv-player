@@ -97,6 +97,10 @@ class AppConfig:
     ai_api_key: str = ""
     ai_chat_model: str = ""
     ai_request_timeout_seconds: int = 30
+    ai_metadata_enrichment_enabled: bool = True
+    ai_danmaku_enrichment_enabled: bool = True
+    ai_episode_title_rewrite_enabled: bool = True
+    ai_following_summary_enabled: bool = True
     following_episode_display_mode: str = "poster"
     following_episode_grid_columns: int = 1
 

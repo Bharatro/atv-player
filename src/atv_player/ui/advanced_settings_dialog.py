@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player import cache_management
+from atv_player.ai import AIProviderConfig, OpenAICompatibleClient
 from atv_player.controllers.youtube_category_config import (
     load_youtube_category_config,
     parse_youtube_category_config,
@@ -66,6 +67,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         apply_theme: Callable[[], None] | None = None,
         app_log_service=None,
         youtube_category_text_loader: Callable[[str], str] | None = None,
+        ai_client_factory: Callable[[AIProviderConfig], object] | None = None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
@@ -73,6 +75,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
         self._youtube_category_text_loader = youtube_category_text_loader
+        self._ai_client_factory = ai_client_factory or OpenAICompatibleClient
         self.resize(920, 560)
 
         self.settings_tabs = QTabWidget()
@@ -107,13 +110,21 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.bangumi_access_token_edit.setPlaceholderText("可选；留空时使用匿名访问")
         self.ai_group = QGroupBox("AI 智能功能")
         self.ai_enabled_checkbox = QCheckBox("启用智能搜索")
+        self.ai_metadata_enrichment_checkbox = QCheckBox("AI 增强元数据刮削")
+        self.ai_danmaku_enrichment_checkbox = QCheckBox("AI 优化弹幕搜索")
+        self.ai_episode_title_rewrite_checkbox = QCheckBox("AI 改写剧集标题")
+        self.ai_following_summary_checkbox = QCheckBox("AI 生成追更详情")
         self.ai_base_url_edit = QLineEdit()
         self.ai_base_url_edit.setPlaceholderText("例如 https://api.openai.com/v1")
         self.ai_api_key_edit = QLineEdit()
         self.ai_api_key_edit.setPlaceholderText("填写 API Key")
         self.ai_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.ai_chat_model_edit = QLineEdit()
-        self.ai_chat_model_edit.setPlaceholderText("例如 gpt-4o-mini")
+        self.ai_chat_model_combo = FlatComboBox()
+        self.ai_chat_model_combo.setEditable(True)
+        self.ai_chat_model_combo.setInsertPolicy(FlatComboBox.InsertPolicy.NoInsert)
+        self.ai_chat_model_combo.setPlaceholderText("例如 gpt-4o-mini")
+        self.ai_load_models_button = QPushButton("拉取模型")
+        self.ai_check_connectivity_button = QPushButton("检查连通性")
         self.ai_timeout_edit = QLineEdit()
         self.ai_timeout_edit.setPlaceholderText("5 - 120")
         self.ai_privacy_label = QLabel(
@@ -269,9 +280,15 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
         self.ai_enabled_checkbox.setChecked(config.ai_enabled)
+        self.ai_metadata_enrichment_checkbox.setChecked(config.ai_metadata_enrichment_enabled)
+        self.ai_danmaku_enrichment_checkbox.setChecked(config.ai_danmaku_enrichment_enabled)
+        self.ai_episode_title_rewrite_checkbox.setChecked(config.ai_episode_title_rewrite_enabled)
+        self.ai_following_summary_checkbox.setChecked(config.ai_following_summary_enabled)
         self.ai_base_url_edit.setText(config.ai_base_url)
         self.ai_api_key_edit.setText(config.ai_api_key)
-        self.ai_chat_model_edit.setText(config.ai_chat_model)
+        if config.ai_chat_model:
+            self.ai_chat_model_combo.addItem(config.ai_chat_model)
+            self.ai_chat_model_combo.setCurrentText(config.ai_chat_model)
         self.ai_timeout_edit.setText(str(config.ai_request_timeout_seconds))
         self.network_proxy_mode_combo.setCurrentIndex(
             max(0, self.network_proxy_mode_combo.findData(config.network_proxy_mode))
@@ -354,9 +371,17 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         ai_layout = QFormLayout()
         ai_layout.addRow(self.ai_enabled_checkbox)
+        ai_layout.addRow(self.ai_metadata_enrichment_checkbox)
+        ai_layout.addRow(self.ai_danmaku_enrichment_checkbox)
+        ai_layout.addRow(self.ai_episode_title_rewrite_checkbox)
+        ai_layout.addRow(self.ai_following_summary_checkbox)
         ai_layout.addRow("API 地址", self.ai_base_url_edit)
         ai_layout.addRow("API Key", self.ai_api_key_edit)
-        ai_layout.addRow("Chat 模型", self.ai_chat_model_edit)
+        ai_model_row = QHBoxLayout()
+        ai_model_row.addWidget(self.ai_chat_model_combo, 1)
+        ai_model_row.addWidget(self.ai_load_models_button)
+        ai_model_row.addWidget(self.ai_check_connectivity_button)
+        ai_layout.addRow("Chat 模型", ai_model_row)
         ai_layout.addRow("请求超时", self.ai_timeout_edit)
         ai_layout.addRow("隐私", self.ai_privacy_label)
         self.ai_group.setLayout(ai_layout)
@@ -463,6 +488,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
         self.youtube_category_test_button.clicked.connect(self._test_youtube_category_source)
         self.youtube_category_refresh_button.clicked.connect(self._refresh_youtube_category_cache)
+        self.ai_load_models_button.clicked.connect(self._load_ai_models)
+        self.ai_check_connectivity_button.clicked.connect(self._check_ai_connectivity)
         self.cache_open_root_button.clicked.connect(self._open_cache_root)
         self.cache_refresh_button.clicked.connect(self._refresh_cache_summary)
         self.cache_clear_old_button.clicked.connect(self._clear_old_cache)
@@ -491,6 +518,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.youtube_region_combo,
             self.youtube_category_source_combo,
             self.mpv_hwdec_mode_combo,
+            self.ai_chat_model_combo,
         ):
             combo.setStyleSheet(combo_qss)
             configure_form_flat_combobox(combo, tokens)
@@ -499,7 +527,6 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.bangumi_access_token_edit,
             self.ai_base_url_edit,
             self.ai_api_key_edit,
-            self.ai_chat_model_edit,
             self.ai_timeout_edit,
             self.network_proxy_url_edit,
             self.youtube_category_source_edit,
@@ -511,6 +538,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         ):
             edit.setStyleSheet(line_edit_qss)
             edit.setFixedHeight(42)
+        if self.ai_chat_model_combo.lineEdit() is not None:
+            self.ai_chat_model_combo.lineEdit().setStyleSheet(line_edit_qss)
         self.log_console.apply_theme()
 
     def _refresh_cache_summary(self) -> None:
@@ -893,7 +922,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         enabled = self.ai_enabled_checkbox.isChecked()
         base_url = self.ai_base_url_edit.text().strip().rstrip("/")
         api_key = self.ai_api_key_edit.text().strip()
-        model = self.ai_chat_model_edit.text().strip()
+        model = self.ai_chat_model_combo.currentText().strip()
         try:
             timeout = int(self.ai_timeout_edit.text().strip() or "30")
         except ValueError:
@@ -912,6 +941,80 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             QMessageBox.warning(self, "AI Chat 模型无效", "启用智能搜索需要填写 Chat 模型")
             return None
         return enabled, base_url, api_key, model, timeout
+
+    def _draft_ai_provider_config(self, *, require_model: bool) -> AIProviderConfig | None:
+        base_url = self.ai_base_url_edit.text().strip().rstrip("/")
+        api_key = self.ai_api_key_edit.text().strip()
+        model = self.ai_chat_model_combo.currentText().strip()
+        try:
+            timeout = int(self.ai_timeout_edit.text().strip() or "30")
+        except ValueError:
+            QMessageBox.warning(self, "AI 请求超时无效", "AI 请求超时必须是整数")
+            return None
+        if timeout < 5 or timeout > 120:
+            QMessageBox.warning(self, "AI 请求超时无效", "AI 请求超时必须在 5 到 120 秒之间")
+            return None
+        if not base_url:
+            QMessageBox.warning(self, "AI API 地址无效", "请先填写 API 地址")
+            return None
+        if not api_key:
+            QMessageBox.warning(self, "AI API Key 无效", "请先填写 API Key")
+            return None
+        if require_model and not model:
+            QMessageBox.warning(self, "AI Chat 模型无效", "请先填写或选择 Chat 模型")
+            return None
+        return AIProviderConfig(
+            base_url=base_url,
+            api_key=api_key,
+            chat_model=model,
+            timeout_seconds=timeout,
+        )
+
+    def _build_ai_settings_client(self, *, require_model: bool):
+        provider_config = self._draft_ai_provider_config(require_model=require_model)
+        if provider_config is None:
+            return None
+        return self._ai_client_factory(provider_config)
+
+    def _load_ai_models(self) -> None:
+        client = self._build_ai_settings_client(require_model=False)
+        if client is None:
+            return
+        self.ai_load_models_button.setEnabled(False)
+        try:
+            models = list(getattr(client, "list_models")())
+        except Exception as exc:
+            QMessageBox.warning(self, "AI 模型列表失败", str(exc))
+            return
+        finally:
+            self.ai_load_models_button.setEnabled(True)
+        current_model = self.ai_chat_model_combo.currentText().strip()
+        seen: set[str] = set()
+        model_items: list[str] = []
+        for value in [current_model, *models]:
+            text = str(value or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                model_items.append(text)
+        self.ai_chat_model_combo.clear()
+        self.ai_chat_model_combo.addItems(model_items)
+        if current_model:
+            self.ai_chat_model_combo.setCurrentText(current_model)
+        QMessageBox.information(self, "AI 模型列表", f"已拉取 {len(models)} 个模型")
+
+    def _check_ai_connectivity(self) -> None:
+        client = self._build_ai_settings_client(require_model=True)
+        if client is None:
+            return
+        self.ai_check_connectivity_button.setEnabled(False)
+        try:
+            getattr(client, "check_connectivity")()
+        except Exception as exc:
+            QMessageBox.warning(self, "AI 连通性失败", str(exc))
+            return
+        finally:
+            self.ai_check_connectivity_button.setEnabled(True)
+        QMessageBox.information(self, "AI 连通性", "连接正常")
 
     def _save(self) -> None:
         proxy_values = self._validated_network_proxy_values()
@@ -953,6 +1056,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.ai_chat_model,
             self._config.ai_request_timeout_seconds,
         ) = ai_values
+        self._config.ai_metadata_enrichment_enabled = self.ai_metadata_enrichment_checkbox.isChecked()
+        self._config.ai_danmaku_enrichment_enabled = self.ai_danmaku_enrichment_checkbox.isChecked()
+        self._config.ai_episode_title_rewrite_enabled = self.ai_episode_title_rewrite_checkbox.isChecked()
+        self._config.ai_following_summary_enabled = self.ai_following_summary_checkbox.isChecked()
         self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules, self._config.network_proxy_rules = proxy_values
         (
             self._config.youtube_cookie_browser,

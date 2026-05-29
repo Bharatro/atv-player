@@ -207,11 +207,16 @@ class MetadataScrapeService:
         cache: MetadataCache,
         providers: list[object],
         ai_enrichment_service=None,
+        *,
+        ai_query_refinement_enabled: bool = True,
+        ai_episode_title_rewrite_enabled: bool = True,
     ) -> None:
         self._cache = cache
         self._providers = list(providers)
         self._providers_by_name = {provider.name: provider for provider in self._providers}
         self._ai_enrichment_service = ai_enrichment_service
+        self._ai_query_refinement_enabled = ai_query_refinement_enabled
+        self._ai_episode_title_rewrite_enabled = ai_episode_title_rewrite_enabled
 
     def _provider_label(self, provider_name: str) -> str:
         return _PROVIDER_LABELS.get(provider_name, provider_name)
@@ -248,7 +253,7 @@ class MetadataScrapeService:
         return provider_search_cache_key(provider, query)
 
     def _refine_query_with_ai(self, query: MetadataQuery) -> MetadataQuery:
-        if self._ai_enrichment_service is None:
+        if not self._ai_query_refinement_enabled or self._ai_enrichment_service is None:
             return query
         refine = getattr(self._ai_enrichment_service, "refine_metadata_query", None)
         if not callable(refine):
@@ -552,7 +557,7 @@ class MetadataScrapeService:
         vod: VodItem,
         playlist: list[PlayItem],
     ) -> list[PlayItem] | None:
-        if self._ai_enrichment_service is None or not playlist:
+        if not self._ai_episode_title_rewrite_enabled or self._ai_enrichment_service is None or not playlist:
             return None
         rewrite = getattr(self._ai_enrichment_service, "rewrite_episode_titles", None)
         if not callable(rewrite):
