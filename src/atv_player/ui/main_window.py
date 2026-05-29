@@ -4242,6 +4242,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             current_episode=decision.episode_number,
             position_seconds=position_seconds,
         )
+        if hasattr(self._following_controller, "record_playback_source"):
+            playlist = list(getattr(self.player_window.session, "playlist", []) or [])
+            playlist_latest_episode = len(playlist) if len(playlist) > 1 else decision.episode_number
+            self._following_controller.record_playback_source(
+                record.id,
+                source_kind=str(getattr(self.player_window.session, "source_kind", "") or "browse"),
+                source_key=str(getattr(self.player_window.session, "source_key", "") or ""),
+                vod_id=str(getattr(self.player_window.session.vod, "vod_id", "") or getattr(item, "vod_id", "") or ""),
+                current_season_number=decision.season_number,
+                current_episode=decision.episode_number,
+                playlist_latest_episode=playlist_latest_episode,
+            )
 
     def _current_player_episode_number(self) -> int:
         if self.player_window is None or self.player_window.session is None:

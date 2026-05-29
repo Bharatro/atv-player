@@ -533,6 +533,73 @@ def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> N
     assert following.progress_calls == [(7, 24, 20)]
 
 
+def test_main_window_reports_following_playback_source_after_threshold(qtbot) -> None:
+    class SourceTrackingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.source_calls: list[dict[str, object]] = []
+
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            return [
+                SimpleNamespace(
+                    record=FollowingRecord(
+                        id=7,
+                        title="凡人修仙传",
+                        provider="player",
+                        provider_id="telegram::tg-vod-1",
+                        current_season_number=1,
+                        current_episode=20,
+                        season_number=1,
+                    )
+                )
+            ], 1
+
+        def record_playback_progress(self, following_id: int, **kwargs) -> None:
+            del following_id, kwargs
+
+        def record_playback_source(self, following_id: int, **kwargs) -> None:
+            self.source_calls.append({"following_id": following_id, **kwargs})
+
+    following = SourceTrackingFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    playlist = [PlayItem(title=f"第{i}集", url=f"https://media.example/{i}.m3u8", vod_id="tg-vod-1") for i in range(1, 25)]
+    item = playlist[19]
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="tg-vod-1", vod_name="凡人修仙传"),
+            playlist=playlist,
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="telegram",
+            source_key="",
+        ),
+        current_index=19,
+    )
+
+    window._report_player_item_following_progress(item, position_seconds=20, duration_seconds=100)
+
+    assert following.source_calls == [
+        {
+            "following_id": 7,
+            "source_kind": "telegram",
+            "source_key": "",
+            "vod_id": "tg-vod-1",
+            "current_season_number": 1,
+            "current_episode": 20,
+            "playlist_latest_episode": 24,
+        }
+    ]
+
+
 def test_main_window_loads_following_when_tab_is_selected(qtbot) -> None:
     following = FakeFollowingController()
     window = MainWindow(
