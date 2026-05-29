@@ -534,6 +534,7 @@ class FollowingController:
             self._update_service.check_record(following_id)
             record = self._repository.get(following_id) or record
             snapshot = self._repository.get_detail_snapshot(following_id) or snapshot
+        snapshot_for_ai = snapshot
         original_bundle = snapshot.metadata_bundle
         snapshot = self._ensure_metadata_bundle(record, snapshot)
         if original_bundle is None and snapshot.metadata_bundle is not None:
@@ -541,8 +542,10 @@ class FollowingController:
             save_snapshot = getattr(self._repository, "save_detail_snapshot", None)
             if callable(save_snapshot):
                 save_snapshot(following_id, snapshot)
-        if include_ai_summary:
-            snapshot = self._with_ai_summary(record, snapshot)
+        if include_ai_summary and snapshot_for_ai.metadata_bundle is None:
+            ai_snapshot = self._with_ai_summary(record, snapshot_for_ai)
+            if ai_snapshot.ai_summary is not None:
+                snapshot = replace(snapshot, ai_summary=ai_snapshot.ai_summary)
         return FollowingDetailView(record=record, snapshot=snapshot)
 
     def _with_ai_summary(

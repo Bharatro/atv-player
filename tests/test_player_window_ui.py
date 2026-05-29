@@ -1124,6 +1124,7 @@ class FakeMetadataScrapeService:
         self.search_queries: list[tuple[str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
         self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
+        self.build_episode_title_playlist_allow_ai_fallback_values: list[bool] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
         self.reset_query_contexts: list[tuple[str, str]] = []
         self.cached_groups: list[MetadataScrapeGroup] = []
@@ -1177,8 +1178,16 @@ class FakeMetadataScrapeService:
             metadata_field_sources={"poster": "tmdb", "overview": "tmdb", "detail_fields": "tmdb"},
         )
 
-    def build_episode_title_playlist(self, vod: VodItem, playlist: list[PlayItem], *, preferred_candidate=None):
+    def build_episode_title_playlist(
+        self,
+        vod: VodItem,
+        playlist: list[PlayItem],
+        *,
+        preferred_candidate=None,
+        allow_ai_fallback: bool = True,
+    ):
         self.build_episode_title_playlist_calls.append((vod.vod_name, getattr(preferred_candidate, "provider", "")))
+        self.build_episode_title_playlist_allow_ai_fallback_values.append(allow_ai_fallback)
         return [
             PlayItem(
                 title=item.title,
@@ -2230,6 +2239,7 @@ def test_player_window_metadata_scrape_apply_refreshes_playlist_titles_from_sele
     qtbot.waitUntil(lambda: window.session.playlist[0].episode_display_title == "第1集 第01话 金银米小圈1", timeout=1000)
     assert window.playlist_title_mode == "episode"
     assert service.build_episode_title_playlist_calls == [("米小圈上学记4", "tencent")]
+    assert service.build_episode_title_playlist_allow_ai_fallback_values == [False]
 
 
 def test_player_window_metadata_scrape_apply_passes_selected_category_override_to_episode_title_rewrite(qtbot) -> None:
@@ -19058,7 +19068,7 @@ def test_player_window_async_metadata_hydration_updates_danmaku_source_dialog_ti
     assert window._danmaku_source_title_edit.text() == corrected_title
 
 
-def test_player_window_async_metadata_hydration_restarts_episode_title_enhancement_with_corrected_title(qtbot) -> None:
+def test_player_window_async_metadata_hydration_does_not_restart_episode_title_enhancement_with_corrected_title(qtbot) -> None:
     hydration_ready = threading.Event()
     enhancement_calls: list[str] = []
 
@@ -19126,8 +19136,9 @@ def test_player_window_async_metadata_hydration_restarts_episode_title_enhanceme
     qtbot.waitUntil(lambda: enhancement_calls == ["原始标题"], timeout=1000)
     hydration_ready.set()
     qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
-    qtbot.waitUntil(lambda: enhancement_calls == ["原始标题", corrected_title], timeout=1000)
-    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 星门初启", timeout=1000)
+    qtbot.wait(50)
+    assert enhancement_calls == ["原始标题"]
+    assert window.playlist.item(0).text() == "S01E01.mkv"
 
 
 def test_player_window_async_metadata_hydration_preserves_manual_danmaku_source_title(qtbot) -> None:

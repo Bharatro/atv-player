@@ -506,6 +506,7 @@ class MetadataScrapeService:
         playlist: list[PlayItem],
         *,
         preferred_candidate: MetadataScrapeCandidate | None = None,
+        allow_ai_fallback: bool = True,
     ) -> list[PlayItem] | None:
         ordered_candidates: list[object] = []
         if preferred_candidate is not None:
@@ -550,6 +551,8 @@ class MetadataScrapeService:
             )
             if updated is not None:
                 return updated
+        if not allow_ai_fallback:
+            return None
         return self._apply_ai_episode_titles(vod, playlist)
 
     def _apply_ai_episode_titles(

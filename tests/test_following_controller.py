@@ -1795,6 +1795,51 @@ def test_following_controller_adds_display_only_ai_summary(tmp_path: Path) -> No
     assert view.record.latest_episode == 2
 
 
+def test_following_controller_ai_summary_uses_pre_metadata_bundle_snapshot(tmp_path: Path) -> None:
+    class MetadataEnhancingFollowingController(FollowingController):
+        def _ensure_metadata_bundle(self, record, snapshot, *, force=False, tmdb_detail_record=None):
+            del record, force, tmdb_detail_record
+            return FollowingDetailSnapshot(
+                following_id=snapshot.following_id,
+                overview="增强简介",
+                metadata_fields=[{"label": "增强字段", "value": "增强值"}],
+                metadata_bundle=FollowingMetadataBundle(
+                    merged_snapshot=FollowingMetadataSourceSnapshot(
+                        source_key="merged",
+                        provider="merged",
+                        provider_label="合并",
+                        overview="增强简介",
+                        metadata_fields=[{"label": "增强字段", "value": "增强值"}],
+                    )
+                ),
+            )
+
+    repo = FollowingRepository(tmp_path / "following.db")
+    record_id = repo.upsert(FollowingRecord(id=0, title="黑镜"))
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="原始简介",
+            metadata_fields=[{"label": "原始字段", "value": "原始值"}],
+        ),
+    )
+    ai = AISummarizesFollowingDetail()
+    controller = MetadataEnhancingFollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        ai_enrichment_service=ai,
+        now=lambda: 100,
+    )
+
+    view = controller.load_detail(record_id, refresh_if_empty=False)
+
+    assert ai.inputs[0].overview == "原始简介"
+    assert ai.inputs[0].metadata_fields == [{"label": "原始字段", "value": "原始值"}]
+    assert view.snapshot.overview == "增强简介"
+    assert view.snapshot.ai_summary is not None
+
+
 def test_following_controller_can_skip_ai_summary_on_detail_load(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "following.db")
     record_id = repo.upsert(FollowingRecord(id=0, title="黑镜"))
