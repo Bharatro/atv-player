@@ -183,3 +183,62 @@ def test_chat_completion_logs_success_without_prompt_or_api_key(caplog) -> None:
     for record in caplog.records:
         assert getattr(record, "log_category", "") == "ai"
         assert getattr(record, "log_source", "") == "app"
+
+
+def test_chat_completion_logs_http_failure_without_api_key(caplog) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"message": "bad key sk-test"}})
+
+    client = OpenAICompatibleClient(
+        AIProviderConfig(
+            base_url="https://api.example.com/v1",
+            api_key="sk-test",
+            chat_model="model-a",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with caplog.at_level("WARNING", logger="atv_player.ai.openai_compatible"):
+        with pytest.raises(OpenAICompatibleError):
+            client.chat_completion(
+                messages=[{"role": "user", "content": "secret prompt"}]
+            )
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "AI chat_completion request failed" in joined
+    assert "status=401" in joined
+    assert "elapsed_ms=" in joined
+    assert "[redacted]" in joined
+    assert "sk-test" not in joined
+    assert "secret prompt" not in joined
+    for record in caplog.records:
+        assert getattr(record, "log_category", "") == "ai"
+        assert getattr(record, "log_source", "") == "app"
+
+
+def test_chat_completion_logs_transport_failure_without_api_key(caplog) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("cannot connect with sk-test")
+
+    client = OpenAICompatibleClient(
+        AIProviderConfig(
+            base_url="https://api.example.com/v1",
+            api_key="sk-test",
+            chat_model="model-a",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with caplog.at_level("WARNING", logger="atv_player.ai.openai_compatible"):
+        with pytest.raises(OpenAICompatibleError):
+            client.chat_completion(
+                messages=[{"role": "user", "content": "secret prompt"}]
+            )
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "AI chat_completion request failed" in joined
+    assert "status=" in joined
+    assert "elapsed_ms=" in joined
+    assert "[redacted]" in joined
+    assert "sk-test" not in joined
+    assert "secret prompt" not in joined

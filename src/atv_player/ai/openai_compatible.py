@@ -113,11 +113,28 @@ class OpenAICompatibleClient:
             )
         except httpx.HTTPStatusError as exc:
             body = _sanitize_message(exc.response.text, self._config.api_key)
+            logger.warning(
+                "AI chat_completion request failed model=%s endpoint=%s status=%s elapsed_ms=%s error=%s",
+                payload["model"],
+                endpoint,
+                exc.response.status_code,
+                _elapsed_ms(started_at),
+                body,
+                extra=_LOG_EXTRA,
+            )
             raise OpenAICompatibleError(
                 f"AI API 请求失败: HTTP {exc.response.status_code} {body}"
             ) from exc
         except httpx.HTTPError as exc:
             message = _sanitize_message(str(exc), self._config.api_key)
+            logger.warning(
+                "AI chat_completion request failed model=%s endpoint=%s status= elapsed_ms=%s error=%s",
+                payload["model"],
+                endpoint,
+                _elapsed_ms(started_at),
+                message,
+                extra=_LOG_EXTRA,
+            )
             raise OpenAICompatibleError(f"AI API 请求失败: {message}") from exc
         data = response.json()
         choices = data.get("choices") if isinstance(data, dict) else None
