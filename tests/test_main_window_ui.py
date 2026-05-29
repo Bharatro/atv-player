@@ -4,6 +4,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import shiboken6
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
@@ -5203,6 +5204,41 @@ def test_main_window_clearing_search_text_during_in_progress_search_restores_mai
     qtbot.wait(100)
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == original_titles
+
+
+def test_main_window_clearing_search_ignores_deleted_active_plugin_page(qtbot) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    stale_plugin_page = window._plugin_pages[0][0]
+    window.nav_tabs.setCurrentWidget(stale_plugin_page)
+    window._active_widget = stale_plugin_page
+    window._plugin_definitions = []
+    window._plugin_pages = []
+    window._plugin_tab_definitions = []
+    window._global_search_active = True
+    window._global_search_keyword = "庆余年"
+    window.global_search_edit.setText("庆余年")
+    shiboken6.delete(stale_plugin_page)
+
+    window._clear_global_search()
+
+    assert window.nav_tabs.currentWidget() is window.douban_page
 
 
 def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot) -> None:

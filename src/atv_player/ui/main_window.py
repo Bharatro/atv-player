@@ -13,6 +13,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
+import shiboken6
 from PySide6.QtCore import (
     QEvent,
     QObject,
@@ -1145,6 +1146,10 @@ class _GlobalSearchResult:
     page_number: int
 
 
+def _is_valid_qt_widget(widget: QWidget | None) -> bool:
+    return widget is not None and shiboken6.isValid(widget)
+
+
 class _NavigationTabs(QWidget):
     currentChanged = Signal(int)
 
@@ -1187,10 +1192,14 @@ class _NavigationTabs(QWidget):
         self._visible_widgets = []
 
     def ensure_widget(self, widget: QWidget) -> None:
+        if not _is_valid_qt_widget(widget):
+            return
         if self.content_stack.indexOf(widget) < 0:
             self.content_stack.addWidget(widget)
 
     def addTab(self, widget: QWidget, title: str) -> int:
+        if not _is_valid_qt_widget(widget):
+            return -1
         self.ensure_widget(widget)
         self._visible_widgets.append(widget)
         return self.tab_bar.addTab(title)
@@ -1202,7 +1211,8 @@ class _NavigationTabs(QWidget):
         return self.tab_bar.tabText(index)
 
     def currentWidget(self) -> QWidget | None:
-        return self.content_stack.currentWidget()
+        widget = self.content_stack.currentWidget()
+        return widget if _is_valid_qt_widget(widget) else None
 
     def currentIndex(self) -> int:
         current_widget = self.currentWidget()
@@ -1212,14 +1222,17 @@ class _NavigationTabs(QWidget):
 
     def widget(self, index: int) -> QWidget | None:
         if 0 <= index < len(self._visible_widgets):
-            return self._visible_widgets[index]
+            widget = self._visible_widgets[index]
+            return widget if _is_valid_qt_widget(widget) else None
         return None
 
     def indexOf(self, widget: QWidget) -> int:
-        try:
-            return self._visible_widgets.index(widget)
-        except ValueError:
+        if not _is_valid_qt_widget(widget):
             return -1
+        for index, visible_widget in enumerate(self._visible_widgets):
+            if visible_widget is widget and _is_valid_qt_widget(visible_widget):
+                return index
+        return -1
 
     def setCurrentIndex(self, index: int) -> None:
         widget = self.widget(index)
@@ -1229,6 +1242,8 @@ class _NavigationTabs(QWidget):
         self.content_stack.setCurrentWidget(widget)
 
     def setCurrentWidget(self, widget: QWidget) -> None:
+        if not _is_valid_qt_widget(widget):
+            return
         self.ensure_widget(widget)
         previous_widget = self.currentWidget()
         index = self.indexOf(widget)
