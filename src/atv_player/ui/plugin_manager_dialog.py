@@ -73,7 +73,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._all_plugins = []
         self.resize(920, 520)
         tokens = current_tokens()
-        self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
+        self.warning_label = QLabel("支持 TvBox Python/JavaScript 爬虫。远程插件会执行本地代码，请只加载受信任来源。")
         self.search_input = QLineEdit(self)
         self.search_input.setPlaceholderText("搜索名称或地址")
         self.search_input.setClearButtonEnabled(True)
@@ -414,6 +414,8 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
     def _clear_plugin_action_buttons(self) -> None:
         while self.plugin_actions_layout.count():
             item = self.plugin_actions_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.hide()
@@ -535,11 +537,11 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         return self.plugin_actions.prompt_config_text(self, current)
 
     def _pick_local_plugin_path(self) -> str:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Plugin Files (*.py *.txt)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择爬虫插件", "", "Plugin Files (*.py *.js *.txt)")
         return path.strip()
 
     def _prompt_remote_url(self) -> str:
-        value, accepted = QInputDialog.getText(self, "添加远程插件", "Python 文件 URL")
+        value, accepted = QInputDialog.getText(self, "添加远程插件", "插件文件 URL")
         return value.strip() if accepted else ""
 
     def _prompt_import_source_url(self) -> str:
