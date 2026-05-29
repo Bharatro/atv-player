@@ -4,12 +4,21 @@ from dataclasses import dataclass, field, replace
 import logging
 import re
 
-from atv_player.ai.enrichment import MetadataQueryRefinementInput
-from atv_player.episode_titles import extract_season_number
+from atv_player.ai.enrichment import (
+    EpisodeTitleRewriteInput,
+    EpisodeTitleRewriteItem,
+    MetadataQueryRefinementInput,
+)
+from atv_player.episode_titles import (
+    apply_episode_title_index_map,
+    extract_season_number,
+    seed_original_titles,
+)
 from atv_player.metadata.async_runner import run_provider_searches
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.episode_title_resolver import (
+    METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
@@ -536,7 +545,53 @@ class MetadataScrapeService:
             )
             if updated is not None:
                 return updated
-        return None
+        return self._apply_ai_episode_titles(vod, playlist)
+
+    def _apply_ai_episode_titles(
+        self,
+        vod: VodItem,
+        playlist: list[PlayItem],
+    ) -> list[PlayItem] | None:
+        if self._ai_enrichment_service is None or not playlist:
+            return None
+        rewrite = getattr(self._ai_enrichment_service, "rewrite_episode_titles", None)
+        if not callable(rewrite):
+            return None
+        seed_original_titles(playlist)
+        try:
+            result = rewrite(
+                EpisodeTitleRewriteInput(
+                    media_title=str(vod.vod_name or "").strip(),
+                    items=[
+                        EpisodeTitleRewriteItem(
+                            index=index,
+                            original_title=item.original_title or item.title,
+                            display_title=item.episode_display_title,
+                        )
+                        for index, item in enumerate(playlist)
+                    ],
+                    metadata_titles={
+                        index: item.episode_display_title
+                        for index, item in enumerate(playlist)
+                        if item.episode_display_title
+                    },
+                )
+            )
+        except Exception:
+            logger.debug(
+                "AI episode title rewrite failed in scrape service",
+                exc_info=True,
+            )
+            return None
+        titles_by_index = dict(getattr(result, "titles_by_index", {}) or {})
+        if not titles_by_index:
+            return None
+        return apply_episode_title_index_map(
+            playlist,
+            titles_by_index,
+            source="ai",
+            source_priority=[*METADATA_EPISODE_TITLE_SOURCE_PRIORITY, "ai"],
+        )
 
     def reset(
         self,
