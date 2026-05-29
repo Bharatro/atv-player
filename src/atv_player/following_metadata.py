@@ -252,6 +252,26 @@ def compute_episode_counts(raw_episodes: list[dict[str, object]], *, now: int | 
     return (max(aired_numbers) if aired_numbers else 0, len(set(normal_numbers)))
 
 
+def _has_aired_episodes_with_dates_beyond(
+    raw_episodes: list[dict[str, object]], beyond_episode: int, season_number: int, now: int
+) -> bool:
+    today = datetime.fromtimestamp(now, BEIJING_TZ).date()
+    for raw in raw_episodes:
+        episode = _episode_from_raw(raw)
+        if episode.episode_number <= 0 or episode.is_special or episode.episode_number <= beyond_episode:
+            continue
+        ep_season = episode.season_number or season_number
+        if season_number > 0 and ep_season != season_number:
+            continue
+        air_date_str = str(raw.get("air_date") or raw.get("airdate") or raw.get("date") or "").strip()
+        if not air_date_str:
+            continue
+        air_date = _air_date(air_date_str)
+        if air_date is not None and air_date <= today:
+            return True
+    return False
+
+
 def _has_future_episode(raw_episodes: list[dict[str, object]], *, now: int | None) -> bool:
     today = datetime.fromtimestamp(now if now is not None else int(time.time()), BEIJING_TZ).date()
     for raw in raw_episodes:
@@ -1003,7 +1023,12 @@ def build_snapshot_from_record(record, *, now: int, media_kind: str = "") -> tup
     )
     if season_local_latest > 0:
         last_ep_to_air = season_local_latest
-        latest = season_local_latest
+        if latest > season_local_latest and _has_aired_episodes_with_dates_beyond(
+            raw_episodes, season_local_latest, season_number, now
+        ):
+            pass
+        else:
+            latest = season_local_latest
     elif last_ep_to_air > 0 and last_ep_to_air > latest:
         latest = last_ep_to_air
     if last_ep_to_air > 0 and last_ep_to_air > total:

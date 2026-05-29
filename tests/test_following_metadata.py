@@ -2093,6 +2093,36 @@ def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_fo
     assert snapshot.next_episode.episode_number == 1178
 
 
+def test_build_snapshot_from_record_prefers_air_date_over_stale_last_episode_to_air() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:323238:season:1",
+        title="都市古医仙",
+        tmdb_id="323238",
+        detail_fields=[
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": i, "season_number": 1, "air_date": "2026-05-24"}
+                    for i in range(1, 13)
+                ] + [
+                    {"episode_number": 13, "season_number": 1, "air_date": "2026-05-28"},
+                    {"episode_number": 14, "season_number": 1, "air_date": "2026-05-28"},
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {"episode_number": 12, "season_number": 1, "air_date": "2026-05-27"},
+            },
+        ],
+    )
+
+    now = 1779969600  # 2026-05-28 20:00 Beijing
+    following, _snapshot = build_snapshot_from_record(record, now=now, media_kind="live_action")
+
+    assert following.latest_episode == 14
+
+
 def test_build_snapshot_from_record_uses_last_episode_air_date_for_recent_update_metadata() -> None:
     record = MetadataRecord(
         provider="tmdb",
