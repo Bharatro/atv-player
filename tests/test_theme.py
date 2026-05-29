@@ -144,6 +144,47 @@ def test_flat_combobox_avoids_native_top_border_line_when_background_is_transpar
     assert image.pixelColor(*top_center).name() == tokens.panel_bg
 
 
+def test_flat_combobox_does_not_draw_text_when_editable(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    del app
+    drawn_texts: list[str] = []
+
+    class FakePainter:
+        class RenderHint:
+            Antialiasing = object()
+
+        def __init__(self, _widget) -> None:
+            pass
+
+        def setRenderHint(self, *_args) -> None:
+            pass
+
+        def setBrush(self, *_args) -> None:
+            pass
+
+        def setPen(self, *_args) -> None:
+            pass
+
+        def drawRoundedRect(self, *_args) -> None:
+            pass
+
+        def drawText(self, *_args) -> None:
+            drawn_texts.append(str(_args[-1]))
+
+        def drawPolygon(self, *_args) -> None:
+            pass
+
+    monkeypatch.setattr(theme_module, "QPainter", FakePainter)
+    combo = theme_module.FlatComboBox()
+    combo.setEditable(True)
+    combo.addItem("qwen3.7-max-2026-05-17")
+    combo.setCurrentText("qwen3.7-max-2026-05-17")
+
+    combo.paintEvent(None)
+
+    assert drawn_texts == []
+
+
 def test_build_combobox_qss_accepts_surface_overrides() -> None:
     manager = ThemeManager(system_theme_getter=lambda: "dark")
     tokens = manager.tokens_for("dark")

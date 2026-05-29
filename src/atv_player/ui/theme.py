@@ -61,13 +61,14 @@ class FlatComboBox(QComboBox):
             painter.setPen(border if border.alpha() > 0 else Qt.PenStyle.NoPen)
             painter.drawRoundedRect(rect, border_radius, border_radius)
 
-        text = self.currentText() if self.currentIndex() >= 0 else self.placeholderText()
         text_color_name = "flat_combo_text_color" if self.isEnabled() else "flat_combo_disabled_text_color"
         fallback_role = QPalette.ColorRole.Text if self.isEnabled() else QPalette.ColorRole.Mid
         text_color = self._resolved_color(text_color_name, self.palette().color(fallback_role))
-        painter.setPen(text_color)
-        text_rect = self.rect().adjusted(left_padding, 0, -indicator_padding, 0)
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+        if not self.isEditable():
+            text = self.currentText() if self.currentIndex() >= 0 else self.placeholderText()
+            painter.setPen(text_color)
+            text_rect = self.rect().adjusted(left_padding, 0, -indicator_padding, 0)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
 
         arrow_color_name = "flat_combo_arrow_color" if self.isEnabled() else "flat_combo_disabled_arrow_color"
         arrow_color = self._resolved_color(arrow_color_name, text_color)
