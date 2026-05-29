@@ -1177,8 +1177,14 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _load_detail_view(self, following_id: int):
         try:
-            return self.controller.load_detail(following_id, refresh_if_empty=False)
+            return self.controller.load_detail(
+                following_id,
+                refresh_if_empty=False,
+                include_ai_summary=False,
+            )
         except TypeError as exc:
+            if "include_ai_summary" in str(exc):
+                return self.controller.load_detail(following_id, refresh_if_empty=False)
             if "refresh_if_empty" not in str(exc):
                 raise
             return self.controller.load_detail(following_id)

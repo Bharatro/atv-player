@@ -517,7 +517,13 @@ class FollowingController:
     def search_items(self, keyword: str, page: int) -> tuple[list[FollowingCardItem], int]:
         return self.load_page(page=page, size=20, keyword=keyword, only_updates=False)
 
-    def load_detail(self, following_id: int, *, refresh_if_empty: bool = True) -> FollowingDetailView:
+    def load_detail(
+        self,
+        following_id: int,
+        *,
+        refresh_if_empty: bool = True,
+        include_ai_summary: bool = True,
+    ) -> FollowingDetailView:
         record = self._repository.get(following_id)
         if record is None:
             raise KeyError(f"following not found: {following_id}")
@@ -535,7 +541,8 @@ class FollowingController:
             save_snapshot = getattr(self._repository, "save_detail_snapshot", None)
             if callable(save_snapshot):
                 save_snapshot(following_id, snapshot)
-        snapshot = self._with_ai_summary(record, snapshot)
+        if include_ai_summary:
+            snapshot = self._with_ai_summary(record, snapshot)
         return FollowingDetailView(record=record, snapshot=snapshot)
 
     def _with_ai_summary(

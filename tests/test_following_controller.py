@@ -1792,3 +1792,28 @@ def test_following_controller_adds_display_only_ai_summary(tmp_path: Path) -> No
     assert view.snapshot.ai_summary is not None
     assert view.snapshot.ai_summary.summary == "AI 摘要"
     assert view.record.latest_episode == 2
+
+
+def test_following_controller_can_skip_ai_summary_on_detail_load(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "following.db")
+    record_id = repo.upsert(FollowingRecord(id=0, title="黑镜"))
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(following_id=record_id, overview="科技寓言"),
+    )
+    ai = AISummarizesFollowingDetail()
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        ai_enrichment_service=ai,
+        now=lambda: 100,
+    )
+
+    view = controller.load_detail(
+        record_id,
+        refresh_if_empty=False,
+        include_ai_summary=False,
+    )
+
+    assert ai.inputs == []
+    assert view.snapshot.ai_summary is None
