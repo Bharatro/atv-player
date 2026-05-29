@@ -481,6 +481,7 @@ class FollowingPersonCard(QFrame):
 
 class FollowingDetailPage(QWidget, AsyncGuardMixin):
     back_requested = Signal()
+    continue_play_requested = Signal(int)
     search_play_requested = Signal(int)
     unfollow_requested = Signal(int)
     image_loaded = Signal(object, object)
@@ -526,6 +527,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.ai_summary_label = QLabel()
         self.ai_summary_label.setWordWrap(True)
         self.status_label = QLabel()
+        self.continue_play_button = QPushButton("继续播放")
         self.search_play_button = QPushButton("搜索播放")
         self.manual_check_button = QPushButton("检查更新")
         self.refresh_metadata_button = QPushButton("更新元数据")
@@ -616,6 +618,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         action_row = QHBoxLayout()
         action_row.addWidget(self.back_button)
         action_row.addStretch(1)
+        action_row.addWidget(self.continue_play_button)
         action_row.addWidget(self.search_play_button)
         action_row.addWidget(self.manual_check_button)
         action_row.addWidget(self.refresh_metadata_button)
@@ -707,6 +710,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _connect_actions(self) -> None:
         self.back_button.clicked.connect(self.back_requested.emit)
+        self.continue_play_button.clicked.connect(self._emit_continue_play)
         self.search_play_button.clicked.connect(self._emit_search_play)
         self.manual_check_button.clicked.connect(self._manual_check)
         self.refresh_metadata_button.clicked.connect(self._refresh_metadata)
@@ -718,6 +722,13 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     ) -> None:
         display_record = _normalized_detail_progress_record(record, snapshot)
         self.status_label.setText("")
+        has_binding = any(
+            str(getattr(binding, "source_kind", "") or "").strip()
+            and str(getattr(binding, "vod_id", "") or "").strip()
+            for binding in list(record.source_bindings or [])
+        )
+        self.continue_play_button.setEnabled(has_binding)
+        self.continue_play_button.setToolTip("从上次播放源继续" if has_binding else "暂无已绑定播放源，请先搜索播放")
         self.title_label.setText(display_record.title)
         self.meta_label.setText(_meta_text(display_record, snapshot))
         self._render_metadata_bundle(snapshot)
@@ -880,6 +891,9 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _emit_search_play(self) -> None:
         self.search_play_requested.emit(self.current_following_id)
+
+    def _emit_continue_play(self) -> None:
+        self.continue_play_requested.emit(self.current_following_id)
 
     def _emit_unfollow(self) -> None:
         self.unfollow_requested.emit(self.current_following_id)

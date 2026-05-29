@@ -14,6 +14,7 @@ from atv_player.following_models import (
     FollowingRatingEntry,
     FollowingRecord,
     FollowingSeason,
+    FollowingSourceBinding,
 )
 from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
@@ -481,6 +482,32 @@ def test_following_detail_page_renders_reference_layout_and_actions(qtbot) -> No
     assert controller.manual_checks == [1]
     assert controller.metadata_refreshes == [1]
     assert controller.progress_updates == [(1, 1, 128)]
+
+
+def test_following_detail_page_emits_continue_play_and_keeps_search_play(qtbot) -> None:
+    class BoundSourceController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True, include_ai_summary: bool = True):
+            view = super().load_detail(following_id, refresh_if_empty=refresh_if_empty)
+            view.record.source_bindings = [
+                FollowingSourceBinding(source_kind="telegram", source_key="", vod_id="tg-vod-1")
+            ]
+            return view
+
+    controller = BoundSourceController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+    continued: list[int] = []
+    searched: list[int] = []
+    page.continue_play_requested.connect(continued.append)
+    page.search_play_requested.connect(searched.append)
+
+    page.load_record(1)
+    page.continue_play_button.click()
+    page.search_play_button.click()
+
+    assert page.continue_play_button.isEnabled() is True
+    assert continued == [1]
+    assert searched == [1]
 
 
 def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:
