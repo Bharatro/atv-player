@@ -19,7 +19,7 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
-from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord
+from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord, FollowingSourceBinding
 from atv_player.models import (
     AppConfig,
     FavoriteCardItem,
@@ -650,6 +650,77 @@ def test_main_window_switches_to_following_detail_before_loading_record(qtbot) -
     assert following.detail_load_saw_detail_page == []
     qtbot.waitUntil(lambda: following.detail_load_saw_detail_page == [True], timeout=1000)
     assert following.detail_load_saw_detail_page == [True]
+
+
+def test_main_window_routes_following_bound_telegram_source(qtbot, monkeypatch) -> None:
+    class BoundFollowingController(FakeFollowingController):
+        def load_detail(self, following_id: int):
+            return FollowingDetailView(
+                record=FollowingRecord(
+                    id=following_id,
+                    title="凡人修仙传",
+                    source_bindings=[FollowingSourceBinding(source_kind="telegram", source_key="", vod_id="tg-vod-1")],
+                ),
+                snapshot=FollowingDetailSnapshot(following_id=following_id),
+            )
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=BoundFollowingController(),
+    )
+    qtbot.addWidget(window)
+    opened: list[OpenPlayerRequest] = []
+    window.telegram_controller = SimpleNamespace(
+        build_request=lambda vod_id: OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="凡人修仙传"),
+            playlist=[PlayItem(title="第20集", url="https://media.example/20.m3u8")],
+            clicked_index=0,
+            source_kind="telegram",
+            source_key="",
+            playback_history_loader=lambda: HistoryRecord(
+                id=0,
+                key=vod_id,
+                vod_name="凡人修仙传",
+                vod_pic="",
+                vod_remarks="第20集",
+                episode=19,
+                episode_url="https://media.example/20.m3u8",
+                position=120000,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=1,
+                source_kind="telegram",
+            ),
+        )
+    )
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()))
+
+    window.open_following_bound_source(1)
+
+    assert opened
+    assert opened[0].vod.vod_id == "tg-vod-1"
+    assert opened[0].playback_history_loader is not None
+
+
+def test_main_window_shows_error_when_following_has_no_bound_source(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=FakeFollowingController(),
+    )
+    qtbot.addWidget(window)
+    errors: list[str] = []
+    monkeypatch.setattr(window, "show_error", errors.append)
+
+    window.open_following_bound_source(1)
+
+    assert errors == ["暂无已绑定播放源，请先搜索播放"]
 
 
 def test_main_window_homepage_prompt_actions(qtbot) -> None:

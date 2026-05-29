@@ -1757,6 +1757,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.following_detail_page.back_requested.connect(
             self._return_to_following_page
         )
+        self.following_detail_page.continue_play_requested.connect(self.open_following_bound_source)
         self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
         self.following_detail_page.unfollow_requested.connect(self._unfollow_from_detail)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
@@ -4283,6 +4284,51 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setCurrentWidget(self.douban_page)
         self._close_following_prompt_dialog(already_handled=True)
         self._start_global_search()
+
+    def open_following_bound_source(self, following_id: int) -> None:
+        view = self._following_controller.load_detail(int(following_id))
+        binding = self._first_playable_following_binding(view.record)
+        if binding is None:
+            self.show_error("暂无已绑定播放源，请先搜索播放")
+            return
+        self._following_controller.clear_homepage_prompt(int(following_id))
+        self._close_following_prompt_dialog(already_handled=True)
+        self._start_open_request(lambda: self._build_following_bound_source_request(binding))
+
+    def _first_playable_following_binding(self, record):
+        for binding in list(getattr(record, "source_bindings", []) or []):
+            source_kind = str(getattr(binding, "source_kind", "") or "").strip()
+            vod_id = str(getattr(binding, "vod_id", "") or "").strip()
+            if source_kind and vod_id:
+                return binding
+        return None
+
+    def _build_following_bound_source_request(self, binding):
+        source_kind = str(getattr(binding, "source_kind", "") or "").strip()
+        source_key = str(getattr(binding, "source_key", "") or "").strip()
+        vod_id = str(getattr(binding, "vod_id", "") or "").strip()
+        if source_kind == "browse":
+            return self.browse_controller.build_request_from_detail(vod_id)
+        if source_kind in {"plugin", "spider_plugin"}:
+            controller = self._plugin_controller_by_id(source_key)
+            if controller is None:
+                raise RuntimeError("已绑定插件不可用")
+            request = controller.build_request(vod_id)
+            request.source_kind = "plugin"
+            request.source_key = source_key
+            return request
+        controller_map = {
+            "telegram": self.telegram_controller,
+            "bilibili": self.bilibili_controller,
+            "youtube": self.youtube_controller,
+            "emby": self.emby_controller,
+            "jellyfin": self.jellyfin_controller,
+            "feiniu": self.feiniu_controller,
+        }
+        controller = controller_map.get(source_kind)
+        if controller is None:
+            raise RuntimeError("已绑定播放源不可用")
+        return self._apply_request_playback_history_title(controller.build_request(vod_id))
 
     def _snooze_following_prompt(self, following_id: int) -> None:
         self._following_controller.snooze_prompt(following_id)
