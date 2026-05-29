@@ -71,6 +71,63 @@ def test_chat_completion_preserves_existing_v1_base_url() -> None:
     assert urls == ["https://api.example.com/v1/chat/completions"]
 
 
+def test_list_models_gets_normalized_v1_models_endpoint() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "gpt-4o-mini"},
+                    {"id": "gpt-4.1-mini"},
+                    {"id": ""},
+                    {"object": "model"},
+                ]
+            },
+        )
+
+    client = OpenAICompatibleClient(
+        AIProviderConfig(
+            base_url="https://api.example.com",
+            api_key="sk-test",
+            chat_model="model-a",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.list_models() == ["gpt-4o-mini", "gpt-4.1-mini"]
+    assert captured["url"] == "https://api.example.com/v1/models"
+    assert captured["auth"] == "Bearer sk-test"
+
+
+def test_check_connectivity_uses_chat_completion_model() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["json"] = json.loads(request.read().decode("utf-8"))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+
+    client = OpenAICompatibleClient(
+        AIProviderConfig(
+            base_url="https://api.example.com",
+            api_key="sk-test",
+            chat_model="gpt-4o-mini",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.check_connectivity()
+
+    assert result is True
+    assert captured["url"] == "https://api.example.com/v1/chat/completions"
+    assert captured["json"]["model"] == "gpt-4o-mini"
+    assert captured["json"]["max_tokens"] == 4
+
+
 def test_chat_completion_raises_sanitized_error_without_api_key() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"message": "bad key sk-test"}})
