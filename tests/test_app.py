@@ -4604,11 +4604,13 @@ def test_advanced_settings_dialog_checks_ai_connectivity(qtbot, monkeypatch) -> 
         "information",
         lambda _parent, title, text: messages.append((title, text)),
     )
+    times = iter([10.0, 11.234])
+    monkeypatch.setattr(module.time, "perf_counter", lambda: next(times))
 
     dialog._check_ai_connectivity()
 
     assert fake_client.connectivity_calls == 1
-    assert messages == [("AI 连通性", "连接正常")]
+    assert messages == [("AI 连通性", "连接正常，用时 1234 ms")]
 
 
 def test_advanced_settings_dialog_shows_ai_connectivity_error(qtbot, monkeypatch) -> None:
@@ -4632,11 +4634,13 @@ def test_advanced_settings_dialog_shows_ai_connectivity_error(qtbot, monkeypatch
         "warning",
         lambda _parent, title, text: warnings.append((title, text)),
     )
+    times = iter([20.0, 20.045])
+    monkeypatch.setattr(module.time, "perf_counter", lambda: next(times))
 
     dialog._check_ai_connectivity()
 
     assert fake_client.connectivity_calls == 1
-    assert warnings == [("AI 连通性失败", "bad key [redacted]")]
+    assert warnings == [("AI 连通性失败", "bad key [redacted]\n用时 45 ms")]
 
 
 def test_settings_repository_persists_ai_enrichment_workflow_toggles(tmp_path) -> None:

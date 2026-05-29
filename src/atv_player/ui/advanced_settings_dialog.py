@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import time
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -1007,14 +1008,17 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if client is None:
             return
         self.ai_check_connectivity_button.setEnabled(False)
+        started_at = time.perf_counter()
         try:
             getattr(client, "check_connectivity")()
         except Exception as exc:
-            QMessageBox.warning(self, "AI 连通性失败", str(exc))
+            elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            QMessageBox.warning(self, "AI 连通性失败", f"{exc}\n用时 {elapsed_ms} ms")
             return
         finally:
             self.ai_check_connectivity_button.setEnabled(True)
-        QMessageBox.information(self, "AI 连通性", "连接正常")
+        elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+        QMessageBox.information(self, "AI 连通性", f"连接正常，用时 {elapsed_ms} ms")
 
     def _save(self) -> None:
         proxy_values = self._validated_network_proxy_values()
