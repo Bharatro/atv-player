@@ -15,7 +15,6 @@ import atv_player.app as app_module
 import atv_player.ui.help_dialog as help_dialog_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
-from atv_player.ai.openai_compatible import OpenAICompatibleError
 from atv_player.app import AppCoordinator, decide_start_view
 from atv_player.diagnostics import SystemInfoEntry
 from atv_player.log_store import AppLogEvent
@@ -45,26 +44,6 @@ class RaisingTransport(httpx.BaseTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         raise self.exc
-
-
-class FakeAISettingsClient:
-    def __init__(self, models: list[str] | None = None, error: Exception | None = None) -> None:
-        self.models = models or []
-        self.error = error
-        self.list_model_calls = 0
-        self.connectivity_calls = 0
-
-    def list_models(self) -> list[str]:
-        self.list_model_calls += 1
-        if self.error is not None:
-            raise self.error
-        return list(self.models)
-
-    def check_connectivity(self) -> bool:
-        self.connectivity_calls += 1
-        if self.error is not None:
-            raise self.error
-        return True
 
 
 class FakeBrowseController:
@@ -4505,7 +4484,7 @@ def test_advanced_settings_dialog_saves_ai_provider_settings(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     config = AppConfig()
-    saved: list[tuple[bool, str, str, str, int, bool, bool, bool, bool]] = []
+    saved: list[tuple[bool, str, str, str, int]] = []
     dialog = AdvancedSettingsDialog(
         config,
         save_config=lambda: saved.append(
@@ -4515,10 +4494,6 @@ def test_advanced_settings_dialog_saves_ai_provider_settings(qtbot) -> None:
                 config.ai_api_key,
                 config.ai_chat_model,
                 config.ai_request_timeout_seconds,
-                config.ai_metadata_enrichment_enabled,
-                config.ai_danmaku_enrichment_enabled,
-                config.ai_episode_title_rewrite_enabled,
-                config.ai_following_summary_enabled,
             )
         ),
     )
@@ -4527,137 +4502,11 @@ def test_advanced_settings_dialog_saves_ai_provider_settings(qtbot) -> None:
     dialog.ai_enabled_checkbox.setChecked(True)
     dialog.ai_base_url_edit.setText(" https://api.example.com/v1/ ")
     dialog.ai_api_key_edit.setText(" sk-test ")
-    dialog.ai_chat_model_combo.setEditText(" gpt-4o-mini ")
+    dialog.ai_chat_model_edit.setText(" gpt-4o-mini ")
     dialog.ai_timeout_edit.setText("45")
-    dialog.ai_metadata_enrichment_checkbox.setChecked(False)
-    dialog.ai_danmaku_enrichment_checkbox.setChecked(True)
-    dialog.ai_episode_title_rewrite_checkbox.setChecked(False)
-    dialog.ai_following_summary_checkbox.setChecked(True)
     dialog._save()
 
-    assert saved == [
-        (
-            True,
-            "https://api.example.com/v1",
-            "sk-test",
-            "gpt-4o-mini",
-            45,
-            False,
-            True,
-            False,
-            True,
-        )
-    ]
-
-
-def test_advanced_settings_dialog_loads_ai_models(qtbot, monkeypatch) -> None:
-    from atv_player.ui import advanced_settings_dialog as module
-    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
-
-    messages: list[tuple[str, str]] = []
-    fake_client = FakeAISettingsClient(models=["gpt-4o-mini", "gpt-4.1-mini"])
-    dialog = AdvancedSettingsDialog(
-        AppConfig(
-            ai_base_url="https://api.example.com",
-            ai_api_key="sk-test",
-            ai_chat_model="manual-model",
-        ),
-        save_config=lambda: None,
-        ai_client_factory=lambda config: fake_client,
-    )
-    qtbot.addWidget(dialog)
-    monkeypatch.setattr(
-        module.QMessageBox,
-        "information",
-        lambda _parent, title, text: messages.append((title, text)),
-    )
-
-    dialog._load_ai_models()
-
-    assert fake_client.list_model_calls == 1
-    assert dialog.ai_chat_model_combo.currentText() == "manual-model"
-    assert [
-        dialog.ai_chat_model_combo.itemText(index)
-        for index in range(dialog.ai_chat_model_combo.count())
-    ] == ["manual-model", "gpt-4o-mini", "gpt-4.1-mini"]
-    assert messages == [("AI 模型列表", "已拉取 2 个模型")]
-
-
-def test_advanced_settings_dialog_checks_ai_connectivity(qtbot, monkeypatch) -> None:
-    from atv_player.ui import advanced_settings_dialog as module
-    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
-
-    messages: list[tuple[str, str]] = []
-    fake_client = FakeAISettingsClient()
-    dialog = AdvancedSettingsDialog(
-        AppConfig(
-            ai_base_url="https://api.example.com",
-            ai_api_key="sk-test",
-            ai_chat_model="gpt-4o-mini",
-        ),
-        save_config=lambda: None,
-        ai_client_factory=lambda config: fake_client,
-    )
-    qtbot.addWidget(dialog)
-    monkeypatch.setattr(
-        module.QMessageBox,
-        "information",
-        lambda _parent, title, text: messages.append((title, text)),
-    )
-    times = iter([10.0, 11.234])
-    monkeypatch.setattr(module.time, "perf_counter", lambda: next(times))
-
-    dialog._check_ai_connectivity()
-
-    assert fake_client.connectivity_calls == 1
-    assert messages == [("AI 连通性", "连接正常，用时 1234 ms")]
-
-
-def test_advanced_settings_dialog_shows_ai_connectivity_error(qtbot, monkeypatch) -> None:
-    from atv_player.ui import advanced_settings_dialog as module
-    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
-
-    warnings: list[tuple[str, str]] = []
-    fake_client = FakeAISettingsClient(error=OpenAICompatibleError("bad key [redacted]"))
-    dialog = AdvancedSettingsDialog(
-        AppConfig(
-            ai_base_url="https://api.example.com",
-            ai_api_key="sk-test",
-            ai_chat_model="gpt-4o-mini",
-        ),
-        save_config=lambda: None,
-        ai_client_factory=lambda config: fake_client,
-    )
-    qtbot.addWidget(dialog)
-    monkeypatch.setattr(
-        module.QMessageBox,
-        "warning",
-        lambda _parent, title, text: warnings.append((title, text)),
-    )
-    times = iter([20.0, 20.045])
-    monkeypatch.setattr(module.time, "perf_counter", lambda: next(times))
-
-    dialog._check_ai_connectivity()
-
-    assert fake_client.connectivity_calls == 1
-    assert warnings == [("AI 连通性失败", "bad key [redacted]\n用时 45 ms")]
-
-
-def test_settings_repository_persists_ai_enrichment_workflow_toggles(tmp_path) -> None:
-    repo = app_module.SettingsRepository(tmp_path / "settings.db")
-    config = repo.load_config()
-    config.ai_metadata_enrichment_enabled = False
-    config.ai_danmaku_enrichment_enabled = False
-    config.ai_episode_title_rewrite_enabled = True
-    config.ai_following_summary_enabled = False
-
-    repo.save_config(config)
-    loaded = repo.load_config()
-
-    assert loaded.ai_metadata_enrichment_enabled is False
-    assert loaded.ai_danmaku_enrichment_enabled is False
-    assert loaded.ai_episode_title_rewrite_enabled is True
-    assert loaded.ai_following_summary_enabled is False
+    assert saved == [(True, "https://api.example.com/v1", "sk-test", "gpt-4o-mini", 45)]
 
 
 def test_advanced_settings_dialog_masks_ai_api_key(qtbot) -> None:
@@ -4719,49 +4568,6 @@ def test_app_coordinator_injects_smart_search_controller_when_ai_enabled(monkeyp
     coordinator._show_main()
 
     assert captured["smart_search_controller"] is not None
-
-
-def test_app_coordinator_builds_ai_enrichment_service_when_configured(tmp_path) -> None:
-    repo = app_module.SettingsRepository(tmp_path / "settings.db")
-    config = repo.load_config()
-    config.ai_enabled = True
-    config.ai_base_url = "https://api.example.com"
-    config.ai_api_key = "key"
-    config.ai_chat_model = "model"
-    repo.save_config(config)
-    coordinator = app_module.AppCoordinator(repo)
-
-    service = coordinator._build_ai_enrichment_service(config)
-
-    assert service is not None
-
-
-def test_app_coordinator_skips_ai_enrichment_service_for_disabled_workflow(tmp_path) -> None:
-    repo = app_module.SettingsRepository(tmp_path / "settings.db")
-    config = repo.load_config()
-    config.ai_enabled = True
-    config.ai_base_url = "https://api.example.com"
-    config.ai_api_key = "key"
-    config.ai_chat_model = "model"
-    config.ai_danmaku_enrichment_enabled = False
-    repo.save_config(config)
-    coordinator = app_module.AppCoordinator(repo)
-
-    assert coordinator._build_ai_enrichment_service(config, workflow="danmaku") is None
-    assert coordinator._build_ai_enrichment_service(config, workflow="metadata") is not None
-
-
-def test_app_coordinator_skips_ai_enrichment_service_when_incomplete(tmp_path) -> None:
-    repo = app_module.SettingsRepository(tmp_path / "settings.db")
-    config = repo.load_config()
-    config.ai_enabled = True
-    config.ai_base_url = ""
-    config.ai_api_key = "key"
-    config.ai_chat_model = "model"
-    repo.save_config(config)
-    coordinator = app_module.AppCoordinator(repo)
-
-    assert coordinator._build_ai_enrichment_service(config) is None
 
 
 def test_build_application_installs_app_log_service(monkeypatch, tmp_path) -> None:
@@ -8433,62 +8239,6 @@ def test_app_coordinator_metadata_factories_support_bilibili_pgc_ids(tmp_path, m
 
     assert callable(hydrate)
     assert scrape_service is not None
-
-
-def test_app_coordinator_injects_ai_enrichment_into_metadata_scrape_factory(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    class FakeRepo:
-        def load_config(self) -> AppConfig:
-            return AppConfig(
-                metadata_enhancement_enabled=True,
-                ai_enabled=True,
-                ai_base_url="https://api.example.com",
-                ai_api_key="key",
-                ai_chat_model="model",
-            )
-
-    coordinator = AppCoordinator(FakeRepo())
-    ai_service = object()
-    monkeypatch.setattr(coordinator, "_build_ai_enrichment_service", lambda config: ai_service)
-    monkeypatch.setattr(coordinator, "_build_metadata_providers", lambda **kwargs: [])
-    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
-
-    factory = coordinator._build_metadata_scrape_service_factory(object())
-    service = factory(source_kind="browse", vod=VodItem(vod_id="1", vod_name="x"))
-
-    assert service._ai_enrichment_service is ai_service
-
-
-def test_app_coordinator_disables_metadata_ai_workflows_independently(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    class FakeRepo:
-        def load_config(self) -> AppConfig:
-            return AppConfig(
-                metadata_enhancement_enabled=True,
-                ai_enabled=True,
-                ai_base_url="https://api.example.com",
-                ai_api_key="key",
-                ai_chat_model="model",
-                ai_metadata_enrichment_enabled=False,
-                ai_episode_title_rewrite_enabled=True,
-            )
-
-    coordinator = AppCoordinator(FakeRepo())
-    ai_service = object()
-    monkeypatch.setattr(coordinator, "_build_ai_enrichment_service", lambda config: ai_service)
-    monkeypatch.setattr(coordinator, "_build_metadata_providers", lambda **kwargs: [])
-    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
-
-    factory = coordinator._build_metadata_scrape_service_factory(object())
-    service = factory(source_kind="browse", vod=VodItem(vod_id="1", vod_name="x"))
-
-    assert service._ai_enrichment_service is ai_service
-    assert service._ai_query_refinement_enabled is False
-    assert service._ai_episode_title_rewrite_enabled is True
 
 
 def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_field(tmp_path, monkeypatch) -> None:

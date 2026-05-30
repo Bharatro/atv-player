@@ -16,12 +16,7 @@ from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
-from atv_player.ai import (
-    AIEnrichmentService,
-    AIProviderConfig,
-    OpenAICompatibleClient,
-    SmartSearchIntentParser,
-)
+from atv_player.ai import AIProviderConfig, OpenAICompatibleClient, SmartSearchIntentParser
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
 from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
@@ -548,33 +543,6 @@ class AppCoordinator(QObject):
             history_controller=history_controller,
         )
 
-    def _build_ai_enrichment_service(self, config: AppConfig, *, workflow: str = ""):
-        if not config.ai_enabled:
-            return None
-        if workflow == "metadata" and not config.ai_metadata_enrichment_enabled:
-            return None
-        if workflow == "danmaku" and not config.ai_danmaku_enrichment_enabled:
-            return None
-        if workflow == "episode_titles" and not config.ai_episode_title_rewrite_enabled:
-            return None
-        if workflow == "following" and not config.ai_following_summary_enabled:
-            return None
-        provider_config = AIProviderConfig(
-            base_url=config.ai_base_url,
-            api_key=config.ai_api_key,
-            chat_model=config.ai_chat_model,
-            timeout_seconds=config.ai_request_timeout_seconds,
-        )
-        if not provider_config.is_complete:
-            return None
-        return AIEnrichmentService(OpenAICompatibleClient(provider_config))
-
-    def _refresh_danmaku_ai_enrichment(self, config: AppConfig):
-        ai_enrichment_service = self._build_ai_enrichment_service(config, workflow="danmaku")
-        if self._danmaku_service is not None:
-            setattr(self._danmaku_service, "_ai_enrichment_service", ai_enrichment_service)
-        return ai_enrichment_service
-
     def _proxy_http_get(self):
         def run(url: str, **kwargs):
             request_kwargs = dict(kwargs)
@@ -821,14 +789,7 @@ class AppCoordinator(QObject):
                 source_kind=source_kind,
                 raw_detail=raw_detail,
             )
-            ai_enrichment_service = self._build_ai_enrichment_service(config)
-            return MetadataScrapeService(
-                cache=cache,
-                providers=providers,
-                ai_enrichment_service=ai_enrichment_service,
-                ai_query_refinement_enabled=config.ai_metadata_enrichment_enabled,
-                ai_episode_title_rewrite_enabled=config.ai_episode_title_rewrite_enabled,
-            )
+            return MetadataScrapeService(cache=cache, providers=providers)
 
         return factory
 
@@ -840,13 +801,9 @@ class AppCoordinator(QObject):
             source_kind="browse",
             raw_detail=None,
         )
-        ai_enrichment_service = self._build_ai_enrichment_service(config)
         return MetadataScrapeService(
             cache=MetadataCache(app_cache_dir() / "metadata"),
             providers=providers,
-            ai_enrichment_service=ai_enrichment_service,
-            ai_query_refinement_enabled=config.ai_metadata_enrichment_enabled,
-            ai_episode_title_rewrite_enabled=config.ai_episode_title_rewrite_enabled,
         )
 
     def _build_following_tmdb_discovery_service(self) -> TMDBDiscoveryService | None:
@@ -1806,8 +1763,6 @@ class AppCoordinator(QObject):
         setattr(self._plugin_manager, "_metadata_scrape_service_factory", metadata_scrape_service_factory)
         setattr(self._plugin_manager, "_episode_title_enhancer_factory", episode_title_enhancer_factory)
         config = self.repo.load_config()
-        self._refresh_danmaku_ai_enrichment(config)
-        following_ai_enrichment_service = self._build_ai_enrichment_service(config, workflow="following")
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
@@ -1961,7 +1916,6 @@ class AppCoordinator(QObject):
                 update_service=following_update_service,
                 discovery_service=following_discovery_service,
                 favorite_tmdb_binding_repository=self._favorite_tmdb_binding_repository,
-                ai_enrichment_service=following_ai_enrichment_service,
             )
         smart_search_controller = self._build_smart_search_controller(
             config,

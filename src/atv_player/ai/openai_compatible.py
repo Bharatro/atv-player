@@ -20,15 +20,6 @@ def _completion_url(base_url: str) -> str:
     return f"{normalized}/v1/chat/completions"
 
 
-def _models_url(base_url: str) -> str:
-    normalized = str(base_url or "").strip().rstrip("/")
-    if not normalized:
-        raise OpenAICompatibleError("AI API 地址不能为空")
-    if normalized.endswith("/v1"):
-        return f"{normalized}/models"
-    return f"{normalized}/v1/models"
-
-
 def _sanitize_message(message: str, api_key: str) -> str:
     sanitized = str(message or "")
     if api_key:
@@ -52,7 +43,6 @@ class OpenAICompatibleClient:
         messages: list[dict[str, str]],
         temperature: float = 0.0,
         response_format: dict[str, object] | None = None,
-        max_tokens: int | None = None,
     ) -> AICompletionResult:
         if not self._config.is_complete:
             raise OpenAICompatibleError("AI API 配置不完整")
@@ -63,8 +53,6 @@ class OpenAICompatibleClient:
         }
         if response_format:
             payload["response_format"] = dict(response_format)
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
         try:
             with httpx.Client(
                 timeout=self._config.timeout_seconds,
@@ -91,51 +79,3 @@ class OpenAICompatibleClient:
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else ""
         return AICompletionResult(content=str(content or ""), raw=data)
-
-    def list_models(self) -> list[str]:
-        api_key = self._config.api_key.strip()
-        base_url = self._config.base_url
-        if not base_url.strip() or not api_key:
-            raise OpenAICompatibleError("AI API 配置不完整")
-        try:
-            with httpx.Client(
-                timeout=self._config.timeout_seconds,
-                transport=self._transport,
-            ) as client:
-                response = client.get(
-                    _models_url(base_url),
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            body = _sanitize_message(exc.response.text, api_key)
-            raise OpenAICompatibleError(
-                f"AI 模型列表请求失败: HTTP {exc.response.status_code} {body}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            message = _sanitize_message(str(exc), api_key)
-            raise OpenAICompatibleError(f"AI 模型列表请求失败: {message}") from exc
-        data = response.json()
-        items = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(items, list):
-            raise OpenAICompatibleError("AI 模型列表响应缺少 data")
-        models: list[str] = []
-        for item in items:
-            model_id = item.get("id") if isinstance(item, dict) else ""
-            model_text = str(model_id or "").strip()
-            if model_text:
-                models.append(model_text)
-        return models
-
-    def check_connectivity(self) -> bool:
-        self.chat_completion(
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Reply with OK.",
-                }
-            ],
-            temperature=0.0,
-            max_tokens=4,
-        )
-        return True

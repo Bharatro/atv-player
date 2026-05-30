@@ -4,34 +4,21 @@ from dataclasses import dataclass, field, replace
 import logging
 import re
 
-from atv_player.ai.enrichment import (
-    EpisodeTitleRewriteInput,
-    EpisodeTitleRewriteItem,
-    MetadataQueryRefinementInput,
-)
-from atv_player.episode_titles import (
-    apply_episode_title_index_map,
-    extract_season_number,
-    seed_original_titles,
-)
+logger = logging.getLogger(__name__)
+
+from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.async_runner import run_provider_searches
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.episode_title_resolver import (
-    METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
 from atv_player.metadata.merge import replace_metadata_record
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
-from atv_player.metadata.query import (
-    normalize_metadata_query_inputs,
-    normalize_metadata_title,
-)
+from atv_player.metadata.query import normalize_metadata_query_inputs, normalize_metadata_title
 from atv_player.metadata.providers.bangumi import is_bangumi_anime_query
 from atv_player.models import PlayItem, VodItem
-
-logger = logging.getLogger(__name__)
 
 _PROVIDER_LABELS = {
     "bangumi": "Bangumi",
@@ -202,21 +189,10 @@ def _bilibili_season_provider_id(vod_id: object) -> str:
 
 
 class MetadataScrapeService:
-    def __init__(
-        self,
-        cache: MetadataCache,
-        providers: list[object],
-        ai_enrichment_service=None,
-        *,
-        ai_query_refinement_enabled: bool = True,
-        ai_episode_title_rewrite_enabled: bool = True,
-    ) -> None:
+    def __init__(self, cache: MetadataCache, providers: list[object]) -> None:
         self._cache = cache
         self._providers = list(providers)
         self._providers_by_name = {provider.name: provider for provider in self._providers}
-        self._ai_enrichment_service = ai_enrichment_service
-        self._ai_query_refinement_enabled = ai_query_refinement_enabled
-        self._ai_episode_title_rewrite_enabled = ai_episode_title_rewrite_enabled
 
     def _provider_label(self, provider_name: str) -> str:
         return _PROVIDER_LABELS.get(provider_name, provider_name)
@@ -251,34 +227,6 @@ class MetadataScrapeService:
     @staticmethod
     def _provider_search_cache_key(provider: object, query: MetadataQuery) -> tuple[str, str]:
         return provider_search_cache_key(provider, query)
-
-    def _refine_query_with_ai(self, query: MetadataQuery) -> MetadataQuery:
-        if not self._ai_query_refinement_enabled or self._ai_enrichment_service is None:
-            return query
-        refine = getattr(self._ai_enrichment_service, "refine_metadata_query", None)
-        if not callable(refine):
-            return query
-        try:
-            result = refine(
-                MetadataQueryRefinementInput(
-                    title=query.title,
-                    year=query.year,
-                    category_name=query.category_name,
-                    season_number=extract_season_number(query.title) or 0,
-                    source_name=query.type_name,
-                )
-            )
-        except Exception:
-            logger.debug(
-                "AI metadata query refinement failed in scrape service",
-                exc_info=True,
-            )
-            return query
-        refined_title = str(getattr(result, "title", "") or "").strip()
-        if not refined_title:
-            return query
-        refined_year = str(getattr(result, "year", "") or "").strip() or query.year
-        return replace(query, title=refined_title, year=refined_year)
 
     def _hydrate_tmdb_episode_candidate(self, vod: VodItem, candidate: object) -> object:
         provider = str(getattr(candidate, "provider", "") or "").strip()
@@ -377,7 +325,6 @@ class MetadataScrapeService:
     ) -> list[MetadataScrapeGroup]:
         normalized_title, normalized_year = normalize_metadata_query_inputs(query.title, query.year)
         query = replace(query, title=normalized_title, year=normalized_year)
-        query = self._refine_query_with_ai(query)
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
         logger.info(
             "Metadata scrape search title=%s year=%s category=%s type=%s provider=%s cache_only=%s",
@@ -550,53 +497,7 @@ class MetadataScrapeService:
             )
             if updated is not None:
                 return updated
-        return self._apply_ai_episode_titles(vod, playlist)
-
-    def _apply_ai_episode_titles(
-        self,
-        vod: VodItem,
-        playlist: list[PlayItem],
-    ) -> list[PlayItem] | None:
-        if not self._ai_episode_title_rewrite_enabled or self._ai_enrichment_service is None or not playlist:
-            return None
-        rewrite = getattr(self._ai_enrichment_service, "rewrite_episode_titles", None)
-        if not callable(rewrite):
-            return None
-        seed_original_titles(playlist)
-        try:
-            result = rewrite(
-                EpisodeTitleRewriteInput(
-                    media_title=str(vod.vod_name or "").strip(),
-                    items=[
-                        EpisodeTitleRewriteItem(
-                            index=index,
-                            original_title=item.original_title or item.title,
-                            display_title=item.episode_display_title,
-                        )
-                        for index, item in enumerate(playlist)
-                    ],
-                    metadata_titles={
-                        index: item.episode_display_title
-                        for index, item in enumerate(playlist)
-                        if item.episode_display_title
-                    },
-                )
-            )
-        except Exception:
-            logger.debug(
-                "AI episode title rewrite failed in scrape service",
-                exc_info=True,
-            )
-            return None
-        titles_by_index = dict(getattr(result, "titles_by_index", {}) or {})
-        if not titles_by_index:
-            return None
-        return apply_episode_title_index_map(
-            playlist,
-            titles_by_index,
-            source="ai",
-            source_priority=[*METADATA_EPISODE_TITLE_SOURCE_PRIORITY, "ai"],
-        )
+        return None
 
     def reset(
         self,
