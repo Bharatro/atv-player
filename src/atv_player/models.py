@@ -431,6 +431,7 @@ class SpiderPluginConfig:
     config_text: str = ""
     plugin_version: int = 1
     category_overrides_json: str = ""
+    manifest_id: str = ""
 
 
 @dataclass(slots=True)

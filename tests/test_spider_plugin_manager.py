@@ -303,6 +303,55 @@ def test_manager_add_remote_plugin_uses_decoded_url_filename_as_default_name(tmp
     assert plugins[0].display_name == "红果短剧"
 
 
+def test_manager_add_remote_txt_plugin_overwrites_existing_plugin_with_same_id(tmp_path: Path) -> None:
+    first_url = "https://example.com/plugins/old.txt"
+    second_url = "https://example.com/plugins/new.txt"
+    responses = {
+        first_url: httpx.Response(200, text="//@id:same-plugin\n//@version:1\nclass Spider: pass\n"),
+        second_url: httpx.Response(200, text="//@id:same-plugin\n//@version:2\nclass Spider: pass\n"),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    manager.add_remote_plugin(first_url)
+    manager.add_remote_plugin(second_url)
+
+    plugins = repository.list_plugins()
+
+    assert len(plugins) == 1
+    assert plugins[0].manifest_id == "same-plugin"
+    assert plugins[0].source_type == "remote"
+    assert plugins[0].source_value == second_url
+    assert plugins[0].plugin_version == 2
+
+
+def test_manager_add_local_txt_plugin_overwrites_existing_plugin_with_same_id(tmp_path: Path) -> None:
+    first_path = tmp_path / "old.txt"
+    second_path = tmp_path / "new.txt"
+    first_path.write_text("//@id:same-plugin\n//@version:1\nclass Spider: pass\n", encoding="utf-8")
+    second_path.write_text("//@id:same-plugin\n//@version:2\nclass Spider: pass\n", encoding="utf-8")
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    manager.add_local_plugin(str(first_path))
+    manager.add_local_plugin(str(second_path))
+
+    plugins = repository.list_plugins()
+
+    assert len(plugins) == 1
+    assert plugins[0].manifest_id == "same-plugin"
+    assert plugins[0].source_type == "local"
+    assert plugins[0].source_value == str(second_path)
+    assert plugins[0].plugin_version == 2
+
+
 def test_manager_import_github_repository_imports_manifest_plugins_and_disables_invalid_entries(tmp_path: Path) -> None:
     responses = {
         "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
@@ -490,6 +539,100 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
     assert updated.enabled is False
     assert updated.display_name == "双星自定义"
     assert updated.config_text == "token=keep\n"
+
+
+def test_manager_import_github_repository_overwrites_existing_plugin_with_same_manifest_id(tmp_path: Path) -> None:
+    first_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%97%A7%E6%BA%90.txt"
+    second_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%96%B0%E6%BA%90.txt"
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"id": "same-plugin", "file": "py/旧源.txt", "valid": True, "version": 6},
+                {"id": "same-plugin", "file": "py/新源.txt", "valid": False, "version": 9},
+            ],
+        ),
+        first_url: httpx.Response(
+            200,
+            text="//@version:6\nprint('old')\n",
+        ),
+        second_url: httpx.Response(
+            200,
+            text="//@version:9\nprint('new')\n",
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins("https://github.com/har01d5/tvbox")
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=1, updated_count=1, skipped_count=0)
+    assert len(plugins) == 1
+    assert plugins[0].manifest_id == "same-plugin"
+    assert plugins[0].source_value == second_url
+    assert plugins[0].plugin_version == 9
+    assert plugins[0].enabled is False
+
+
+def test_manager_import_github_repository_overwrites_valid_state_for_same_manifest_id_version(
+    tmp_path: Path,
+) -> None:
+    plugin_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%90%8C%E6%BA%90.txt"
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"id": "same-plugin", "file": "py/同源.txt", "valid": False, "version": 6},
+            ],
+        ),
+        plugin_url: httpx.Response(
+            200,
+            text="//@version:6\nprint('same')\n",
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    existing = repository.add_plugin(
+        "remote",
+        plugin_url,
+        "同源",
+        enabled=True,
+        plugin_version=6,
+        manifest_id="same-plugin",
+    )
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    result = manager.import_plugins("https://github.com/har01d5/tvbox")
+
+    plugins = repository.list_plugins()
+
+    assert result == SpiderPluginImportResult(imported_count=0, updated_count=1, skipped_count=0)
+    assert [plugin.id for plugin in plugins] == [existing.id]
+    assert plugins[0].enabled is False
+    assert plugins[0].plugin_version == 6
 
 
 def test_manager_import_github_repository_skips_entries_with_invalid_manifest_version(tmp_path: Path) -> None:

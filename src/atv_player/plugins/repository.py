@@ -40,7 +40,8 @@ class SpiderPluginRepository:
                     last_error TEXT NOT NULL DEFAULT '',
                     config_text TEXT NOT NULL DEFAULT '',
                     plugin_version INTEGER NOT NULL DEFAULT 1,
-                    category_overrides_json TEXT NOT NULL DEFAULT ''
+                    category_overrides_json TEXT NOT NULL DEFAULT '',
+                    manifest_id TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -51,6 +52,8 @@ class SpiderPluginRepository:
                 conn.execute("ALTER TABLE spider_plugins ADD COLUMN plugin_version INTEGER NOT NULL DEFAULT 1")
             if "category_overrides_json" not in plugin_columns:
                 conn.execute("ALTER TABLE spider_plugins ADD COLUMN category_overrides_json TEXT NOT NULL DEFAULT ''")
+            if "manifest_id" not in plugin_columns:
+                conn.execute("ALTER TABLE spider_plugins ADD COLUMN manifest_id TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS spider_plugin_logs (
@@ -109,6 +112,7 @@ class SpiderPluginRepository:
         *,
         enabled: bool = True,
         plugin_version: int = 1,
+        manifest_id: str = "",
     ) -> SpiderPluginConfig:
         with self._connect() as conn:
             next_order = conn.execute(
@@ -119,11 +123,11 @@ class SpiderPluginRepository:
                 INSERT INTO spider_plugins (
                     source_type, source_value, display_name, enabled, sort_order,
                     cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
-                    category_overrides_json
+                    category_overrides_json, manifest_id
                 )
-                VALUES (?, ?, ?, ?, ?, '', 0, '', '', ?, '')
+                VALUES (?, ?, ?, ?, ?, '', 0, '', '', ?, '', ?)
                 """,
-                (source_type, source_value, display_name, int(enabled), next_order, int(plugin_version)),
+                (source_type, source_value, display_name, int(enabled), next_order, int(plugin_version), manifest_id),
             )
         return self.get_plugin(_require_lastrowid(cursor))
 
@@ -133,7 +137,7 @@ class SpiderPluginRepository:
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
                        cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
-                       category_overrides_json
+                       category_overrides_json, manifest_id
                 FROM spider_plugins
                 WHERE id = ?
                 """,
@@ -151,7 +155,7 @@ class SpiderPluginRepository:
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
                        cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
-                       category_overrides_json
+                       category_overrides_json, manifest_id
                 FROM spider_plugins
                 ORDER BY sort_order ASC, id ASC
                 """
@@ -176,19 +180,42 @@ class SpiderPluginRepository:
         config_text: str,
         plugin_version: int = 1,
         category_overrides_json: str | None = None,
+        source_type: str | None = None,
+        source_value: str | None = None,
+        manifest_id: str | None = None,
     ) -> None:
+        current = None
+        if (
+            category_overrides_json is None
+            or source_type is None
+            or source_value is None
+            or manifest_id is None
+        ):
+            current = self.get_plugin(plugin_id)
         if category_overrides_json is None:
-            category_overrides_json = self.get_plugin(plugin_id).category_overrides_json
+            assert current is not None
+            category_overrides_json = current.category_overrides_json
+        if source_type is None:
+            assert current is not None
+            source_type = current.source_type
+        if source_value is None:
+            assert current is not None
+            source_value = current.source_value
+        if manifest_id is None:
+            assert current is not None
+            manifest_id = current.manifest_id
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE spider_plugins
-                SET display_name = ?, enabled = ?, cached_file_path = ?,
+                SET source_type = ?, source_value = ?, display_name = ?, enabled = ?, cached_file_path = ?,
                     last_loaded_at = ?, last_error = ?, config_text = ?, plugin_version = ?,
-                    category_overrides_json = ?
+                    category_overrides_json = ?, manifest_id = ?
                 WHERE id = ?
                 """,
                 (
+                    source_type,
+                    source_value,
                     display_name,
                     int(enabled),
                     cached_file_path,
@@ -197,6 +224,7 @@ class SpiderPluginRepository:
                     config_text,
                     int(plugin_version),
                     category_overrides_json,
+                    manifest_id,
                     plugin_id,
                 ),
             )
@@ -235,11 +263,34 @@ class SpiderPluginRepository:
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
                        cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
-                       category_overrides_json
+                       category_overrides_json, manifest_id
                 FROM spider_plugins
                 WHERE source_value = ?
                 """,
                 (source_value,),
+            ).fetchone()
+        if row is None:
+            return None
+        values = list(row)
+        values[4] = bool(values[4])
+        values[10] = int(values[10])
+        return SpiderPluginConfig(*values)
+
+    def find_plugin_by_manifest_id(self, manifest_id: str) -> SpiderPluginConfig | None:
+        if not manifest_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, source_type, source_value, display_name, enabled, sort_order,
+                       cached_file_path, last_loaded_at, last_error, config_text, plugin_version,
+                       category_overrides_json, manifest_id
+                FROM spider_plugins
+                WHERE manifest_id = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (manifest_id,),
             ).fetchone()
         if row is None:
             return None

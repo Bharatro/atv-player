@@ -96,6 +96,27 @@ def _parse_manifest_plugin_version(entry: object) -> int | None:
     return value
 
 
+def _parse_manifest_plugin_id(entry: object) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("id") or "").strip()
+
+
+def _parse_plugin_source_metadata(source_text: str) -> tuple[str, int]:
+    plugin_id = ""
+    plugin_version = 1
+    for raw_line in source_text.splitlines()[:16]:
+        line = raw_line.strip()
+        id_match = re.match(r"^//\s*@id\s*:\s*(.+?)\s*$", line)
+        if id_match is not None:
+            plugin_id = id_match.group(1).strip()
+            continue
+        version_match = re.match(r"^//\s*@version\s*:\s*(\d+)\s*$", line)
+        if version_match is not None:
+            plugin_version = max(1, int(version_match.group(1)))
+    return plugin_id, plugin_version
+
+
 def _raw_github_url(owner: str, repo: str, branch: str, relative_path: str) -> str:
     encoded_parts = [quote(part) for part in PurePosixPath(relative_path).parts]
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{'/'.join(encoded_parts)}"
@@ -152,13 +173,71 @@ class SpiderPluginManager:
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
 
+    def _upsert_single_plugin(
+        self,
+        source_type: str,
+        source_value: str,
+        display_name: str,
+        *,
+        manifest_id: str = "",
+        plugin_version: int = 1,
+    ) -> SpiderPluginConfig:
+        existing = self._repository.find_plugin_by_manifest_id(manifest_id)
+        if existing is None:
+            return self._repository.add_plugin(
+                source_type,
+                source_value,
+                display_name,
+                plugin_version=plugin_version,
+                manifest_id=manifest_id,
+            )
+        self._repository.update_plugin(
+            existing.id,
+            source_type=source_type,
+            source_value=source_value,
+            display_name=existing.display_name,
+            enabled=existing.enabled,
+            cached_file_path=existing.cached_file_path,
+            last_loaded_at=existing.last_loaded_at,
+            last_error=existing.last_error,
+            config_text=existing.config_text,
+            plugin_version=plugin_version,
+            category_overrides_json=existing.category_overrides_json,
+            manifest_id=manifest_id,
+        )
+        return self._repository.get_plugin(existing.id)
+
     def add_local_plugin(self, path: str) -> None:
-        plugin = self._repository.add_plugin("local", path, Path(path).stem)
+        manifest_id = ""
+        plugin_version = 1
+        if Path(path).suffix.lower() == ".txt":
+            manifest_id, plugin_version = _parse_plugin_source_metadata(Path(path).read_text(encoding="utf-8"))
+        plugin = self._upsert_single_plugin(
+            "local",
+            path,
+            Path(path).stem,
+            manifest_id=manifest_id,
+            plugin_version=plugin_version,
+        )
         self.refresh_plugin(plugin.id)
 
     def add_remote_plugin(self, url: str) -> None:
         name = _default_plugin_name("remote", url)
-        plugin = self._repository.add_plugin("remote", url, name)
+        manifest_id = ""
+        plugin_version = 1
+        if Path(urlparse(url).path).suffix.lower() == ".txt":
+            try:
+                manifest_id, plugin_version = _parse_plugin_source_metadata(self._fetch_text(url))
+            except Exception:
+                manifest_id = ""
+                plugin_version = 1
+        plugin = self._upsert_single_plugin(
+            "remote",
+            url,
+            name,
+            manifest_id=manifest_id,
+            plugin_version=plugin_version,
+        )
         self.refresh_plugin(plugin.id)
 
     def rename_plugin(self, plugin_id: int, display_name: str) -> None:
@@ -482,6 +561,7 @@ class SpiderPluginManager:
             if plugin_version is None:
                 result.skipped_count += 1
                 continue
+            manifest_id = _parse_manifest_plugin_id(entry)
             try:
                 source_url = _resolve_manifest_entry_source_url(manifest_url, file_path)
                 if source_url is None:
@@ -489,7 +569,10 @@ class SpiderPluginManager:
                     continue
                 self._raise_if_import_cancelled(cancel_callback, result)
                 self._fetch_text(source_url)
-                existing = self._repository.find_plugin_by_source_value(source_url)
+                existing = self._repository.find_plugin_by_manifest_id(manifest_id)
+                matched_by_manifest_id = existing is not None
+                if existing is None:
+                    existing = self._repository.find_plugin_by_source_value(source_url)
                 if existing is None:
                     plugin = self._repository.add_plugin(
                         "remote",
@@ -497,24 +580,33 @@ class SpiderPluginManager:
                         _default_plugin_name("remote", source_url),
                         enabled=bool(entry.get("valid", True)),
                         plugin_version=plugin_version,
+                        manifest_id=manifest_id,
                     )
                     result.imported_count += 1
                     self._raise_if_import_cancelled(cancel_callback, result)
                     self.refresh_plugin(plugin.id)
                     continue
-                if existing.plugin_version == plugin_version:
+                if (
+                    not matched_by_manifest_id
+                    and existing.plugin_version == plugin_version
+                    and existing.source_value == source_url
+                    and existing.manifest_id == manifest_id
+                ):
                     result.skipped_count += 1
                     continue
                 self._repository.update_plugin(
                     existing.id,
                     display_name=existing.display_name,
-                    enabled=existing.enabled,
+                    enabled=bool(entry.get("valid", True)) if matched_by_manifest_id else existing.enabled,
                     cached_file_path=existing.cached_file_path,
                     last_loaded_at=existing.last_loaded_at,
                     last_error=existing.last_error,
                     config_text=existing.config_text,
                     plugin_version=plugin_version,
                     category_overrides_json=existing.category_overrides_json,
+                    source_type="remote",
+                    source_value=source_url,
+                    manifest_id=manifest_id,
                 )
                 result.updated_count += 1
                 self._raise_if_import_cancelled(cancel_callback, result)
