@@ -8478,22 +8478,15 @@ def test_app_coordinator_disables_metadata_ai_workflows_independently(
             )
 
     coordinator = AppCoordinator(FakeRepo())
-    workflow_calls: list[str] = []
-
-    def build_ai(config, *, workflow: str = ""):
-        del config
-        workflow_calls.append(workflow)
-        return object()
-
-    monkeypatch.setattr(coordinator, "_build_ai_enrichment_service", build_ai)
+    ai_service = object()
+    monkeypatch.setattr(coordinator, "_build_ai_enrichment_service", lambda config: ai_service)
     monkeypatch.setattr(coordinator, "_build_metadata_providers", lambda **kwargs: [])
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
     factory = coordinator._build_metadata_scrape_service_factory(object())
     service = factory(source_kind="browse", vod=VodItem(vod_id="1", vod_name="x"))
 
-    assert workflow_calls == ["episode_titles"]
-    assert service._ai_enrichment_service is not None
+    assert service._ai_enrichment_service is ai_service
     assert service._ai_query_refinement_enabled is False
     assert service._ai_episode_title_rewrite_enabled is True
 

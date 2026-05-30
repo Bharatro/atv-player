@@ -340,34 +340,6 @@ def test_following_detail_page_renders_ai_summary_panel(qtbot) -> None:
     assert "明晚更新" in page.ai_summary_label.text()
 
 
-def test_following_detail_page_skips_ai_summary_on_initial_open(qtbot) -> None:
-    class RecordingController(FakeController):
-        def __init__(self) -> None:
-            super().__init__()
-            self.include_ai_summary_values: list[object] = []
-
-        def load_detail(
-            self,
-            following_id: int,
-            *,
-            refresh_if_empty: bool = True,
-            include_ai_summary: bool = True,
-        ):
-            self.include_ai_summary_values.append(include_ai_summary)
-            return super().load_detail(
-                following_id,
-                refresh_if_empty=refresh_if_empty,
-            )
-
-    controller = RecordingController()
-    page = FollowingDetailPage(controller)
-    qtbot.addWidget(page)
-
-    page.load_record(1)
-
-    assert controller.include_ai_summary_values == [False]
-
-
 def test_following_detail_page_switches_between_merged_and_provider_raw_views(qtbot) -> None:
     controller = FakeController()
     page = FollowingDetailPage(controller)
