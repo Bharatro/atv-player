@@ -781,6 +781,14 @@ class MpvWidget(QWidget):
                 return default
         return default
 
+    def _seconds_property_value(self, value: object | None) -> int:
+        if isinstance(value, bool) or value is None:
+            return 0
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
     def _scale_property_percent(self, value: object | None, default: int) -> int:
         if isinstance(value, bool):
             return int(round(float(value) * 100))
@@ -1162,8 +1170,11 @@ class MpvWidget(QWidget):
             return int(self._run_on_widget_thread(self.duration_seconds) or 0)
         if self._player is None:
             return 0
+        duration = self._seconds_property_value(self._player_property("duration", None))
+        if duration > 0:
+            return duration
         try:
-            return int(self._player.duration or 0)
+            return self._seconds_property_value(getattr(self._player, "duration", 0))
         except Exception:
             return 0
 

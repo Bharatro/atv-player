@@ -1718,6 +1718,24 @@ def test_mpv_widget_applies_repeated_property_sets_on_windows_via_direct_assignm
     assert player.mute_history == [True, True]
 
 
+def test_mpv_widget_duration_prefers_live_mpv_property_when_attribute_is_zero(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    class FakePlayer:
+        duration = 0
+
+        def __getitem__(self, key: str) -> object:
+            if key == "duration":
+                return 3672.8
+            raise KeyError(key)
+
+    widget._player = FakePlayer()
+
+    assert widget.duration_seconds() == 3672
+
+
 def test_mpv_widget_applies_startup_properties_on_windows_like_other_platforms(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
