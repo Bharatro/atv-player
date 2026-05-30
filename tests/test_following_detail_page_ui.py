@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QLabel
 
 from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.following_models import (
+    FollowingAISummary,
     FollowingDetailSnapshot,
     FollowingEpisode,
     FollowingEpisodeState,
@@ -309,6 +310,62 @@ def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_p
     assert "腾讯" in platform_html
     assert "更新至第128集" in platform_html
     assert platform_html.index("爱奇艺") < platform_html.index("腾讯")
+
+
+def test_following_detail_page_renders_ai_summary_panel(qtbot) -> None:
+    class AISummaryController(FakeController):
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=FollowingRecord(id=following_id, title="黑镜"),
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    ai_summary=FollowingAISummary(
+                        summary="AI 摘要",
+                        highlights=["看点一", "看点二"],
+                        next_hint="明晚更新",
+                    ),
+                ),
+            )
+
+    page = FollowingDetailPage(AISummaryController())
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load_record(1)
+
+    assert page.ai_summary_panel.isVisible()
+    assert "AI 摘要" in page.ai_summary_label.text()
+    assert "看点一" in page.ai_summary_label.text()
+    assert "明晚更新" in page.ai_summary_label.text()
+
+
+def test_following_detail_page_skips_ai_summary_on_initial_open(qtbot) -> None:
+    class RecordingController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.include_ai_summary_values: list[object] = []
+
+        def load_detail(
+            self,
+            following_id: int,
+            *,
+            refresh_if_empty: bool = True,
+            include_ai_summary: bool = True,
+        ):
+            self.include_ai_summary_values.append(include_ai_summary)
+            return super().load_detail(
+                following_id,
+                refresh_if_empty=refresh_if_empty,
+            )
+
+    controller = RecordingController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert controller.include_ai_summary_values == [False]
 
 
 def test_following_detail_page_switches_between_merged_and_provider_raw_views(qtbot) -> None:
