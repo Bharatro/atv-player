@@ -2264,6 +2264,38 @@ def test_player_window_metadata_scrape_apply_refreshes_playlist_titles_from_sele
     assert service.build_episode_title_playlist_calls == [("米小圈上学记4", "tencent")]
 
 
+def test_player_window_metadata_scrape_apply_rebuilds_playlist_titles_off_ui_thread(qtbot) -> None:
+    class ThreadRecordingMetadataScrapeService(FakeMetadataScrapeService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_threads: list[threading.Thread] = []
+
+        def build_episode_title_playlist(self, vod: VodItem, playlist: list[PlayItem], *, preferred_candidate=None):
+            self.build_threads.append(threading.current_thread())
+            return super().build_episode_title_playlist(vod, playlist, preferred_candidate=preferred_candidate)
+
+    service = ThreadRecordingMetadataScrapeService()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="米小圈上学记4", vod_year="2026", vod_content="原始简介"),
+        playlist=[PlayItem(title="01.mp4", original_title="01.mp4", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: bool(service.build_threads), timeout=1000)
+    assert service.build_threads[0] is not threading.main_thread()
+
+
 def test_player_window_metadata_scrape_apply_passes_selected_category_override_to_episode_title_rewrite(qtbot) -> None:
     class RecordingMetadataScrapeService(FakeMetadataScrapeService):
         def __init__(self) -> None:

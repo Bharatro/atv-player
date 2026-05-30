@@ -486,7 +486,7 @@ class _MetadataHydrationSignals(QObject):
 
 class _MetadataScrapeSignals(QObject):
     search_succeeded = Signal(int, object)
-    apply_succeeded = Signal(int, object, object)
+    apply_succeeded = Signal(int, object)
     failed = Signal(int, str)
 
 
@@ -525,6 +525,17 @@ class AudioPreference:
     lang: str = ""
     is_default: bool = False
     is_forced: bool = False
+
+
+@dataclass(slots=True)
+class _MetadataScrapeApplyResult:
+    updated_vod: VodItem
+    candidate: object
+    previous_vod: VodItem
+    updated_playlist: list[PlayItem] | None = None
+    binding_key: tuple[str, str] | None = None
+    episode_title_error: str = ""
+    binding_error: str = ""
 
 
 @dataclass(slots=True)
@@ -7967,17 +7978,82 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_request_id += 1
         request_id = self._metadata_scrape_request_id
         service = self.session.metadata_scrape_service
-        current_vod = self.session.vod
+        previous_vod = self.session.vod
+        playlist_snapshot = list(self.session.playlist)
+        selected_category = self._metadata_scrape_selected_category_name()
+        bindings = self.session.metadata_binding_repository
+        binding_key = None
+        if bindings is not None and hasattr(bindings, "save"):
+            binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
+            binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
+            season_binding_title, season_binding_year = self._bilibili_season_binding_key()
+            save_title = season_binding_title or binding_title
+            save_year = season_binding_year if season_binding_title else binding_year
+            binding_key = (save_title, save_year)
 
         def run() -> None:
             try:
-                updated_vod = service.apply(current_vod, candidate)
+                updated_vod = service.apply(previous_vod, candidate)
+                if selected_category:
+                    updated_vod = replace(updated_vod, category_name=selected_category)
             except Exception as exc:
                 if self._is_window_alive():
                     self._metadata_scrape_signals.failed.emit(request_id, f"刮削应用失败: {exc}")
                 return
+            updated_playlist = None
+            episode_title_error = ""
+            build_playlist = getattr(service, "build_episode_title_playlist", None)
+            if callable(build_playlist):
+                try:
+                    logger.info(
+                        "Metadata scrape apply rebuilding episode titles title=%s year=%s category=%s preferred_provider=%s preferred_id=%s",
+                        str(updated_vod.vod_name or "").strip(),
+                        str(updated_vod.vod_year or "").strip(),
+                        str(updated_vod.category_name or "").strip(),
+                        str(getattr(candidate, "provider", "") or "").strip(),
+                        str(getattr(candidate, "provider_id", "") or "").strip(),
+                        extra={"log_category": "metadata", "log_source": "app"},
+                    )
+                    updated_playlist = build_playlist(updated_vod, playlist_snapshot, preferred_candidate=candidate)
+                except Exception as exc:
+                    episode_title_error = str(exc)
+            binding_error = ""
+            if binding_key is not None and bindings is not None and hasattr(bindings, "save"):
+                save_title, save_year = binding_key
+                try:
+                    logger.info(
+                        "Metadata scrape apply saving binding query_title=%s query_year=%s provider=%s provider_id=%s matched_title=%s matched_year=%s",
+                        save_title,
+                        save_year,
+                        str(getattr(candidate, "provider", "") or "").strip(),
+                        str(getattr(candidate, "provider_id", "") or "").strip(),
+                        str(getattr(candidate, "title", "") or "").strip(),
+                        str(getattr(candidate, "year", "") or "").strip(),
+                        extra={"log_category": "metadata", "log_source": "app"},
+                    )
+                    bindings.save(
+                        save_title,
+                        save_year,
+                        provider=getattr(candidate, "provider", ""),
+                        provider_id=getattr(candidate, "provider_id", ""),
+                        matched_title=getattr(candidate, "title", ""),
+                        matched_year=getattr(candidate, "year", ""),
+                    )
+                except Exception as exc:
+                    binding_error = str(exc)
             if self._is_window_alive():
-                self._metadata_scrape_signals.apply_succeeded.emit(request_id, updated_vod, candidate)
+                self._metadata_scrape_signals.apply_succeeded.emit(
+                    request_id,
+                    _MetadataScrapeApplyResult(
+                        updated_vod=updated_vod,
+                        candidate=candidate,
+                        previous_vod=previous_vod,
+                        updated_playlist=updated_playlist,
+                        binding_key=binding_key,
+                        episode_title_error=episode_title_error,
+                        binding_error=binding_error,
+                    ),
+                )
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -7990,66 +8066,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._metadata_scrape_status_label is not None:
             self._metadata_scrape_status_label.setText("")
 
-    def _handle_metadata_scrape_apply_succeeded(self, request_id: int, updated_vod: VodItem, candidate) -> None:
+    def _handle_metadata_scrape_apply_succeeded(self, request_id: int, result: _MetadataScrapeApplyResult) -> None:
         if request_id != self._metadata_scrape_request_id or self.session is None:
             return
         self._metadata_request_id += 1
         self._pending_metadata_session = None
-        previous_vod = self.session.vod
-        selected_category = self._metadata_scrape_selected_category_name()
-        if selected_category:
-            updated_vod = replace(updated_vod, category_name=selected_category)
+        candidate = result.candidate
+        previous_vod = result.previous_vod
+        updated_vod = result.updated_vod
         self.session.vod = updated_vod
         self._reset_metadata_poster_index()
         if 0 <= self.current_index < len(self.session.playlist):
             current_item = self.session.playlist[self.current_index]
             self._snapshot_item_detail_fields(current_item)
             current_item.detail_fields = list(updated_vod.detail_fields)
-        updated_playlist = None
-        build_playlist = getattr(self.session.metadata_scrape_service, "build_episode_title_playlist", None)
-        if callable(build_playlist):
-            try:
-                logger.info(
-                    "Metadata scrape apply rebuilding episode titles title=%s year=%s category=%s preferred_provider=%s preferred_id=%s",
-                    str(updated_vod.vod_name or "").strip(),
-                    str(updated_vod.vod_year or "").strip(),
-                    str(updated_vod.category_name or "").strip(),
-                    str(getattr(candidate, "provider", "") or "").strip(),
-                    str(getattr(candidate, "provider_id", "") or "").strip(),
-                    extra={"log_category": "metadata", "log_source": "app"},
-                )
-                updated_playlist = build_playlist(updated_vod, self.session.playlist, preferred_candidate=candidate)
-            except Exception as exc:
-                self._append_log(f"剧集标题增强失败: {exc}")
-        if updated_playlist is not None:
+        if result.episode_title_error:
+            self._append_log(f"剧集标题增强失败: {result.episode_title_error}")
+        if result.updated_playlist is not None:
             self._episode_title_request_id += 1
             self._pending_episode_title_session = self.session
-            self._handle_episode_title_enhancement_succeeded(self._episode_title_request_id, updated_playlist)
-        bindings = self.session.metadata_binding_repository
-        if bindings is not None and hasattr(bindings, "save"):
-            binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
-            binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
-            season_binding_title, season_binding_year = self._bilibili_season_binding_key()
-            save_title = season_binding_title or binding_title
-            save_year = season_binding_year if season_binding_title else binding_year
-            logger.info(
-                "Metadata scrape apply saving binding query_title=%s query_year=%s provider=%s provider_id=%s matched_title=%s matched_year=%s",
-                save_title,
-                save_year,
-                str(candidate.provider or "").strip(),
-                str(candidate.provider_id or "").strip(),
-                str(candidate.title or "").strip(),
-                str(candidate.year or "").strip(),
-                extra={"log_category": "metadata", "log_source": "app"},
-            )
-            bindings.save(
-                save_title,
-                save_year,
-                provider=candidate.provider,
-                provider_id=candidate.provider_id,
-                matched_title=candidate.title,
-                matched_year=candidate.year,
-            )
+            self._handle_episode_title_enhancement_succeeded(self._episode_title_request_id, result.updated_playlist)
+            if 0 <= self.current_index < len(self.session.playlist):
+                self.session.playlist[self.current_index].detail_fields = list(updated_vod.detail_fields)
+        if result.binding_error:
+            self._append_log(f"刮削绑定保存失败: {result.binding_error}")
+        if result.binding_key is not None and not result.binding_error:
+            save_title, save_year = result.binding_key
             self._metadata_scrape_binding_title = save_title
             self._metadata_scrape_binding_year = save_year
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
