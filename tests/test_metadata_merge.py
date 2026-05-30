@@ -8,7 +8,7 @@ from atv_player.metadata.models import MetadataRecord
 from atv_player.models import PlaybackDetailField, PlaybackDetailFieldAction, VodItem
 
 
-def test_merge_metadata_overrides_overview_with_douban_and_preserves_existing_title() -> None:
+def test_merge_metadata_overrides_overview_and_title_with_douban() -> None:
     vod = VodItem(vod_id="v1", vod_name="插件标题", vod_content="插件简介", vod_pic="poster.jpg")
     record = MetadataRecord(
         provider="douban",
@@ -21,7 +21,7 @@ def test_merge_metadata_overrides_overview_with_douban_and_preserves_existing_ti
 
     merge_metadata_record(vod, record, provider_priority=["douban"])
 
-    assert vod.vod_name == "插件标题"
+    assert vod.vod_name == "豆瓣标题"
     assert vod.vod_content == "豆瓣简介"
     assert vod.vod_remarks == "8.1"
     assert vod.dbid == 35746415
@@ -546,13 +546,13 @@ def test_merge_metadata_iqiyi_overrides_low_quality_title_with_record_title() ->
     assert vod.vod_name == "国色芳华"
 
 
-def test_merge_metadata_iqiyi_preserves_clean_existing_title() -> None:
+def test_merge_metadata_iqiyi_overrides_clean_existing_title() -> None:
     vod = VodItem(vod_id="v1", vod_name="国色芳花")
     record = MetadataRecord(provider="iqiyi", provider_id="iqiyi:1", title="国色芳华")
 
     merge_metadata_record(vod, record, provider_priority=["iqiyi"])
 
-    assert vod.vod_name == "国色芳花"
+    assert vod.vod_name == "国色芳华"
 
 
 def test_merge_metadata_iqiyi_overrides_drive_folder_style_title_with_record_title() -> None:
@@ -571,6 +571,34 @@ def test_merge_metadata_tmdb_overrides_decorated_title_with_record_title() -> No
     merge_metadata_record(vod, record, provider_priority=["tmdb"])
 
     assert vod.vod_name == "大道独行"
+
+
+def test_merge_metadata_prefers_official_platform_title_over_tmdb_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="成何体统剧版")
+    tmdb = MetadataRecord(provider="tmdb", provider_id="tv:1", title="成何体统剧版")
+    tencent = MetadataRecord(provider="tencent", provider_id="tx:1", title="成何体统")
+
+    merge_metadata_record(vod, tmdb, provider_priority=["tencent", "tmdb"])
+    merge_metadata_record(vod, tencent, provider_priority=["tencent", "tmdb"])
+
+    assert vod.vod_name == "成何体统"
+    assert vod.metadata_field_sources["title"] == "tencent"
+
+
+def test_merge_metadata_prefers_tmdb_title_over_douban_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="原始标题")
+    tmdb = MetadataRecord(provider="tmdb", provider_id="tv:1", title="TMDB标题")
+    douban = MetadataRecord(
+        provider="official_douban",
+        provider_id="35746415",
+        title="豆瓣标题",
+    )
+
+    merge_metadata_record(vod, douban, provider_priority=["tmdb", "official_douban"])
+    merge_metadata_record(vod, tmdb, provider_priority=["tmdb", "official_douban"])
+
+    assert vod.vod_name == "TMDB标题"
+    assert vod.metadata_field_sources["title"] == "tmdb"
 
 
 def test_replace_metadata_record_strips_html_tags_from_detail_fields() -> None:

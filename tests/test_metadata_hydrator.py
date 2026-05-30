@@ -1181,6 +1181,45 @@ def test_metadata_hydrator_uses_primary_match_kind_when_primary_record_lacks_gen
     assert bangumi.get_detail_calls == []
 
 
+def test_metadata_hydrator_prefers_later_platform_title_over_tmdb_title(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    tmdb = FakeProvider(
+        "tmdb",
+        matches=[
+            MetadataMatch(
+                provider="tmdb",
+                provider_id="tv:1",
+                title="成何体统剧版",
+                score=1.0,
+            )
+        ],
+        record=MetadataRecord(provider="tmdb", provider_id="tv:1", title="成何体统剧版"),
+    )
+    tencent = FakeProvider(
+        "tencent",
+        matches=[
+            MetadataMatch(
+                provider="tencent",
+                provider_id="tx:1",
+                title="成何体统",
+                score=1.0,
+            )
+        ],
+        record=MetadataRecord(provider="tencent", provider_id="tx:1", title="成何体统"),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[tmdb, tencent])
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="成何体统剧版"),
+            source_kind="browse",
+        )
+    )
+
+    assert updated.vod_name == "成何体统"
+    assert updated.metadata_field_sources["title"] == "tencent"
+
+
 def test_metadata_hydrator_caches_empty_search_results_and_skips_repeat_search(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider("local_douban", matches=[])

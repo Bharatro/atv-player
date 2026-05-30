@@ -59,6 +59,18 @@ _LOW_VALUE_PROVIDER_GENRES = {
 }
 
 _TITLE_CORRECTION_PROVIDERS = {"local_douban", "remote_douban", "sohu"}
+_TITLE_PROVIDER_PRIORITY = {
+    "tencent": 0,
+    "iqiyi": 0,
+    "youku": 0,
+    "sohu": 0,
+    "bilibili": 0,
+    "tmdb": 10,
+    "official_douban": 20,
+    "local_douban": 20,
+    "remote_douban": 20,
+    "douban": 20,
+}
 _TITLE_NOISE_PATTERN = re.compile(
     r"(?:\bS\d+E\d+\b|第\s*\d+\s*[集话]|\b(?:WEB[-_. ]?\d+|2160p|1080p|4K|HDR|简繁字幕|外挂|内嵌|高码率)\b|@\w+@)",
     re.IGNORECASE,
@@ -157,6 +169,16 @@ def _can_override_overview(vod: VodItem, record: MetadataRecord) -> bool:
     if not current:
         return True
     return _overview_rank(record.provider, record.provider_id) <= _overview_rank(current)
+
+
+def _can_override_title(vod: VodItem, provider: str) -> bool:
+    current = vod.metadata_field_sources.get("title", "")
+    if not current:
+        return provider in _TITLE_PROVIDER_PRIORITY
+    fallback_rank = len(_TITLE_PROVIDER_PRIORITY) + 100
+    current_rank = _TITLE_PROVIDER_PRIORITY.get(current, fallback_rank)
+    provider_rank = _TITLE_PROVIDER_PRIORITY.get(provider, fallback_rank)
+    return provider_rank <= current_rank
 
 
 def _set_field_source(vod: VodItem, field_name: str, provider: str) -> None:
@@ -475,8 +497,18 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
     if record.title:
         if not vod.vod_name:
             vod.vod_name = record.title
-        elif record.provider in _TITLE_CORRECTION_PROVIDERS or _is_low_quality_title(vod.vod_name):
-            vod.vod_name = choose_preferred_title(vod.vod_name, record.title)
+            _set_field_source(vod, "title", record.provider)
+        elif _can_override_title(vod, record.provider):
+            vod.vod_name = record.title
+            _set_field_source(vod, "title", record.provider)
+        elif (
+            record.provider in _TITLE_CORRECTION_PROVIDERS
+            or _is_low_quality_title(vod.vod_name)
+        ):
+            preferred_title = choose_preferred_title(vod.vod_name, record.title)
+            if preferred_title != vod.vod_name:
+                vod.vod_name = preferred_title
+                _set_field_source(vod, "title", record.provider)
     poster = _normalize_poster_source(record.poster)
     if poster:
         if not vod.vod_pic or _can_override(vod, "poster", record.provider):
@@ -566,6 +598,10 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
 def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
     if not vod.vod_name and record.title:
         vod.vod_name = record.title
+        _set_field_source(vod, "title", record.provider)
+    elif record.title and _can_override_title(vod, record.provider):
+        vod.vod_name = record.title
+        _set_field_source(vod, "title", record.provider)
     if not vod.vod_pic and record.poster:
         _sync_poster_candidates(vod, primary=record.poster)
         _set_field_source(vod, "poster", record.provider)
@@ -649,6 +685,7 @@ def replace_metadata_record(vod: VodItem, record: MetadataRecord) -> VodItem:
     vod.detail_fields = [field for item in detail_fields if (field := _build_detail_field(record, item)) is not None]
 
     for field_name in (
+        "title",
         "poster",
         "year",
         "genres",
