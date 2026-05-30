@@ -232,6 +232,55 @@ def test_local_douban_client_parses_subject_detail_html() -> None:
     }
 
 
+def test_local_douban_client_parses_subject_recommendations() -> None:
+    html = """
+    <html>
+      <body>
+        <div id="recommendations">
+          <div class="recommendations-bd">
+            <dl>
+              <dt>
+                <a href="https://movie.douban.com/subject/37090537/">
+                  <img src="https://img.example/凡人.jpg" />
+                </a>
+              </dt>
+              <dd>
+                <a href="https://movie.douban.com/subject/37090537/">凡人修仙传</a>
+              </dd>
+            </dl>
+            <dl>
+              <dt>
+                <a href="/subject/35801576/?from=subject-page">
+                  <img src="https://img.example/仙逆.jpg" />
+                </a>
+              </dt>
+              <dd>
+                <a href="/subject/35801576/?from=subject-page">仙逆</a>
+              </dd>
+            </dl>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    client = LocalDoubanClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=html)),
+    )
+
+    assert client.get_recommendations("35746415") == [
+        {
+            "id": "37090537",
+            "title": "凡人修仙传",
+            "poster": "https://img.example/凡人.jpg",
+        },
+        {
+            "id": "35801576",
+            "title": "仙逆",
+            "poster": "https://img.example/仙逆.jpg",
+        },
+    ]
+
+
 def test_local_douban_client_parses_douban_playbtn_vendor_entries() -> None:
     html = """
     <html>

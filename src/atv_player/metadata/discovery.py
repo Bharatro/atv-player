@@ -67,9 +67,10 @@ class TMDBDiscoveryService:
     _RELATED_CACHE_TTL_SECONDS = 60 * 60 * 6
     _RECOMMENDATION_MAX_WORKERS = 8
 
-    def __init__(self, *, client, cache: MetadataCache) -> None:
+    def __init__(self, *, client, cache: MetadataCache, douban_client=None) -> None:
         self._client = client
         self._cache = cache
+        self._douban_client = douban_client
 
     def trending(self, query: DiscoveryQuery) -> DiscoveryResult:
         window, source_label = self._trending_window_and_label(query.list_key)
@@ -169,10 +170,21 @@ class TMDBDiscoveryService:
         *,
         media_type: str,
         tmdb_id: str | int,
+        douban_id: str | int = "",
+        prefer_douban: bool = False,
         excluded_provider_ids: set[str] | None = None,
     ) -> DiscoveryResult:
         normalized_media_type = "movie" if str(media_type or "").strip() == "movie" else "tv"
         normalized_tmdb_id = str(tmdb_id or "").strip()
+        normalized_douban_id = str(douban_id or "").strip()
+        excluded = self._normalized_excluded_provider_ids(excluded_provider_ids)
+        if prefer_douban and normalized_douban_id and self._douban_client is not None:
+            douban_result = self._related_from_douban(
+                normalized_douban_id,
+                excluded_provider_ids=excluded,
+            )
+            if douban_result.items:
+                return douban_result
         if not normalized_tmdb_id:
             return DiscoveryResult(items=[], total=0, source_label="关联推荐")
         cache_key = self._cache_key(
@@ -199,13 +211,68 @@ class TMDBDiscoveryService:
             ]
             cached = DiscoveryResult(items=items, total=len(items), source_label="关联推荐")
             self._save_cached_result(self._RELATED_CACHE_NAMESPACE, cache_key, cached)
-        excluded = {
+        items = [item for item in list(cached.items or []) if item.provider_id not in excluded]
+        return DiscoveryResult(items=items, total=len(items), source_label=cached.source_label)
+
+    def _related_from_douban(
+        self,
+        douban_id: str,
+        *,
+        excluded_provider_ids: set[str],
+    ) -> DiscoveryResult:
+        cache_key = self._cache_key(
+            {
+                "kind": "related_douban",
+                "douban_id": douban_id,
+            }
+        )
+        cached = self._load_cached_result(
+            self._RELATED_CACHE_NAMESPACE,
+            cache_key,
+            ttl_seconds=self._RELATED_CACHE_TTL_SECONDS,
+            empty_ttl_seconds=60 * 10,
+        )
+        if cached is None:
+            try:
+                items = [
+                    self._map_douban_item(raw, seed_douban_id=douban_id)
+                    for raw in self._douban_client.get_recommendations(douban_id)
+                ]
+            except Exception:
+                items = []
+            cached = DiscoveryResult(
+                items=[item for item in items if item.provider_id],
+                total=len(items),
+                source_label="豆瓣官方关联推荐",
+            )
+            self._save_cached_result(self._RELATED_CACHE_NAMESPACE, cache_key, cached)
+        items = [item for item in list(cached.items or []) if item.provider_id not in excluded_provider_ids]
+        return DiscoveryResult(items=items, total=len(items), source_label=cached.source_label)
+
+    def _map_douban_item(self, raw: dict[str, object], *, seed_douban_id: str) -> DiscoveryItem:
+        del seed_douban_id
+        provider_id = str(raw.get("id") or raw.get("douban_id") or "").strip()
+        return DiscoveryItem(
+            provider="official_douban",
+            provider_id=provider_id,
+            tmdb_id="",
+            media_type="",
+            title=str(raw.get("title") or raw.get("name") or "").strip(),
+            year=str(raw.get("year") or "").strip(),
+            poster=str(raw.get("poster") or raw.get("cover") or raw.get("img") or "").strip(),
+            backdrop="",
+            rating=str(raw.get("rating") or raw.get("dbScore") or "").strip(),
+            overview=str(raw.get("overview") or raw.get("description") or "").strip(),
+            source_label="豆瓣官方关联推荐",
+        )
+
+    @staticmethod
+    def _normalized_excluded_provider_ids(excluded_provider_ids: set[str] | None) -> set[str]:
+        return {
             str(provider_id or "").strip()
             for provider_id in set(excluded_provider_ids or set())
             if str(provider_id or "").strip()
         }
-        items = [item for item in list(cached.items or []) if item.provider_id not in excluded]
-        return DiscoveryResult(items=items, total=len(items), source_label=cached.source_label)
 
     @staticmethod
     def _recommendation_seed_payload(seed: RecommendationSeed) -> dict[str, object]:

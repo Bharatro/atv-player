@@ -46,6 +46,19 @@ class StubTMDBClient:
         return list(self._recommendations.get((str(media_type), str(tmdb_id)), []))
 
 
+class StubDoubanClient:
+    def __init__(self, *, recommendations=None, error: Exception | None = None) -> None:
+        self._recommendations = dict(recommendations or {})
+        self.error = error
+        self.recommendation_calls = 0
+
+    def get_recommendations(self, douban_id: str | int) -> list[dict[str, object]]:
+        self.recommendation_calls += 1
+        if self.error is not None:
+            raise self.error
+        return list(self._recommendations.get(str(douban_id), []))
+
+
 def test_tmdb_discovery_service_maps_trending_items_to_shared_cards(tmp_path: Path) -> None:
     client = StubTMDBClient(
         trending=[
@@ -398,3 +411,95 @@ def test_tmdb_discovery_service_caches_related_recommendations_before_filtering(
     assert [item.provider_id for item in first.items] == ["movie:400"]
     assert [item.provider_id for item in second.items] == ["movie:300"]
     assert client.recommendation_calls == 1
+
+
+def test_tmdb_discovery_service_prefers_official_douban_related_recommendations(tmp_path: Path) -> None:
+    tmdb_client = StubTMDBClient(
+        recommendations={
+            ("tv", "76479"): [
+                {"id": 100, "name": "TMDB 推荐", "vote_average": 7.8},
+            ]
+        }
+    )
+    douban_client = StubDoubanClient(
+        recommendations={
+            "35746415": [
+                {"id": "37090537", "title": "凡人修仙传", "poster": "https://img.example/fanren.jpg"},
+            ]
+        }
+    )
+    service = TMDBDiscoveryService(
+        client=tmdb_client,
+        cache=MetadataCache(tmp_path),
+        douban_client=douban_client,
+    )
+
+    result = service.related(
+        media_type="tv",
+        tmdb_id="76479",
+        douban_id="35746415",
+        prefer_douban=True,
+    )
+
+    assert result.source_label == "豆瓣官方关联推荐"
+    assert [item.provider_id for item in result.items] == ["37090537"]
+    assert result.items[0].provider == "official_douban"
+    assert result.items[0].title == "凡人修仙传"
+    assert result.items[0].poster == "https://img.example/fanren.jpg"
+    assert douban_client.recommendation_calls == 1
+    assert tmdb_client.recommendation_calls == 0
+
+
+def test_tmdb_discovery_service_loads_official_douban_related_without_tmdb_identity(tmp_path: Path) -> None:
+    tmdb_client = StubTMDBClient()
+    douban_client = StubDoubanClient(
+        recommendations={
+            "30267287": [
+                {"id": "37090537", "title": "凡人修仙传"},
+            ]
+        }
+    )
+    service = TMDBDiscoveryService(
+        client=tmdb_client,
+        cache=MetadataCache(tmp_path),
+        douban_client=douban_client,
+    )
+
+    result = service.related(
+        media_type="tv",
+        tmdb_id="",
+        douban_id="30267287",
+        prefer_douban=True,
+    )
+
+    assert result.source_label == "豆瓣官方关联推荐"
+    assert [item.provider_id for item in result.items] == ["37090537"]
+    assert tmdb_client.recommendation_calls == 0
+
+
+def test_tmdb_discovery_service_falls_back_to_tmdb_when_official_douban_related_is_empty(tmp_path: Path) -> None:
+    tmdb_client = StubTMDBClient(
+        recommendations={
+            ("movie", "157336"): [
+                {"id": 300, "title": "Interstellar 2", "vote_average": 8.0},
+            ]
+        }
+    )
+    douban_client = StubDoubanClient(recommendations={"1889243": []})
+    service = TMDBDiscoveryService(
+        client=tmdb_client,
+        cache=MetadataCache(tmp_path),
+        douban_client=douban_client,
+    )
+
+    result = service.related(
+        media_type="movie",
+        tmdb_id="157336",
+        douban_id="1889243",
+        prefer_douban=True,
+    )
+
+    assert result.source_label == "关联推荐"
+    assert [item.provider_id for item in result.items] == ["movie:300"]
+    assert douban_client.recommendation_calls == 1
+    assert tmdb_client.recommendation_calls == 1

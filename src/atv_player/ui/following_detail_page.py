@@ -740,7 +740,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         related_section_layout = QVBoxLayout(self.related_recommendation_section)
         related_section_layout.setContentsMargins(14, 14, 14, 14)
         related_section_layout.setSpacing(10)
-        related_section_layout.addWidget(QLabel("TMDB 关联推荐", self.related_recommendation_section))
+        related_section_layout.addWidget(QLabel("关联媒体推荐", self.related_recommendation_section))
         related_section_layout.addWidget(self.related_recommendation_status_label)
         related_section_layout.addWidget(self.related_recommendation_scroll)
 

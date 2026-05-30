@@ -2030,6 +2030,145 @@ def test_following_controller_loads_related_recommendations_from_tmdb_source_sna
             "excluded_provider_ids": {"movie:157336"},
         }
     ]
+
+
+def test_following_controller_prefers_douban_related_for_domestic_anime(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:30983",
+            external_ids={"tmdb": "30983", "douban": "30267287"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            metadata_fields=[
+                {"label": "类型", "value": "动画 / 奇幻"},
+                {"label": "地区", "value": "中国大陆"},
+            ],
+        ),
+    )
+
+    class Service:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def related(self, **kwargs):
+            self.calls.append(kwargs)
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+
+    service = Service()
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), discovery_service=service)
+
+    controller.load_related_recommendations(record_id)
+
+    assert service.calls == [
+        {
+            "media_type": "tv",
+            "tmdb_id": "30983",
+            "douban_id": "30267287",
+            "prefer_douban": True,
+            "excluded_provider_ids": {"tv:30983"},
+        }
+    ]
+
+
+def test_following_controller_keeps_tmdb_related_for_non_domestic_movie(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="星际穿越",
+            media_kind="movie",
+            provider="tmdb",
+            provider_id="movie:157336",
+            external_ids={"tmdb": "157336", "douban": "1889243"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            metadata_fields=[
+                {"label": "类型", "value": "剧情 / 科幻"},
+                {"label": "地区", "value": "美国 / 英国"},
+            ],
+        ),
+    )
+
+    class Service:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def related(self, **kwargs):
+            self.calls.append(kwargs)
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+
+    service = Service()
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), discovery_service=service)
+
+    controller.load_related_recommendations(record_id)
+
+    assert service.calls == [
+        {
+            "media_type": "movie",
+            "tmdb_id": "157336",
+            "excluded_provider_ids": {"movie:157336"},
+        }
+    ]
+
+
+def test_following_controller_loads_douban_related_when_domestic_record_has_no_tmdb_id(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="国宝里的中国故事",
+            media_kind="documentary",
+            provider="official_douban",
+            provider_id="35746415",
+            external_ids={"douban": "35746415"},
+        )
+    )
+    repo.save_detail_snapshot(
+        record_id,
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            metadata_fields=[
+                {"label": "类型", "value": "纪录片"},
+                {"label": "地区", "value": "中国大陆"},
+            ],
+        ),
+    )
+
+    class Service:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def related(self, **kwargs):
+            self.calls.append(kwargs)
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+
+    service = Service()
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), discovery_service=service)
+
+    controller.load_related_recommendations(record_id)
+
+    assert service.calls == [
+        {
+            "media_type": "tv",
+            "tmdb_id": "",
+            "douban_id": "35746415",
+            "prefer_douban": True,
+            "excluded_provider_ids": set(),
+        }
+    ]
 def test_following_controller_updates_recent_playback_binding_when_progress_reaches_current(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 500)

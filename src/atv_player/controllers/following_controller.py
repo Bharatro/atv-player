@@ -229,15 +229,21 @@ class FollowingController:
             following_id=following_id
         )
         identity = self._related_tmdb_identity(record, snapshot)
-        if identity is None:
+        douban_id = self._related_douban_id(record, snapshot)
+        prefer_douban = bool(douban_id and self._should_prefer_douban_related(record, snapshot))
+        if identity is None and not prefer_douban:
             return DiscoveryResult(items=[], total=0, source_label="关联推荐")
-        media_type, tmdb_id = identity
+        media_type, tmdb_id = identity or (self._related_media_type_for_record(record, snapshot), "")
         excluded_provider_ids = self._related_excluded_provider_ids(record, snapshot)
-        return self._discovery_service.related(
-            media_type=media_type,
-            tmdb_id=tmdb_id,
-            excluded_provider_ids=excluded_provider_ids,
-        )
+        kwargs: dict[str, object] = {
+            "media_type": media_type,
+            "tmdb_id": tmdb_id,
+            "excluded_provider_ids": excluded_provider_ids,
+        }
+        if prefer_douban:
+            kwargs["douban_id"] = douban_id
+            kwargs["prefer_douban"] = True
+        return self._discovery_service.related(**kwargs)
 
     def _related_tmdb_identity(
         self,
@@ -303,6 +309,88 @@ class FollowingController:
                 if identity is not None:
                     excluded.add(f"{identity[0]}:{identity[1]}")
         return excluded
+
+    def _related_douban_id(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> str:
+        external_id = str((record.external_ids or {}).get("douban") or "").strip()
+        if external_id:
+            return external_id
+        if str(record.provider or "").strip() in {"official_douban", "local_douban", "douban"}:
+            provider_id = str(record.provider_id or "").strip()
+            if provider_id.isdigit():
+                return provider_id
+        bundle = snapshot.metadata_bundle
+        if bundle is not None:
+            for source in (bundle.source_snapshots or {}).values():
+                if str(source.provider or "").strip() not in {"official_douban", "local_douban", "douban"}:
+                    continue
+                provider_id = str(source.provider_id or "").strip()
+                if provider_id.isdigit():
+                    return provider_id
+        for fields in self._related_metadata_field_sets(snapshot):
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                if str(field.get("label") or "").strip() != "豆瓣ID":
+                    continue
+                value = str(field.get("value") or "").strip()
+                if value.isdigit():
+                    return value
+        return ""
+
+    def _should_prefer_douban_related(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> bool:
+        media_kind = _resolve_effective_media_kind(record, snapshot)
+        if media_kind not in {"movie", "live_action", "anime", "variety", "documentary"}:
+            return False
+        return self._is_domestic_following(record, snapshot)
+
+    def _is_domestic_following(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> bool:
+        texts = [record.title, record.original_title, record.media_kind]
+        for fields in self._related_metadata_field_sets(snapshot):
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                label = str(field.get("label") or "").strip()
+                if label in {"地区", "国家", "制片国家/地区", "类型"}:
+                    texts.append(str(field.get("value") or ""))
+        text = " ".join(texts).lower()
+        return any(
+            marker in text
+            for marker in (
+                "中国大陆",
+                "中国内地",
+                "内地",
+                "大陆",
+                "中国",
+                "国产",
+                "国创",
+                "cn",
+            )
+        )
+
+    @staticmethod
+    def _related_metadata_field_sets(snapshot: FollowingDetailSnapshot) -> list[list[dict[str, object]]]:
+        field_sets: list[list[dict[str, object]]] = []
+        field_sets.append(list(getattr(snapshot, "metadata_fields", []) or []))
+        bundle = snapshot.metadata_bundle
+        if bundle is not None:
+            merged = getattr(bundle, "merged_snapshot", None)
+            if merged is not None:
+                field_sets.append(list(getattr(merged, "metadata_fields", []) or []))
+            for source in (bundle.source_snapshots or {}).values():
+                field_sets.append(list(getattr(source, "metadata_fields", []) or []))
+        return field_sets
 
     def _build_recommendation_seeds(self, *, limit: int) -> list[RecommendationSeed]:
         seeds: list[RecommendationSeed] = []

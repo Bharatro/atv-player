@@ -815,12 +815,20 @@ class AppCoordinator(QObject):
         api_key = str(config.metadata_tmdb_api_key or "").strip()
         if not api_key:
             return None
+        proxy_decider = self._build_proxy_decider()
+        douban_client = None
+        if "official_douban" not in disabled_provider_ids and str(config.metadata_douban_cookie or "").strip():
+            douban_client = LocalDoubanClient(
+                cookie=config.metadata_douban_cookie,
+                proxy_decider=proxy_decider,
+            )
         return TMDBDiscoveryService(
             client=TMDBClient(
                 api_key=api_key,
-                proxy_decider=self._build_proxy_decider(),
+                proxy_decider=proxy_decider,
             ),
             cache=MetadataCache(app_cache_dir() / "metadata"),
+            douban_client=douban_client,
         )
 
     def _build_danmaku_controller_factory(self):

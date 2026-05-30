@@ -396,3 +396,53 @@ class LocalDoubanClient:
             "official_links": self._extract_official_links(text),
         }
         return detail
+
+    @classmethod
+    def _extract_subject_recommendations(cls, text: str) -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+        container = cls._extract_first(
+            r'<div[^>]+id=["\']recommendations["\'][^>]*>(.*?)</div>\s*</div>',
+            text,
+        )
+        source_text = container or text
+        for match in re.finditer(
+            r"(<dl\b[^>]*>.*?</dl>)",
+            source_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            block = match.group(1)
+            id_match = re.search(
+                r"""href\s*=\s*(["'])(?:https?://movie\.douban\.com)?/subject/(\d+)/?[^"']*\1""",
+                block,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if id_match is None:
+                continue
+            subject_id = id_match.group(2).strip()
+            if not subject_id or subject_id in seen:
+                continue
+            title = cls._strip_tags(
+                cls._extract_first(
+                    r"<dd\b[^>]*>.*?<a\b[^>]*>(.*?)</a>",
+                    block,
+                )
+            )
+            if not title:
+                title = cls._strip_tags(cls._extract_attr(block, "title"))
+            poster_match = re.search(
+                r"<img\b[^>]+src=(['\"])(.*?)\1",
+                block,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            poster = unescape(poster_match.group(2)).strip() if poster_match else ""
+            results.append({"id": subject_id, "title": title, "poster": poster})
+            seen.add(subject_id)
+        return [item for item in results if item["id"] and item["title"]]
+
+    def get_recommendations(self, douban_id: int | str) -> list[dict[str, object]]:
+        normalized_id = str(douban_id).strip()
+        if not normalized_id:
+            return []
+        text = self._get_text(self._DETAIL_URL_TEMPLATE.format(douban_id=normalized_id))
+        return list(self._extract_subject_recommendations(text))
