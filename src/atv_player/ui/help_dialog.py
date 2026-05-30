@@ -101,7 +101,7 @@ class ShortcutHelpDialog(ThemedDialogBase):
 
         if system_info_rows is not None:
             layout.addWidget(QLabel("系统信息", self))
-            self.system_info_table = QTableWidget(len(system_info_rows), 2, self)
+            self.system_info_table = QTableWidget(0, 2, self)
             self.system_info_table.setObjectName("systemInfoTable")
             self.system_info_table.setHorizontalHeaderLabels(["组件", "版本"])
             self.system_info_table.verticalHeader().setVisible(False)
@@ -110,12 +110,7 @@ class ShortcutHelpDialog(ThemedDialogBase):
             self.system_info_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.system_info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             self.system_info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            for row, entry in enumerate(system_info_rows):
-                self.system_info_table.setItem(row, 0, QTableWidgetItem(entry.label))
-                if entry.url:
-                    self.system_info_table.setCellWidget(row, 1, self._build_system_info_link_widget(entry))
-                    continue
-                self.system_info_table.setItem(row, 1, QTableWidgetItem(entry.value))
+            self.update_system_info(system_info_rows)
             layout.addWidget(self.system_info_table)
 
             actions = QHBoxLayout()
@@ -150,6 +145,28 @@ class ShortcutHelpDialog(ThemedDialogBase):
             self.shortcuts_table.setItem(row, 1, QTableWidgetItem(entry.description))
 
         layout.addWidget(self.shortcuts_table)
+
+    def update_system_info(
+        self,
+        system_info_rows: Sequence[SystemInfoEntry],
+        *,
+        diagnostics_text: str | None = None,
+        detailed_diagnostics_text: str | None = None,
+    ) -> None:
+        if not hasattr(self, "system_info_table"):
+            return
+        self.system_info_table.clearContents()
+        self.system_info_table.setRowCount(len(system_info_rows))
+        for row, entry in enumerate(system_info_rows):
+            self.system_info_table.setItem(row, 0, QTableWidgetItem(entry.label))
+            if entry.url:
+                self.system_info_table.setCellWidget(row, 1, self._build_system_info_link_widget(entry))
+                continue
+            self.system_info_table.setItem(row, 1, QTableWidgetItem(entry.value))
+        if diagnostics_text is not None:
+            self._diagnostics_text = diagnostics_text
+        if detailed_diagnostics_text is not None:
+            self._detailed_diagnostics_text = detailed_diagnostics_text
 
     def _build_system_info_link_widget(self, entry: SystemInfoEntry) -> QLabel:
         label = QLabel(self.system_info_table)

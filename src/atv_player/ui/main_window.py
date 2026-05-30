@@ -620,6 +620,10 @@ class _GlobalSearchPopupSignals(QObject):
     hotkeys_loaded = Signal(int, object)
 
 
+class _HelpPayloadSignals(QObject):
+    loaded = Signal(int, object, str, str)
+
+
 class SearchInputWithHotkey(QLineEdit):
     focus_gained = Signal()
     focus_lost = Signal()
@@ -1589,6 +1593,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_restore_plugin_keys: list[str] = []
         self._global_search_popup_signals = _GlobalSearchPopupSignals()
         self._connect_async_signal(self._global_search_popup_signals.hotkeys_loaded, self._handle_global_search_hotkeys_loaded)
+        self._help_payload_signals = _HelpPayloadSignals()
+        self._connect_async_signal(self._help_payload_signals.loaded, self._handle_help_payload_loaded)
+        self._help_payload_request_id = 0
         self._global_search_hotkey_request_id = 0
         self._global_search_hotkey_cache: dict[tuple[str, str], list[dict[str, str]]] = {}
         self._global_search_hot_categories_by_source = {
@@ -5288,20 +5295,54 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return lines
 
     def _show_shortcut_help(self) -> None:
-        system_info_rows, diagnostics_text, detailed_diagnostics_text = self._build_main_window_help_payload()
         dialog = show_shortcut_help_dialog(
             self,
             context="main_window",
             existing_dialog=self.help_dialog,
             quit_sequence=self.quit_shortcut.key(),
-            system_info_rows=system_info_rows,
-            diagnostics_text=diagnostics_text,
-            detailed_diagnostics_text=detailed_diagnostics_text,
+            system_info_rows=[SystemInfoEntry("依赖状态", "检查中...")],
+            diagnostics_text="系统信息\n依赖状态: 检查中...",
+            detailed_diagnostics_text="系统信息\n依赖状态: 检查中...",
         )
         if dialog is self.help_dialog:
             return
         self.help_dialog = dialog
         dialog.destroyed.connect(self._clear_help_dialog_reference)
+        self._request_help_payload()
+
+    def _request_help_payload(self) -> None:
+        self._help_payload_request_id += 1
+        request_id = self._help_payload_request_id
+
+        def run() -> None:
+            system_info_rows, diagnostics_text, detailed_diagnostics_text = self._build_main_window_help_payload()
+            if self._is_window_alive():
+                self._help_payload_signals.loaded.emit(
+                    request_id,
+                    system_info_rows,
+                    diagnostics_text,
+                    detailed_diagnostics_text,
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_help_payload_loaded(
+        self,
+        request_id: int,
+        system_info_rows: object,
+        diagnostics_text: str,
+        detailed_diagnostics_text: str,
+    ) -> None:
+        if request_id != self._help_payload_request_id:
+            return
+        dialog = self.help_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog.update_system_info(
+            list(system_info_rows),
+            diagnostics_text=diagnostics_text,
+            detailed_diagnostics_text=detailed_diagnostics_text,
+        )
 
     def _clear_help_dialog_reference(self, *_args) -> None:
         self.help_dialog = None

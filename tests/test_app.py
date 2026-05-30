@@ -1925,6 +1925,7 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
     dialog = visible_shortcut_help_dialogs()[0]
     rows = shortcut_table_rows(dialog)
+    qtbot.waitUntil(lambda: ("atv-player", "0.8.2") in system_info_table_rows(dialog))
     system_rows = system_info_table_rows(dialog)
 
     assert ("F1", "打开帮助") in rows
@@ -1938,6 +1939,56 @@ def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("ffmpeg", "7.1") in system_rows
     assert ("yt-dlp", "2026.05.17") in system_rows
     assert ("Platform", "Linux") in system_rows
+
+
+def test_main_window_f1_opens_help_dialog_before_dependency_checks_finish(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    release_payload = threading.Event()
+    payload_started = threading.Event()
+
+    def slow_payload():
+        payload_started.set()
+        assert release_payload.wait(timeout=1)
+        return (
+            [
+                SystemInfoEntry("Node.js", "20.11.1", "https://nodejs.org/en/download"),
+                SystemInfoEntry("yt-dlp", "2026.05.17", "https://github.com/yt-dlp/yt-dlp/releases/latest"),
+            ],
+            "系统信息\nNode.js: 20.11.1\nyt-dlp: 2026.05.17",
+            "详细诊断",
+        )
+
+    window._build_main_window_help_payload = slow_payload
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    assert system_info_table_rows(dialog) == [("依赖状态", "检查中...")]
+    assert payload_started.wait(timeout=1)
+
+    release_payload.set()
+
+    qtbot.waitUntil(
+        lambda: ("Node.js", "20.11.1") in system_info_table_rows(dialog),
+        timeout=2000,
+    )
+    assert ("yt-dlp", "2026.05.17") in system_info_table_rows(dialog)
 
 
 def test_main_window_help_dialog_opens_system_info_links_except_platform(qtbot, monkeypatch) -> None:
