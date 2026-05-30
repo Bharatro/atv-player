@@ -663,6 +663,51 @@ def test_loader_detects_suffixless_remote_js_source(monkeypatch, tmp_path: Path)
     assert loaded.config.cached_file_path.endswith("plugin_53.js")
 
 
+def test_loader_resolves_github_blob_txt_url_before_detecting_remote_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    requested_urls: list[str] = []
+
+    class FakeNodeSpider:
+        def __init__(self, plugin_path, cache_dir, plugin_id):
+            self.plugin_path = Path(plugin_path)
+
+        def init(self, extend=""):
+            return None
+
+        def getName(self):
+            return "JS短剧"
+
+        def supports_search(self):
+            return True
+
+    monkeypatch.setattr("atv_player.plugins.loader.NodeSpider", FakeNodeSpider)
+
+    def fake_get(url: str, **kwargs) -> httpx.Response:
+        requested_urls.append(url)
+        return httpx.Response(
+            200, text=JS_PLUGIN_SOURCE, request=httpx.Request("GET", url)
+        )
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get)
+    config = SpiderPluginConfig(
+        id=56,
+        source_type="remote",
+        source_value="https://github.com/example/spiders/blob/main/py/%E7%9F%AD%E5%89%A7.txt",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "JS短剧"
+    assert requested_urls == [
+        "https://raw.githubusercontent.com/example/spiders/main/py/%E7%9F%AD%E5%89%A7.txt"
+    ]
+    assert loaded.config.cached_file_path.endswith("plugin_56.js")
+
+
 def test_loader_detects_suffixless_remote_t4_commonjs_source(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -767,6 +812,37 @@ class Spider(Spider):
 
     assert loaded.plugin_name == "远程加密"
     assert Path(loaded.config.cached_file_path).read_text(encoding="utf-8").startswith("// ignore")
+
+
+def test_loader_detects_remote_txt_secspider_format_below_metadata_headers(tmp_path: Path) -> None:
+    package_text, keyring = build_secspider_package(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    def getName(self):
+        return "远程TXT加密"
+""",
+        name="远程TXT加密",
+    )
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        return httpx.Response(200, text=package_text)
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get, keyring=keyring)
+    config = SpiderPluginConfig(
+        id=57,
+        source_type="remote",
+        source_value="https://example.com/encrypted.txt",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "远程TXT加密"
+    assert loaded.config.cached_file_path.endswith("plugin_57.py")
 
 
 def test_loader_reports_secspider_signature_failure(tmp_path: Path) -> None:

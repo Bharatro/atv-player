@@ -32,6 +32,22 @@ from atv_player.plugins.spider_crypto.runtime import SecSpiderRuntime
 logger = logging.getLogger(__name__)
 
 
+def _normalize_remote_source_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "github.com":
+        return url
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 5 or parts[2] not in {"blob", "raw"}:
+        return url
+    owner, repo, _, branch, *source_parts = parts
+    if not owner or not repo or not branch or not source_parts:
+        return url
+    return (
+        f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
+        f"{'/'.join(source_parts)}"
+    )
+
+
 @dataclass(slots=True)
 class LoadedSpiderPlugin:
     config: SpiderPluginConfig
@@ -194,8 +210,7 @@ class SpiderPluginLoader:
         path_suffix = Path(urlparse(url).path).suffix.lower()
         if path_suffix in {".py", ".js", ".mjs", ".cjs"}:
             return ".js" if path_suffix in {".mjs", ".cjs"} else path_suffix
-        first_lines = "\n".join(source_text.splitlines()[:16])
-        if first_lines.strip().startswith("//@format:secspider/1"):
+        if any(line.strip() == "//@format:secspider/1" for line in source_text.splitlines()[:16]):
             return ".py"
         if any(marker in source_text for marker in ("from base.spider import Spider", "class Spider")):
             return ".py"
@@ -234,6 +249,7 @@ class SpiderPluginLoader:
         return module
 
     def _fetch_remote_text(self, url: str) -> str:
+        url = _normalize_remote_source_url(url)
         response = self._get(
             url,
             timeout=15.0,
