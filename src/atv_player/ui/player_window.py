@@ -590,6 +590,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _VIDEO_POSTER_LOAD_FALLBACK_SIZE = QSize(960, 540)
     _DETAIL_LOG_MAX_HEIGHT_DIVISOR = 4
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+    _COMPACT_CONTROLS_WIDTH_THRESHOLD = 1120
     _AUDIO_ONLY_SUFFIXES = {
         ".aac",
         ".aiff",
@@ -968,6 +969,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.audio_combo.addItem("音轨", ("auto", None))
         self.audio_combo.setEnabled(False)
         self.parse_combo = FlatComboBox()
+        self._width_adaptive_control_combos: list[QComboBox] = [
+            self.subtitle_combo,
+            self.danmaku_combo,
+            self.video_quality_combo,
+            self.audio_combo,
+            self.parse_combo,
+        ]
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
         self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72, fixed_height=28)
@@ -1309,6 +1317,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._populate_parse_combo()
         self._apply_theme()
         self._apply_visibility_state()
+        self._refresh_width_adaptive_control_visibility()
         self._update_log_section_max_height()
         app = QApplication.instance()
         if app is not None:
@@ -5171,6 +5180,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.subtitle_combo.setCurrentIndex(0)
         self.subtitle_combo.setEnabled(False)
         self.subtitle_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _reset_danmaku_combo(self, *, enabled: bool = False, current_index: int = 0) -> None:
         self.danmaku_combo.blockSignals(True)
@@ -5181,6 +5191,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.danmaku_combo.setCurrentIndex(current_index)
         self.danmaku_combo.setEnabled(enabled)
         self.danmaku_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _reset_video_quality_combo(self) -> None:
         self.video_quality_combo.blockSignals(True)
@@ -5189,6 +5200,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_quality_combo.setCurrentIndex(0)
         self.video_quality_combo.setEnabled(False)
         self.video_quality_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _reset_audio_combo(self) -> None:
         self.audio_combo.blockSignals(True)
@@ -5197,6 +5209,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.audio_combo.setCurrentIndex(0)
         self.audio_combo.setEnabled(False)
         self.audio_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _populate_parse_combo(self) -> None:
         self.parse_combo.blockSignals(True)
@@ -5210,6 +5223,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.parse_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
         self.parse_combo.setEnabled(False)
         self.parse_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _change_parse_selection(self, index: int) -> None:
         if self.config is None:
@@ -5459,6 +5473,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _refresh_parse_combo_enabled_state(self) -> None:
         self.parse_combo.setEnabled(self._current_item_requires_parse())
+        self._refresh_width_adaptive_control_visibility()
 
     def _mark_manual_subtitle_switch_refresh(self) -> None:
         self._manual_subtitle_switch_refresh_until = (
@@ -5888,6 +5903,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.subtitle_combo.setEnabled(bool(self._unified_primary_subtitle_options))
         self.subtitle_combo.setCurrentIndex(0)
         self.subtitle_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _populate_audio_combo(self, tracks: list[AudioTrack]) -> None:
         ytdlp_tracks = self._current_item_ytdlp_audio_tracks()
@@ -5913,6 +5929,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.audio_combo.setEnabled(False)
             self.audio_combo.setCurrentIndex(0)
         self.audio_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _populate_video_quality_combo(
         self,
@@ -5926,6 +5943,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.video_quality_combo.setCurrentIndex(0)
             self.video_quality_combo.setEnabled(False)
             self.video_quality_combo.blockSignals(False)
+            self._refresh_width_adaptive_control_visibility()
             return
         selected_index = 0
         for index, quality in enumerate(qualities):
@@ -5935,6 +5953,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_quality_combo.setCurrentIndex(selected_index)
         self.video_quality_combo.setEnabled(len(qualities) > 1)
         self.video_quality_combo.blockSignals(False)
+        self._refresh_width_adaptive_control_visibility()
 
     def _remember_audio_track_preference(self, track: AudioTrack) -> None:
         self._audio_preference = AudioPreference(
@@ -9046,7 +9065,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._poster_row_widget.setHidden(is_fullscreen or not metadata_visible or not poster_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)
         self._refresh_metadata_original_toggle()
+        self._refresh_width_adaptive_control_visibility()
         self._update_log_section_max_height()
+
+    def _refresh_width_adaptive_control_visibility(self) -> None:
+        if not hasattr(self, "_width_adaptive_control_combos"):
+            return
+        compact = self.width() <= self._COMPACT_CONTROLS_WIDTH_THRESHOLD
+        for combo in self._width_adaptive_control_combos:
+            combo.setHidden(compact and not combo.isEnabled())
 
     def _should_dock_log_to_sidebar_bottom(self) -> bool:
         return (
@@ -9440,6 +9467,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             self._apply_visibility_state()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_width_adaptive_control_visibility()
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if not hasattr(self, "video_widget"):

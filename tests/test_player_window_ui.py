@@ -376,6 +376,38 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert "border: 1px solid" in window.ending_spin.styleSheet()
 
 
+def test_player_window_hides_disabled_control_combos_when_width_is_tight(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+
+    qtbot.addWidget(window)
+    window.show()
+    window.resize(1000, 700)
+
+    assert window.subtitle_combo.isEnabled() is False
+    assert window.subtitle_combo.isHidden() is True
+    assert window.danmaku_combo.isEnabled() is False
+    assert window.danmaku_combo.isHidden() is True
+    assert window.video_quality_combo.isEnabled() is False
+    assert window.video_quality_combo.isHidden() is True
+    assert window.audio_combo.isEnabled() is False
+    assert window.audio_combo.isHidden() is True
+    assert window.parse_combo.isEnabled() is False
+    assert window.parse_combo.isHidden() is True
+    assert window.speed_combo.isHidden() is False
+
+
+def test_player_window_keeps_enabled_control_combos_visible_when_width_is_tight(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+
+    qtbot.addWidget(window)
+    window.danmaku_combo.setEnabled(True)
+    window.show()
+    window.resize(1000, 700)
+
+    assert window.danmaku_combo.isHidden() is False
+    assert window.subtitle_combo.isHidden() is True
+
+
 def test_player_window_volume_label_shows_current_volume(qtbot) -> None:
     config = AppConfig(player_volume=35)
     window = PlayerWindow(FakePlayerController(), config=config)
