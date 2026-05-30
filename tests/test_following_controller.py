@@ -2,7 +2,6 @@
 from datetime import datetime
 from pathlib import Path
 
-from atv_player.ai.enrichment import FollowingDetailSummary
 from atv_player.controllers.following_controller import FollowingController
 from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.following_models import (
@@ -1886,60 +1885,6 @@ def test_following_controller_refresh_metadata_skips_tmdb_when_season_unknown(tm
         pass
 
     assert service.full_detail_provider_ids == []
-
-
-class AISummarizesFollowingDetail:
-    def __init__(self) -> None:
-        self.inputs = []
-
-    def summarize_following_detail(self, data):
-        self.inputs.append(data)
-        return FollowingDetailSummary(
-            summary="AI 摘要",
-            highlights=["看点一", "看点二"],
-            next_hint="明晚更新",
-        )
-
-
-def test_following_controller_adds_display_only_ai_summary(tmp_path: Path) -> None:
-    repo = FollowingRepository(tmp_path / "following.db")
-    record_id = repo.upsert(
-        FollowingRecord(
-            id=0,
-            title="黑镜",
-            current_episode=1,
-            latest_episode=2,
-            total_episodes=6,
-        )
-    )
-    repo.save_detail_snapshot(
-        record_id,
-        FollowingDetailSnapshot(
-            following_id=record_id,
-            overview="科技寓言",
-            next_episode=FollowingEpisode(
-                episode_number=3,
-                title="第三集",
-                air_date="2026-05-30",
-            ),
-        ),
-    )
-    ai = AISummarizesFollowingDetail()
-    controller = FollowingController(
-        repo,
-        metadata_search_service=FakeSearchService(),
-        ai_enrichment_service=ai,
-        now=lambda: 100,
-    )
-
-    view = controller.load_detail(record_id, refresh_if_empty=False)
-
-    assert ai.inputs[0].title == "黑镜"
-    assert view.snapshot.ai_summary is not None
-    assert view.snapshot.ai_summary.summary == "AI 摘要"
-    assert view.record.latest_episode == 2
-
-
 def test_following_controller_updates_recent_playback_binding_when_progress_reaches_current(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 500)

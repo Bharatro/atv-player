@@ -41,26 +41,6 @@ def test_apply_episode_title_map_uses_higher_priority_source() -> None:
     assert playlist[0].episode_title_source == "tmdb"
 
 
-def test_ai_episode_title_source_has_lower_priority_than_tmdb() -> None:
-    playlist = [PlayItem(title="S01E01", url="http://a", original_title="S01E01")]
-
-    apply_episode_title_map(
-        playlist,
-        {1: "官方标题"},
-        source="tmdb",
-        source_priority=["tmdb", "ai"],
-    )
-    apply_episode_title_map(
-        playlist,
-        {1: "AI 标题"},
-        source="ai",
-        source_priority=["tmdb", "ai"],
-    )
-
-    assert playlist[0].episode_display_title == "官方标题"
-    assert playlist[0].episode_title_source == "tmdb"
-
-
 def test_playlist_has_title_variants_requires_different_original_and_enhanced_titles() -> None:
     playlist = [PlayItem(title="第1集", url="http://a", original_title="第1集", episode_display_title="第1集")]
 

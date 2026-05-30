@@ -6,7 +6,6 @@ import httpx
 import logging
 import re
 
-from atv_player.ai.enrichment import DanmakuQueryRefinementInput
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.providers import (
@@ -310,13 +309,11 @@ class DanmakuService:
         providers: dict[str, DanmakuProvider],
         provider_order: list[str],
         disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
-        ai_enrichment_service=None,
     ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
         self._disabled_provider_ids_loader = disabled_provider_ids_loader
-        self._ai_enrichment_service = ai_enrichment_service
 
     def _disabled_provider_ids(self) -> set[str]:
         if self._disabled_provider_ids_loader is None:
@@ -345,33 +342,6 @@ class DanmakuService:
     @property
     def provider_order(self) -> list[str]:
         return [key for key in self._provider_order if self._provider_enabled(key)]
-
-    def _ai_danmaku_queries(
-        self,
-        normalized: str,
-        requested_episode: int | None,
-    ) -> list[str]:
-        if self._ai_enrichment_service is None:
-            return []
-        refine = getattr(self._ai_enrichment_service, "refine_danmaku_query", None)
-        if not callable(refine):
-            return []
-        try:
-            result = refine(
-                DanmakuQueryRefinementInput(
-                    title=normalized,
-                    episode_number=requested_episode or 0,
-                )
-            )
-        except Exception:
-            logger.debug("AI danmaku query refinement failed in service", exc_info=True)
-            return []
-        queries: list[str] = []
-        for query in getattr(result, "queries", []) or []:
-            text = normalize_name(query)
-            if text and text not in queries:
-                queries.append(text)
-        return queries[:3]
 
     def search_danmu_sources(
         self,
@@ -484,20 +454,8 @@ class DanmakuService:
             preferred_key = provider_filter if self._provider_enabled(provider_filter) else None
         else:
             provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
-        query_variants = [
-            query
-            for query in self._ai_danmaku_queries(normalized, requested_episode)
-            if query != primary_query
-        ]
-        query_variants.append(primary_query)
-        results: list[DanmakuSearchItem] = []
-        for query_variant in query_variants:
-            results = self._collect_search_results(provider_keys, query_variant, normalized)
-            results = _filter_too_short_duration_candidates(results)
-            if results:
-                primary_query = query_variant
-                break
-        match_query = normalize_name(primary_query) or normalized
+        results = self._collect_search_results(provider_keys, primary_query, normalized)
+        results = _filter_too_short_duration_candidates(results)
         if _is_likely_variety_search(normalized, results):
             if variety_issue_key is not None and preferred_key is not None and not provider_filter:
                 has_variety_match = any(_variety_issue_key_for_item(item) == variety_issue_key for item in results)
@@ -523,7 +481,7 @@ class DanmakuService:
                 item
                 for item in results
                 if extract_episode_number(item.name) == requested_episode
-                and episode_title_matches(match_query, item.name)
+                and episode_title_matches(normalized, item.name)
             ]
             if not matching and preferred_key is not None and not provider_filter:
                 fallback_keys = [
@@ -536,7 +494,7 @@ class DanmakuService:
                         item
                         for item in results
                         if extract_episode_number(item.name) == requested_episode
-                        and episode_title_matches(match_query, item.name)
+                        and episode_title_matches(normalized, item.name)
                     ]
             no_episode = [
                 item
@@ -544,7 +502,7 @@ class DanmakuService:
                 if extract_episode_number(item.name) is None
                 and (
                     not explicit_episode_request
-                    or episode_title_matches(match_query, item.name)
+                    or episode_title_matches(normalized, item.name)
                 )
             ]
             if matching:
@@ -799,7 +757,6 @@ def create_default_danmaku_service(
     post=httpx.post,
     disabled_provider_ids: list[str] | None = None,
     disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
-    ai_enrichment_service=None,
 ) -> DanmakuService:
     disabled = {str(item or "").strip() for item in (disabled_provider_ids or [])}
     providers = {
@@ -821,5 +778,4 @@ def create_default_danmaku_service(
         providers,
         provider_order=provider_order,
         disabled_provider_ids_loader=disabled_provider_ids_loader,
-        ai_enrichment_service=ai_enrichment_service,
     )

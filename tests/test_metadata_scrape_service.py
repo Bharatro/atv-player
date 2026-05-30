@@ -1,7 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
 
-from atv_player.ai.enrichment import EpisodeTitleRewrite, MetadataQueryRefinement
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import (
@@ -51,30 +50,6 @@ class FakeTMDBClient:
         assert str(tmdb_id) == "42"
         assert season_number == 1
         return {"episodes": list(self.episodes)}
-
-
-class AIRefinesMetadataQuery:
-    def __init__(self) -> None:
-        self.inputs = []
-
-    def refine_metadata_query(self, data):
-        self.inputs.append(data)
-        return MetadataQueryRefinement(title="黑镜", year="2011")
-
-
-class AIEmptyMetadataQuery:
-    def refine_metadata_query(self, data):
-        del data
-        return MetadataQueryRefinement()
-
-
-class AIEpisodeTitleRewrite:
-    def __init__(self) -> None:
-        self.inputs = []
-
-    def rewrite_episode_titles(self, data):
-        self.inputs.append(data)
-        return EpisodeTitleRewrite(titles_by_index={0: "AI 第一集", 1: "AI 第二集"})
 
 
 def test_normalize_metadata_scrape_title_strips_leading_media_prefix_and_episode_marker() -> None:
@@ -139,49 +114,6 @@ def test_metadata_scrape_service_cache_only_reuses_cached_results_without_provid
         )
     ]
     assert tmdb.search_calls == []
-
-
-def test_metadata_scrape_service_uses_ai_refined_query_before_original(tmp_path: Path) -> None:
-    cache = MetadataCache(tmp_path)
-    provider = FakeProvider(
-        "tmdb",
-        matches=[
-            MetadataMatch(
-                provider="tmdb",
-                provider_id="tv:1",
-                title="黑镜",
-                year="2011",
-            )
-        ],
-    )
-    ai = AIRefinesMetadataQuery()
-    service = MetadataScrapeService(
-        cache=cache,
-        providers=[provider],
-        ai_enrichment_service=ai,
-    )
-
-    groups = service.search(MetadataQuery(title="Black.Mirror.S01E01", year=""))
-
-    assert ai.inputs[0].title == "Black.Mirror.S01E01"
-    assert provider.search_calls[0].title == "黑镜"
-    assert groups[0].items[0].title == "黑镜"
-
-
-def test_metadata_scrape_service_falls_back_when_ai_refinement_empty(
-    tmp_path: Path,
-) -> None:
-    cache = MetadataCache(tmp_path)
-    provider = FakeProvider("tmdb")
-    service = MetadataScrapeService(
-        cache=cache,
-        providers=[provider],
-        ai_enrichment_service=AIEmptyMetadataQuery(),
-    )
-
-    service.search(MetadataQuery(title="Black.Mirror.S01E01", year=""))
-
-    assert provider.search_calls[0].title == "Black.Mirror.S01E01"
 
 
 def test_metadata_scrape_service_uses_provider_detail_cache_key(tmp_path: Path) -> None:
@@ -456,33 +388,6 @@ def test_metadata_scrape_service_can_build_episode_title_playlist_for_selected_c
     assert updated is not None
     assert updated[0].episode_title_source == "tencent"
     assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
-
-
-def test_metadata_scrape_service_applies_ai_episode_titles_when_provider_titles_missing(
-    tmp_path: Path,
-) -> None:
-    cache = MetadataCache(tmp_path)
-    ai = AIEpisodeTitleRewrite()
-    service = MetadataScrapeService(
-        cache=cache,
-        providers=[],
-        ai_enrichment_service=ai,
-    )
-    playlist = [
-        PlayItem(title="S01E01.mkv", original_title="", url="http://m/1.mp4"),
-        PlayItem(title="S01E02.mkv", original_title="", url="http://m/2.mp4"),
-    ]
-
-    updated = service.build_episode_title_playlist(
-        VodItem(vod_id="1", vod_name="黑镜"),
-        playlist,
-    )
-
-    assert updated is playlist
-    assert ai.inputs[0].media_title == "黑镜"
-    assert playlist[0].original_title == "S01E01.mkv"
-    assert playlist[0].episode_display_title == "AI 第一集"
-    assert playlist[0].episode_title_source == "ai"
 
 
 def test_metadata_scrape_service_skips_movie_classified_candidate_for_episode_title_rewrite(tmp_path: Path) -> None:
