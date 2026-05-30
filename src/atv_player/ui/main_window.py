@@ -4368,7 +4368,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._following_prompt_dialog.close()
         self._following_prompt_dialog = None
 
+    def _player_window_is_playing(self) -> bool:
+        if self.player_window is None:
+            return False
+        return bool(getattr(self.player_window, "is_playing", False))
+
     def show_following_homepage_prompts(self) -> None:
+        if self._player_window_is_playing():
+            return
         if self._following_prompt_dialog is not None:
             return
         records = list(self._following_controller.load_homepage_prompts())

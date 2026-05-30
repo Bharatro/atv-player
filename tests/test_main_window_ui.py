@@ -747,6 +747,25 @@ def test_main_window_homepage_prompt_actions(qtbot) -> None:
     assert following.cleared == [1]
 
 
+def test_main_window_does_not_show_homepage_prompt_while_player_is_playing(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+    window.player_window = SimpleNamespace(is_playing=True, session=object())
+
+    window.show_following_homepage_prompts()
+
+    assert window._following_prompt_dialog is None
+    assert following.cleared == []
+    assert following.snoozed == []
+
+
 def test_main_window_homepage_prompt_uses_tmdb_global_latest_count(qtbot) -> None:
     class LongRunningFollowingController(FakeFollowingController):
         def load_homepage_prompts(self):
