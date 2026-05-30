@@ -12,13 +12,15 @@ from atv_player.episode_titles import (
     seed_original_titles,
 )
 from atv_player.metadata.models import MetadataQuery
-from atv_player.metadata.query import normalize_metadata_title
+from atv_player.metadata.query import infer_metadata_category_name_from_title, normalize_metadata_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import PlayItem, VodItem
 
 METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
 _IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "iqiyi", "tmdb", "tencent"]
 _MOVIE_MARKERS = ("电影", "影片", "movie")
+_ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "animation", "国创")
+_LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "剧版", "真人版", "真人", "短剧")
 _EPISODE_SORT_SENTINEL = 10**9
 
 
@@ -108,9 +110,72 @@ def _candidate_supports_episode_title_rewrite(
         return False
     if provider == "tmdb" and not provider_id.startswith("tv:"):
         return False
+    vod_kind = _vod_media_kind(vod)
+    candidate_kind = _candidate_media_kind(provider, provider_id, raw)
+    if vod_kind and candidate_kind and vod_kind != candidate_kind:
+        return False
     if provider == "bilibili" and not _is_confirmed_bilibili_anime_candidate(raw):
         return False
     return not _raw_indicates_movie_category(raw)
+
+
+def _vod_media_kind(vod: VodItem) -> str:
+    return _classify_media_kind(
+        getattr(vod, "category_name", ""),
+        getattr(vod, "type_name", ""),
+        infer_metadata_category_name_from_title(getattr(vod, "vod_name", "")),
+        getattr(vod, "vod_name", ""),
+    )
+
+
+def _candidate_media_kind(provider: str, provider_id: str, raw: dict[str, object]) -> str:
+    if provider == "bangumi":
+        categories = raw.get("categories") or []
+        if isinstance(categories, list) and any(
+            any(marker in str(category).strip().lower() for marker in _ANIME_MARKERS)
+            for category in categories
+        ):
+            return "anime"
+        return ""
+    if provider == "tmdb" and provider_id.startswith("movie:"):
+        return "movie"
+    return _classify_media_kind(
+        raw.get("typeName"),
+        raw.get("channel"),
+        raw.get("genres"),
+        raw.get("categories"),
+        raw.get("baseTags"),
+        raw.get("category"),
+    )
+
+
+def _classify_media_kind(*values: object) -> str:
+    text = " ".join(_iter_media_kind_tokens(*values)).lower()
+    if not text:
+        return ""
+    if any(marker in text for marker in _ANIME_MARKERS):
+        return "anime"
+    if any(marker in text for marker in _MOVIE_MARKERS):
+        return "movie"
+    if any(marker in text for marker in _LIVE_ACTION_MARKERS):
+        return "live_action"
+    return ""
+
+
+def _iter_media_kind_tokens(*values: object) -> list[str]:
+    tokens: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            tokens.extend(_iter_media_kind_tokens(value.get("value")))
+            continue
+        if isinstance(value, list):
+            for item in value:
+                tokens.extend(_iter_media_kind_tokens(item))
+            continue
+        text = str(value or "").strip()
+        if text:
+            tokens.append(text)
+    return tokens
 
 
 def _is_confirmed_bilibili_anime_candidate(raw: dict[str, object]) -> bool:

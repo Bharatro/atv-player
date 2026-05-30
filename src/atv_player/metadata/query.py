@@ -15,7 +15,7 @@ _TRAILING_RELEASE_NOISE_RE = re.compile(
 )
 _TRAILING_YEAR_RE = re.compile(r"(.*?)[\s]*[\(（]\s*((?:19|20)\d{2})\s*[\)）]\s*$")
 _TITLE_CATEGORY_PREFIX_RE = re.compile(r"^(电视剧|电影|剧集|连续剧|动漫|动画|番剧)\s*[:：]\s*", re.IGNORECASE)
-_TITLE_CATEGORY_SUFFIX_RE = re.compile(r"(电视剧|电影|剧集|连续剧|动漫|动画|番剧)\s*$", re.IGNORECASE)
+_TITLE_CATEGORY_SUFFIX_RE = re.compile(r"(电视剧|电影|剧集|连续剧|剧版|真人版|动漫|动画|番剧)\s*$", re.IGNORECASE)
 
 _TITLE_CATEGORY_HINTS = {
     "动漫": "动漫",
@@ -24,6 +24,8 @@ _TITLE_CATEGORY_HINTS = {
     "电视剧": "剧集",
     "剧集": "剧集",
     "连续剧": "剧集",
+    "剧版": "剧集",
+    "真人版": "剧集",
     "电影": "电影",
 }
 

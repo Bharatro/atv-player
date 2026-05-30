@@ -82,6 +82,7 @@ from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.metadata.providers.youku import YoukuMetadataProvider
+from atv_player.metadata.query import infer_metadata_category_name_from_title
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -110,7 +111,7 @@ _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EPISODE_SORT_SENTINEL = 10**9
-_EPISODE_TITLE_PLAYLIST_CACHE_VERSION = "v2"
+_EPISODE_TITLE_PLAYLIST_CACHE_VERSION = "v3"
 _QUALITY_VARIANT_EPISODE_RE = re.compile(
     r"(?:^|[\s\-_.])0*(\d{1,3})\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
     re.IGNORECASE,
@@ -931,7 +932,15 @@ class AppCoordinator(QObject):
             normalized_title = _normalize_title(preferred_title)
             preferred_base = _normalize_title(_strip_search_season_suffix(preferred_title))
             preferred_season = extract_season_number(preferred_title)
-            category_name = str(getattr(vod, "category_name", "") or "").strip().lower()
+            category_name = " ".join(
+                value
+                for value in (
+                    str(getattr(vod, "category_name", "") or "").strip(),
+                    infer_metadata_category_name_from_title(getattr(vod, "vod_name", "")),
+                    str(getattr(vod, "vod_name", "") or "").strip(),
+                )
+                if value
+            ).lower()
             prefer_animation = any(token in category_name for token in ("动漫", "动画", "anime", "国创"))
             prefer_live_action = any(token in category_name for token in ("电视剧", "剧集", "连续剧", "真人"))
             prefer_short_drama = any(token in category_name for token in ("短剧", "短片"))

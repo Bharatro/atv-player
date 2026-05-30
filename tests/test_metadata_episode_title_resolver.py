@@ -320,6 +320,41 @@ def test_build_provider_episode_playlist_maps_bangumi_episode_names() -> None:
     ]
 
 
+def test_build_provider_episode_playlist_rejects_bangumi_for_live_action_drama_version() -> None:
+    vod = VodItem(vod_id="v1", vod_name="成何体统剧版", vod_year="2026")
+    playlist = [
+        PlayItem(
+            title="01.mkv",
+            original_title="01.mkv",
+            url="http://m/1.mp4",
+        ),
+        PlayItem(
+            title="21.mkv",
+            original_title="21.mkv",
+            url="http://m/21.mp4",
+        ),
+    ]
+    match = MetadataMatch(
+        provider="bangumi",
+        provider_id="subject:1",
+        title="成何体统",
+        year="2024",
+        raw={
+            "categories": ["动漫"],
+            "episodes": [{"sort": 1, "type": 0, "name_cn": "先救母后"}],
+        },
+    )
+
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+
+    assert updated is None
+
+
 def test_build_provider_episode_playlist_sorts_bangumi_titles_by_episode_number_with_late_episode_and_duplicate() -> None:
     vod = VodItem(vod_id="v1", vod_name="仙剑奇侠传三", vod_year="2025", category_name="动漫")
     original_titles = [
