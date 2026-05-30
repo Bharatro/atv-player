@@ -1324,7 +1324,11 @@ def _detail_latest_season_number(
         if base_season_has_latest and not (
             record.has_update and max(0, int(record.current_episode or 0)) <= 0
         ):
-            return base
+            if not (
+                current_season == base
+                and latest_episode <= max(0, int(record.current_episode or 0))
+            ):
+                return base
 
     exact_match_seasons = [
         int(episode.season_number)
@@ -1338,7 +1342,9 @@ def _detail_latest_season_number(
     ):
         exact_match_seasons.append(int(snapshot.next_episode.season_number))
     if exact_match_seasons:
-        return max(exact_match_seasons)
+        exact_max = max(exact_match_seasons)
+        if exact_max >= current_season:
+            return exact_max
 
     if record.has_update and max(0, int(record.current_episode or 0)) <= 0:
         snapshot_seasons = [
@@ -1396,6 +1402,7 @@ def _normalize_loaded_season_episode(
     *,
     season_number: int,
     episode_number: int,
+    total_episodes: int,
     seasons: list[FollowingSeason],
     episodes: list[FollowingEpisode],
     overflow_value: int | None,
@@ -1425,6 +1432,16 @@ def _normalize_loaded_season_episode(
         return normalized_episode
     local_latest = max(local_numbers)
     if normalized_episode > local_latest and local_latest >= group.episode_count:
+        if overflow_value is None:
+            normalized_total = max(0, int(total_episodes or 0))
+            if normalized_total > group.episode_count and normalized_episode <= normalized_total:
+                return normalized_episode
+        if overflow_value is None and any(
+            int(episode.season_number or 0) == normalized_season
+            and int(episode.episode_number or 0) > group.episode_count
+            for episode in group.episodes
+        ):
+            return normalized_episode
         return local_latest if overflow_value is None else max(0, int(overflow_value))
     return normalized_episode
 
@@ -1444,6 +1461,7 @@ def _normalized_detail_progress_record(
     current_episode = _normalize_loaded_season_episode(
         season_number=current_season_number,
         episode_number=record.current_episode,
+        total_episodes=record.total_episodes,
         seasons=list(snapshot.seasons or []),
         episodes=list(snapshot.episodes or []),
         overflow_value=0,
@@ -1451,6 +1469,7 @@ def _normalized_detail_progress_record(
     latest_episode = _normalize_loaded_season_episode(
         season_number=latest_season_number,
         episode_number=record.latest_episode,
+        total_episodes=record.total_episodes,
         seasons=list(snapshot.seasons or []),
         episodes=list(snapshot.episodes or []),
         overflow_value=None,

@@ -268,6 +268,62 @@ def test_update_service_counts_absolute_episode_updates_across_seasons(tmp_path:
     assert record.new_episode_count == 582
 
 
+def test_update_service_uses_tmdb_global_latest_and_series_total_without_specials(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "37854"},
+            season_number=1,
+            current_season_number=15,
+            current_episode=581,
+            latest_episode=581,
+            total_episodes=0,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854:season:23",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "37854"},
+            season_number=23,
+            latest_episode=1163,
+            total_episodes=1181,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            seasons=[
+                FollowingSeason(season_number=0, episode_count=35, is_special=True),
+                FollowingSeason(season_number=15, episode_count=62),
+                FollowingSeason(season_number=23, episode_count=61),
+            ],
+            episodes=[
+                FollowingEpisode(season_number=23, episode_number=61, air_date="2026-05-24"),
+            ],
+            next_episode=FollowingEpisode(season_number=23, episode_number=1164, air_date="2026-05-31"),
+            refreshed_at=200,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.latest_episode == 1163
+    assert record.total_episodes == 1181
+    assert record.has_update is True
+    assert record.new_episode_count == 582
+
+
 def test_update_service_counts_unwatched_local_episode_updates_across_seasons(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(
@@ -330,7 +386,7 @@ def test_update_service_counts_unwatched_local_episode_updates_across_seasons(tm
     assert record.new_episode_count == 310
 
 
-def test_update_service_counts_unwatched_tmdb_series_total_as_updates(tmp_path: Path) -> None:
+def test_update_service_counts_unwatched_tmdb_latest_as_updates_with_incomplete_seasons(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(
         _record(
@@ -383,7 +439,7 @@ def test_update_service_counts_unwatched_tmdb_series_total_as_updates(tmp_path: 
     assert record is not None
     assert record.total_episodes == 272
     assert record.has_update is True
-    assert record.new_episode_count == 272
+    assert record.new_episode_count == 8
 
 
 def test_update_service_prefers_tmdb_first_when_tmdb_id_exists(tmp_path: Path) -> None:

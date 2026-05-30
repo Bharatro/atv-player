@@ -454,6 +454,12 @@ def _season_local_latest_episode(
     local_latest = max(local_numbers)
     if normalized_latest_season == normalized_season:
         if normalized_latest > local_latest:
+            for raw_season in raw_seasons:
+                if _to_int(raw_season.get("season_number")) == normalized_season:
+                    season_ep_count = _to_int(raw_season.get("episode_count"))
+                    if normalized_latest > season_ep_count > 0:
+                        return 0
+                    break
             return local_latest
         return normalized_latest
 
@@ -463,6 +469,9 @@ def _season_local_latest_episode(
             season_episode_count = _to_int(raw_season.get("episode_count"))
             break
     if season_episode_count <= 0:
+        return 0
+
+    if normalized_latest_season > normalized_season:
         return 0
 
     if normalized_latest > local_latest and local_latest >= season_episode_count:

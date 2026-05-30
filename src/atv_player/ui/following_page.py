@@ -32,7 +32,7 @@ class FollowingCardButton(QPushButton):
         super().__init__(parent)
         self.item = item
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(220, 320)
+        self.setFixedSize(220, 340)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setProperty("updated_hint", item.updated_hint)
 
@@ -49,6 +49,7 @@ class FollowingCardButton(QPushButton):
         title_row.setSpacing(6)
         self.title_label = QLabel(item.display_title, self)
         self.title_label.setWordWrap(True)
+        self.title_label.setMaximumHeight(40)
         title_row.addWidget(self.title_label, 1)
         if item.subtitle:
             self.type_label = QLabel(item.subtitle, self)
@@ -65,6 +66,7 @@ class FollowingCardButton(QPushButton):
         self.error_label.setVisible(bool(item.error_text))
         for label in (self.progress_label, self.update_label, self.error_label):
             label.setWordWrap(True)
+            label.setMaximumHeight(36)
             layout.addWidget(label)
         self._apply_label_styles()
         self._apply_style()

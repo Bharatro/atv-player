@@ -292,8 +292,11 @@ def resolve_new_episode_count(
     normalized_latest = max(0, int(latest_episode or 0))
     normalized_current = max(0, int(current_episode or 0))
     normalized_total = max(0, int(total_episodes or 0))
-    if normalized_current <= 0 and normalized_total > 0:
-        return max(normalized_total, int(fallback_count or 0))
+    if (
+        normalized_total > 0
+        and normalized_total >= normalized_latest > normalized_current > 0
+    ):
+        return normalized_latest - normalized_current
     if normalized_latest > 0 and (seasons or episodes):
         latest_absolute = resolve_absolute_episode_count(
             season_number=latest_season_number,
@@ -308,11 +311,15 @@ def resolve_new_episode_count(
             episodes=episodes,
         )
         if latest_absolute > 0 and current_absolute <= 0:
-            return max(latest_absolute, int(fallback_count or 0))
+            return latest_absolute
         if latest_absolute > current_absolute > 0:
             return latest_absolute - current_absolute
+    if normalized_current <= 0:
+        return normalized_latest
     if normalized_latest > normalized_current > 0:
         return normalized_latest - normalized_current
+    if latest_season_number > current_season_number and normalized_latest > 0:
+        return normalized_latest
     return max(0, int(fallback_count or 0), normalized_latest)
 
 

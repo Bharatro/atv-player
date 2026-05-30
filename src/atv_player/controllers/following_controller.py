@@ -1352,6 +1352,7 @@ class FollowingController:
         *,
         season_number: int,
         episode_number: int,
+        total_episodes: int,
         snapshot: FollowingDetailSnapshot,
         overflow_value: int | None,
     ) -> int:
@@ -1379,6 +1380,15 @@ class FollowingController:
             return normalized_episode
         local_latest = max(local_numbers)
         if normalized_episode > local_latest and local_latest >= season_count:
+            if overflow_value is None:
+                normalized_total = max(0, int(total_episodes or 0))
+                if normalized_total > season_count and normalized_episode <= normalized_total:
+                    return normalized_episode
+                next_episode = snapshot.next_episode
+                next_season = int(next_episode.season_number or 0) if next_episode is not None else 0
+                next_number = int(next_episode.episode_number or 0) if next_episode is not None else 0
+                if next_season == normalized_season and next_number > season_count:
+                    return normalized_episode
             return local_latest if overflow_value is None else max(0, int(overflow_value))
         return normalized_episode
 
@@ -1398,12 +1408,14 @@ class FollowingController:
         current_episode = self._normalize_loaded_season_episode(
             season_number=current_season_number,
             episode_number=record.current_episode,
+            total_episodes=record.total_episodes,
             snapshot=snapshot,
             overflow_value=0,
         )
         latest_episode = self._normalize_loaded_season_episode(
             season_number=latest_season_number,
             episode_number=record.latest_episode,
+            total_episodes=record.total_episodes,
             snapshot=snapshot,
             overflow_value=None,
         )

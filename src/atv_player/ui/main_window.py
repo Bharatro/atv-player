@@ -4361,6 +4361,31 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             f"更新 {record.new_episode_count} 集，最新第 {record.latest_episode} 集",
             dialog,
         )
+        if record.new_episode_count > 0:
+            try:
+                prompt_view = self._following_controller.load_detail(record.id, refresh_if_empty=False)
+                prompt_snapshot = prompt_view.snapshot
+            except Exception:
+                prompt_snapshot = None
+            if prompt_snapshot is not None and (prompt_snapshot.seasons or prompt_snapshot.episodes):
+                from atv_player.following_models import resolve_new_episode_count as _resolve_count, resolve_progress_season as _resolve_season
+                prompt_current_season = _resolve_season(
+                    record.current_season_number, record.current_episode, fallback_season=record.season_number,
+                )
+                snapshot_seasons = [int(s.season_number) for s in prompt_snapshot.seasons if int(s.season_number or 0) > 0]
+                snapshot_seasons.extend(int(e.season_number) for e in prompt_snapshot.episodes if int(e.season_number or 0) > 0)
+                prompt_latest_season = max(max(snapshot_seasons, default=0), prompt_current_season)
+                absolute_count = _resolve_count(
+                    has_update=True,
+                    current_season_number=prompt_current_season,
+                    current_episode=record.current_episode,
+                    latest_season_number=prompt_latest_season,
+                    latest_episode=record.latest_episode,
+                    total_episodes=record.total_episodes,
+                    seasons=prompt_snapshot.seasons,
+                    episodes=prompt_snapshot.episodes,
+                )
+                detail_label.setText(f"更新 {absolute_count} 集，最新第 {record.latest_episode} 集")
         button_row = QHBoxLayout()
         self._following_prompt_detail_button = QPushButton("查看详情", dialog)
         self._following_prompt_search_button = QPushButton("搜索播放", dialog)

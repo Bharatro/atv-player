@@ -61,6 +61,40 @@ def test_following_page_renders_update_card_and_emits_detail(qtbot) -> None:
     assert opened == [1]
 
 
+def test_following_card_keeps_long_progress_text_below_poster(qtbot) -> None:
+    item = FollowingCardItem(
+        record=FollowingRecord(
+            id=1,
+            title="航海王",
+            provider="tmdb",
+            provider_id="tv:37854",
+        ),
+        display_title="航海王",
+        subtitle="动漫",
+        progress_text="看到 S15E581 · 最新 S23E1163 / 总 1181",
+        update_text="有 582 集更新",
+        updated_hint=True,
+    )
+    page = FollowingPage(FakeFollowingController())
+    qtbot.addWidget(page)
+
+    card = page.card_widgets[0] if page.card_widgets else None
+    page._render_cards([item])
+    card = page.card_widgets[0]
+    card.show()
+    qtbot.wait(0)
+
+    poster_bottom = card.poster_label.geometry().bottom()
+    title_top = card.title_label.geometry().top()
+    progress_top = card.progress_label.geometry().top()
+    update_bottom = card.update_label.geometry().bottom()
+
+    assert card.height() >= 340
+    assert title_top > poster_bottom
+    assert progress_top > card.title_label.geometry().bottom()
+    assert update_bottom <= card.contentsRect().bottom()
+
+
 def test_following_page_centers_content_like_favorites_page(qtbot) -> None:
     page = FollowingPage(FakeFollowingController())
     qtbot.addWidget(page)

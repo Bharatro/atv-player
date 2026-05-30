@@ -19,7 +19,7 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
-from atv_player.following_models import FollowingDetailSnapshot, FollowingRecord, FollowingSourceBinding
+from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord, FollowingSeason, FollowingSourceBinding
 from atv_player.models import (
     AppConfig,
     FavoriteCardItem,
@@ -739,6 +739,59 @@ def test_main_window_homepage_prompt_actions(qtbot) -> None:
     assert window._following_prompt_dialog is not None
     window._following_prompt_detail_button.click()
     assert following.cleared == [1]
+
+
+def test_main_window_homepage_prompt_uses_tmdb_global_latest_count(qtbot) -> None:
+    class LongRunningFollowingController(FakeFollowingController):
+        def load_homepage_prompts(self):
+            return [
+                FollowingRecord(
+                    id=1,
+                    title="航海王",
+                    provider="tmdb",
+                    provider_id="tv:37854",
+                    season_number=1,
+                    current_season_number=15,
+                    current_episode=581,
+                    latest_episode=1163,
+                    total_episodes=1181,
+                    has_update=True,
+                    new_episode_count=582,
+                    homepage_prompt_pending=True,
+                )
+            ]
+
+        def load_detail(self, following_id: int, *, refresh_if_empty: bool = True):
+            del refresh_if_empty
+            return FollowingDetailView(
+                record=self.load_homepage_prompts()[0],
+                snapshot=FollowingDetailSnapshot(
+                    following_id=following_id,
+                    seasons=[
+                        FollowingSeason(season_number=0, episode_count=35, is_special=True),
+                        FollowingSeason(season_number=15, episode_count=62),
+                        FollowingSeason(season_number=23, episode_count=61),
+                    ],
+                    episodes=[
+                        FollowingEpisode(season_number=23, episode_number=61, air_date="2026-05-24"),
+                    ],
+                    next_episode=FollowingEpisode(season_number=23, episode_number=1164, air_date="2026-05-31"),
+                ),
+            )
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=LongRunningFollowingController(),
+    )
+    qtbot.addWidget(window)
+
+    window.show_following_homepage_prompts()
+
+    labels = [label.text() for label in window._following_prompt_dialog.findChildren(main_window_module.QLabel)]
+    assert "更新 582 集，最新第 1163 集" in labels
 
 
 def test_main_window_closing_homepage_prompt_dismisses_current_reminder(qtbot) -> None:

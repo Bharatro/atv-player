@@ -1983,11 +1983,84 @@ def test_build_snapshot_from_record_normalizes_global_tmdb_latest() -> None:
 
     following, snapshot = build_snapshot_from_record(record, now=300, media_kind="anime")
 
-    assert following.latest_episode == 24
-    assert following.total_episodes == 24
+    assert following.latest_episode == 112
+    assert following.total_episodes == 112
     assert snapshot.seasons == [
         FollowingSeason(season_number=2, title="第二季", episode_count=24)
     ]
+
+
+def test_build_snapshot_from_record_keeps_cross_season_tmdb_global_latest() -> None:
+    record = MetadataRecord(
+        provider="tmdb",
+        provider_id="tv:37854:season:1",
+        title="航海王",
+        tmdb_id="37854",
+        detail_fields=[
+            {"label": "number_of_episodes", "value": "1181"},
+            {
+                "label": "episodes",
+                "value": [
+                    {"episode_number": index, "season_number": 1, "name": f"第 {index} 集"}
+                    for index in range(1, 62)
+                ],
+            },
+            {
+                "label": "seasons",
+                "value": [
+                    {"season_number": 0, "name": "特别篇", "episode_count": 35},
+                    {"season_number": 1, "name": "第 1 季", "episode_count": 61},
+                    {"season_number": 23, "name": "第 23 季", "episode_count": 61},
+                ],
+            },
+            {
+                "label": "last_episode_to_air",
+                "value": {
+                    "episode_number": 1163,
+                    "season_number": 23,
+                    "air_date": "2026-05-24",
+                },
+            },
+            {
+                "label": "next_episode_to_air",
+                "value": {
+                    "episode_number": 1164,
+                    "season_number": 23,
+                    "air_date": "2026-05-31",
+                },
+            },
+        ],
+    )
+
+    following, snapshot = build_snapshot_from_record(record, now=1780070400, media_kind="anime")
+
+    assert following.latest_episode == 1163
+    assert following.total_episodes == 1181
+    assert snapshot.seasons[0].is_special is True
+
+
+def test_resolve_new_episode_count_keeps_tmdb_global_episode_numbers() -> None:
+    from atv_player.following_models import resolve_new_episode_count
+
+    count = resolve_new_episode_count(
+        has_update=True,
+        current_season_number=15,
+        current_episode=581,
+        latest_season_number=23,
+        latest_episode=1163,
+        total_episodes=1181,
+        seasons=[
+            FollowingSeason(season_number=0, episode_count=35, is_special=True),
+            *[
+                FollowingSeason(season_number=season_number, episode_count=50)
+                for season_number in range(1, 23)
+            ],
+            FollowingSeason(season_number=23, episode_count=1163),
+        ],
+        episodes=[],
+    )
+
+    assert count == 582
 
 
 def test_build_snapshot_from_record_stamps_tmdb_season_on_season_detail_episodes() -> None:
@@ -2067,11 +2140,19 @@ def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_fo
         title="航海王",
         tmdb_id="37854",
         detail_fields=[
+            {"label": "number_of_episodes", "value": "1181"},
+            {"label": "number_of_seasons", "value": "23"},
+            {
+                "label": "seasons",
+                "value": [
+                    {"season_number": 0, "episode_count": 35},
+                    {"season_number": 23, "episode_count": 61},
+                ],
+            },
             {
                 "label": "episodes",
                 "value": [
-                    {"episode_number": 1163, "season_number": 23, "name": "第 1163 集", "air_date": "2026-05-24"},
-                    {"episode_number": 1178, "season_number": 23, "name": "第 1178 集", "air_date": "2026-09-06"},
+                    {"episode_number": 61, "season_number": 23, "name": "第 61 集", "air_date": "2026-05-24"},
                 ],
             },
             {
@@ -2080,7 +2161,7 @@ def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_fo
             },
             {
                 "label": "next_episode_to_air",
-                "value": {"episode_number": 1178, "season_number": 23, "air_date": "2026-09-06"},
+                "value": {"episode_number": 1164, "season_number": 23, "air_date": "2026-05-31"},
             },
         ],
     )
@@ -2088,9 +2169,10 @@ def test_build_snapshot_from_record_does_not_use_last_episode_to_air_as_total_fo
     following, snapshot = build_snapshot_from_record(record, now=1780070400, media_kind="anime")
 
     assert following.latest_episode == 1163
-    assert following.total_episodes == 0
+    assert following.total_episodes == 1181
     assert snapshot.next_episode is not None
-    assert snapshot.next_episode.episode_number == 1178
+    assert snapshot.next_episode.episode_number == 1164
+    assert snapshot.seasons[0].is_special is True
 
 
 def test_build_snapshot_from_record_prefers_air_date_over_stale_last_episode_to_air() -> None:
