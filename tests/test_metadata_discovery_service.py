@@ -3,7 +3,11 @@ import time
 from pathlib import Path
 
 from atv_player.metadata.cache import MetadataCache
-from atv_player.metadata.discovery import DiscoveryQuery, RecommendationSeed, TMDBDiscoveryService
+from atv_player.metadata.discovery import (
+    DiscoveryQuery,
+    RecommendationSeed,
+    TMDBDiscoveryService,
+)
 
 
 class StubTMDBClient:
@@ -342,3 +346,55 @@ def test_tmdb_discovery_service_recommendation_cache_miss_when_seed_signature_ch
     )
 
     assert client.recommendation_calls == 2
+
+
+def test_tmdb_discovery_service_loads_related_recommendations_for_single_media(tmp_path: Path) -> None:
+    client = StubTMDBClient(
+        recommendations={
+            ("tv", "76479"): [
+                {"id": 100, "name": "Gen V", "vote_average": 7.8, "poster_path": "/genv.jpg"},
+                {"id": 200, "name": "The Boys: Mexico", "vote_average": 7.0},
+            ]
+        }
+    )
+    service = TMDBDiscoveryService(client=client, cache=MetadataCache(tmp_path))
+
+    result = service.related(
+        media_type="tv",
+        tmdb_id="76479",
+        excluded_provider_ids={"tv:100"},
+    )
+
+    assert result.source_label == "关联推荐"
+    assert result.total == 1
+    assert [item.provider_id for item in result.items] == ["tv:200"]
+    assert result.items[0].title == "The Boys: Mexico"
+    assert client.recommendation_calls == 1
+
+
+def test_tmdb_discovery_service_caches_related_recommendations_before_filtering(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    client = StubTMDBClient(
+        recommendations={
+            ("movie", "157336"): [
+                {"id": 300, "title": "Interstellar 2", "vote_average": 8.0},
+                {"id": 400, "title": "Arrival", "vote_average": 7.6},
+            ]
+        }
+    )
+    first = TMDBDiscoveryService(client=client, cache=cache).related(
+        media_type="movie",
+        tmdb_id="157336",
+        excluded_provider_ids={"movie:300"},
+    )
+
+    client._recommendations = {("movie", "157336"): [{"id": 999, "title": "不会被读到"}]}
+    second = TMDBDiscoveryService(client=client, cache=cache).related(
+        media_type="movie",
+        tmdb_id="157336",
+        excluded_provider_ids={"movie:400"},
+    )
+
+    assert [item.provider_id for item in first.items] == ["movie:400"]
+    assert [item.provider_id for item in second.items] == ["movie:300"]
+    assert client.recommendation_calls == 1

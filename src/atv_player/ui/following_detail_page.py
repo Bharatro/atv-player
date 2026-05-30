@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -38,6 +39,7 @@ from atv_player.following_models import (
     resolve_new_episode_count,
     resolve_progress_season,
 )
+from atv_player.metadata.discovery import DiscoveryItem
 from atv_player.models import AppConfig
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.external_links import external_link_html
@@ -479,15 +481,72 @@ class FollowingPersonCard(QFrame):
         super().mouseReleaseEvent(event)
 
 
+class FollowingRelatedRecommendationCard(QFrame):
+    activated = Signal(object)
+    context_menu_requested = Signal(object, object)
+
+    def __init__(self, item: DiscoveryItem, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.item = item
+        self.setObjectName("followingRelatedRecommendationCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumSize(148, 258)
+        self.setMaximumWidth(176)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        self.poster_label = QLabel("海报", self)
+        self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poster_label.setFixedSize(132, 188)
+        self.poster_label.setStyleSheet(_image_placeholder_qss())
+        self.title_label = QLabel(item.title or "未命名", self)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setWordWrap(True)
+        self.title_label.setObjectName("relatedRecommendationTitle")
+        meta_parts = [
+            part
+            for part in (
+                item.year,
+                "电影" if item.media_type == "movie" else "剧集",
+                f"TMDB {item.rating}" if item.rating else "",
+            )
+            if str(part or "").strip()
+        ]
+        self.meta_label = QLabel(" · ".join(meta_parts), self)
+        self.meta_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.meta_label.setWordWrap(True)
+        self.meta_label.setObjectName("relatedRecommendationMeta")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.meta_label)
+        layout.addStretch(1)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.item)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        self.context_menu_requested.emit(self.item, event.globalPos())
+        event.accept()
+
+
 class FollowingDetailPage(QWidget, AsyncGuardMixin):
     back_requested = Signal()
     continue_play_requested = Signal(int)
     search_play_requested = Signal(int)
     unfollow_requested = Signal(int)
+    related_global_search_requested = Signal(str)
     image_loaded = Signal(object, object)
     check_finished = Signal(int, object, str)
     metadata_refresh_finished = Signal(int, object, str)
     season_detail_finished = Signal(int, int, object, str)
+    related_recommendations_finished = Signal(int, int, object, str)
 
     def __init__(
         self,
@@ -504,6 +563,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.current_following_id = 0
         self.current_view = None
         self._selected_season_number = 0
+        self._related_recommendation_request_id = 0
         self._pending_people: list[dict[str, object]] = []
         self._batch_timer = QTimer(self)
         self._batch_timer.setInterval(1)
@@ -546,6 +606,15 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.playback_platform_buttons: list[QPushButton] = []
         self.playback_platform_widgets: list[QLabel] = []
         self._selected_metadata_source_key = "merged"
+        self.related_recommendation_cards: list[FollowingRelatedRecommendationCard] = []
+        self.related_recommendation_section = QFrame()
+        self.related_recommendation_section.setObjectName("followingRelatedRecommendationSection")
+        self.related_recommendation_status_label = QLabel()
+        self.related_recommendation_scroll = QScrollArea()
+        self._related_recommendation_container = QWidget()
+        self._related_recommendation_layout = QHBoxLayout(self._related_recommendation_container)
+        self._related_recommendation_layout.setContentsMargins(0, 0, 0, 0)
+        self._related_recommendation_layout.setSpacing(12)
 
         self._cast_container = QWidget()
         self._cast_layout = QHBoxLayout(self._cast_container)
@@ -559,6 +628,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self.check_finished, self._handle_check_finished)
         self._connect_async_signal(self.metadata_refresh_finished, self._handle_metadata_refresh_finished)
         self._connect_async_signal(self.season_detail_finished, self._handle_season_detail_finished)
+        self._connect_async_signal(self.related_recommendations_finished, self._handle_related_recommendations_finished)
         self.episode_browser.episode_activated.connect(self._open_episode_preview)
         self.episode_browser.season_changed.connect(self._handle_season_changed)
         self.episode_browser.grid_columns_changed.connect(
@@ -660,6 +730,20 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.cast_scroll.setMinimumHeight(270)
         self.cast_scroll.setMaximumHeight(300)
 
+        self.related_recommendation_scroll.setWidgetResizable(True)
+        self.related_recommendation_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.related_recommendation_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.related_recommendation_scroll.setWidget(self._related_recommendation_container)
+        self.related_recommendation_scroll.setMinimumHeight(286)
+        self.related_recommendation_scroll.setMaximumHeight(308)
+
+        related_section_layout = QVBoxLayout(self.related_recommendation_section)
+        related_section_layout.setContentsMargins(14, 14, 14, 14)
+        related_section_layout.setSpacing(10)
+        related_section_layout.addWidget(QLabel("TMDB 关联推荐", self.related_recommendation_section))
+        related_section_layout.addWidget(self.related_recommendation_status_label)
+        related_section_layout.addWidget(self.related_recommendation_scroll)
+
         self.episodes_section = QFrame(content)
         self.episodes_section.setObjectName("followingDetailEpisodesSection")
         self.episodes_section.setMinimumHeight(480)
@@ -685,6 +769,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         content_layout.setSpacing(18)
         content_layout.addWidget(self.top_section)
         content_layout.addWidget(self.episodes_section)
+        content_layout.addWidget(self.related_recommendation_section)
         content_layout.addWidget(self.cast_section)
         content_layout.addStretch(1)
 
@@ -744,6 +829,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         _clear_layout(self._cast_layout)
         self._pending_people = [*snapshot.cast, *snapshot.crew]
         self._render_next_batch()
+        self._start_related_recommendations_load()
 
     def _render_metadata_bundle(self, snapshot: FollowingDetailSnapshot) -> None:
         bundle = snapshot.metadata_bundle
@@ -1082,6 +1168,97 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         if label.property("person_avatar"):
             label.setStyleSheet(_person_inner_label_qss())
         label.setPixmap(QPixmap.fromImage(image))
+
+    def _start_related_recommendations_load(self) -> None:
+        load_related = getattr(self.controller, "load_related_recommendations", None)
+        self._related_recommendation_request_id += 1
+        request_id = self._related_recommendation_request_id
+        self._clear_related_recommendations()
+        if self.current_following_id <= 0 or not callable(load_related):
+            self.related_recommendation_section.hide()
+            return
+        following_id = self.current_following_id
+        self.related_recommendation_section.show()
+        self.related_recommendation_status_label.setText("正在加载关联推荐...")
+        self.related_recommendation_status_label.show()
+        self.related_recommendation_scroll.hide()
+
+        def load() -> None:
+            try:
+                result = load_related(following_id)
+                error = ""
+            except Exception as exc:
+                result = None
+                error = str(exc)
+            if self._can_deliver_async_result():
+                self.related_recommendations_finished.emit(request_id, following_id, result, error)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_related_recommendations_finished(
+        self,
+        request_id: int,
+        following_id: int,
+        result,
+        error: str,
+    ) -> None:
+        if request_id != self._related_recommendation_request_id or following_id != self.current_following_id:
+            return
+        self._clear_related_recommendations()
+        self.related_recommendation_section.show()
+        if error:
+            self.related_recommendation_status_label.setText(f"关联推荐加载失败: {error}")
+            self.related_recommendation_status_label.show()
+            self.related_recommendation_scroll.hide()
+            return
+        items = list(getattr(result, "items", []) or [])
+        if not items:
+            self.related_recommendation_status_label.setText("暂无关联推荐")
+            self.related_recommendation_status_label.show()
+            self.related_recommendation_scroll.hide()
+            return
+        self.related_recommendation_status_label.hide()
+        self.related_recommendation_scroll.show()
+        for item in items:
+            card = FollowingRelatedRecommendationCard(item, self._related_recommendation_container)
+            card.activated.connect(self._handle_related_recommendation_activated)
+            card.context_menu_requested.connect(self._open_related_recommendation_menu)
+            self._related_recommendation_layout.addWidget(card)
+            self.related_recommendation_cards.append(card)
+            self._start_image_load(card.poster_label, item.poster)
+        self._related_recommendation_layout.addStretch(1)
+
+    def _clear_related_recommendations(self) -> None:
+        self.related_recommendation_cards = []
+        _clear_layout(self._related_recommendation_layout)
+
+    def _handle_related_recommendation_activated(self, item: DiscoveryItem) -> None:
+        keyword = str(item.title or "").strip()
+        if keyword:
+            self.related_global_search_requested.emit(keyword)
+
+    def _open_related_recommendation_menu(self, item: DiscoveryItem, global_pos) -> None:
+        menu = QMenu(self)
+        search_action = menu.addAction("搜索资源")
+        add_action = menu.addAction("加入追更")
+        chosen = menu.exec(global_pos)
+        if chosen == search_action:
+            self._handle_related_recommendation_activated(item)
+            return
+        if chosen != add_action:
+            return
+        add_candidate = getattr(self.controller, "add_candidate", None)
+        if not callable(add_candidate):
+            self.status_label.setText("加入追更失败: 当前控制器不支持加入追更")
+            return
+        try:
+            record = add_candidate(item)
+        except Exception as exc:
+            self.status_label.setText(f"加入追更失败: {exc}")
+            return
+        title = str(getattr(record, "title", "") or item.title or "").strip()
+        self.status_label.setText(f"已加入追更: {title}" if title else "已加入追更")
+        self._start_related_recommendations_load()
 
     def _snapshot_needs_refresh(self, snapshot: FollowingDetailSnapshot) -> bool:
         return not any(

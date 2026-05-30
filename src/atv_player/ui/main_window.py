@@ -1767,6 +1767,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.following_detail_page.continue_play_requested.connect(self.open_following_bound_source)
         self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
         self.following_detail_page.unfollow_requested.connect(self._unfollow_from_detail)
+        self.following_detail_page.related_global_search_requested.connect(self._handle_favorite_global_search)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.history_page.global_search_requested.connect(self._handle_favorite_global_search)

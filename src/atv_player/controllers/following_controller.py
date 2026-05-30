@@ -219,6 +219,91 @@ class FollowingController:
         fallback.fallback_reason = "recommendation-empty"
         return fallback
 
+    def load_related_recommendations(self, following_id: int) -> DiscoveryResult:
+        if self._discovery_service is None or not hasattr(self._discovery_service, "related"):
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+        record = self._repository.get(following_id)
+        if record is None:
+            raise KeyError(f"following not found: {following_id}")
+        snapshot = self._repository.get_detail_snapshot(following_id) or FollowingDetailSnapshot(
+            following_id=following_id
+        )
+        identity = self._related_tmdb_identity(record, snapshot)
+        if identity is None:
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+        media_type, tmdb_id = identity
+        excluded_provider_ids = self._related_excluded_provider_ids(record, snapshot)
+        return self._discovery_service.related(
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+            excluded_provider_ids=excluded_provider_ids,
+        )
+
+    def _related_tmdb_identity(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> tuple[str, str] | None:
+        provider_id_identity = self._tmdb_identity_from_provider_id(record.provider_id)
+        if str(record.provider or "").strip() == "tmdb" and provider_id_identity is not None:
+            return provider_id_identity
+        tmdb_id = str((record.external_ids or {}).get("tmdb") or "").strip()
+        if tmdb_id:
+            media_type = self._related_media_type_for_record(record, snapshot)
+            if media_type:
+                return media_type, tmdb_id
+        if provider_id_identity is not None:
+            return provider_id_identity
+        bundle = snapshot.metadata_bundle
+        if bundle is not None:
+            for source in (bundle.source_snapshots or {}).values():
+                if str(source.provider or "").strip() != "tmdb":
+                    continue
+                identity = self._tmdb_identity_from_provider_id(source.provider_id)
+                if identity is not None:
+                    return identity
+        return None
+
+    @staticmethod
+    def _tmdb_identity_from_provider_id(provider_id: object) -> tuple[str, str] | None:
+        parts = str(provider_id or "").strip().split(":")
+        if len(parts) < 2 or parts[0] not in {"tv", "movie"} or not parts[1]:
+            return None
+        return parts[0], parts[1]
+
+    def _related_media_type_for_record(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> str:
+        provider_id_identity = self._tmdb_identity_from_provider_id(record.provider_id)
+        if provider_id_identity is not None:
+            return provider_id_identity[0]
+        return "movie" if _resolve_effective_media_kind(record, snapshot) == "movie" else "tv"
+
+    def _related_excluded_provider_ids(
+        self,
+        record: FollowingRecord,
+        snapshot: FollowingDetailSnapshot,
+    ) -> set[str]:
+        excluded: set[str] = set()
+        for candidate in [record.provider_id]:
+            identity = self._tmdb_identity_from_provider_id(candidate)
+            if identity is not None:
+                excluded.add(f"{identity[0]}:{identity[1]}")
+        tmdb_id = str((record.external_ids or {}).get("tmdb") or "").strip()
+        if tmdb_id:
+            media_type = self._related_media_type_for_record(record, snapshot)
+            if media_type:
+                excluded.add(f"{media_type}:{tmdb_id}")
+        bundle = snapshot.metadata_bundle
+        if bundle is not None:
+            for source in (bundle.source_snapshots or {}).values():
+                identity = self._tmdb_identity_from_provider_id(source.provider_id)
+                if identity is not None:
+                    excluded.add(f"{identity[0]}:{identity[1]}")
+        return excluded
+
     def _build_recommendation_seeds(self, *, limit: int) -> list[RecommendationSeed]:
         seeds: list[RecommendationSeed] = []
         seen_provider_ids: set[str] = set()

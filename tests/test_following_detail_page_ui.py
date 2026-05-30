@@ -1,7 +1,10 @@
-from PySide6.QtCore import Qt
+import threading
+
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QLabel
 
+import atv_player.ui.following_detail_page as following_detail_page_module
 from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.following_models import (
     FollowingDetailSnapshot,
@@ -15,6 +18,7 @@ from atv_player.following_models import (
     FollowingSeason,
     FollowingSourceBinding,
 )
+from atv_player.metadata.discovery import DiscoveryItem, DiscoveryResult
 from atv_player.models import AppConfig
 from atv_player.ui.following_detail_page import (
     FollowingDetailPage,
@@ -451,6 +455,117 @@ def test_following_detail_page_emits_continue_play_and_keeps_search_play(qtbot) 
     assert page.continue_play_button.isEnabled() is True
     assert continued == [1]
     assert searched == [1]
+
+
+def _related_item() -> DiscoveryItem:
+    return DiscoveryItem(
+        provider="tmdb",
+        provider_id="tv:100",
+        tmdb_id="100",
+        media_type="tv",
+        title="Gen V",
+        year="2023",
+        rating="7.8",
+        overview="少年英雄衍生剧",
+    )
+
+
+def test_following_detail_page_loads_related_recommendations_asynchronously(qtbot) -> None:
+    class BlockingRelatedController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def load_related_recommendations(self, following_id: int):
+            self.started.set()
+            self.release.wait(timeout=2)
+            return DiscoveryResult(items=[_related_item()], total=1, source_label="关联推荐")
+
+    controller = BlockingRelatedController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+
+    assert page.title_label.text() == "凡人修仙传"
+    assert page.related_recommendation_status_label.text() == "正在加载关联推荐..."
+    qtbot.waitUntil(controller.started.is_set, timeout=1000)
+
+    controller.release.set()
+    qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+
+    assert page.related_recommendation_cards[0].item.title == "Gen V"
+    assert page.related_recommendation_cards[0].title_label.text() == "Gen V"
+
+
+def test_following_detail_page_related_recommendation_left_click_starts_global_search(qtbot) -> None:
+    class RelatedController(FakeController):
+        def load_related_recommendations(self, following_id: int):
+            del following_id
+            return DiscoveryResult(items=[_related_item()], total=1, source_label="关联推荐")
+
+    page = FollowingDetailPage(RelatedController())
+    qtbot.addWidget(page)
+    searched: list[str] = []
+    page.related_global_search_requested.connect(searched.append)
+
+    page.load_record(1)
+    qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+    qtbot.mouseClick(page.related_recommendation_cards[0], Qt.MouseButton.LeftButton)
+
+    assert searched == ["Gen V"]
+
+
+def test_following_detail_page_related_recommendation_context_menu_adds_following(qtbot, monkeypatch) -> None:
+    class RelatedController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.added: list[DiscoveryItem] = []
+
+        def load_related_recommendations(self, following_id: int):
+            del following_id
+            return DiscoveryResult(items=[_related_item()], total=1, source_label="关联推荐")
+
+        def add_candidate(self, item):
+            self.added.append(item)
+            return FollowingRecord(id=2, title=item.title, provider=item.provider, provider_id=item.provider_id)
+
+    class FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    captured_actions: list[str] = []
+
+    class FakeMenu:
+        selected_text = "加入追更"
+
+        def __init__(self, parent=None) -> None:
+            del parent
+            self.actions: list[FakeAction] = []
+
+        def addAction(self, text: str):
+            captured_actions.append(text)
+            action = FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def exec(self, global_pos):
+            del global_pos
+            return next(action for action in self.actions if action.text == self.selected_text)
+
+    monkeypatch.setattr(following_detail_page_module, "QMenu", FakeMenu)
+    controller = RelatedController()
+    page = FollowingDetailPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_record(1)
+    qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+    page._open_related_recommendation_menu(_related_item(), QPoint(0, 0))
+
+    assert captured_actions == ["搜索资源", "加入追更"]
+    assert [item.title for item in controller.added] == ["Gen V"]
+    assert page.status_label.text() == "已加入追更: Gen V"
 
 
 def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:

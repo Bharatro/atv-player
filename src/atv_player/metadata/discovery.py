@@ -60,9 +60,11 @@ class TMDBDiscoveryService:
     _TRENDING_CACHE_NAMESPACE = "tmdb_discovery_trending"
     _DISCOVER_CACHE_NAMESPACE = "tmdb_discovery_discover"
     _RECOMMEND_CACHE_NAMESPACE = "tmdb_discovery_recommend"
+    _RELATED_CACHE_NAMESPACE = "tmdb_discovery_related"
     _TRENDING_CACHE_TTL_SECONDS = 60 * 60 * 6
     _DISCOVER_CACHE_TTL_SECONDS = 60 * 60 * 2
     _RECOMMEND_CACHE_TTL_SECONDS = 60 * 60 * 6
+    _RELATED_CACHE_TTL_SECONDS = 60 * 60 * 6
     _RECOMMENDATION_MAX_WORKERS = 8
 
     def __init__(self, *, client, cache: MetadataCache) -> None:
@@ -161,6 +163,49 @@ class TMDBDiscoveryService:
             favorite_provider_ids=favorite_provider_ids,
             following_provider_ids=following_provider_ids,
         )
+
+    def related(
+        self,
+        *,
+        media_type: str,
+        tmdb_id: str | int,
+        excluded_provider_ids: set[str] | None = None,
+    ) -> DiscoveryResult:
+        normalized_media_type = "movie" if str(media_type or "").strip() == "movie" else "tv"
+        normalized_tmdb_id = str(tmdb_id or "").strip()
+        if not normalized_tmdb_id:
+            return DiscoveryResult(items=[], total=0, source_label="关联推荐")
+        cache_key = self._cache_key(
+            {
+                "kind": "related",
+                "media_type": normalized_media_type,
+                "tmdb_id": normalized_tmdb_id,
+            }
+        )
+        cached = self._load_cached_result(
+            self._RELATED_CACHE_NAMESPACE,
+            cache_key,
+            ttl_seconds=self._RELATED_CACHE_TTL_SECONDS,
+            empty_ttl_seconds=60 * 10,
+        )
+        if cached is None:
+            items = [
+                self._map_item(raw, source_label="关联推荐")
+                for raw in self._client.get_recommendations(
+                    media_type=normalized_media_type,
+                    tmdb_id=normalized_tmdb_id,
+                    page=1,
+                )
+            ]
+            cached = DiscoveryResult(items=items, total=len(items), source_label="关联推荐")
+            self._save_cached_result(self._RELATED_CACHE_NAMESPACE, cache_key, cached)
+        excluded = {
+            str(provider_id or "").strip()
+            for provider_id in set(excluded_provider_ids or set())
+            if str(provider_id or "").strip()
+        }
+        items = [item for item in list(cached.items or []) if item.provider_id not in excluded]
+        return DiscoveryResult(items=items, total=len(items), source_label=cached.source_label)
 
     @staticmethod
     def _recommendation_seed_payload(seed: RecommendationSeed) -> dict[str, object]:

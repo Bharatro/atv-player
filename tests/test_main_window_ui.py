@@ -19,7 +19,13 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
-from atv_player.following_models import FollowingDetailSnapshot, FollowingEpisode, FollowingRecord, FollowingSeason, FollowingSourceBinding
+from atv_player.following_models import (
+    FollowingDetailSnapshot,
+    FollowingEpisode,
+    FollowingRecord,
+    FollowingSeason,
+    FollowingSourceBinding,
+)
 from atv_player.models import (
     AppConfig,
     FavoriteCardItem,
@@ -2943,6 +2949,23 @@ def test_main_window_player_detail_name_global_search_signal_starts_global_searc
 
     assert window.global_search_edit.text() == "刮削后的标题"
     assert started_keywords == ["刮削后的标题"]
+
+
+def test_main_window_following_detail_related_global_search_signal_starts_global_search(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    started_keywords: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda: started_keywords.append(window.global_search_edit.text()))
+
+    window.following_detail_page.related_global_search_requested.emit("Gen V")
+
+    assert window.global_search_edit.text() == "Gen V"
+    assert started_keywords == ["Gen V"]
 
 
 def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -> None:
