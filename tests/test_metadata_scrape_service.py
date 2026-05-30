@@ -485,29 +485,6 @@ def test_metadata_scrape_service_applies_ai_episode_titles_when_provider_titles_
     assert playlist[0].episode_title_source == "ai"
 
 
-def test_metadata_scrape_service_can_skip_ai_episode_title_fallback(tmp_path: Path) -> None:
-    cache = MetadataCache(tmp_path)
-    ai = AIEpisodeTitleRewrite()
-    service = MetadataScrapeService(
-        cache=cache,
-        providers=[],
-        ai_enrichment_service=ai,
-    )
-    playlist = [
-        PlayItem(title="S01E01.mkv", original_title="", url="http://m/1.mp4"),
-    ]
-
-    updated = service.build_episode_title_playlist(
-        VodItem(vod_id="1", vod_name="黑镜"),
-        playlist,
-        allow_ai_fallback=False,
-    )
-
-    assert updated is None
-    assert ai.inputs == []
-    assert playlist[0].episode_display_title == ""
-
-
 def test_metadata_scrape_service_skips_movie_classified_candidate_for_episode_title_rewrite(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

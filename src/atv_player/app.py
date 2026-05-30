@@ -569,21 +569,6 @@ class AppCoordinator(QObject):
             return None
         return AIEnrichmentService(OpenAICompatibleClient(provider_config))
 
-    def _build_metadata_ai_enrichment_service(self, config: AppConfig):
-        workflows = [
-            workflow
-            for workflow, enabled in (
-                ("metadata", config.ai_metadata_enrichment_enabled),
-                ("episode_titles", config.ai_episode_title_rewrite_enabled),
-            )
-            if enabled
-        ]
-        if not workflows:
-            return None
-        if len(workflows) == 1:
-            return self._build_ai_enrichment_service(config, workflow=workflows[0])
-        return self._build_ai_enrichment_service(config)
-
     def _refresh_danmaku_ai_enrichment(self, config: AppConfig):
         ai_enrichment_service = self._build_ai_enrichment_service(config, workflow="danmaku")
         if self._danmaku_service is not None:
@@ -836,7 +821,7 @@ class AppCoordinator(QObject):
                 source_kind=source_kind,
                 raw_detail=raw_detail,
             )
-            ai_enrichment_service = self._build_metadata_ai_enrichment_service(config)
+            ai_enrichment_service = self._build_ai_enrichment_service(config)
             return MetadataScrapeService(
                 cache=cache,
                 providers=providers,
@@ -855,7 +840,7 @@ class AppCoordinator(QObject):
             source_kind="browse",
             raw_detail=None,
         )
-        ai_enrichment_service = self._build_metadata_ai_enrichment_service(config)
+        ai_enrichment_service = self._build_ai_enrichment_service(config)
         return MetadataScrapeService(
             cache=MetadataCache(app_cache_dir() / "metadata"),
             providers=providers,
