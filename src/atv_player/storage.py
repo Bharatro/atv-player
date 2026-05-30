@@ -1,7 +1,12 @@
 import json
+import hashlib
+import platform
 from pathlib import Path
+import sys
+import time
+import uuid
 
-from atv_player.models import AppConfig
+from atv_player.models import AppConfig, AppIdentity
 from atv_player.source_preferences import VALID_DANMAKU_PROVIDER_IDS, VALID_METADATA_PROVIDER_IDS
 from atv_player.sqlite_utils import managed_connection
 
@@ -21,6 +26,7 @@ _VALID_MPV_HWDEC_MODES = {"auto-safe", "no"}
 _VALID_FOLLOWING_EPISODE_DISPLAY_MODES = {"compact", "poster", "full"}
 _VALID_FOLLOWING_EPISODE_GRID_COLUMNS = {1, 2, 3}
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
+_APP_IDENTITY_HASH_LENGTH = 16
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
     "localhost",
     "127.0.0.1",
@@ -351,6 +357,33 @@ class SettingsRepository:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_identity (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    installation_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS app_identity_no_update
+                BEFORE UPDATE ON app_identity
+                BEGIN
+                    SELECT RAISE(ABORT, 'app identity is immutable');
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS app_identity_no_delete
+                BEFORE DELETE ON app_identity
+                BEGIN
+                    SELECT RAISE(ABORT, 'app identity is immutable');
+                END
+                """
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app_config (
@@ -819,6 +852,53 @@ class SettingsRepository:
                 ON CONFLICT(id) DO NOTHING
                 """
             )
+
+    def _build_app_identity_id(self) -> str:
+        installation_uuid = str(uuid.uuid4())
+        feature_text = "|".join(
+            (
+                "atv-player",
+                installation_uuid,
+                sys.platform,
+                platform.machine(),
+                platform.release(),
+                str(self._db_path.resolve()),
+            )
+        )
+        feature_hash = hashlib.sha256(feature_text.encode("utf-8")).hexdigest()[
+            :_APP_IDENTITY_HASH_LENGTH
+        ]
+        return f"{installation_uuid}.{feature_hash}"
+
+    def ensure_app_identity(self) -> AppIdentity:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT installation_id, created_at
+                FROM app_identity
+                WHERE id = 1
+                """
+            ).fetchone()
+            if row is None:
+                installation_id = self._build_app_identity_id()
+                created_at = int(time.time())
+                conn.execute(
+                    """
+                    INSERT INTO app_identity (id, installation_id, created_at)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                    """,
+                    (installation_id, created_at),
+                )
+                row = conn.execute(
+                    """
+                    SELECT installation_id, created_at
+                    FROM app_identity
+                    WHERE id = 1
+                    """
+                ).fetchone()
+        assert row is not None
+        return AppIdentity(installation_id=str(row[0]), created_at=int(row[1]))
 
     def load_config(self) -> AppConfig:
         with self._connect() as conn:

@@ -101,6 +101,12 @@ class AppConfig:
     following_episode_grid_columns: int = 1
 
 
+@dataclass(slots=True, frozen=True)
+class AppIdentity:
+    installation_id: str
+    created_at: int
+
+
 @dataclass(slots=True)
 class ExternalSubtitleOption:
     name: str

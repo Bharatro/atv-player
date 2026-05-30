@@ -351,6 +351,7 @@ def build_application() -> tuple[QApplication, SettingsRepository, AppLogService
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     config = repo.load_config()
+    repo.ensure_app_identity()
     app_log_service = AppLogService(
         data_dir / "logs",
         enabled_getter=lambda: repo.load_config().logging_enabled,

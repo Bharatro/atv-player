@@ -1,11 +1,66 @@
 import sqlite3
 from pathlib import Path
+import re
 
 import pytest
 
 from atv_player.models import AppConfig
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
+
+
+def test_settings_repository_creates_stable_app_identity(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+
+    identity = repo.ensure_app_identity()
+    repeated = repo.ensure_app_identity()
+    reloaded = SettingsRepository(tmp_path / "app.db").ensure_app_identity()
+
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[0-9a-f]{16}",
+        identity.installation_id,
+    )
+    assert identity.installation_id == repeated.installation_id == reloaded.installation_id
+    assert identity.created_at > 0
+    assert repeated.created_at == identity.created_at
+    assert reloaded.created_at == identity.created_at
+
+
+def test_settings_repository_preserves_existing_app_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO app_identity (id, installation_id, created_at)
+            VALUES (1, 'existing-id.abcdef0123456789', 123)
+            """
+        )
+
+    identity = repo.ensure_app_identity()
+
+    assert identity.installation_id == "existing-id.abcdef0123456789"
+    assert identity.created_at == 123
+
+
+def test_settings_repository_app_identity_row_is_database_immutable(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    identity = repo.ensure_app_identity()
+
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                UPDATE app_identity
+                SET installation_id = 'changed.abcdef0123456789'
+                WHERE id = 1
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("DELETE FROM app_identity WHERE id = 1")
+
+    assert repo.ensure_app_identity() == identity
 
 
 def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: Path) -> None:

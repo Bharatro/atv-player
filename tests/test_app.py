@@ -4122,6 +4122,39 @@ def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_pa
     assert repo.load_config().base_url == "http://127.0.0.1:4567"
 
 
+def test_build_application_ensures_app_identity(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    calls = {"count": 0}
+    original_ensure = repo.ensure_app_identity
+
+    def ensure_app_identity():
+        calls["count"] += 1
+        return original_ensure()
+
+    repo.ensure_app_identity = ensure_app_identity
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module, "SettingsRepository", lambda _path: repo)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    app_module.build_application()
+
+    assert calls["count"] == 1
+
+
 def test_build_application_passes_process_argv_to_qapplication(monkeypatch, tmp_path) -> None:
     captured = {"args": None}
 
