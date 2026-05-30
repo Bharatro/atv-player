@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from atv_player.dependency_installer import DependencyInstallError, install_dependency
 from atv_player.diagnostics import SystemInfoEntry
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -64,6 +65,10 @@ _PLAYER_WINDOW_SHORTCUTS: tuple[ShortcutEntry, ...] = (
     ShortcutEntry("+", "提高倍速"),
     ShortcutEntry("=", "恢复 1.0x"),
 )
+
+_INSTALL_LINK_COMPONENTS = frozenset({"Node.js", "yt-dlp"})
+_MISSING_SYSTEM_INFO_VALUE = "未安装"
+_INSTALL_LINK_LABEL = "一键安装"
 
 
 def shortcut_entries_for(context: HelpContext, quit_sequence: QKeySequence) -> tuple[ShortcutEntry, ...]:
@@ -154,14 +159,33 @@ class ShortcutHelpDialog(ThemedDialogBase):
         label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         label.setStyleSheet("background: transparent; padding: 0; margin: 0;")
-        label.setText(external_link_html(entry.url or "", entry.value))
+        label.setText(
+            external_link_html(entry.url or "", _system_info_link_label(entry))
+        )
         label.setToolTip(entry.url or "")
-        label.linkActivated.connect(lambda href: self._open_external_url(QUrl(href)))
+        if _is_install_link(entry):
+            label.linkActivated.connect(
+                lambda _href: self._install_dependency(entry.label)
+            )
+        else:
+            label.linkActivated.connect(lambda href: self._open_external_url(QUrl(href)))
         return label
 
     def _open_external_url(self, url: QUrl) -> None:
         if not QDesktopServices.openUrl(url):
             QMessageBox.warning(self, "错误", f"打开链接失败: {url.toString()}")
+
+    def _install_dependency(self, component: str) -> None:
+        try:
+            install_dependency(component)
+        except DependencyInstallError as exc:
+            QMessageBox.warning(self, "安装失败", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "安装完成",
+            f"{component} 安装完成，请重新打开帮助检查版本。",
+        )
 
     def _copy_diagnostics_to_clipboard(self) -> None:
         clipboard = QApplication.clipboard()
@@ -224,3 +248,16 @@ def show_shortcut_help_dialog(
     dialog.raise_()
     dialog.activateWindow()
     return dialog
+
+
+def _system_info_link_label(entry: SystemInfoEntry) -> str:
+    if _is_install_link(entry):
+        return _INSTALL_LINK_LABEL
+    return entry.value
+
+
+def _is_install_link(entry: SystemInfoEntry) -> bool:
+    return (
+        entry.label in _INSTALL_LINK_COMPONENTS
+        and entry.value == _MISSING_SYSTEM_INFO_VALUE
+    )

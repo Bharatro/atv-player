@@ -44,7 +44,12 @@ def _iter_path_candidates(executable_name: str) -> list[Path]:
     candidates: list[Path] = []
     current_python_dir = Path(sys.executable).resolve().parent
     project_venv_dir = Path(__file__).resolve().parents[3] / ".venv" / "bin"
-    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+    search_dirs = [
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry
+    ]
+    if not sys.platform.startswith("win"):
+        search_dirs.append(str(Path.home() / ".local" / "bin"))
+    for raw_entry in search_dirs:
         if not raw_entry:
             continue
         directory = Path(raw_entry).expanduser()
@@ -72,7 +77,8 @@ def resolve_system_ytdlp_path() -> str:
         return ""
     discovered_path = Path(discovered).expanduser()
     project_venv_dir = Path(__file__).resolve().parents[3] / ".venv" / "bin"
-    if discovered_path.parent in {Path(sys.executable).resolve().parent, project_venv_dir}:
+    ignored_dirs = {Path(sys.executable).resolve().parent, project_venv_dir}
+    if discovered_path.parent in ignored_dirs:
         return ""
     return str(discovered_path)
 

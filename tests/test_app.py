@@ -2056,6 +2056,77 @@ def test_main_window_help_dialog_renders_system_info_links_like_player_metadata(
     assert expected_accent in rendered_html
 
 
+def test_main_window_help_dialog_renders_install_links_for_missing_ytdlp_and_nodejs(
+    qtbot, monkeypatch
+) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+    window._build_main_window_help_payload = lambda: (
+        [
+            SystemInfoEntry("Node.js", "未安装", "https://nodejs.org/en/download"),
+            SystemInfoEntry("mpv", "未安装", "https://mpv.io/installation/"),
+            SystemInfoEntry("yt-dlp", "未安装", "https://github.com/yt-dlp/yt-dlp/releases/latest"),
+        ],
+        "diagnostic text",
+        "detailed diagnostic text",
+    )
+
+    opened: list[str] = []
+    installed: list[str] = []
+    monkeypatch.setattr(
+        help_dialog_module.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(QUrl(url).toString()) or True,
+    )
+    monkeypatch.setattr(
+        help_dialog_module,
+        "install_dependency",
+        lambda component: installed.append(component),
+    )
+    monkeypatch.setattr(
+        help_dialog_module.QMessageBox,
+        "information",
+        lambda *args: None,
+    )
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    dialog = visible_shortcut_help_dialogs()[0]
+    table = dialog.findChild(QTableWidget, "systemInfoTable")
+    assert table is not None
+
+    node_widget = system_info_value_widget(dialog, 0)
+    mpv_widget = system_info_value_widget(dialog, 1)
+    ytdlp_widget = system_info_value_widget(dialog, 2)
+
+    assert isinstance(node_widget, QLabel)
+    assert isinstance(mpv_widget, QLabel)
+    assert isinstance(ytdlp_widget, QLabel)
+    assert QTextDocument(html=node_widget.text()).toPlainText().strip() == "一键安装"
+    assert QTextDocument(html=mpv_widget.text()).toPlainText().strip() == "未安装"
+    assert QTextDocument(html=ytdlp_widget.text()).toPlainText().strip() == "一键安装"
+
+    click_system_info_value_cell(qtbot, dialog, 0)
+    click_system_info_value_cell(qtbot, dialog, 2)
+
+    assert installed == ["Node.js", "yt-dlp"]
+    assert opened == []
+
+
 def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),

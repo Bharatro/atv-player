@@ -50,7 +50,7 @@
 - [ ] YouTube TIME STAMPS / Chapters 解析、点击跳转与章节跳转
 - [ ] YouTube 播放列表预加载下一个视频
 - [ ] 优化 YouTube 字幕与翻译字幕加载策略
-- [ ] F1 系统信息中未安装 `yt-dlp` 时显示 link 样式的一键安装按钮
+- [x] F1 系统信息中未安装 `yt-dlp` / `Node.js` 时显示 link 样式的一键安装按钮
 - [x] 修复 YouTube 播放卡顿
 - [x] 全局解析 YouTube 无法恢复播放进度，重启不能恢复播放
 - [x] YouTube 详情信息补全

@@ -42,12 +42,50 @@ def test_resolve_system_ytdlp_path_skips_current_venv_bin(monkeypatch) -> None:
     assert ytdlp_runtime.resolve_system_ytdlp_path() == "/usr/local/bin/yt-dlp"
 
 
-def test_resolve_mpv_ytdlp_path_returns_empty_when_no_candidate_exists(monkeypatch) -> None:
+def test_resolve_system_ytdlp_path_finds_user_local_bin_after_user_pip_install(
+    monkeypatch,
+) -> None:
     from atv_player.player import ytdlp_runtime
 
     monkeypatch.delenv("ATV_YTDLP_PATH", raising=False)
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(ytdlp_runtime.sys, "executable", "/home/demo/project/.venv/bin/python")
+    monkeypatch.setattr(
+        ytdlp_runtime.sys,
+        "executable",
+        "/home/demo/project/.venv/bin/python",
+    )
+    monkeypatch.setattr(
+        ytdlp_runtime.Path,
+        "home",
+        lambda: ytdlp_runtime.Path("/home/demo"),
+    )
+    monkeypatch.setattr(
+        ytdlp_runtime,
+        "_is_usable_file",
+        lambda path: str(path) == "/home/demo/.local/bin/yt-dlp",
+    )
+    monkeypatch.setattr(ytdlp_runtime.shutil, "which", lambda name: None)
+
+    assert ytdlp_runtime.resolve_system_ytdlp_path() == "/home/demo/.local/bin/yt-dlp"
+
+
+def test_resolve_mpv_ytdlp_path_returns_empty_when_no_candidate_exists(
+    monkeypatch,
+) -> None:
+    from atv_player.player import ytdlp_runtime
+
+    monkeypatch.delenv("ATV_YTDLP_PATH", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(
+        ytdlp_runtime.sys,
+        "executable",
+        "/home/demo/project/.venv/bin/python",
+    )
+    monkeypatch.setattr(
+        ytdlp_runtime.Path,
+        "home",
+        lambda: ytdlp_runtime.Path("/home/demo"),
+    )
     monkeypatch.setattr(ytdlp_runtime.shutil, "which", lambda name: None)
 
     assert ytdlp_runtime.resolve_mpv_ytdlp_path() == ""
