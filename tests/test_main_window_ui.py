@@ -4242,6 +4242,7 @@ def test_main_window_global_search_does_not_record_direct_open_url_history(qtbot
         plugin_manager=FakePluginManager(),
     )
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "_open_player_immediately", lambda request, restore_paused_state=False: None)
 
     qtbot.addWidget(window)
     window.show()
@@ -4316,6 +4317,7 @@ def test_main_window_global_search_treats_drive_url_as_direct_detail_open(qtbot,
         plugin_manager=FakePluginManager(),
     )
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "_open_player_immediately", lambda request, restore_paused_state=False: None)
 
     qtbot.addWidget(window)
     window.show()
@@ -4333,6 +4335,76 @@ def test_main_window_global_search_treats_drive_url_as_direct_detail_open(qtbot,
     assert opened[0].vod.vod_name == "夸克资源"
     assert [item.title for item in opened[0].playlist] == ["第1集", "第2集"]
     assert opened[0].source_vod_id == "https://pan.quark.cn/s/demo"
+
+
+def test_main_window_global_search_drive_url_opens_placeholder_player_immediately(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/demo"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$91792$1",
+                    "vod_name": "夸克资源",
+                    "vod_play_url": "第1集$https://media.example/quark-1.m3u8",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    builders: list[object] = []
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        drive_detail_loader=load_drive_detail,
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: builders.append(builder) or 7)
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("https://pan.quark.cn/s/demo")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    placeholder_session = window.player_window.opened[0][0]
+    assert placeholder_session["is_placeholder"] is True
+    assert placeholder_session["vod"].vod_name == "https://pan.quark.cn/s/demo"
+    assert placeholder_session["initial_log_message"] == "正在加载详情..."
+
+    assert len(builders) == 1
+    real_request = builders[0]()
+    assert real_request.vod.vod_name == "夸克资源"
+    assert [item.title for item in real_request.playlist] == ["第1集"]
 
 
 def test_main_window_global_search_treats_non_drive_url_as_direct_parse(qtbot, monkeypatch) -> None:

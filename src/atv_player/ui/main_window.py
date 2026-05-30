@@ -3114,6 +3114,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             detail_resolver=getattr(self.browse_controller, "resolve_folder_play_item", None),
         )
 
+    def _build_drive_placeholder_player_request(self, link: str) -> OpenPlayerRequest:
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=link, vod_name=link),
+            playlist=[],
+            clicked_index=0,
+            source_kind="telegram",
+            source_mode="detail",
+            source_vod_id=link,
+            use_local_history=False,
+            initial_log_message="正在加载详情...",
+            is_placeholder=True,
+        )
+
     def _build_offline_download_request(self, link: str) -> OpenPlayerRequest:
         if self._offline_download_detail_loader is None:
             raise ValueError("当前未配置磁力链接解析")
@@ -3379,6 +3392,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if not _looks_like_http_url(keyword):
             return False
         if _looks_like_drive_share_link(keyword):
+            self._open_player_immediately(self._build_drive_placeholder_player_request(keyword))
             self._start_open_request(lambda: self._build_drive_detail_request(keyword))
             return True
         yt_dlp = self._yt_dlp_service
