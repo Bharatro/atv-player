@@ -1674,6 +1674,7 @@ class FollowingController:
         return not any(
             (
                 snapshot.overview,
+                snapshot.metadata_fields,
                 snapshot.cast,
                 snapshot.crew,
                 snapshot.episodes,
@@ -1693,6 +1694,7 @@ class FollowingController:
         metadata_episodes = [self._episode_from_raw(item) for item in metadata_raw_episodes or []]
         return FollowingDetailSnapshot(
             overview=str(vod.vod_content or "").strip(),
+            metadata_fields=self._metadata_fields_from_vod(vod),
             cast=[{"name": name} for name in self._split_people(vod.vod_actor)],
             crew=[{"name": name, "job": "Director"} for name in self._split_people(vod.vod_director)],
             episodes=metadata_episodes or [
@@ -1715,6 +1717,44 @@ class FollowingController:
 
     def _snapshot_has_data(self, snapshot: FollowingDetailSnapshot) -> bool:
         return not self._snapshot_needs_refresh(snapshot)
+
+    def _metadata_fields_from_vod(self, vod: VodItem) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def put(label: str, value: object) -> None:
+            normalized_label = str(label or "").strip()
+            normalized_value = str(value or "").strip()
+            if not normalized_label or not normalized_value or normalized_label in seen:
+                return
+            fields.append({"label": normalized_label, "value": normalized_value})
+            seen.add(normalized_label)
+
+        put("类型", vod.type_name or vod.category_name)
+        put("年代", vod.vod_year)
+        put("地区", vod.vod_area)
+        put("语言", vod.vod_lang)
+        put("导演", vod.vod_director)
+        put("演员", vod.vod_actor)
+        if int(vod.dbid or 0):
+            put("豆瓣ID", str(int(vod.dbid or 0)))
+
+        internal_labels = {
+            "episodes",
+            "last_episode_to_air",
+            "next_episode_to_air",
+            "seasons",
+            "number_of_episodes",
+            "number_of_seasons",
+            "last_air_date",
+            "watch_provider_sources",
+        }
+        for field in list(vod.detail_fields or []):
+            label = str(getattr(field, "label", "") or "").strip()
+            if not label or label.lower() in internal_labels:
+                continue
+            put(label, getattr(field, "value", ""))
+        return fields
 
     def _split_people(self, value: object) -> list[str]:
         return [part.strip() for part in re.split(r"[,/、]", str(value or "")) if part.strip()]

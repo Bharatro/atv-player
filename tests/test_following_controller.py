@@ -1308,6 +1308,50 @@ def test_following_controller_adds_from_player_and_updates_progress(tmp_path: Pa
     assert snapshot.episodes[0].title == "风起"
 
 
+def test_following_controller_add_from_player_preserves_enriched_metadata_fields(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
+    vod = VodItem(
+        vod_id="vod-1",
+        vod_name="低智商犯罪",
+        vod_year="2025",
+        type_name="喜剧 / 悬疑 / 犯罪",
+        vod_area="中国大陆",
+        vod_lang="汉语普通话",
+        vod_director="刘海波",
+        vod_actor="王骁,田曦薇",
+        dbid=35517044,
+        detail_fields=[
+            PlaybackDetailField("TMDB ID", "272432"),
+            PlaybackDetailField("IMDb ID", "tt32592348"),
+        ],
+    )
+    item = PlayItem(title="第1集", url="u", media_title="低智商犯罪", vod_id="vod-1")
+
+    record = controller.add_from_player(
+        vod=vod,
+        item=item,
+        source_kind="browse",
+        source_key="",
+        position_seconds=0,
+        playlist=[item],
+    )
+
+    snapshot = repo.get_detail_snapshot(record.id)
+    assert snapshot is not None
+    assert snapshot.metadata_fields == [
+        {"label": "类型", "value": "喜剧 / 悬疑 / 犯罪"},
+        {"label": "年代", "value": "2025"},
+        {"label": "地区", "value": "中国大陆"},
+        {"label": "语言", "value": "汉语普通话"},
+        {"label": "导演", "value": "刘海波"},
+        {"label": "演员", "value": "王骁,田曦薇"},
+        {"label": "豆瓣ID", "value": "35517044"},
+        {"label": "TMDB ID", "value": "272432"},
+        {"label": "IMDb ID", "value": "tt32592348"},
+    ]
+
+
 def test_following_controller_add_from_player_can_skip_initial_watched_progress(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     controller = FollowingController(repo, metadata_search_service=FakeSearchService(), update_service=FakeUpdateService(), now=lambda: 100)
