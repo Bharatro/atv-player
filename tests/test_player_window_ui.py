@@ -5856,6 +5856,33 @@ def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) 
     assert window.poster_label.minimumHeight() > 0
 
 
+def test_player_window_sidebar_actions_include_poster_toggle(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    actions_layout = window.sidebar_actions_widget.layout()
+
+    assert actions_layout.count() == 4
+    assert actions_layout.indexOf(window.toggle_poster_button) != -1
+    assert window.toggle_poster_button.text() == ""
+    assert window.toggle_poster_button.toolTip() == "海报"
+    assert window.toggle_poster_button.isCheckable() is True
+    assert window.toggle_poster_button.isChecked() is True
+    assert window._poster_row_widget.isHidden() is False
+
+    qtbot.mouseClick(window.toggle_poster_button, Qt.MouseButton.LeftButton)
+
+    assert window.toggle_poster_button.isChecked() is False
+    assert window._poster_row_widget.isHidden() is True
+    assert window.metadata_section.isHidden() is False
+    assert window.log_section.isHidden() is False
+
+    qtbot.mouseClick(window.toggle_poster_button, Qt.MouseButton.LeftButton)
+
+    assert window.toggle_poster_button.isChecked() is True
+    assert window._poster_row_widget.isHidden() is False
+
+
 def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) -> None:
     poster_path = tmp_path / "poster.png"
     pixmap = QPixmap(20, 30)

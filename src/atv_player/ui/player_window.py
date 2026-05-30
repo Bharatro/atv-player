@@ -627,6 +627,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         "grid.svg",
         "maximize.svg",
         "queue.svg",
+        "poster.svg",
         "info.svg",
         "logs.svg",
         "danmaku.svg",
@@ -914,14 +915,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is not None:
             self.wide_button.setChecked(bool(self.config.player_wide_mode))
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表", role="secondary")
+        self.toggle_poster_button = self._create_icon_button("poster.svg", "海报", role="secondary")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情", role="secondary")
         self.toggle_log_button = self._create_icon_button("logs.svg", "播放日志", role="secondary")
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D", role="secondary")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D", role="secondary")
         self.metadata_scrape_button = self._create_icon_button("scrape.svg", "刮削", "S", role="secondary")
         self.toggle_playlist_button.setCheckable(True)
+        self.toggle_poster_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_log_button.setCheckable(True)
+        self.toggle_poster_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
         self.toggle_log_button.setChecked(bool(getattr(self.config, "player_log_visible", True)))
         self._update_playlist_toggle_button_state()
@@ -1126,6 +1130,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         sidebar_actions = QHBoxLayout(self.sidebar_actions_widget)
         sidebar_actions.setContentsMargins(0, 0, 0, 0)
         sidebar_actions.addWidget(self.toggle_playlist_button)
+        sidebar_actions.addWidget(self.toggle_poster_button)
         sidebar_actions.addWidget(self.toggle_details_button)
         sidebar_actions.addWidget(self.toggle_log_button)
 
@@ -1269,6 +1274,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._poster_next_button.clicked.connect(lambda: self._step_metadata_poster(1))
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._cycle_playlist_panel_mode)
+        self.toggle_poster_button.clicked.connect(self._apply_visibility_state)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_log_button.clicked.connect(self._toggle_log_visibility)
         self.playback_retry_button.clicked.connect(self._retry_failed_startup)
@@ -1482,6 +1488,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.wide_button,
             self.fullscreen_button,
             self.toggle_playlist_button,
+            self.toggle_poster_button,
             self.toggle_details_button,
             self.toggle_log_button,
             self.danmaku_source_button,
@@ -9006,6 +9013,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.set_title_bar_visible(not is_fullscreen)
         sidebar_hidden = is_fullscreen or self.wide_button.isChecked()
         metadata_visible = self.toggle_details_button.isChecked()
+        poster_visible = self.toggle_poster_button.isChecked()
         log_visible = self.toggle_log_button.isChecked()
         playlist_visible = self._playlist_panel_visible()
         playlist_panel_visible = playlist_visible and not sidebar_hidden
@@ -9035,6 +9043,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_playlist_title_tabs()
         self.details.setHidden(is_fullscreen or not metadata_visible)
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)
+        self._poster_row_widget.setHidden(is_fullscreen or not metadata_visible or not poster_visible)
         self.log_section.setHidden(is_fullscreen or not log_visible)
         self._refresh_metadata_original_toggle()
         self._update_log_section_max_height()
