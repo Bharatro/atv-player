@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+from datetime import datetime
 from pathlib import Path
 
 from atv_player.ai.enrichment import FollowingDetailSummary
@@ -470,6 +471,150 @@ def test_following_controller_load_page_uses_completed_text_for_idle_record(tmp_
     cards, _total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
 
     assert cards[0].update_text == "已完结"
+
+
+def test_following_controller_load_page_sorts_by_next_update_and_keeps_completed_last(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    completed_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="已完结",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:completed",
+            provider_priority=["bangumi"],
+            latest_episode=12,
+            total_episodes=12,
+            created_at=1,
+            updated_at=400,
+        )
+    )
+    later_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="稍后更新",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:later",
+            provider_priority=["bangumi"],
+            latest_episode=8,
+            total_episodes=0,
+            created_at=2,
+            updated_at=300,
+        )
+    )
+    sooner_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="更早更新",
+            media_kind="anime",
+            provider="bangumi",
+            provider_id="subject:sooner",
+            provider_priority=["bangumi"],
+            latest_episode=8,
+            total_episodes=0,
+            created_at=3,
+            updated_at=200,
+        )
+    )
+    repo.save_detail_snapshot(
+        completed_id,
+        FollowingDetailSnapshot(
+            following_id=completed_id,
+            episodes=[FollowingEpisode(episode_number=12, air_date="2026-05-20")],
+        ),
+    )
+    repo.save_detail_snapshot(
+        later_id,
+        FollowingDetailSnapshot(
+            following_id=later_id,
+            episodes=[FollowingEpisode(episode_number=9, air_date="2026-06-03")],
+        ),
+    )
+    repo.save_detail_snapshot(
+        sooner_id,
+        FollowingDetailSnapshot(
+            following_id=sooner_id,
+            episodes=[FollowingEpisode(episode_number=9, air_date="2026-05-31")],
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 1779638400)
+
+    cards, total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert total == 3
+    assert [card.display_title for card in cards] == ["更早更新", "稍后更新", "已完结"]
+
+
+def test_following_controller_load_page_prefers_platform_weekly_update_time(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    tmdb_only_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="TMDB日期",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:tmdb",
+            provider_priority=["tmdb"],
+            created_at=1,
+            updated_at=2,
+        )
+    )
+    platform_time_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="平台具体时间",
+            media_kind="anime",
+            provider="bilibili",
+            provider_id="ss1",
+            provider_priority=["bilibili"],
+            created_at=2,
+            updated_at=1,
+        )
+    )
+    repo.save_detail_snapshot(
+        tmdb_only_id,
+        FollowingDetailSnapshot(
+            following_id=tmdb_only_id,
+            episodes=[FollowingEpisode(episode_number=9, air_date="2026-06-01")],
+        ),
+    )
+    repo.save_detail_snapshot(
+        platform_time_id,
+        FollowingDetailSnapshot(
+            following_id=platform_time_id,
+            episodes=[FollowingEpisode(episode_number=9, air_date="2026-06-01")],
+            metadata_bundle=FollowingMetadataBundle(
+                merged_snapshot=FollowingMetadataSourceSnapshot(
+                    source_key="merged",
+                    provider="merged",
+                    provider_label="合并",
+                    playback_platforms=[
+                        FollowingPlaybackPlatformEntry(
+                            provider="bilibili",
+                            label="哔哩哔哩",
+                            update_time_text="连载中, 每周日 11:00更新",
+                        )
+                    ],
+                )
+            ),
+        ),
+    )
+    controller = FollowingController(repo, metadata_search_service=FakeSearchService(), now=lambda: 1780070400)
+
+    cards, total = controller.load_page(page=1, size=20, keyword="", only_updates=False)
+
+    assert total == 2
+    assert [card.display_title for card in cards] == ["平台具体时间", "TMDB日期"]
+
+
+def test_following_controller_parses_multiple_platform_weekdays() -> None:
+    parsed = FollowingController._parse_update_time_text(
+        "每周三周四 20:00更新",
+        now=datetime(2026, 5, 30, 0, 0),
+    )
+
+    assert parsed == (datetime(2026, 6, 3).date().toordinal(), 20 * 60)
 
 
 def test_following_controller_keyword_search_uses_tmdb_only_and_sorts_tv_before_movie(tmp_path: Path) -> None:

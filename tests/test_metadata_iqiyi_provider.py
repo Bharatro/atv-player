@@ -100,6 +100,7 @@ def test_iqiyi_metadata_provider_maps_movie_people_and_detail_fields() -> None:
                         "actors": {"value": [{"title": "金妮弗·古德温"}, {"title": "杰森·贝特曼"}]},
                         "brief": {"value": "兔子朱迪与狐狸尼克正式组成搭档。"},
                         "releaseTime": {"key": "上映时间", "value": "2025-11-26"},
+                        "updateTime": {"key": "更新至", "value": "每周六 10:00更新"},
                         "timeLength": {"key": "片长", "value": "01:43:26"},
                         "baseTags": [{"value": "冒险"}, {"value": "动画"}, {"value": "喜剧"}],
                         "rating": 9.0,
@@ -131,6 +132,7 @@ def test_iqiyi_metadata_provider_maps_movie_people_and_detail_fields() -> None:
     assert record.detail_fields == [
         {"label": "播放链接", "value": "https://www.iqiyi.com/v_demo.html"},
         {"label": "上映时间", "value": "2025-11-26"},
+        {"label": "更新时间", "value": "每周六 10:00更新"},
         {"label": "片长", "value": "01:43:26"},
     ]
 

@@ -70,6 +70,8 @@ class IqiyiMetadataProvider:
                 continue
             label = str(item.get("key") or "").strip()
             value = str(item.get("value") or "").strip()
+            if key == "updateTime" and value:
+                label = "更新时间"
             if label and value:
                 detail_fields.append({"label": label, "value": value})
         return MetadataRecord(

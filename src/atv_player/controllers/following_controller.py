@@ -6,6 +6,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 
 from atv_player.ai.enrichment import FollowingDetailSummaryInput
 from atv_player.danmaku.utils import infer_playlist_episode_number
@@ -460,7 +461,10 @@ class FollowingController:
         )
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
-        records, total = self._repository.load_page(page=page, size=size, keyword=keyword, only_updates=only_updates)
+        normalized_size = max(1, int(size or 1))
+        records, total = self._repository.load_page(page=1, size=normalized_size, keyword=keyword, only_updates=only_updates)
+        if total > len(records):
+            records, total = self._repository.load_page(page=1, size=total, keyword=keyword, only_updates=only_updates)
         cards = []
         for record in records:
             snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
@@ -477,7 +481,146 @@ class FollowingController:
                     error_text=record.last_error,
                 )
             )
-        return cards, total
+        cards.sort(key=self._following_card_sort_key)
+        offset = max(0, int(page or 1) - 1) * normalized_size
+        return cards[offset : offset + normalized_size], total
+
+    def _following_card_sort_key(self, card: FollowingCardItem) -> tuple[int, int, int, int, int]:
+        record = card.record
+        snapshot = self._repository.get_detail_snapshot(record.id) or FollowingDetailSnapshot(following_id=record.id)
+        completion_state = self._completion_state(record, snapshot)
+        if completion_state == FollowingCompletionState.COMPLETED:
+            return (1, 1, 0, 0, -int(record.updated_at or 0))
+        now = datetime.fromtimestamp(self._now())
+        next_update_date = self._next_update_sort_date(snapshot, now=now)
+        if next_update_date is None:
+            return (0, 1, 0, 0, -int(record.updated_at or 0))
+        return (0, 0, next_update_date[0], next_update_date[1], -int(record.updated_at or 0))
+
+    @staticmethod
+    def _next_update_sort_date(snapshot: FollowingDetailSnapshot, *, now: datetime) -> tuple[int, int] | None:
+        dates: list[tuple[int, int]] = []
+        for platform in FollowingController._snapshot_playback_platforms(snapshot):
+            parsed = FollowingController._parse_update_time_text(
+                " ".join(
+                    text
+                    for text in (platform.update_time_text, platform.status_text)
+                    if str(text or "").strip()
+                ),
+                now=now,
+            )
+            if parsed is not None:
+                dates.append(parsed)
+        if snapshot.next_episode is not None:
+            parsed = FollowingController._parse_air_date(snapshot.next_episode.air_date)
+            if parsed is not None and parsed[0] >= now.date().toordinal():
+                dates.append(parsed)
+        for episode in snapshot.episodes:
+            parsed = FollowingController._parse_air_date(episode.air_date)
+            if parsed is not None and parsed[0] >= now.date().toordinal():
+                dates.append(parsed)
+        return min(dates) if dates else None
+
+    @staticmethod
+    def _snapshot_playback_platforms(snapshot: FollowingDetailSnapshot):
+        bundle = snapshot.metadata_bundle
+        if bundle is None:
+            return []
+        platforms = list(bundle.merged_snapshot.playback_platforms or [])
+        for source in (bundle.source_snapshots or {}).values():
+            platforms.extend(source.playback_platforms or [])
+        return platforms
+
+    @staticmethod
+    def _parse_update_time_text(value: str, *, now: datetime) -> tuple[int, int] | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        time_match = re.search(r"(\d{1,2})[:：](\d{2})", text)
+        minutes = 24 * 60
+        if time_match is not None:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                minutes = hour * 60 + minute
+        weekdays = FollowingController._parse_update_weekdays(text)
+        if weekdays:
+            candidates: list[tuple[int, int]] = []
+            for weekday in weekdays:
+                days = (weekday - now.weekday()) % 7
+                candidate_date = now.date() + timedelta(days=days)
+                if days == 0 and minutes != 24 * 60 and minutes < now.hour * 60 + now.minute:
+                    candidate_date += timedelta(days=7)
+                candidates.append((candidate_date.toordinal(), minutes))
+            return min(candidates)
+        date_match = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", text)
+        if date_match is None:
+            return None
+        try:
+            parsed = datetime(
+                int(date_match.group(1)),
+                int(date_match.group(2)),
+                int(date_match.group(3)),
+            ).date()
+        except ValueError:
+            return None
+        if parsed < now.date():
+            return None
+        return parsed.toordinal(), minutes
+
+    @staticmethod
+    def _parse_update_weekdays(text: str) -> list[int]:
+        weekday_map = {
+            "一": 0,
+            "二": 1,
+            "三": 2,
+            "四": 3,
+            "五": 4,
+            "六": 5,
+            "日": 6,
+            "天": 6,
+            "1": 0,
+            "2": 1,
+            "3": 2,
+            "4": 3,
+            "5": 4,
+            "6": 5,
+            "7": 6,
+        }
+        weekdays: list[int] = []
+        seen: set[int] = set()
+        for match in re.finditer(r"(?:每|周|星期|礼拜)([一二三四五六日天1-7、,，/和至到]+)", text):
+            segment = match.group(1)
+            if any(separator in segment for separator in ("至", "到")):
+                parts = re.split(r"[至到]", segment, maxsplit=1)
+                if len(parts) == 2:
+                    start = weekday_map.get(parts[0][-1:])
+                    end = weekday_map.get(parts[1][:1])
+                    if start is not None and end is not None:
+                        indexes = list(range(start, end + 1)) if start <= end else [*range(start, 7), *range(0, end + 1)]
+                        for index in indexes:
+                            if index not in seen:
+                                seen.add(index)
+                                weekdays.append(index)
+                        continue
+            for char in segment:
+                index = weekday_map.get(char)
+                if index is None or index in seen:
+                    continue
+                seen.add(index)
+                weekdays.append(index)
+        return weekdays
+
+    @staticmethod
+    def _parse_air_date(value: str) -> tuple[int, int] | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.strptime(text[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        return parsed.toordinal(), 24 * 60
 
     def _update_text(self, record: FollowingRecord, *, completion_state: str | None = None, snapshot: FollowingDetailSnapshot | None = None, media_kind: str = "") -> str:
         if media_kind == "movie":
