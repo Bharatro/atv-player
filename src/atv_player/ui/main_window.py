@@ -4782,6 +4782,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return None
 
     def _prepare_request_for_open(self, request: OpenPlayerRequest) -> OpenPlayerRequest:
+        if request.is_placeholder:
+            return request
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None

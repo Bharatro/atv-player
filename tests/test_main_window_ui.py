@@ -9602,6 +9602,48 @@ def test_main_window_prepares_episode_title_enhancer_for_browse_request(qtbot) -
     assert prepared.episode_title_enhancer is marker
 
 
+def test_main_window_does_not_prepare_metadata_for_loading_placeholder(qtbot) -> None:
+    hydrator_calls: list[str] = []
+    hydrator = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **kwargs: hydrator_calls.append(kwargs["vod"].vod_name) or hydrator,
+    )
+    qtbot.addWidget(window)
+    placeholder = OpenPlayerRequest(
+        vod=VodItem(
+            vod_id="magnet:?xt=urn:btih:f7a602d85036999a1b66025a359a1c647279a51f",
+            vod_name="magnet:?xt=urn:btih:f7a602d85036999a1b66025a359a1c647279a51f",
+        ),
+        playlist=[],
+        clicked_index=0,
+        source_kind="browse",
+        source_mode="detail",
+        source_vod_id="magnet:?xt=urn:btih:f7a602d85036999a1b66025a359a1c647279a51f",
+        initial_log_message="正在加载详情...",
+        is_placeholder=True,
+    )
+    detail_request = OpenPlayerRequest(
+        vod=VodItem(vod_id="detail-1", vod_name="低智商犯罪"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        clicked_index=0,
+        source_kind="browse",
+        source_mode="detail",
+        source_vod_id=placeholder.source_vod_id,
+    )
+
+    prepared_placeholder = window._prepare_request_for_open(placeholder)
+    prepared_detail = window._prepare_request_for_open(detail_request)
+
+    assert prepared_placeholder.metadata_hydrator is None
+    assert prepared_detail.metadata_hydrator is hydrator
+    assert hydrator_calls == ["低智商犯罪"]
+
+
 @pytest.mark.parametrize("source_kind", ["telegram", "emby", "jellyfin", "feiniu"])
 def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(qtbot, source_kind: str) -> None:
     hydrator = object()
