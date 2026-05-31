@@ -3319,6 +3319,62 @@ def test_main_window_global_search_shows_only_tabs_with_results_and_count_titles
     assert plugin_controller.search_calls == [("庆余年", 1)]
 
 
+def test_main_window_global_search_overflow_results_use_more_button(qtbot, monkeypatch) -> None:
+    controllers = [SearchableController([_vod(f"结果{i}")], total=i) for i in range(1, 8)]
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=controllers[0],
+        live_controller=FakeStaticController(),
+        emby_controller=controllers[1],
+        jellyfin_controller=controllers[2],
+        feiniu_controller=controllers[3],
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[
+            {"id": f"plugin-{index}", "title": f"插件{index}", "controller": controller, "search_enabled": True}
+            for index, controller in enumerate(controllers[4:], start=1)
+        ],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    monkeypatch.setattr(window.nav_tabs.tab_bar, "width", lambda: 240)
+    monkeypatch.setattr(window.nav_tabs, "width", lambda: 240)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: window.plugin_overflow_button.isVisible() is True)
+    assert window.plugin_overflow_button.text() == "更多(6)"
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+        "电报影视(1)",
+    ]
+    assert [definition.title for definition in window._hidden_plugin_tab_definitions] == [
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+        "插件1",
+        "插件2",
+        "插件3",
+    ]
+    window._open_plugin_overflow_drawer()
+    assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == [
+        "Emby(2)",
+        "Jellyfin(3)",
+        "飞牛影视(4)",
+        "插件1(5)",
+        "插件2(6)",
+        "插件3(7)",
+    ]
+    window._plugin_overflow_drawer.select_plugin_by_title("Emby(2)")
+
+    assert window.nav_tabs.currentWidget() is window.emby_page
+
+
 def test_main_window_global_search_hides_all_tabs_then_shows_results_incrementally(qtbot) -> None:
     telegram = AsyncKeywordSearchController({"庆余年": ([_vod("Telegram One")], 12)})
     plugin_controller = AsyncKeywordSearchController({"庆余年": ([_vod("Plugin One")], 1)})

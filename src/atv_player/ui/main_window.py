@@ -2109,16 +2109,49 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 hidden.append(definition)
         return visible, hidden
 
+    def _split_visible_and_hidden_search_tabs(
+        self,
+        definitions: list[_TabDefinition],
+        title_overrides: dict[str, str],
+    ) -> tuple[list[_TabDefinition], list[_TabDefinition]]:
+        button_spacing = 8
+        total_nav_width = self.nav_tabs.tab_bar.width()
+        if total_nav_width <= 0:
+            total_nav_width = max(self.nav_tabs.width(), 0)
+        widths = [
+            (definition, self._plugin_tab_title_width(title_overrides.get(definition.key, definition.title)))
+            for definition in definitions
+        ]
+        total_width = sum(width for _definition, width in widths)
+        available = total_nav_width
+        if definitions and total_width > available:
+            available -= self._plugin_overflow_button_width() + button_spacing
+        visible: list[_TabDefinition] = []
+        hidden: list[_TabDefinition] = []
+        used = 0
+        for definition, width in widths:
+            if used + width <= available:
+                visible.append(definition)
+                used += width
+            else:
+                hidden.append(definition)
+        return visible, hidden
+
     def _refresh_navigation_tabs(self) -> None:
         current_widget = self._active_widget or self.nav_tabs.currentWidget()
         title_overrides = self._global_search_title_overrides() if self._global_search_active else {}
         for definition in self._all_tab_definitions():
             self.nav_tabs.ensure_widget(definition.page)
         if self._global_search_active:
-            definitions = [definition for definition in self._all_tab_definitions() if definition.key in self._global_search_results]
-            self._hidden_plugin_tab_definitions = []
-            self.plugin_overflow_button.hide()
-            self._close_plugin_overflow_drawer()
+            result_definitions = [
+                definition for definition in self._all_tab_definitions() if definition.key in self._global_search_results
+            ]
+            definitions, hidden_results = self._split_visible_and_hidden_search_tabs(result_definitions, title_overrides)
+            self._hidden_plugin_tab_definitions = hidden_results
+            self.plugin_overflow_button.setVisible(bool(hidden_results))
+            self.plugin_overflow_button.setText(f"更多({len(hidden_results)})" if hidden_results else "更多")
+            if not hidden_results:
+                self._close_plugin_overflow_drawer()
         else:
             visible_static_definitions = [
                 definition for definition in self._static_tab_definitions if not definition.global_search_only
@@ -2612,8 +2645,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _overflow_drawer_items(self) -> list[tuple[str, str, bool]]:
         active_key = self._tab_key_for_widget(self._active_widget or self.nav_tabs.currentWidget())
+        title_overrides = self._global_search_title_overrides() if self._global_search_active else {}
         return [
-            (definition.key, definition.title, definition.key == active_key)
+            (definition.key, title_overrides.get(definition.key, definition.title), definition.key == active_key)
             for definition in self._hidden_plugin_tab_definitions
         ]
 
@@ -2709,7 +2743,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         widget.update()
 
     def _handle_hidden_plugin_selected(self, plugin_key: str) -> None:
-        definition = next((item for item in self._plugin_tab_definitions if item.key == plugin_key), None)
+        candidates = self._all_tab_definitions() if self._global_search_active else self._plugin_tab_definitions
+        definition = next((item for item in candidates if item.key == plugin_key), None)
         if definition is None:
             return
         self._close_plugin_overflow_drawer()
