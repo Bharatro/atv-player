@@ -3393,6 +3393,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_video_quality_state()
         self._configure_danmaku_for_current_item()
 
+    def refresh_runtime_video_output_settings(self) -> None:
+        if hasattr(self.video_widget, "apply_runtime_video_output_settings"):
+            self.video_widget.apply_runtime_video_output_settings()
+
     def _handle_video_file_loaded(self) -> None:
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
         pending_item = self._pending_post_load_item

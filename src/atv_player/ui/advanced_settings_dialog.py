@@ -200,6 +200,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
         self.mpv_hwdec_mode_combo = FlatComboBox()
         self.mpv_hwdec_mode_combo.addItem("硬解", "auto-safe")
+        self.mpv_hwdec_mode_combo.addItem("兼容硬解", "auto-copy")
         self.mpv_hwdec_mode_combo.addItem("软解", "no")
         self.mpv_network_timeout_edit = QLineEdit()
         self.mpv_network_timeout_edit.setPlaceholderText("1 - 300")

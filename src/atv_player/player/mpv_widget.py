@@ -305,6 +305,7 @@ class MpvWidget(QWidget):
         options = dict(
             wid=str(int(self.winId())),
             hwdec=hwdec,
+            deinterlace="auto",
             force_window="yes",
             audio_spdif="no",
             ad="ffmpeg",
@@ -322,6 +323,8 @@ class MpvWidget(QWidget):
         if sys.platform.startswith("win"):
             options["vo"] = "gpu"
             options["gpu_context"] = "d3d11"
+        elif sys.platform.startswith("linux"):
+            options["vo"] = "gpu"
         mismatch = detect_linux_nvidia_driver_mismatch()
         if mismatch is not None:
             userspace_version, kernel_version = mismatch
@@ -741,6 +744,18 @@ class MpvWidget(QWidget):
             if getattr(self._player, "core_shutdown", False):
                 return
             raise
+
+    def apply_runtime_video_output_settings(self) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(self.apply_runtime_video_output_settings)
+            return
+        if self._player is None:
+            return
+        hwdec = str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe")
+        if sys.platform.startswith("win") and hwdec == "auto-copy":
+            hwdec = "auto-safe"
+        self._set_player_property("hwdec", hwdec)
+        self._set_player_property("deinterlace", "auto")
 
     def _is_missing_mpv_property_error(self, exc: Exception) -> bool:
         return "property does not exist" in str(exc)

@@ -5744,6 +5744,53 @@ def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeyp
     assert saved == [(False, "bid=demo;", "tmdb-key")]
 
 
+def test_main_window_advanced_settings_refreshes_player_hwdec(qtbot, monkeypatch) -> None:
+    class FakePlayerWindow:
+        def __init__(self) -> None:
+            self.refreshed = 0
+            self.session = object()
+
+        def refresh_runtime_video_output_settings(self) -> None:
+            self.refreshed += 1
+
+    class FakeDialog:
+        def __init__(
+            self,
+            config_arg,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+        ) -> None:
+            del parent, apply_theme, app_log_service, youtube_category_text_loader
+            config_arg.mpv_hwdec_mode = "auto-copy"
+            save_config()
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "AdvancedSettingsDialog", FakeDialog)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.player_window = FakePlayerWindow()
+
+    window._open_advanced_settings()
+
+    assert window.player_window.refreshed == 1
+
+
 def test_main_window_apply_open_player_supports_legacy_player_window_constructor(qtbot, monkeypatch) -> None:
     opened: list[tuple[object, bool]] = []
 
@@ -6235,6 +6282,19 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     assert config.mpv_default_readahead_secs == 40
     assert config.mpv_extra_options == "cache-pause-wait=8\nstream-buffer-size=6M"
     assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_saves_auto_copy_hwdec_mode(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("auto-copy"))
+    dialog._save()
+
+    assert config.mpv_hwdec_mode == "auto-copy"
 
 
 def test_advanced_settings_dialog_loads_m3u_proxy_segment_prefetch_size(qtbot) -> None:

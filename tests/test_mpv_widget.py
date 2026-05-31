@@ -181,10 +181,51 @@ def test_mpv_widget_uses_configured_base_playback_settings(qtbot, monkeypatch) -
     widget._create_player()
 
     assert captured["hwdec"] == "no"
+    assert captured["deinterlace"] == "auto"
     assert captured["demuxer_max_bytes"] == "768M"
     assert captured["network_timeout"] == 22
     assert captured["demuxer_readahead_secs"] == 45
     assert captured["ytdl_raw_options"] == "cookies-from-browser=edge,remote-components=ejs:github"
+
+
+def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
+
+    widget._create_player()
+
+    assert captured["hwdec"] == "auto-copy"
+    assert captured["ao"] == "pulse,pipewire,alsa,"
+
+
+def test_mpv_widget_refreshes_runtime_hwdec_setting_on_existing_player(qtbot, monkeypatch) -> None:
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.options: dict[str, object] = {}
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    qtbot.addWidget(widget)
+    fake_player = FakeMPV()
+    widget._player = fake_player
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    widget.apply_runtime_video_output_settings()
+
+    assert fake_player.options["hwdec"] == "auto-copy"
+    assert fake_player.options["deinterlace"] == "auto"
 
 
 def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -> None:
@@ -1130,6 +1171,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
     assert "cache_secs" not in captured
+    assert captured["deinterlace"] == "auto"
     assert captured["demuxer_max_bytes"] == "512M"
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"
@@ -1194,7 +1236,7 @@ def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_nam
 
     widget._create_player()
 
-    assert "vo" not in captured
+    assert captured["vo"] == "gpu"
     assert captured["ao"] == "pulse,pipewire,alsa,"
     assert "audio_device" not in captured
 

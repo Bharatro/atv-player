@@ -3919,7 +3919,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             app_log_service=self._app_log_service,
             youtube_category_text_loader=self._youtube_category_text_loader,
         )
-        if dialog.exec() == QDialog.DialogCode.Accepted and self.youtube_page is not None:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if self.player_window is not None and hasattr(self.player_window, "refresh_runtime_video_output_settings"):
+            self.player_window.refresh_runtime_video_output_settings()
+        if self.youtube_page is not None:
             self.youtube_page.reload_categories()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:

@@ -508,6 +508,13 @@ def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Pat
     assert saved == config
 
 
+def test_settings_repository_accepts_auto_copy_hwdec_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(mpv_hwdec_mode="auto-copy"))
+
+    assert repo.load_config().mpv_hwdec_mode == "auto-copy"
+
+
 def test_settings_repository_round_trip_persists_playback_auto_switch_source_flag(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)
