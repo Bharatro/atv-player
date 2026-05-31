@@ -82,6 +82,7 @@ _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
 _WINDOWS_MPV_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv.dll")
+_VALID_RENDER_PROFILES = {"auto", "compat", "balanced", "vulkan", "quality", "performance", "software"}
 
 
 def _version_sort_key(value: str) -> tuple[int, ...]:
@@ -147,6 +148,80 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(normalized)
         deduped.append(normalized)
     return deduped
+
+
+def _normalize_render_profile(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in _VALID_RENDER_PROFILES else "auto"
+
+
+def _detect_gpu_vendor() -> str:
+    override = str(os.getenv("ATV_GPU_VENDOR") or "").strip().lower()
+    if override in {"nvidia", "amd", "intel", "unknown"}:
+        return override
+    return "unknown"
+
+
+def _explicit_render_profile_options(profile: str) -> dict[str, object]:
+    if profile == "compat":
+        return {"vo": "gpu", "hwdec": "auto-safe", "profile": "fast"}
+    if profile == "balanced":
+        return {"vo": "gpu-next", "hwdec": "auto-safe"}
+    if profile == "vulkan":
+        return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "auto-safe"}
+    if profile == "quality":
+        return {
+            **_explicit_render_profile_options("vulkan"),
+            "scale": "ewa_lanczossharp",
+            "cscale": "ewa_lanczossharp",
+            "sigmoid_upscaling": "yes",
+            "deband": "yes",
+        }
+    if profile == "performance":
+        return {
+            "vo": "gpu-next",
+            "gpu_api": "vulkan",
+            "hwdec": "auto-safe",
+            "profile": "sw-fast",
+            "vd_lavc_threads": 1,
+            "deband": "no",
+            "interpolation": "no",
+        }
+    if profile == "software":
+        return {"vo": "gpu", "hwdec": "no"}
+    return {}
+
+
+def _auto_render_profile_options() -> dict[str, object]:
+    vendor = _detect_gpu_vendor()
+    if sys.platform.startswith(("linux", "win")):
+        if vendor == "nvidia":
+            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "nvdec"}
+        if sys.platform.startswith("win") and vendor in {"amd", "intel"}:
+            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "d3d11va"}
+        if sys.platform.startswith("linux") and vendor in {"amd", "intel"}:
+            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "auto-safe"}
+    return {"vo": "gpu-next", "hwdec": "auto-safe"}
+
+
+def _render_profile_options(profile: str) -> dict[str, object]:
+    normalized = _normalize_render_profile(profile)
+    if normalized == "auto":
+        return _auto_render_profile_options()
+    return _explicit_render_profile_options(normalized)
+
+
+def _is_vulkan_render_options(options: dict[str, object]) -> bool:
+    return options.get("gpu_api") == "vulkan"
+
+
+def _fallback_render_options(options: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
+    if not _is_vulkan_render_options(options):
+        return []
+    return [
+        ("balanced", _explicit_render_profile_options("balanced")),
+        ("compat", _explicit_render_profile_options("compat")),
+    ]
 
 
 def _existing_windows_mpv_dll_candidates() -> list[str]:
@@ -299,12 +374,9 @@ class MpvWidget(QWidget):
         self.playback_finished.emit()
 
     def _base_player_options(self) -> dict[str, object]:
-        hwdec = str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe")
-        if sys.platform.startswith("win") and hwdec == "auto-copy":
-            hwdec = "auto-safe"
         options = dict(
             wid=str(int(self.winId())),
-            hwdec=hwdec,
+            hwdec="auto-safe",
             deinterlace="auto",
             force_window="yes",
             audio_spdif="no",
@@ -320,11 +392,10 @@ class MpvWidget(QWidget):
             stream_buffer_size="4M",
             network_timeout=int(getattr(self._config, "mpv_network_timeout_seconds", 15) or 15),
         )
-        if sys.platform.startswith("win"):
-            options["vo"] = "gpu"
-            options["gpu_context"] = "d3d11"
-        elif sys.platform.startswith("linux"):
-            options["vo"] = "gpu"
+        render_profile = _normalize_render_profile(
+            getattr(self._config, "mpv_render_profile", "auto")
+        )
+        options.update(_render_profile_options(render_profile))
         mismatch = detect_linux_nvidia_driver_mismatch()
         if mismatch is not None:
             userspace_version, kernel_version = mismatch
@@ -413,36 +484,82 @@ class MpvWidget(QWidget):
             common["log_handler"] = print
             common["loglevel"] = "debug"
 
-        if sys.platform.startswith("win"):
-            self._log_windows_mpv_runtime_diagnostics("before-create", mpv_module=mpv)
-        try:
+        def instantiate(options: dict[str, object]):
             if sys.platform.startswith("win"):
-                player = mpv.MPV(
-                    **common,
+                return mpv.MPV(
+                    **options,
                     audio_device="auto",
                     audio_exclusive="no",
                 )
-            elif sys.platform == "darwin":
-                player = mpv.MPV(
-                    **common,
+            if sys.platform == "darwin":
+                return mpv.MPV(
+                    **options,
                     # macOS 👉 不指定最稳
                     # audio_device="auto" 也可以
                     audio_exclusive="no",
                 )
-            else:
-                player = mpv.MPV(
-                    **common,
-                    ao="pulse,pipewire,alsa,",
-                )
+            return mpv.MPV(
+                **options,
+                ao="pulse,pipewire,alsa,",
+            )
+
+        if sys.platform.startswith("win"):
+            self._log_windows_mpv_runtime_diagnostics("before-create", mpv_module=mpv)
+        original_exc: Exception | None = None
+        try:
+            player = instantiate(common)
         except Exception as exc:
+            original_exc = exc
+            player = None
+            for fallback_name, render_options in _fallback_render_options(common):
+                fallback_common = dict(common)
+                for key in (
+                    "vo",
+                    "gpu_api",
+                    "hwdec",
+                    "profile",
+                    "scale",
+                    "cscale",
+                    "sigmoid_upscaling",
+                    "deband",
+                    "interpolation",
+                    "vd_lavc_threads",
+                ):
+                    fallback_common.pop(key, None)
+                fallback_common.update(render_options)
+                logger.warning(
+                    "MPV create failed, retrying with render profile %s: %r",
+                    fallback_name,
+                    exc,
+                    extra={"log_category": "player", "log_source": "app"},
+                )
+                try:
+                    player = instantiate(fallback_common)
+                    break
+                except Exception as fallback_exc:
+                    exc = fallback_exc
+            if player is None:
+                assert original_exc is not None
+                exc = original_exc
+                if sys.platform.startswith("win"):
+                    self._log_windows_mpv_runtime_diagnostics(
+                        "create-player-failed",
+                        mpv_module=mpv,
+                        exc=exc,
+                        force=True,
+                    )
+                raise exc
+        except BaseException:
+            raise
+        if original_exc is not None and player is None:
             if sys.platform.startswith("win"):
                 self._log_windows_mpv_runtime_diagnostics(
                     "create-player-failed",
                     mpv_module=mpv,
-                    exc=exc,
+                    exc=original_exc,
                     force=True,
                 )
-            raise
+            raise original_exc
         if sys.platform.startswith("win"):
             self._log_windows_mpv_runtime_diagnostics("after-create", mpv_module=mpv)
         return player

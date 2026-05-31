@@ -166,7 +166,7 @@ def test_mpv_widget_uses_configured_base_playback_settings(qtbot, monkeypatch) -
         config=AppConfig(
             youtube_cookie_browser="edge",
             mpv_cache_size_mb=768,
-            mpv_hwdec_mode="no",
+            mpv_render_profile="software",
             mpv_network_timeout_seconds=22,
             mpv_default_readahead_secs=45,
         )
@@ -195,7 +195,7 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
-    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    widget = MpvWidget(config=AppConfig(mpv_render_profile="balanced"))
     qtbot.addWidget(widget)
     monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
     monkeypatch.setattr(sys, "platform", "linux")
@@ -203,8 +203,146 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
 
     widget._create_player()
 
-    assert captured["hwdec"] == "auto-copy"
+    assert captured["vo"] == "gpu-next"
+    assert captured["hwdec"] == "auto-safe"
     assert captured["ao"] == "pulse,pipewire,alsa,"
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [
+        ("compat", {"vo": "gpu", "hwdec": "auto-safe", "profile": "fast"}),
+        ("vulkan", {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "auto-safe"}),
+        (
+            "quality",
+            {
+                "vo": "gpu-next",
+                "gpu_api": "vulkan",
+                "hwdec": "auto-safe",
+                "scale": "ewa_lanczossharp",
+                "cscale": "ewa_lanczossharp",
+                "sigmoid_upscaling": "yes",
+                "deband": "yes",
+            },
+        ),
+        (
+            "performance",
+            {
+                "vo": "gpu-next",
+                "gpu_api": "vulkan",
+                "profile": "sw-fast",
+                "vd_lavc_threads": 1,
+                "deband": "no",
+                "interpolation": "no",
+            },
+        ),
+        ("software", {"vo": "gpu", "hwdec": "no"}),
+    ],
+)
+def test_mpv_widget_applies_render_profile_options(qtbot, monkeypatch, profile, expected) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget(config=AppConfig(mpv_render_profile=profile))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
+    monkeypatch.delenv("ATV_GPU_VENDOR", raising=False)
+
+    widget._create_player()
+
+    for key, value in expected.items():
+        assert captured[key] == value
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "vendor", "expected_hwdec"),
+    [
+        ("linux", "nvidia", "nvdec"),
+        ("win32", "nvidia", "nvdec"),
+        ("win32", "intel", "d3d11va"),
+        ("linux", "amd", "auto-safe"),
+    ],
+)
+def test_mpv_widget_auto_render_profile_uses_platform_gpu_vendor(
+    qtbot,
+    monkeypatch,
+    platform_name,
+    vendor,
+    expected_hwdec,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget(config=AppConfig(mpv_render_profile="auto"))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", platform_name)
+    monkeypatch.setenv("ATV_GPU_VENDOR", vendor)
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdlp_path", lambda: "")
+    monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options", lambda **_kwargs: "")
+
+    widget._create_player()
+
+    assert captured["vo"] == "gpu-next"
+    assert captured["gpu_api"] == "vulkan"
+    assert captured["hwdec"] == expected_hwdec
+
+
+def test_mpv_widget_falls_back_from_vulkan_creation_failure(qtbot, monkeypatch) -> None:
+    attempts: list[dict[str, object]] = []
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            attempts.append(dict(kwargs))
+            if kwargs.get("gpu_api") == "vulkan":
+                raise RuntimeError("vulkan unavailable")
+
+    widget = MpvWidget(config=AppConfig(mpv_render_profile="vulkan"))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
+
+    player = widget._create_player()
+
+    assert isinstance(player, FakeMPV)
+    assert len(attempts) == 2
+    assert attempts[0]["gpu_api"] == "vulkan"
+    assert attempts[1]["vo"] == "gpu-next"
+    assert "gpu_api" not in attempts[1]
+
+
+def test_mpv_widget_fallback_reraises_original_creation_failure(qtbot, monkeypatch) -> None:
+    attempts: list[dict[str, object]] = []
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            attempts.append(dict(kwargs))
+            raise RuntimeError("first failure" if len(attempts) == 1 else "fallback failure")
+
+    widget = MpvWidget(config=AppConfig(mpv_render_profile="vulkan"))
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("atv_player.player.mpv_widget.detect_linux_nvidia_driver_mismatch", lambda: None)
+
+    with pytest.raises(RuntimeError, match="first failure"):
+        widget._create_player()
+
+    assert len(attempts) == 3
+    assert attempts[0]["gpu_api"] == "vulkan"
+    assert attempts[1]["vo"] == "gpu-next"
+    assert "gpu_api" not in attempts[1]
+    assert attempts[2]["vo"] == "gpu"
 
 
 def test_mpv_widget_refreshes_runtime_hwdec_setting_on_existing_player(qtbot, monkeypatch) -> None:
@@ -1198,27 +1336,27 @@ def test_mpv_widget_enables_mpv_terminal_logging_only_when_debug_is_requested(qt
     assert captured["loglevel"] == "debug"
 
 
-def test_mpv_widget_uses_conservative_windows_renderer_defaults(qtbot, monkeypatch) -> None:
+def test_mpv_widget_uses_auto_windows_renderer_defaults(qtbot, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeMPV:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
-    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    widget = MpvWidget(config=AppConfig())
     qtbot.addWidget(widget)
     monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("ATV_GPU_VENDOR", "intel")
     monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdlp_path", lambda: "")
     monkeypatch.setattr("atv_player.player.mpv_widget.resolve_mpv_ytdl_raw_options", lambda **_kwargs: "")
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu"
-    assert captured["gpu_context"] == "d3d11"
-    assert captured["hwdec"] == "auto-safe"
+    assert captured["vo"] == "gpu-next"
+    assert captured["gpu_api"] == "vulkan"
+    assert captured["hwdec"] == "d3d11va"
     assert "start_event_thread" not in captured
-    assert "gpu_api" not in captured
 
 
 def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_name(qtbot, monkeypatch) -> None:
@@ -1236,7 +1374,7 @@ def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_nam
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu"
+    assert captured["vo"] == "gpu-next"
     assert captured["ao"] == "pulse,pipewire,alsa,"
     assert "audio_device" not in captured
 

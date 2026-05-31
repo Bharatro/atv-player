@@ -22,6 +22,15 @@ _VALID_YOUTUBE_SUBTITLE_LANGS = {"", "zh-CN", "zh-TW", "zh-HK", "en"}
 _VALID_YOUTUBE_AUDIO_LANGS = {"", "zh", "en"}
 _VALID_YOUTUBE_REGIONS = {"", "CN", "US", "JP", "SG", "HK", "TW"}
 _VALID_YOUTUBE_CATEGORY_SOURCE_TYPES = {"builtin", "remote", "local"}
+_VALID_MPV_RENDER_PROFILES = {
+    "auto",
+    "compat",
+    "balanced",
+    "vulkan",
+    "quality",
+    "performance",
+    "software",
+}
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "auto-copy", "no"}
 _VALID_FOLLOWING_EPISODE_DISPLAY_MODES = {"compact", "poster", "full"}
 _VALID_FOLLOWING_EPISODE_GRID_COLUMNS = {1, 2, 3}
@@ -281,6 +290,22 @@ def _normalize_mpv_cache_size_mb(value: object) -> int:
     return max(16, min(normalized, 4096))
 
 
+def _render_profile_from_legacy_hwdec(value: object) -> str:
+    hwdec = _normalize_mpv_hwdec_mode(value)
+    if hwdec == "no":
+        return "software"
+    if hwdec == "auto-copy":
+        return "balanced"
+    return "auto"
+
+
+def _normalize_mpv_render_profile(value: object, legacy_hwdec: object = "auto-safe") -> str:
+    text = str(value or "").strip().lower()
+    if text in _VALID_MPV_RENDER_PROFILES:
+        return text
+    return _render_profile_from_legacy_hwdec(legacy_hwdec)
+
+
 def _normalize_mpv_hwdec_mode(value: object) -> str:
     text = str(value or "").strip().lower()
     return text if text in _VALID_MPV_HWDEC_MODES else "auto-safe"
@@ -416,6 +441,7 @@ class SettingsRepository:
                     youtube_category_cache_json TEXT NOT NULL DEFAULT '',
                     youtube_category_cache_refreshed_at INTEGER NOT NULL DEFAULT 0,
                     youtube_category_cache_error TEXT NOT NULL DEFAULT '',
+                    mpv_render_profile TEXT NOT NULL DEFAULT 'auto',
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
@@ -574,6 +600,21 @@ class SettingsRepository:
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512"
+                )
+            if "mpv_render_profile" not in columns:
+                legacy_hwdec = "auto-safe"
+                if "mpv_hwdec_mode" in columns:
+                    row = conn.execute(
+                        "SELECT mpv_hwdec_mode FROM app_config WHERE id = 1"
+                    ).fetchone()
+                    if row is not None:
+                        legacy_hwdec = row[0]
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN mpv_render_profile TEXT NOT NULL DEFAULT 'auto'"
+                )
+                conn.execute(
+                    "UPDATE app_config SET mpv_render_profile = ? WHERE id = 1",
+                    (_render_profile_from_legacy_hwdec(legacy_hwdec),),
                 )
             if "mpv_hwdec_mode" not in columns:
                 conn.execute(
@@ -795,6 +836,7 @@ class SettingsRepository:
                     youtube_category_cache_json,
                     youtube_category_cache_refreshed_at,
                     youtube_category_cache_error,
+                    mpv_render_profile,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -845,7 +887,7 @@ class SettingsRepository:
                     following_episode_grid_columns
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1
                 )
@@ -934,6 +976,7 @@ class SettingsRepository:
                     youtube_category_cache_json,
                     youtube_category_cache_refreshed_at,
                     youtube_category_cache_error,
+                    mpv_render_profile,
                     mpv_cache_size_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
@@ -1017,6 +1060,7 @@ class SettingsRepository:
             youtube_category_cache_json,
             youtube_category_cache_refreshed_at,
             youtube_category_cache_error,
+            mpv_render_profile,
             mpv_cache_size_mb,
             mpv_hwdec_mode,
             mpv_network_timeout_seconds,
@@ -1104,6 +1148,10 @@ class SettingsRepository:
                 youtube_category_cache_refreshed_at
             ),
             youtube_category_cache_error=str(youtube_category_cache_error or "").strip(),
+            mpv_render_profile=_normalize_mpv_render_profile(
+                mpv_render_profile,
+                mpv_hwdec_mode,
+            ),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
@@ -1203,6 +1251,7 @@ class SettingsRepository:
                     youtube_category_cache_json = ?,
                     youtube_category_cache_refreshed_at = ?,
                     youtube_category_cache_error = ?,
+                    mpv_render_profile = ?,
                     mpv_cache_size_mb = ?,
                     mpv_hwdec_mode = ?,
                     mpv_network_timeout_seconds = ?,
@@ -1295,6 +1344,10 @@ class SettingsRepository:
                     str(config.youtube_category_cache_json or ""),
                     _normalize_youtube_category_cache_refreshed_at(config.youtube_category_cache_refreshed_at),
                     str(config.youtube_category_cache_error or "").strip(),
+                    _normalize_mpv_render_profile(
+                        getattr(config, "mpv_render_profile", "auto"),
+                        config.mpv_hwdec_mode,
+                    ),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),

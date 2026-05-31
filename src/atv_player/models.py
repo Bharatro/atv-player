@@ -48,6 +48,7 @@ class AppConfig:
     youtube_category_cache_json: str = ""
     youtube_category_cache_refreshed_at: int = 0
     youtube_category_cache_error: str = ""
+    mpv_render_profile: str = "auto"
     mpv_cache_size_mb: int = 512
     mpv_hwdec_mode: str = "auto-safe"
     mpv_network_timeout_seconds: int = 15

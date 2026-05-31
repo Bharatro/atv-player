@@ -488,6 +488,7 @@ def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Pat
         vod_token="vod-123",
         youtube_cookie_browser="edge",
         youtube_max_height=1080,
+        mpv_render_profile="vulkan",
         mpv_cache_size_mb=768,
         mpv_hwdec_mode="no",
         mpv_network_timeout_seconds=25,
@@ -500,6 +501,7 @@ def test_settings_repository_round_trip_persists_playback_settings(tmp_path: Pat
 
     assert saved.youtube_cookie_browser == "edge"
     assert saved.youtube_max_height == 1080
+    assert saved.mpv_render_profile == "vulkan"
     assert saved.mpv_cache_size_mb == 768
     assert saved.mpv_hwdec_mode == "no"
     assert saved.mpv_network_timeout_seconds == 25
@@ -513,6 +515,46 @@ def test_settings_repository_accepts_auto_copy_hwdec_mode(tmp_path: Path) -> Non
     repo.save_config(AppConfig(mpv_hwdec_mode="auto-copy"))
 
     assert repo.load_config().mpv_hwdec_mode == "auto-copy"
+
+
+def test_settings_repository_normalizes_invalid_mpv_render_profile(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(mpv_render_profile="experimental"))
+
+    assert repo.load_config().mpv_render_profile == "auto"
+
+
+def test_settings_repository_maps_legacy_software_hwdec_to_render_profile(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    repo.save_config(AppConfig(mpv_hwdec_mode="no"))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("ALTER TABLE app_config RENAME TO app_config_new")
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                last_path TEXT NOT NULL,
+                mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, last_path, mpv_hwdec_mode
+            )
+            SELECT id, base_url, username, token, vod_token, last_path, mpv_hwdec_mode
+            FROM app_config_new
+            """
+        )
+        conn.execute("DROP TABLE app_config_new")
+
+    assert SettingsRepository(db_path).load_config().mpv_render_profile == "software"
 
 
 def test_settings_repository_round_trip_persists_playback_auto_switch_source_flag(tmp_path: Path) -> None:
@@ -579,6 +621,7 @@ def test_settings_repository_migrates_missing_playback_settings_columns(tmp_path
 
     assert config.youtube_cookie_browser == ""
     assert config.youtube_max_height == 1080
+    assert config.mpv_render_profile == "auto"
     assert config.mpv_cache_size_mb == 512
     assert config.mpv_hwdec_mode == "auto-safe"
     assert config.mpv_network_timeout_seconds == 15

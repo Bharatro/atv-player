@@ -199,9 +199,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_cache_size_edit = QLineEdit()
         self.mpv_cache_size_edit.setPlaceholderText("16 - 4096")
         self.mpv_hwdec_mode_combo = FlatComboBox()
-        self.mpv_hwdec_mode_combo.addItem("硬解", "auto-safe")
-        self.mpv_hwdec_mode_combo.addItem("兼容硬解", "auto-copy")
-        self.mpv_hwdec_mode_combo.addItem("软解", "no")
+        self.mpv_hwdec_mode_combo.addItem("自动（推荐）", "auto")
+        self.mpv_hwdec_mode_combo.addItem("兼容模式（OpenGL）", "compat")
+        self.mpv_hwdec_mode_combo.addItem("平衡模式（gpu-next）", "balanced")
+        self.mpv_hwdec_mode_combo.addItem("Vulkan 模式", "vulkan")
+        self.mpv_hwdec_mode_combo.addItem("高画质模式", "quality")
+        self.mpv_hwdec_mode_combo.addItem("极限性能模式", "performance")
+        self.mpv_hwdec_mode_combo.addItem("软解", "software")
         self.mpv_network_timeout_edit = QLineEdit()
         self.mpv_network_timeout_edit.setPlaceholderText("1 - 300")
         self.mpv_default_readahead_edit = QLineEdit()
@@ -211,7 +215,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_extra_options_edit = QPlainTextEdit()
         self.mpv_extra_options_edit.setPlaceholderText("一行一个 key=value，例如 cache-pause-wait=8")
         self.playback_scope_label = QLabel(
-            "说明：普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
+            "说明：Vulkan 和高画质模式需要较新的显卡驱动；黑屏、花屏或不稳定时请切到兼容模式。普通流预读时长只影响普通流；ISO / YouTube / DASH 仍保留内置专用参数。更多 MPV 配置会在最后应用，并可覆盖同名项。"
         )
         self.playback_scope_label.setWordWrap(True)
         self.youtube_scope_label = QLabel(
@@ -319,7 +323,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.mpv_cache_size_edit.setText(str(config.mpv_cache_size_mb))
         self.mpv_hwdec_mode_combo.setCurrentIndex(
-            max(0, self.mpv_hwdec_mode_combo.findData(config.mpv_hwdec_mode))
+            max(0, self.mpv_hwdec_mode_combo.findData(config.mpv_render_profile))
         )
         self.mpv_network_timeout_edit.setText(str(config.mpv_network_timeout_seconds))
         self.mpv_default_readahead_edit.setText(str(config.mpv_default_readahead_secs))
@@ -380,7 +384,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
-        playback_layout.addRow("解码模式", self.mpv_hwdec_mode_combo)
+        playback_layout.addRow("渲染模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
         playback_layout.addRow("普通流预读时长", self.mpv_default_readahead_edit)
         playback_layout.addRow("m3u代理分片预取大小", self.m3u_proxy_segment_prefetch_size_edit)
@@ -879,11 +883,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
                 return None
             normalized_lines.append(f"{key}={value}")
 
+        render_profile = str(self.mpv_hwdec_mode_combo.currentData() or "auto")
+        if render_profile not in {"auto", "compat", "balanced", "vulkan", "quality", "performance", "software"}:
+            QMessageBox.warning(self, "渲染模式无效", "渲染模式选项无效")
+            return None
+
         return (
             self.playback_auto_switch_source_on_failure_checkbox.isChecked(),
             self.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked(),
             cache_size,
-            str(self.mpv_hwdec_mode_combo.currentData() or "auto-safe"),
+            render_profile,
             timeout,
             readahead,
             prefetch_size,
@@ -972,7 +981,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.playback_auto_switch_source_on_failure,
             self._config.bilibili_grouped_playlist_tree_enabled,
             self._config.mpv_cache_size_mb,
-            self._config.mpv_hwdec_mode,
+            self._config.mpv_render_profile,
             self._config.mpv_network_timeout_seconds,
             self._config.mpv_default_readahead_secs,
             self._config.m3u_proxy_segment_prefetch_size,

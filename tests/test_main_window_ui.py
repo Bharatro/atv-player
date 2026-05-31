@@ -6245,6 +6245,7 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
 
     config = AppConfig(
         youtube_cookie_browser="firefox",
+        mpv_render_profile="vulkan",
         mpv_cache_size_mb=1024,
         mpv_hwdec_mode="no",
         mpv_network_timeout_seconds=20,
@@ -6260,7 +6261,7 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
     assert dialog.playback_auto_switch_source_on_failure_checkbox.isChecked() is True
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
     assert dialog.mpv_cache_size_edit.text() == "1024"
-    assert dialog.mpv_hwdec_mode_combo.currentData() == "no"
+    assert dialog.mpv_hwdec_mode_combo.currentData() == "vulkan"
     assert dialog.mpv_network_timeout_edit.text() == "20"
     assert dialog.mpv_default_readahead_edit.text() == "35"
     assert dialog.mpv_extra_options_edit.toPlainText() == "cache-pause-wait=9\nstream-buffer-size=8M"
@@ -6405,7 +6406,7 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     dialog.playback_auto_switch_source_on_failure_checkbox.setChecked(True)
     dialog.youtube_cookie_browser_combo.setCurrentIndex(dialog.youtube_cookie_browser_combo.findData("chrome"))
     dialog.mpv_cache_size_edit.setText(" 768 ")
-    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("no"))
+    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("quality"))
     dialog.mpv_network_timeout_edit.setText(" 22 ")
     dialog.mpv_default_readahead_edit.setText(" 40 ")
     dialog.mpv_extra_options_edit.setPlainText(" cache-pause-wait=8 \nstream-buffer-size=6M ")
@@ -6414,24 +6415,24 @@ def test_advanced_settings_dialog_saves_trimmed_playback_settings(qtbot) -> None
     assert config.playback_auto_switch_source_on_failure is True
     assert config.youtube_cookie_browser == "chrome"
     assert config.mpv_cache_size_mb == 768
-    assert config.mpv_hwdec_mode == "no"
+    assert config.mpv_render_profile == "quality"
     assert config.mpv_network_timeout_seconds == 22
     assert config.mpv_default_readahead_secs == 40
     assert config.mpv_extra_options == "cache-pause-wait=8\nstream-buffer-size=6M"
     assert len(saved) == 1
 
 
-def test_advanced_settings_dialog_saves_auto_copy_hwdec_mode(qtbot) -> None:
+def test_advanced_settings_dialog_saves_vulkan_render_profile(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     config = AppConfig()
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("auto-copy"))
+    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("vulkan"))
     dialog._save()
 
-    assert config.mpv_hwdec_mode == "auto-copy"
+    assert config.mpv_render_profile == "vulkan"
 
 
 def test_advanced_settings_dialog_loads_m3u_proxy_segment_prefetch_size(qtbot) -> None:
