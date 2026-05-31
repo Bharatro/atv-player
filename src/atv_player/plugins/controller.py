@@ -475,6 +475,7 @@ _SUPPORTED_DRIVE_DOMAINS = (
     "anxia.com",
     "189.cn",
     "baidu.com",
+    "guangyapan.com",
 )
 
 _DRIVE_PROVIDER_LABELS = {
@@ -496,6 +497,7 @@ _DRIVE_PROVIDER_LABELS = {
     "anxia.com": "115",
     "189.cn": "天翼",
     "baidu.com": "百度",
+    "guangyapan.com": "光鸭",
 }
 
 

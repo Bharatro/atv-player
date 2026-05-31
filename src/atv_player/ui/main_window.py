@@ -216,6 +216,7 @@ _SUPPORTED_DRIVE_DOMAINS = (
     "anxia.com",
     "189.cn",
     "baidu.com",
+    "guangyapan.com",
 )
 _DIRECT_PARSE_DETAIL_API = "https://dmku.hls.one/"
 _HOTKEY_360_API = "http://api.xcvts.cn/api/hotlist/360so_juhe"
@@ -3170,6 +3171,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             is_placeholder=True,
         )
 
+    def _build_offline_download_placeholder_player_request(self, link: str) -> OpenPlayerRequest:
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=link, vod_name=link),
+            playlist=[],
+            clicked_index=0,
+            source_kind="browse",
+            source_mode="detail",
+            source_vod_id=link,
+            use_local_history=False,
+            initial_log_message="正在加载详情...",
+            is_placeholder=True,
+        )
+
     def _build_offline_download_request(self, link: str) -> OpenPlayerRequest:
         if self._offline_download_detail_loader is None:
             raise ValueError("当前未配置磁力链接解析")
@@ -3430,6 +3444,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _start_direct_open_from_global_search(self, keyword: str) -> bool:
         if _looks_like_offline_download_link(keyword):
+            self._open_player_immediately(self._build_offline_download_placeholder_player_request(keyword))
             self._start_open_request(lambda: self._build_offline_download_request(keyword))
             return True
         if not _looks_like_http_url(keyword):
