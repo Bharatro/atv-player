@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import threading
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,6 +58,13 @@ def _build_source_checkbox_layout(checkboxes: list[QCheckBox]) -> QGridLayout:
     return layout
 
 
+class _InitialContentSignals(QObject):
+    cache_loaded = Signal(object)
+    cache_failed = Signal(str)
+    logs_loaded = Signal(object)
+    logs_failed = Signal(str)
+
+
 class AdvancedSettingsDialog(ThemedDialogBase):
     def __init__(
         self,
@@ -73,6 +81,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
         self._youtube_category_text_loader = youtube_category_text_loader
+        self._initial_deferred_load_scheduled = False
+        self._initial_content_signals = _InitialContentSignals(self)
         self.resize(920, 560)
 
         self.settings_tabs = QTabWidget()
@@ -222,7 +232,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             "说明：默认画质设为 1080P 及以下时通常启播更快；2K 及以上会按编码偏好选择视频流。语言和地区设置只影响 yt-dlp 的 YouTube 信息提取。"
         )
         self.youtube_scope_label.setWordWrap(True)
-        self.log_console = LogConsoleWidget(config=config, save_config=save_config, app_log_service=app_log_service)
+        self.log_console = LogConsoleWidget(
+            config=config,
+            save_config=save_config,
+            app_log_service=app_log_service,
+            load_on_init=False,
+        )
+        self._initial_content_signals.cache_loaded.connect(self._apply_cache_summary)
+        self._initial_content_signals.cache_failed.connect(self._show_cache_summary_error)
+        self._initial_content_signals.logs_loaded.connect(self.log_console.apply_records)
+        self._initial_content_signals.logs_failed.connect(self.log_console.set_status_message)
         self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
         self.cache_group = QGroupBox("缓存管理")
         self.cache_root_label = QLabel("")
@@ -476,8 +495,50 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.cancel_button.clicked.connect(self.reject)
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
         self._sync_network_proxy_inputs()
-        self._refresh_cache_summary()
         self._apply_theme()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._initial_deferred_load_scheduled:
+            return
+        self._initial_deferred_load_scheduled = True
+        QTimer.singleShot(0, self._load_initial_deferred_content)
+
+    def _load_initial_deferred_content(self) -> None:
+        if not self.isVisible():
+            return
+        self.cache_root_label.setText("缓存统计加载中...")
+        self.log_console.set_status_message("日志加载中...")
+        log_filter = self.log_console.current_filter()
+        threading.Thread(
+            target=self._load_initial_content_in_background,
+            args=(log_filter,),
+            daemon=True,
+        ).start()
+
+    def _load_initial_content_in_background(self, log_filter) -> None:
+        try:
+            cache_summary = cache_management.build_cache_summary()
+        except OSError as exc:
+            self._emit_initial_content_signal(self._initial_content_signals.cache_failed, str(exc))
+        else:
+            self._emit_initial_content_signal(self._initial_content_signals.cache_loaded, cache_summary)
+
+        if self._app_log_service is None:
+            self._emit_initial_content_signal(self._initial_content_signals.logs_failed, "日志服务不可用")
+            return
+        try:
+            records = self._app_log_service.load_records(limit=2000, log_filter=log_filter)
+        except Exception as exc:
+            self._emit_initial_content_signal(self._initial_content_signals.logs_failed, f"日志读取失败: {exc}")
+            return
+        self._emit_initial_content_signal(self._initial_content_signals.logs_loaded, records)
+
+    def _emit_initial_content_signal(self, signal, *args) -> None:
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            return
 
     def _apply_theme(self) -> None:
         tokens = current_tokens()
@@ -524,6 +585,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         except OSError as exc:
             QMessageBox.warning(self, "缓存统计失败", str(exc))
             return
+        self._apply_cache_summary(summary)
+
+    def _show_cache_summary_error(self, message: str) -> None:
+        self.cache_root_label.setText(f"缓存统计失败：{message}")
+
+    def _apply_cache_summary(self, summary) -> None:
         self.cache_root_label.setText(f"缓存目录：{summary.root}")
         self.cache_total_size_label.setText(
             f"总大小：{cache_management.format_cache_size(summary.total_size_bytes)}"

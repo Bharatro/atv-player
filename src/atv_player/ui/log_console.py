@@ -31,7 +31,7 @@ from atv_player.ui.theme import (
 
 
 class LogConsoleWidget(QWidget):
-    def __init__(self, *, config, save_config, app_log_service) -> None:
+    def __init__(self, *, config, save_config, app_log_service, load_on_init: bool = True) -> None:
         super().__init__()
         self._config = config
         self._save_config = save_config
@@ -113,7 +113,26 @@ class LogConsoleWidget(QWidget):
         self.log_table.itemSelectionChanged.connect(self._render_selected_detail)
 
         self.apply_theme()
-        self.reload_records()
+        if load_on_init:
+            self.reload_records()
+        else:
+            self._update_status_banner()
+
+    def current_filter(self) -> AppLogFilter:
+        return AppLogFilter(
+            query=self.search_edit.text().strip(),
+            source=str(self.source_combo.currentData() or ""),
+            level=str(self.level_combo.currentData() or ""),
+            category=str(self.category_combo.currentData() or ""),
+        )
+
+    def apply_records(self, records) -> None:
+        self._records = list(records)
+        self._render_records()
+        self._update_status_banner()
+
+    def set_status_message(self, message: str) -> None:
+        self._update_status_banner(message)
 
     def apply_theme(self) -> None:
         tokens = current_tokens()
@@ -166,15 +185,7 @@ class LogConsoleWidget(QWidget):
             self._update_status_banner("日志服务不可用")
             return
         try:
-            self._records = self._app_log_service.load_records(
-                limit=2000,
-                log_filter=AppLogFilter(
-                    query=self.search_edit.text().strip(),
-                    source=str(self.source_combo.currentData() or ""),
-                    level=str(self.level_combo.currentData() or ""),
-                    category=str(self.category_combo.currentData() or ""),
-                ),
-            )
+            self._records = self._app_log_service.load_records(limit=2000, log_filter=self.current_filter())
         except Exception as exc:
             self._records = []
             self._render_records()

@@ -6749,11 +6749,96 @@ def test_advanced_settings_dialog_adds_logs_tab_with_logging_toggle(qtbot) -> No
         app_log_service=FakeService(),
     )
     qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(dialog.isVisible)
 
     tab_labels = [dialog.settings_tabs.tabText(index) for index in range(dialog.settings_tabs.count())]
     assert "日志" in tab_labels
     assert dialog.logging_enabled_checkbox.isChecked() is False
     assert "仅可查看历史日志" in dialog.log_console.status_label.text()
+
+
+def test_advanced_settings_dialog_defers_slow_initial_content_until_visible(
+    qtbot,
+    monkeypatch,
+) -> None:
+    from atv_player import cache_management
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    calls: list[str] = []
+
+    def fake_build_cache_summary():
+        calls.append("cache")
+        return cache_management.CacheSummary(
+            root=cache_management.app_cache_dir(),
+            categories=(),
+            total_size_bytes=0,
+            total_file_count=0,
+        )
+
+    class FakeService:
+        def load_records(self, *, limit: int, log_filter):
+            del limit, log_filter
+            calls.append("logs")
+            return []
+
+    monkeypatch.setattr(cache_management, "build_cache_summary", fake_build_cache_summary)
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(),
+        save_config=lambda: None,
+        app_log_service=FakeService(),
+    )
+    qtbot.addWidget(dialog)
+
+    assert calls == []
+
+    dialog.show()
+    qtbot.waitUntil(lambda: calls == ["cache", "logs"])
+
+
+def test_advanced_settings_dialog_loads_initial_content_without_blocking_paint(
+    qtbot,
+    monkeypatch,
+) -> None:
+    from atv_player import cache_management
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    cache_started = threading.Event()
+    release_cache = threading.Event()
+
+    def slow_build_cache_summary():
+        cache_started.set()
+        assert release_cache.wait(timeout=5)
+        return cache_management.CacheSummary(
+            root=cache_management.app_cache_dir(),
+            categories=(),
+            total_size_bytes=0,
+            total_file_count=0,
+        )
+
+    class FakeService:
+        def load_records(self, *, limit: int, log_filter):
+            del limit, log_filter
+            return []
+
+    monkeypatch.setattr(cache_management, "build_cache_summary", slow_build_cache_summary)
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(),
+        save_config=lambda: None,
+        app_log_service=FakeService(),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.show()
+    qtbot.waitUntil(cache_started.is_set)
+
+    assert dialog.isVisible() is True
+    assert dialog.cache_root_label.text() == "缓存统计加载中..."
+
+    release_cache.set()
+    qtbot.waitUntil(lambda: dialog.cache_root_label.text().startswith("缓存目录："))
 
 
 def test_advanced_settings_dialog_adds_cache_management_tab_and_summary(
@@ -6772,6 +6857,10 @@ def test_advanced_settings_dialog_adds_cache_management_tab_and_summary(
 
     dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
     qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(
+        lambda: dialog.cache_category_table.rowCount() == len(cache_management.CACHE_CATEGORIES)
+    )
 
     tab_labels = [
         dialog.settings_tabs.tabText(index)
