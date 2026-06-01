@@ -1199,6 +1199,8 @@ class _NavigationTabs(QWidget):
     def _handle_tab_bar_changed(self, index: int) -> None:
         widget = self.widget(index)
         if widget is None:
+            if index < 0 and not self.signalsBlocked():
+                self.currentChanged.emit(index)
             return
         self.content_stack.setCurrentWidget(widget)
         if not self.signalsBlocked():
@@ -1272,10 +1274,12 @@ class _NavigationTabs(QWidget):
             if previous_index == index and previous_widget is not widget and not self.signalsBlocked():
                 self.currentChanged.emit(index)
             return
-        if self.tab_bar.currentIndex() != -1:
-            self.tab_bar.setCurrentIndex(-1)
+        previous_index = self.tab_bar.currentIndex()
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.setCurrentIndex(-1)
+        self.tab_bar.blockSignals(False)
         self.content_stack.setCurrentWidget(widget)
-        if not self.signalsBlocked():
+        if not self.signalsBlocked() and (previous_index != -1 or previous_widget is not widget):
             self.currentChanged.emit(-1)
 
     def blockSignals(self, block: bool) -> bool:
@@ -1722,10 +1726,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_overflow_drawer.plugin_context_requested.connect(self._open_plugin_context_menu)
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
         self.startup_plugin_retry_button.clicked.connect(self._retry_startup_plugin_load)
-        self.browse_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.browse_page))
-        self.favorites_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.favorites_page))
-        self.following_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.following_page))
-        self.history_button.clicked.connect(lambda: self.nav_tabs.setCurrentWidget(self.history_page))
+        self.browse_button.clicked.connect(lambda: self._open_builtin_page_from_header("browse"))
+        self.favorites_button.clicked.connect(lambda: self._open_builtin_page_from_header("favorites"))
+        self.following_button.clicked.connect(lambda: self._open_builtin_page_from_header("following"))
+        self.history_button.clicked.connect(lambda: self._open_builtin_page_from_header("history"))
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         self.advanced_settings_button.clicked.connect(self._open_advanced_settings)
@@ -2316,10 +2320,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if definition.key == selected_key:
                 self.nav_tabs.setCurrentIndex(index)
                 return True
-        hidden_builtin_definition = self._builtin_tab_definition_by_key(selected_key)
-        if hidden_builtin_definition is not None:
-            self.nav_tabs.setCurrentWidget(hidden_builtin_definition.page)
-            return True
         return False
 
     def _tab_key_for_widget(self, widget: QWidget | None) -> str | None:
@@ -2332,15 +2332,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _remember_selected_tab(self, widget: QWidget) -> None:
         selected_key = self._tab_key_for_widget(widget)
-        if selected_key is not None and self.config.last_selected_tab == selected_key:
-            return
         if (
             self._startup_plugin_pending_tab_restore_key
             and self._startup_plugin_load_state == "loading"
             and selected_key != self._startup_plugin_pending_tab_restore_key
         ):
             return
-        if selected_key is None:
+        if selected_key is None or self.config.last_selected_tab == selected_key:
             return
         self.config.last_selected_tab = selected_key
         self._save_config()
@@ -2857,6 +2855,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._close_plugin_overflow_drawer()
         self.nav_tabs.setCurrentWidget(definition.page)
 
+    def _open_builtin_page_from_header(self, tab_key: str) -> None:
+        definition = self._builtin_tab_definition_by_key(tab_key)
+        if definition is None:
+            return
+        hidden_keys = getattr(self, "_builtin_hidden_keys", set())
+        if tab_key in hidden_keys:
+            self._select_first_visible_tab()
+            self._remember_selected_tab(self.nav_tabs.currentWidget() or definition.page)
+            definition.page.setVisible(True)
+            self.nav_tabs.content_stack.setCurrentWidget(definition.page)
+            return
+        self.nav_tabs.setCurrentWidget(definition.page)
+
     def _handle_tab_context_menu_requested(self, pos: QPoint) -> None:
         index = self.nav_tabs.tab_bar.tabAt(pos)
         if index < 0:
@@ -2913,6 +2924,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if tab_key not in overrides.hidden:
             overrides.hidden.append(tab_key)
         self._save_builtin_overrides_object(overrides)
+
+    def _select_first_visible_tab(self) -> None:
+        if self.nav_tabs.count() > 0:
+            first_widget = self.nav_tabs.widget(0)
+            if first_widget is not None:
+                self.nav_tabs.setCurrentWidget(first_widget)
 
     def _open_plugin_context_menu(self, plugin_key: str, global_pos: QPoint) -> None:
         self._dismiss_visible_global_search_popup()
