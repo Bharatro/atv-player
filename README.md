@@ -101,6 +101,8 @@ scripts/build_mpv.sh --master
 - 默认使用 `mpv-build` 的 release 轨道构建 `mpv/libmpv`
 - 默认执行 `sudo ./install`
 - 如果缺少 Lua 开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y liblua5.2-dev`
+- 如果缺少硬件解码相关开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libva-dev libvdpau-dev`
+- 如果缺少 NVIDIA codec headers，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libffmpeg-nvenc-dev`
 - 如果当前桌面会话是 `X11` 且缺少 `xpresent` 开发包，脚本会自动执行 `sudo apt-get install -y libxpresent-dev`
 - 安装完成后建议先执行 `hash -r`，再用 `/usr/local/bin/mpv --version` 和 `ldconfig -p | grep libmpv` 确认新运行时已生效
 - 如果遇到 `nasm not found or too old`，可先使用 `--disable-x86asm`
@@ -200,7 +202,7 @@ uv run atv-player
 - 后端地址、用户名、登录令牌和 `vod token`
 - 上次活跃窗口、上次活跃标签页、分类和浏览路径
 - 上次播放来源、恢复信息、播放器布局、宽屏模式和日志可见性
-- 播放器音量、静音状态、偏好解析器
+- 播放器音量、静音状态、偏好解析器、MPV 渲染模式、缓存、网络超时、普通流预读和额外 MPV 选项
 - 直播源、手动频道、EPG 配置
 - 插件配置、缓存路径和加载日志
 - 弹幕偏好（启用、行数、显示模式、颜色、位置、速率、字号）
@@ -236,7 +238,7 @@ uv run ruff check .
 本地打包和 GitHub Actions 共用同一个入口：
 
 ```bash
-uv sync --group dev --group package
+uv sync --group dev --group build
 uv run python build.py current
 ```
 
@@ -272,6 +274,7 @@ GitHub Actions 会为 Pull Request 和手动触发构建 Linux、macOS、Windows
 | 变量 | 说明 |
 |------|------|
 | `ATV_MPV_DEBUG` | 启用 mpv 调试日志输出 |
+| `ATV_GPU_VENDOR` | 覆盖自动渲染模式的 GPU 厂商探测，可选 `nvidia`、`amd`、`intel`、`unknown` |
 | `ATV_MPV_RUNTIME_DIR` | Windows 打包时指定 mpv 运行库目录 |
 | `ATV_YTDLP_PATH` | 指定系统 `yt-dlp` 可执行文件路径；留空时从 PATH 查找 |
 | `ATV_YTDLP_COOKIES_FROM_BROWSER` | 为 `yt-dlp` 指定浏览器 Cookie 来源，例如 `chrome`、`edge`、`firefox`；高级设置中的 YouTube Cookie 会优先用于应用内解析 |
