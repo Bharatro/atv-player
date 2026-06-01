@@ -1575,6 +1575,85 @@ def test_main_window_refreshes_builtin_tabs_after_saving_overrides(qtbot) -> Non
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:2] == ["电影", "电报影视"]
 
 
+def test_main_window_builtin_tab_context_menu_renames_tab(qtbot, monkeypatch) -> None:
+    config = AppConfig()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    class FakeMenu:
+        rename_action = object()
+
+        def __init__(self, parent=None) -> None:
+            del parent
+
+        def addAction(self, text: str):
+            return self.rename_action if text == "重命名" else object()
+
+        def exec(self, global_pos):
+            del global_pos
+            return self.rename_action
+
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+    monkeypatch.setattr(main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("电影", True))
+
+    window._open_builtin_tab_context_menu("douban", window.mapToGlobal(window.rect().center()))
+
+    assert config.builtin_tab_overrides_json == '{"order":["douban","telegram","live","emby","jellyfin","feiniu","browse","favorites","following","history"],"renames":{"douban":"电影"}}'
+    assert window.nav_tabs.tabText(0) == "电影"
+
+
+def test_main_window_builtin_tab_context_menu_hides_tab(qtbot, monkeypatch) -> None:
+    config = AppConfig()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    class FakeMenu:
+        hide_action = object()
+
+        def __init__(self, parent=None) -> None:
+            del parent
+
+        def addAction(self, text: str):
+            return self.hide_action if text == "隐藏" else object()
+
+        def exec(self, global_pos):
+            del global_pos
+            return self.hide_action
+
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+
+    window._open_builtin_tab_context_menu("history", window.mapToGlobal(window.rect().center()))
+
+    assert '"hidden":["history"]' in config.builtin_tab_overrides_json
+    assert "播放记录" not in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+    window.history_button.click()
+    assert window.nav_tabs.currentWidget() is window.history_page
+
+
 def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),

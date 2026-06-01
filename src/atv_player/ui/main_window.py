@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -50,7 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.builtin_tab_overrides import parse_builtin_tab_overrides_json
+from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
@@ -59,6 +60,7 @@ from atv_player.following_progress import resolve_following_playback_progress
 from atv_player.log_store import AppLogFilter
 from atv_player.models import (
     AppConfig,
+    BuiltinTabOverrides,
     FavoriteRecord,
     HistoryRecord,
     OpenPlayerRequest,
@@ -1715,7 +1717,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
         self.plugin_overflow_button.clicked.connect(self._toggle_plugin_overflow_drawer)
-        self.nav_tabs.tab_bar.customContextMenuRequested.connect(self._handle_plugin_tab_context_menu_requested)
+        self.nav_tabs.tab_bar.customContextMenuRequested.connect(self._handle_tab_context_menu_requested)
         self._plugin_overflow_drawer.plugin_selected.connect(self._handle_hidden_plugin_selected)
         self._plugin_overflow_drawer.plugin_context_requested.connect(self._open_plugin_context_menu)
         self._plugin_overflow_drawer.close_requested.connect(self._close_plugin_overflow_drawer)
@@ -2849,14 +2851,62 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._close_plugin_overflow_drawer()
         self.nav_tabs.setCurrentWidget(definition.page)
 
-    def _handle_plugin_tab_context_menu_requested(self, pos: QPoint) -> None:
+    def _handle_tab_context_menu_requested(self, pos: QPoint) -> None:
         index = self.nav_tabs.tab_bar.tabAt(pos)
         if index < 0:
             return
-        plugin_id = self._plugin_id_for_visible_tab_index(index)
-        if not plugin_id:
+        widget = self.nav_tabs.widget(index)
+        tab_key = self._tab_key_for_widget(widget)
+        if not tab_key:
             return
-        self._open_plugin_context_menu(plugin_id, self.nav_tabs.tab_bar.mapToGlobal(pos))
+        global_pos = self.nav_tabs.tab_bar.mapToGlobal(pos)
+        if tab_key.startswith("plugin:"):
+            self._open_plugin_context_menu(tab_key.removeprefix("plugin:"), global_pos)
+            return
+        if self._builtin_tab_definition_by_key(tab_key) is not None:
+            self._open_builtin_tab_context_menu(tab_key, global_pos)
+
+    def _current_builtin_overrides(self):
+        return parse_builtin_tab_overrides_json(getattr(self.config, "builtin_tab_overrides_json", ""))
+
+    def _default_builtin_tab_keys(self) -> list[str]:
+        return [definition.key for definition in self._builtin_tab_default_definitions()]
+
+    def _save_builtin_overrides_object(self, overrides: BuiltinTabOverrides) -> None:
+        self._handle_builtin_tab_overrides_saved(dumps_builtin_tab_overrides_json(overrides))
+
+    def _open_builtin_tab_context_menu(self, tab_key: str, global_pos: QPoint) -> None:
+        self._dismiss_visible_global_search_popup()
+        definition = self._builtin_tab_definition_by_key(tab_key)
+        if definition is None:
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("重命名")
+        hide_action = menu.addAction("隐藏")
+        chosen = menu.exec(global_pos)
+        if chosen is rename_action:
+            self._rename_builtin_tab_from_context(tab_key, definition.title)
+        elif chosen is hide_action:
+            self._hide_builtin_tab_from_context(tab_key)
+
+    def _rename_builtin_tab_from_context(self, tab_key: str, current_title: str) -> None:
+        value, accepted = QInputDialog.getText(self, "重命名内置源", "显示名称", text=current_title)
+        value = value.strip() if accepted else ""
+        if not value:
+            return
+        overrides = self._current_builtin_overrides()
+        if not overrides.order:
+            overrides.order = self._default_builtin_tab_keys()
+        overrides.renames[tab_key] = value
+        self._save_builtin_overrides_object(overrides)
+
+    def _hide_builtin_tab_from_context(self, tab_key: str) -> None:
+        overrides = self._current_builtin_overrides()
+        if not overrides.order:
+            overrides.order = self._default_builtin_tab_keys()
+        if tab_key not in overrides.hidden:
+            overrides.hidden.append(tab_key)
+        self._save_builtin_overrides_object(overrides)
 
     def _open_plugin_context_menu(self, plugin_key: str, global_pos: QPoint) -> None:
         self._dismiss_visible_global_search_popup()
