@@ -8584,6 +8584,7 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: type("P", (), {"name": "tencent"})(), raising=False)
     monkeypatch.setattr(app_module, "YoukuMetadataProvider", lambda: type("P", (), {"name": "youku"})(), raising=False)
     monkeypatch.setattr(app_module, "SohuMetadataProvider", lambda: type("P", (), {"name": "sohu"})(), raising=False)
+    monkeypatch.setattr(app_module, "MiguMetadataProvider", lambda: type("P", (), {"name": "migu"})(), raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
     monkeypatch.setattr(app_module, "OfficialDoubanProvider", RecordingLocalDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
@@ -8597,7 +8598,16 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     service = factory(source_kind="browse", vod=VodItem(vod_id="v1", vod_name="深空彼岸"))
 
     assert service is not None
-    assert [provider.name for provider in service._providers] == ["bangumi", "bilibili", "iqiyi", "tencent", "youku", "sohu", "remote_douban"]
+    assert [provider.name for provider in service._providers] == [
+        "bangumi",
+        "bilibili",
+        "iqiyi",
+        "tencent",
+        "youku",
+        "sohu",
+        "migu",
+        "remote_douban",
+    ]
     assert bangumi_tokens == [""]
 
 
@@ -8608,7 +8618,7 @@ def test_app_coordinator_scrape_service_excludes_disabled_metadata_sources(monke
                 metadata_enhancement_enabled=True,
                 metadata_douban_cookie="bid=demo;",
                 metadata_tmdb_api_key="tmdb-key",
-                disabled_metadata_provider_ids=["iqiyi", "tmdb", "official_douban"],
+                disabled_metadata_provider_ids=["iqiyi", "tmdb", "official_douban", "migu"],
             )
 
     class RecordingProvider:
@@ -8631,6 +8641,7 @@ def test_app_coordinator_scrape_service_excludes_disabled_metadata_sources(monke
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: RecordingProvider("tencent"), raising=False)
     monkeypatch.setattr(app_module, "YoukuMetadataProvider", lambda: RecordingProvider("youku"), raising=False)
     monkeypatch.setattr(app_module, "SohuMetadataProvider", lambda: RecordingProvider("sohu"), raising=False)
+    monkeypatch.setattr(app_module, "MiguMetadataProvider", lambda: RecordingProvider("migu"), raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanClient", lambda cookie="", proxy_decider=None: object(), raising=False)
     monkeypatch.setattr(app_module, "OfficialDoubanProvider", lambda client: RecordingProvider("official_douban"), raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", lambda api_key="", proxy_decider=None: object(), raising=False)

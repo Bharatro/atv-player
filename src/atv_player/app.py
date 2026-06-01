@@ -73,6 +73,7 @@ from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
 from atv_player.metadata.providers.bangumi_client import BangumiClient
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
 from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider
+from atv_player.metadata.providers.migu import MiguMetadataProvider
 from atv_player.metadata.providers.official_douban import OfficialDoubanProvider
 from atv_player.metadata.providers.official_douban_client import LocalDoubanClient
 from atv_player.metadata.providers.plugin import CustomPluginProvider
@@ -742,6 +743,8 @@ class AppCoordinator(QObject):
             )
         if enabled("sohu"):
             providers.append(SohuMetadataProvider())
+        if enabled("migu"):
+            providers.append(MiguMetadataProvider())
         if enabled("local_douban") and enabled("remote_douban"):
             providers.append(LocalDoubanProvider(api_client))
         return providers

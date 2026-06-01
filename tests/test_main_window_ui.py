@@ -6260,6 +6260,25 @@ def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_exposes_migu_source_options(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    assert dialog.danmaku_source_checkboxes["migu"].text() == "咪咕"
+    assert dialog.metadata_source_checkboxes["migu"].text() == "咪咕"
+
+    dialog.danmaku_source_checkboxes["migu"].setChecked(False)
+    dialog.metadata_source_checkboxes["migu"].setChecked(False)
+    dialog._save()
+
+    assert "migu" in config.disabled_danmaku_provider_ids
+    assert "migu" in config.disabled_metadata_provider_ids
+
+
 def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
