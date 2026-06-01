@@ -5,6 +5,7 @@ from dataclasses import replace
 import gc
 import httpx
 import inspect
+import os
 import threading
 import time
 import logging
@@ -106,6 +107,8 @@ from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.theme import ThemeManager, install_theme
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+POSTER_CACHE_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
+_POSTER_CACHE_PURGE_MARKER_NAME = ".last_poster_cache_purge"
 _MAIN_THREAD_GC_INTERVAL_MS = 30_000
 _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
@@ -173,17 +176,32 @@ def _app_icon_path() -> Path:
 
 
 def purge_stale_poster_cache(now: float | None = None) -> None:
-    cutoff = (now if now is not None else time.time()) - POSTER_CACHE_MAX_AGE_SECONDS
     cache_dir = app_cache_dir() / "posters"
     cache_dir.mkdir(parents=True, exist_ok=True)
+    current_time = now if now is not None else time.time()
+    marker_path = cache_dir / _POSTER_CACHE_PURGE_MARKER_NAME
+    try:
+        if marker_path.exists() and current_time - marker_path.stat().st_mtime < POSTER_CACHE_PURGE_INTERVAL_SECONDS:
+            return
+    except OSError:
+        pass
+
+    cutoff = current_time - POSTER_CACHE_MAX_AGE_SECONDS
     for entry in cache_dir.iterdir():
         try:
+            if entry.name == _POSTER_CACHE_PURGE_MARKER_NAME:
+                continue
             if not entry.is_file():
                 continue
             if entry.stat().st_mtime < cutoff:
                 entry.unlink()
         except OSError:
             continue
+    try:
+        marker_path.touch()
+        os.utime(marker_path, (current_time, current_time))
+    except OSError:
+        pass
 
 
 def _install_button_pointing_hand_cursor(app: QApplication) -> None:

@@ -4287,6 +4287,29 @@ def test_build_application_deletes_poster_cache_files_older_than_seven_days(monk
     assert new_file.exists() is True
 
 
+def test_purge_stale_poster_cache_skips_recently_scanned_cache(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    cache_dir = tmp_path / "app-cache" / "posters"
+    cache_dir.mkdir(parents=True)
+    old_file = cache_dir / "old.img"
+    old_file.write_bytes(b"old")
+    now = time.time()
+    stale_age = now - (8 * 24 * 60 * 60)
+    os.utime(old_file, (stale_age, stale_age))
+
+    app_module.purge_stale_poster_cache(now=now)
+
+    assert old_file.exists() is False
+
+    second_old_file = cache_dir / "second-old.img"
+    second_old_file.write_bytes(b"old")
+    os.utime(second_old_file, (stale_age, stale_age))
+
+    app_module.purge_stale_poster_cache(now=now + 60)
+
+    assert second_old_file.exists() is True
+
+
 def test_build_application_starts_async_danmaku_cache_cleanup(monkeypatch, tmp_path) -> None:
     class FakeApplication:
         def __init__(self, args) -> None:

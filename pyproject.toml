@@ -29,6 +29,7 @@ dev = [
     "pytest-qt>=4.4",
     "ruff>=0.11",
     "pyright>=1.1",
+    "snakeviz>=2.2.2",
 ]
 
 build = [
