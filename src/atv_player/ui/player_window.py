@@ -98,7 +98,7 @@ from atv_player.episode_titles import normalize_episode_title_text, playlist_has
 from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
-from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
 from atv_player.request_headers import normalize_media_request_headers
@@ -9385,7 +9385,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
-        if sys.platform.startswith("win"):
+        if sys.platform.startswith("win") or (
+            self.config is not None and _render_profile_requires_shutdown(getattr(self.config, "mpv_render_profile", "auto"))
+        ):
             self.video_widget.shutdown()
         else:
             stop_media = getattr(self.video_widget, "stop_media", None)

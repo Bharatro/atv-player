@@ -166,12 +166,13 @@ def _explicit_render_profile_options(profile: str) -> dict[str, object]:
     if profile == "compat":
         return {"vo": "gpu", "hwdec": "auto-safe", "profile": "fast"}
     if profile == "balanced":
-        return {"vo": "gpu-next", "hwdec": "auto-safe"}
+        return {"vo": "gpu", "hwdec": "auto-safe"}
     if profile == "vulkan":
         return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "auto-safe"}
     if profile == "quality":
         return {
-            **_explicit_render_profile_options("vulkan"),
+            "vo": "gpu",
+            "hwdec": "auto-safe",
             "scale": "ewa_lanczossharp",
             "cscale": "ewa_lanczossharp",
             "sigmoid_upscaling": "yes",
@@ -179,8 +180,7 @@ def _explicit_render_profile_options(profile: str) -> dict[str, object]:
         }
     if profile == "performance":
         return {
-            "vo": "gpu-next",
-            "gpu_api": "vulkan",
+            "vo": "gpu",
             "hwdec": "auto-safe",
             "profile": "sw-fast",
             "vd_lavc_threads": 1,
@@ -196,12 +196,12 @@ def _auto_render_profile_options() -> dict[str, object]:
     vendor = _detect_gpu_vendor()
     if sys.platform.startswith(("linux", "win")):
         if vendor == "nvidia":
-            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "nvdec"}
+            return {"vo": "gpu", "hwdec": "nvdec"}
         if sys.platform.startswith("win") and vendor in {"amd", "intel"}:
-            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "d3d11va"}
+            return {"vo": "gpu", "hwdec": "d3d11va"}
         if sys.platform.startswith("linux") and vendor in {"amd", "intel"}:
-            return {"vo": "gpu-next", "gpu_api": "vulkan", "hwdec": "auto-safe"}
-    return {"vo": "gpu-next", "hwdec": "auto-safe"}
+            return {"vo": "gpu", "hwdec": "auto-safe"}
+    return {"vo": "gpu", "hwdec": "auto-safe"}
 
 
 def _render_profile_options(profile: str) -> dict[str, object]:
@@ -209,6 +209,10 @@ def _render_profile_options(profile: str) -> dict[str, object]:
     if normalized == "auto":
         return _auto_render_profile_options()
     return _explicit_render_profile_options(normalized)
+
+
+def _render_profile_requires_shutdown(profile: str) -> bool:
+    return _normalize_render_profile(profile) in {"vulkan", "quality", "performance"}
 
 
 def _is_vulkan_render_options(options: dict[str, object]) -> bool:

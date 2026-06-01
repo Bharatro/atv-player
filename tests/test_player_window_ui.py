@@ -21394,6 +21394,37 @@ def test_player_window_return_to_main_uses_video_shutdown_on_windows(qtbot, monk
     assert shutdowns["count"] == 1
 
 
+def test_player_window_return_to_main_shuts_down_video_backend_for_gpu_render_profiles(qtbot, monkeypatch) -> None:
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player", mpv_render_profile="quality")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+    shutdowns = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+    window.session = make_player_session(start_index=0)
+    window.video = FakeVideo()
+    monkeypatch.setattr(
+        window.video_widget,
+        "shutdown",
+        lambda: shutdowns.__setitem__("count", shutdowns["count"] + 1),
+    )
+    monkeypatch.setattr(player_window_module.sys, "platform", "linux")
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+
+    window._return_to_main()
+
+    assert emitted["count"] == 1
+    assert window.isHidden() is True
+    assert pauses["count"] == 1
+    assert shutdowns["count"] == 1
+
+
 def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeypatch) -> None:
     quit_calls = {"count": 0}
     emitted = {"count": 0}

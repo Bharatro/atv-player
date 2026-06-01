@@ -203,7 +203,7 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu-next"
+    assert captured["vo"] == "gpu"
     assert captured["hwdec"] == "auto-safe"
     assert captured["ao"] == "pulse,pipewire,alsa,"
 
@@ -216,8 +216,7 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
         (
             "quality",
             {
-                "vo": "gpu-next",
-                "gpu_api": "vulkan",
+                "vo": "gpu",
                 "hwdec": "auto-safe",
                 "scale": "ewa_lanczossharp",
                 "cscale": "ewa_lanczossharp",
@@ -228,8 +227,7 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
         (
             "performance",
             {
-                "vo": "gpu-next",
-                "gpu_api": "vulkan",
+                "vo": "gpu",
                 "profile": "sw-fast",
                 "vd_lavc_threads": 1,
                 "deband": "no",
@@ -292,8 +290,8 @@ def test_mpv_widget_auto_render_profile_uses_platform_gpu_vendor(
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu-next"
-    assert captured["gpu_api"] == "vulkan"
+    assert captured["vo"] == "gpu"
+    assert "gpu_api" not in captured
     assert captured["hwdec"] == expected_hwdec
 
 
@@ -317,7 +315,7 @@ def test_mpv_widget_falls_back_from_vulkan_creation_failure(qtbot, monkeypatch) 
     assert isinstance(player, FakeMPV)
     assert len(attempts) == 2
     assert attempts[0]["gpu_api"] == "vulkan"
-    assert attempts[1]["vo"] == "gpu-next"
+    assert attempts[1]["vo"] == "gpu"
     assert "gpu_api" not in attempts[1]
 
 
@@ -340,7 +338,7 @@ def test_mpv_widget_fallback_reraises_original_creation_failure(qtbot, monkeypat
 
     assert len(attempts) == 3
     assert attempts[0]["gpu_api"] == "vulkan"
-    assert attempts[1]["vo"] == "gpu-next"
+    assert attempts[1]["vo"] == "gpu"
     assert "gpu_api" not in attempts[1]
     assert attempts[2]["vo"] == "gpu"
 
@@ -1353,8 +1351,8 @@ def test_mpv_widget_uses_auto_windows_renderer_defaults(qtbot, monkeypatch) -> N
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu-next"
-    assert captured["gpu_api"] == "vulkan"
+    assert captured["vo"] == "gpu"
+    assert "gpu_api" not in captured
     assert captured["hwdec"] == "d3d11va"
     assert "start_event_thread" not in captured
 
@@ -1374,7 +1372,7 @@ def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_nam
 
     widget._create_player()
 
-    assert captured["vo"] == "gpu-next"
+    assert captured["vo"] == "gpu"
     assert captured["ao"] == "pulse,pipewire,alsa,"
     assert "audio_device" not in captured
 
