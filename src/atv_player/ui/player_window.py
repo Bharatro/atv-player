@@ -5379,6 +5379,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_danmaku_settings_dialog_controls()
         self._reload_active_danmaku_for_render_settings()
 
+    def _apply_danmaku_keypad_line_count(self, line_count: int) -> None:
+        if self.config is None:
+            return
+        normalized = max(0, min(int(line_count), 9))
+        enabled = normalized > 0
+        if (
+            self.config.preferred_danmaku_enabled != enabled
+            or self.config.preferred_danmaku_line_count != max(normalized, 1)
+        ):
+            self.config.preferred_danmaku_enabled = enabled
+            if enabled:
+                self.config.preferred_danmaku_line_count = normalized
+            self._save_config()
+        self._refresh_danmaku_combo_from_preferences()
+        self._refresh_danmaku_settings_dialog_controls()
+        if not self._current_play_item_danmaku_xml():
+            return
+        if not enabled:
+            self._clear_active_danmaku()
+            return
+        try:
+            self._enable_danmaku(normalized)
+        except Exception as exc:
+            self._append_log(f"弹幕切换失败: {exc}")
+            self._clear_active_danmaku()
+            self._reset_danmaku_combo(enabled=True, current_index=1)
+
     def _save_danmaku_render_mode(self, value: str) -> None:
         if self.config is None:
             return
@@ -9633,6 +9660,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ):
             super().keyPressEvent(event)
             return
+        if event.modifiers() & Qt.KeyboardModifier.KeypadModifier:
+            key = event.key()
+            if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+                self._apply_danmaku_keypad_line_count(int(key - Qt.Key.Key_0))
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_Space:
             self.toggle_playback()
             event.accept()

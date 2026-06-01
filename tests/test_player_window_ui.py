@@ -2916,6 +2916,81 @@ def test_player_window_saves_and_resets_danmaku_readability_settings(qtbot) -> N
     assert saved["called"] >= 2
 
 
+def test_player_window_keypad_zero_disables_active_danmaku(qtbot, monkeypatch) -> None:
+    saved = {"called": 0}
+    config = AppConfig(preferred_danmaku_enabled=True, preferred_danmaku_line_count=4)
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>',
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.session = session
+    window.current_index = 0
+    window.danmaku_combo.setEnabled(True)
+    window._danmaku_active = True
+
+    cleared = {"called": 0}
+    monkeypatch.setattr(window, "_clear_active_danmaku", lambda: cleared.__setitem__("called", cleared["called"] + 1))
+
+    send_key(window, Qt.Key.Key_0, Qt.KeyboardModifier.KeypadModifier, "0")
+
+    assert config.preferred_danmaku_enabled is False
+    assert config.preferred_danmaku_line_count == 4
+    assert window.danmaku_combo.currentIndex() == 1
+    assert cleared["called"] == 1
+    assert saved["called"] == 1
+
+
+def test_player_window_keypad_digit_sets_danmaku_line_count_immediately(qtbot, monkeypatch) -> None:
+    saved = {"called": 0}
+    config = AppConfig(preferred_danmaku_enabled=False, preferred_danmaku_line_count=1)
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>',
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.session = session
+    window.current_index = 0
+    window.danmaku_combo.setEnabled(True)
+
+    enabled_line_counts: list[int] = []
+    monkeypatch.setattr(window, "_enable_danmaku", lambda line_count: enabled_line_counts.append(line_count))
+
+    send_key(window, Qt.Key.Key_7, Qt.KeyboardModifier.KeypadModifier, "7")
+
+    assert config.preferred_danmaku_enabled is True
+    assert config.preferred_danmaku_line_count == 7
+    assert window.danmaku_combo.currentIndex() == 8
+    assert enabled_line_counts == [7]
+    assert saved["called"] == 1
+
+
 def test_player_window_shows_danmaku_source_option_duration_in_dialog(qtbot) -> None:
     item = PlayItem(
         title="正片",
