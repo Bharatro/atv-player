@@ -481,6 +481,7 @@ class SettingsRepository:
                     last_selected_tab TEXT NOT NULL DEFAULT 'douban',
                     last_selected_category_tab TEXT NOT NULL DEFAULT '',
                     last_selected_category_id TEXT NOT NULL DEFAULT '',
+                    builtin_tab_overrides_json TEXT NOT NULL DEFAULT '',
                     global_search_history TEXT NOT NULL DEFAULT '[]',
                     global_search_hot_source TEXT NOT NULL DEFAULT '360',
                     ai_enabled INTEGER NOT NULL DEFAULT 0,
@@ -764,6 +765,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_selected_category_id TEXT NOT NULL DEFAULT ''"
                 )
+            if "builtin_tab_overrides_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN builtin_tab_overrides_json TEXT NOT NULL DEFAULT ''"
+                )
             if "global_search_history" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN global_search_history TEXT NOT NULL DEFAULT '[]'"
@@ -876,6 +881,7 @@ class SettingsRepository:
                     last_selected_tab,
                     last_selected_category_tab,
                     last_selected_category_id,
+                    builtin_tab_overrides_json,
                     global_search_history,
                     global_search_hot_source,
                     ai_enabled,
@@ -889,7 +895,7 @@ class SettingsRepository:
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -1016,6 +1022,7 @@ class SettingsRepository:
                     last_selected_tab,
                     last_selected_category_tab,
                     last_selected_category_id,
+                    builtin_tab_overrides_json,
                     global_search_history,
                     global_search_hot_source,
                     ai_enabled,
@@ -1100,6 +1107,7 @@ class SettingsRepository:
             last_selected_tab,
             last_selected_category_tab,
             last_selected_category_id,
+            builtin_tab_overrides_json,
             global_search_history,
             global_search_hot_source,
             ai_enabled,
@@ -1197,6 +1205,7 @@ class SettingsRepository:
             last_selected_tab=last_selected_tab,
             last_selected_category_tab=last_selected_category_tab,
             last_selected_category_id=last_selected_category_id,
+            builtin_tab_overrides_json=str(builtin_tab_overrides_json or "").strip(),
             global_search_history=_normalize_global_search_history(global_search_history),
             global_search_hot_source=str(global_search_hot_source or "360").strip() or "360",
             ai_enabled=bool(ai_enabled),
@@ -1291,6 +1300,7 @@ class SettingsRepository:
                     last_selected_tab = ?,
                     last_selected_category_tab = ?,
                     last_selected_category_id = ?,
+                    builtin_tab_overrides_json = ?,
                     global_search_history = ?,
                     global_search_hot_source = ?,
                     ai_enabled = ?,
@@ -1387,6 +1397,7 @@ class SettingsRepository:
                     config.last_selected_tab,
                     config.last_selected_category_tab,
                     config.last_selected_category_id,
+                    str(getattr(config, "builtin_tab_overrides_json", "") or "").strip(),
                     json.dumps(_normalize_global_search_history(config.global_search_history), ensure_ascii=False),
                     str(config.global_search_hot_source or "360").strip() or "360",
                     int(config.ai_enabled),

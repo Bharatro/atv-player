@@ -91,6 +91,7 @@ class AppConfig:
     last_selected_tab: str = "douban"
     last_selected_category_tab: str = ""
     last_selected_category_id: str = ""
+    builtin_tab_overrides_json: str = ""
     global_search_history: list[str] = field(default_factory=list)
     global_search_hot_source: str = "360"
     ai_enabled: bool = False
@@ -270,6 +271,13 @@ class DoubanCategory:
 
 @dataclass(slots=True)
 class SpiderPluginCategoryOverrides:
+    order: list[str] = field(default_factory=list)
+    hidden: list[str] = field(default_factory=list)
+    renames: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class BuiltinTabOverrides:
     order: list[str] = field(default_factory=list)
     hidden: list[str] = field(default_factory=list)
     renames: dict[str, str] = field(default_factory=dict)

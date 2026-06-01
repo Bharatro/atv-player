@@ -162,7 +162,7 @@ def test_plugin_manager_dialog_uses_custom_title_bar(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)
 
-    assert dialog.title_bar().title_label.text() == "插件管理"
+    assert dialog.title_bar().title_label.text() == "源管理"
 
 
 def test_plugin_manager_dialog_hides_maximize_button(qtbot) -> None:
@@ -170,6 +170,74 @@ def test_plugin_manager_dialog_hides_maximize_button(qtbot) -> None:
     qtbot.addWidget(dialog)
 
     assert dialog.title_bar().maximize_button.isHidden() is True
+
+
+def test_plugin_manager_dialog_has_builtin_and_plugin_tabs(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager(), builtin_tabs=[], save_builtin_tab_overrides=lambda _json: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.management_tabs.tabText(0) == "内置源管理"
+    assert dialog.management_tabs.tabText(1) == "插件源管理"
+    assert dialog.management_tabs.currentWidget() is dialog.plugin_tab_page
+
+
+def test_builtin_tab_manager_places_actions_above_list(qtbot) -> None:
+    dialog = PluginManagerDialog(
+        FakePluginManager(),
+        builtin_tabs=[{"key": "douban", "title": "豆瓣电影"}],
+        save_builtin_tab_overrides=lambda _json: None,
+    )
+    qtbot.addWidget(dialog)
+    dialog.management_tabs.setCurrentWidget(dialog.builtin_tab_page)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert dialog.builtin_top_button.y() < dialog.builtin_tab_list.y()
+    assert dialog.builtin_save_button.y() < dialog.builtin_tab_list.y()
+
+
+def test_plugin_manager_dialog_reduces_tab_top_spacing(qtbot) -> None:
+    dialog = PluginManagerDialog(
+        FakePluginManager(),
+        builtin_tabs=[{"key": "douban", "title": "豆瓣电影"}],
+        save_builtin_tab_overrides=lambda _json: None,
+    )
+    qtbot.addWidget(dialog)
+    dialog.management_tabs.setCurrentWidget(dialog.builtin_tab_page)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert dialog.management_tabs.y() - dialog.title_bar().height() <= 12
+
+
+def test_builtin_tab_manager_saves_hidden_renamed_ordered_rows(qtbot) -> None:
+    saved: list[str] = []
+    dialog = PluginManagerDialog(
+        FakePluginManager(),
+        builtin_tabs=[
+            {"key": "douban", "title": "豆瓣电影"},
+            {"key": "telegram", "title": "电报影视"},
+            {"key": "history", "title": "播放记录"},
+        ],
+        builtin_tab_overrides_json='{"order":["history","douban","telegram"],"hidden":["telegram"],"renames":{"douban":"电影"}}',
+        save_builtin_tab_overrides=saved.append,
+    )
+    qtbot.addWidget(dialog)
+
+    assert [dialog.builtin_tab_list.item(index).text() for index in range(dialog.builtin_tab_list.count())] == [
+        "播放记录",
+        "电影",
+        "电报影视（已隐藏）",
+    ]
+
+    dialog.builtin_tab_list.setCurrentRow(1)
+    dialog._move_builtin_tab_to_top()
+    dialog.builtin_tab_list.setCurrentRow(1)
+    dialog._toggle_builtin_tab_hidden()
+    dialog._save_builtin_tabs()
+
+    assert saved == ['{"order":["douban","history","telegram"],"hidden":["history","telegram"],"renames":{"douban":"电影"}}']
+    assert dialog.builtin_tabs_dirty is True
 
 
 def test_plugin_manager_copy_mentions_javascript(qtbot) -> None:

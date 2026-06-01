@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 import threading
@@ -17,17 +18,21 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
-from atv_player.models import SpiderPluginImportCancelled
+from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
+from atv_player.models import BuiltinTabOverrides, SpiderPluginImportCancelled
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
@@ -55,15 +60,34 @@ class _PluginRefreshSignals(QObject):
     failed = Signal(str)
 
 
+@dataclass(slots=True)
+class _BuiltinTabRow:
+    key: str
+    raw_title: str
+    display_title: str
+    hidden: bool = False
+
+
 class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
+    builtin_tabs_saved = Signal(str)
     _ACTION_RELOAD_DELAY_MS = 75
 
-    def __init__(self, plugin_manager, parent=None) -> None:
-        super().__init__(title="插件管理", parent=parent)
+    def __init__(
+        self,
+        plugin_manager,
+        parent=None,
+        *,
+        builtin_tabs=None,
+        builtin_tab_overrides_json: str = "",
+        save_builtin_tab_overrides=None,
+    ) -> None:
+        super().__init__(title="源管理", parent=parent)
         self._init_async_guard()
         self.plugin_manager = plugin_manager
         self.plugin_actions = PluginActions(plugin_manager)
         self.plugin_tabs_dirty = False
+        self.builtin_tabs_dirty = False
+        self._save_builtin_tab_overrides = save_builtin_tab_overrides or (lambda _payload: None)
         self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
         self._refresh_in_progress = False
@@ -72,7 +96,25 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._initial_plugin_snapshot_captured = False
         self._all_plugins = []
         self.resize(920, 520)
+        self.content_layout().setContentsMargins(12, 4, 12, 12)
         tokens = current_tokens()
+        self._default_builtin_rows = self._build_builtin_default_rows(builtin_tabs or [])
+        self._builtin_draft_rows = self._build_builtin_rows_from_overrides(
+            parse_builtin_tab_overrides_json(builtin_tab_overrides_json)
+        )
+        self.management_tabs = QTabWidget(self)
+        self.builtin_tab_page = QWidget(self)
+        self.plugin_tab_page = QWidget(self)
+        self.builtin_tab_list = QListWidget(self)
+        self.builtin_tab_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.builtin_top_button = QPushButton("置顶", self)
+        self.builtin_up_button = QPushButton("上移", self)
+        self.builtin_down_button = QPushButton("下移", self)
+        self.builtin_bottom_button = QPushButton("置底", self)
+        self.builtin_rename_button = QPushButton("重命名", self)
+        self.builtin_hide_button = QPushButton("隐藏/显示", self)
+        self.builtin_reset_button = QPushButton("恢复默认", self)
+        self.builtin_save_button = QPushButton("保存", self)
         self.warning_label = QLabel("支持 TvBox Python/JavaScript 爬虫。远程插件会执行本地代码，请只加载受信任来源。")
         self.search_input = QLineEdit(self)
         self.search_input.setPlaceholderText("搜索名称或地址")
@@ -170,16 +212,49 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.filters_layout.addWidget(self.sort_combo)
         self.filters_layout.addWidget(self.clear_filters_button)
 
-        layout = self.content_layout()
-        layout.addWidget(self.warning_label)
-        layout.addLayout(actions)
-        layout.addWidget(self.plugin_actions_label)
-        layout.addWidget(self.plugin_actions_empty_label)
-        layout.addWidget(self.plugin_actions_widget)
-        layout.addLayout(self.filters_layout)
-        layout.addWidget(self.plugin_table)
-        layout.addWidget(self.empty_state_label)
+        builtin_controls = QHBoxLayout()
+        for button in (
+            self.builtin_top_button,
+            self.builtin_up_button,
+            self.builtin_down_button,
+            self.builtin_bottom_button,
+            self.builtin_rename_button,
+            self.builtin_hide_button,
+            self.builtin_reset_button,
+            self.builtin_save_button,
+        ):
+            builtin_controls.addWidget(button)
 
+        builtin_layout = QVBoxLayout(self.builtin_tab_page)
+        builtin_layout.addLayout(builtin_controls)
+        builtin_layout.addWidget(self.builtin_tab_list)
+
+        plugin_layout = QVBoxLayout(self.plugin_tab_page)
+        plugin_layout.addWidget(self.warning_label)
+        plugin_layout.addLayout(actions)
+        plugin_layout.addWidget(self.plugin_actions_label)
+        plugin_layout.addWidget(self.plugin_actions_empty_label)
+        plugin_layout.addWidget(self.plugin_actions_widget)
+        plugin_layout.addLayout(self.filters_layout)
+        plugin_layout.addWidget(self.plugin_table)
+        plugin_layout.addWidget(self.empty_state_label)
+
+        self.management_tabs.addTab(self.builtin_tab_page, "内置源管理")
+        self.management_tabs.addTab(self.plugin_tab_page, "插件源管理")
+        self.management_tabs.setCurrentWidget(self.plugin_tab_page)
+
+        layout = self.content_layout()
+        layout.addWidget(self.management_tabs)
+
+        self.builtin_top_button.clicked.connect(self._move_builtin_tab_to_top)
+        self.builtin_up_button.clicked.connect(self._move_builtin_tab_up)
+        self.builtin_down_button.clicked.connect(self._move_builtin_tab_down)
+        self.builtin_bottom_button.clicked.connect(self._move_builtin_tab_to_bottom)
+        self.builtin_rename_button.clicked.connect(self._rename_builtin_tab)
+        self.builtin_hide_button.clicked.connect(self._toggle_builtin_tab_hidden)
+        self.builtin_reset_button.clicked.connect(self._restore_builtin_tab_defaults)
+        self.builtin_save_button.clicked.connect(self._save_builtin_tabs)
+        self.builtin_tab_list.currentRowChanged.connect(self._sync_builtin_action_state)
         self.add_local_button.clicked.connect(self._add_local_plugin)
         self.add_remote_button.clicked.connect(self._add_remote_plugin)
         self.import_github_button.clicked.connect(self._import_plugins)
@@ -200,6 +275,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.clear_filters_button.clicked.connect(self._clear_view_filters)
         self.plugin_table.itemSelectionChanged.connect(self._sync_action_state)
 
+        self._render_builtin_rows()
         self.reload_plugins()
 
     def showEvent(self, event: QShowEvent) -> None:
@@ -211,6 +287,158 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             return
         self.search_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         self.search_input.selectAll()
+
+    def _build_builtin_default_rows(self, builtin_tabs) -> list[_BuiltinTabRow]:
+        rows: list[_BuiltinTabRow] = []
+        for item in builtin_tabs:
+            if isinstance(item, dict):
+                key = str(item.get("key") or "").strip()
+                title = str(item.get("title") or "").strip()
+            else:
+                key = str(getattr(item, "key", "") or "").strip()
+                title = str(getattr(item, "title", "") or "").strip()
+            if not key or not title:
+                continue
+            rows.append(_BuiltinTabRow(key=key, raw_title=title, display_title=title))
+        return rows
+
+    def _copy_builtin_row(self, row: _BuiltinTabRow) -> _BuiltinTabRow:
+        return _BuiltinTabRow(
+            key=row.key,
+            raw_title=row.raw_title,
+            display_title=row.display_title,
+            hidden=row.hidden,
+        )
+
+    def _build_builtin_rows_from_overrides(self, overrides: BuiltinTabOverrides) -> list[_BuiltinTabRow]:
+        base_rows = [self._copy_builtin_row(row) for row in self._default_builtin_rows]
+        by_key = {row.key: row for row in base_rows}
+        ordered_keys: list[str] = []
+        for key in overrides.order:
+            if key in by_key and key not in ordered_keys:
+                ordered_keys.append(key)
+        for row in base_rows:
+            if row.key not in ordered_keys:
+                ordered_keys.append(row.key)
+        hidden = set(overrides.hidden)
+        rows: list[_BuiltinTabRow] = []
+        for key in ordered_keys:
+            row = self._copy_builtin_row(by_key[key])
+            renamed = overrides.renames.get(key, "")
+            if renamed:
+                row.display_title = renamed
+            row.hidden = key in hidden
+            rows.append(row)
+        return rows
+
+    def _current_builtin_row(self) -> int:
+        return self.builtin_tab_list.currentRow()
+
+    def _current_builtin_row_object(self) -> _BuiltinTabRow | None:
+        row = self._current_builtin_row()
+        if row < 0 or row >= len(self._builtin_draft_rows):
+            return None
+        return self._builtin_draft_rows[row]
+
+    def _render_builtin_rows(self, current_row: int | None = None) -> None:
+        if current_row is None:
+            current_row = self._current_builtin_row()
+        self.builtin_tab_list.clear()
+        for row in self._builtin_draft_rows:
+            label = row.display_title
+            if row.hidden:
+                label = f"{label}（已隐藏）"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, row.key)
+            self.builtin_tab_list.addItem(item)
+        if self.builtin_tab_list.count():
+            if current_row is None or current_row < 0:
+                current_row = 0
+            self.builtin_tab_list.setCurrentRow(min(current_row, self.builtin_tab_list.count() - 1))
+        self._sync_builtin_action_state()
+
+    def _move_builtin_tab_row(self, target_row: int) -> None:
+        row = self._current_builtin_row()
+        if row < 0 or row == target_row or not (0 <= target_row < len(self._builtin_draft_rows)):
+            return
+        item = self._builtin_draft_rows.pop(row)
+        self._builtin_draft_rows.insert(target_row, item)
+        self._render_builtin_rows(target_row)
+
+    def _move_builtin_tab_to_top(self) -> None:
+        self._move_builtin_tab_row(0)
+
+    def _move_builtin_tab_up(self) -> None:
+        row = self._current_builtin_row()
+        if row > 0:
+            self._move_builtin_tab_row(row - 1)
+
+    def _move_builtin_tab_down(self) -> None:
+        row = self._current_builtin_row()
+        if 0 <= row < len(self._builtin_draft_rows) - 1:
+            self._move_builtin_tab_row(row + 1)
+
+    def _move_builtin_tab_to_bottom(self) -> None:
+        if self._builtin_draft_rows:
+            self._move_builtin_tab_row(len(self._builtin_draft_rows) - 1)
+
+    def _rename_builtin_tab(self) -> None:
+        row = self._current_builtin_row_object()
+        if row is None:
+            return
+        value, accepted = QInputDialog.getText(self, "重命名内置源", "显示名称", text=row.display_title)
+        value = value.strip() if accepted else ""
+        if not value:
+            return
+        row.display_title = value
+        self._render_builtin_rows()
+
+    def _toggle_builtin_tab_hidden(self) -> None:
+        row = self._current_builtin_row_object()
+        if row is None:
+            return
+        row.hidden = not row.hidden
+        self._render_builtin_rows()
+
+    def _restore_builtin_tab_defaults(self) -> None:
+        self._builtin_draft_rows = [self._copy_builtin_row(row) for row in self._default_builtin_rows]
+        self._render_builtin_rows(0)
+
+    def _compose_builtin_tab_overrides_json(self) -> str:
+        overrides = BuiltinTabOverrides(
+            order=[row.key for row in self._builtin_draft_rows],
+            hidden=[row.key for row in self._builtin_draft_rows if row.hidden],
+            renames={
+                row.key: row.display_title
+                for row in self._builtin_draft_rows
+                if row.display_title.strip() and row.display_title.strip() != row.raw_title
+            },
+        )
+        return dumps_builtin_tab_overrides_json(overrides)
+
+    def _save_builtin_tabs(self) -> None:
+        payload = self._compose_builtin_tab_overrides_json()
+        try:
+            self._save_builtin_tab_overrides(payload)
+        except Exception as exc:
+            QMessageBox.warning(self, "保存失败", str(exc))
+            return
+        self.builtin_tabs_dirty = True
+        self.builtin_tabs_saved.emit(payload)
+
+    def _sync_builtin_action_state(self, *_args) -> None:
+        row = self._current_builtin_row()
+        last_row = len(self._builtin_draft_rows) - 1
+        has_selection = row >= 0
+        has_rows = bool(self._builtin_draft_rows)
+        self.builtin_top_button.setEnabled(has_selection and row > 0)
+        self.builtin_up_button.setEnabled(has_selection and row > 0)
+        self.builtin_down_button.setEnabled(has_selection and row >= 0 and row < last_row)
+        self.builtin_bottom_button.setEnabled(has_selection and row >= 0 and row < last_row)
+        self.builtin_rename_button.setEnabled(has_selection)
+        self.builtin_hide_button.setEnabled(has_selection)
+        self.builtin_reset_button.setEnabled(has_rows)
+        self.builtin_save_button.setEnabled(has_rows)
 
     def reload_plugins(self, selected_plugin_ids: list[int] | None = None) -> None:
         if selected_plugin_ids is None:

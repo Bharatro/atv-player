@@ -76,6 +76,19 @@ def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: P
     assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban"]
 
 
+def test_settings_repository_round_trips_builtin_tab_overrides(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.builtin_tab_overrides_json = '{"order":["history","douban"],"hidden":["telegram"],"renames":{"douban":"电影"}}'
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.builtin_tab_overrides_json == (
+        '{"order":["history","douban"],"hidden":["telegram"],"renames":{"douban":"电影"}}'
+    )
+
+
 def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 

@@ -1507,6 +1507,74 @@ def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> No
     ]
 
 
+def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qtbot) -> None:
+    config = AppConfig(
+        builtin_tab_overrides_json=(
+            '{"order":["telegram","douban","live","browse","favorites","following","history"],'
+            '"hidden":["history"],"renames":{"douban":"电影"}}'
+        )
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.resize(920, 520)
+    window.show()
+
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+        "电报影视",
+        "电影",
+        "网络直播",
+        "文件浏览",
+        "我的收藏",
+        "我的追更",
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+    ]
+
+    window.history_button.click()
+
+    assert window.nav_tabs.currentWidget() is window.history_page
+    assert "播放记录" not in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+
+def test_main_window_refreshes_builtin_tabs_after_saving_overrides(qtbot) -> None:
+    config = AppConfig()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window._handle_builtin_tab_overrides_saved(
+        '{"order":["history","douban"],"hidden":["history"],"renames":{"douban":"电影"}}'
+    )
+
+    assert config.builtin_tab_overrides_json == '{"order":["history","douban"],"hidden":["history"],"renames":{"douban":"电影"}}'
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:2] == ["电影", "电报影视"]
+
+
 def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),

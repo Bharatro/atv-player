@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.builtin_tab_overrides import parse_builtin_tab_overrides_json
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
@@ -1142,6 +1143,16 @@ class _TabDefinition:
 
 
 @dataclass(slots=True)
+class _BuiltinTabDefinition:
+    key: str
+    title: str
+    page: QWidget
+    search_controller: Any | None = None
+    global_search_only: bool = False
+    trailing: bool = False
+
+
+@dataclass(slots=True)
 class _GlobalSearchResult:
     key: str
     title: str
@@ -1382,6 +1393,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._trailing_tab_definitions: list[_TabDefinition] = []
         self._plugin_tab_definitions: list[_TabDefinition] = []
         self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
+        self._builtin_tab_definitions: list[_BuiltinTabDefinition] = []
         self._defer_navigation_refresh = True
         self._startup_plugin_load_started = False
         self._startup_plugin_load_request_id = 0
@@ -1699,6 +1711,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             _TabDefinition("following", "我的追更", self.following_page, self._following_controller),
             _TabDefinition("history", "播放记录", self.history_page),
         ]
+        self._builtin_tab_definitions = self._build_builtin_tab_definitions()
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
         self.plugin_overflow_button.clicked.connect(self._toggle_plugin_overflow_drawer)
@@ -2013,7 +2026,88 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setCurrentWidget(self.browse_page)
 
     def _all_tab_definitions(self) -> list[_TabDefinition]:
-        return [*self._static_tab_definitions, *self._trailing_tab_definitions, *self._plugin_tab_definitions]
+        builtin_definitions = [
+            _TabDefinition(
+                definition.key,
+                definition.title,
+                definition.page,
+                definition.search_controller,
+                definition.global_search_only,
+            )
+            for definition in self._builtin_tab_definitions
+        ]
+        global_search_only_definitions = [
+            definition
+            for definition in self._static_tab_definitions
+            if definition.global_search_only
+            and all(definition.key != builtin.key for builtin in builtin_definitions)
+        ]
+        return [*builtin_definitions, *global_search_only_definitions, *self._plugin_tab_definitions]
+
+    def _builtin_tab_default_definitions(self) -> list[_BuiltinTabDefinition]:
+        definitions: list[_BuiltinTabDefinition] = [
+            _BuiltinTabDefinition("douban", "豆瓣电影", self.douban_page),
+            _BuiltinTabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
+        ]
+        if self.bilibili_page is not None:
+            definitions.append(_BuiltinTabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller))
+        if self.youtube_page is not None:
+            definitions.append(_BuiltinTabDefinition("youtube", "YouTube", self.youtube_page, self.youtube_controller))
+        definitions.append(_BuiltinTabDefinition("live", "网络直播", self.live_page))
+        if self.emby_page is not None:
+            definitions.append(_BuiltinTabDefinition("emby", "Emby", self.emby_page, self.emby_controller))
+        if self.jellyfin_page is not None:
+            definitions.append(_BuiltinTabDefinition("jellyfin", "Jellyfin", self.jellyfin_page, self.jellyfin_controller))
+        if self.feiniu_page is not None:
+            definitions.append(_BuiltinTabDefinition("feiniu", "飞牛影视", self.feiniu_page, self.feiniu_controller))
+        definitions.extend(
+            [
+                _BuiltinTabDefinition("browse", "文件浏览", self.browse_page, trailing=True),
+                _BuiltinTabDefinition("favorites", "我的收藏", self.favorites_page, self._favorites_controller, trailing=True),
+                _BuiltinTabDefinition("following", "我的追更", self.following_page, self._following_controller, trailing=True),
+                _BuiltinTabDefinition("history", "播放记录", self.history_page, trailing=True),
+            ]
+        )
+        return definitions
+
+    def _build_builtin_tab_definitions(self) -> list[_BuiltinTabDefinition]:
+        default_definitions = self._builtin_tab_default_definitions()
+        overrides = parse_builtin_tab_overrides_json(getattr(self.config, "builtin_tab_overrides_json", ""))
+        by_key = {definition.key: definition for definition in default_definitions}
+        ordered_keys: list[str] = []
+        for key in overrides.order:
+            if key in by_key and key not in ordered_keys:
+                ordered_keys.append(key)
+        for definition in default_definitions:
+            if definition.key not in ordered_keys:
+                ordered_keys.append(definition.key)
+        hidden = set(overrides.hidden)
+        result: list[_BuiltinTabDefinition] = []
+        for key in ordered_keys:
+            definition = by_key[key]
+            title = overrides.renames.get(key, definition.title)
+            result.append(
+                _BuiltinTabDefinition(
+                    key=definition.key,
+                    title=title,
+                    page=definition.page,
+                    search_controller=definition.search_controller,
+                    global_search_only=definition.global_search_only,
+                    trailing=definition.trailing,
+                )
+            )
+        self._builtin_hidden_keys = hidden
+        return result
+
+    def _builtin_tab_definition_by_key(self, key: str) -> _BuiltinTabDefinition | None:
+        for definition in self._builtin_tab_definitions:
+            if definition.key == key:
+                return definition
+        return None
+
+    def _visible_builtin_tab_definitions(self) -> list[_BuiltinTabDefinition]:
+        hidden_keys = getattr(self, "_builtin_hidden_keys", set())
+        return [definition for definition in self._builtin_tab_definitions if definition.key not in hidden_keys]
 
     def _startup_plugin_placeholder_definition(self) -> _TabDefinition | None:
         if (
@@ -2070,17 +2164,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             total_nav_width += self._plugin_overflow_button_width() + button_spacing
         if total_nav_width <= 0:
             total_nav_width = max(self.nav_tabs.width(), 0)
-        static_width = sum(
+        builtin_width = sum(
             self._plugin_tab_title_width(definition.title)
-            for definition in self._static_tab_definitions
+            for definition in self._visible_builtin_tab_definitions()
             if not definition.global_search_only
         )
-        trailing_width = sum(
-            self._plugin_tab_title_width(definition.title)
-            for definition in self._trailing_tab_definitions
-            if not definition.global_search_only
-        )
-        available = total_nav_width - static_width - trailing_width
+        available = total_nav_width - builtin_width
         total_plugin_width = sum(
             self._plugin_tab_title_width(definition.title)
             for definition in self._plugin_tab_definitions
@@ -2154,8 +2243,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if not hidden_results:
                 self._close_plugin_overflow_drawer()
         else:
-            visible_static_definitions = [
-                definition for definition in self._static_tab_definitions if not definition.global_search_only
+            visible_builtin_definitions = [
+                _TabDefinition(
+                    definition.key,
+                    definition.title,
+                    definition.page,
+                    definition.search_controller,
+                    definition.global_search_only,
+                )
+                for definition in self._visible_builtin_tab_definitions()
+                if not definition.global_search_only
             ]
             visible_plugins, hidden_plugins = self._split_visible_and_hidden_plugin_tabs()
             placeholder_definition = self._startup_plugin_placeholder_definition()
@@ -2163,14 +2260,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self._hidden_plugin_tab_definitions = []
                 self.plugin_overflow_button.hide()
                 self._close_plugin_overflow_drawer()
-                definitions = [*visible_static_definitions, *self._trailing_tab_definitions, placeholder_definition]
+                definitions = [*visible_builtin_definitions, placeholder_definition]
             else:
                 self._hidden_plugin_tab_definitions = hidden_plugins
                 self.plugin_overflow_button.setVisible(bool(hidden_plugins))
                 self.plugin_overflow_button.setText(f"更多({len(hidden_plugins)})" if hidden_plugins else "更多")
                 if not hidden_plugins:
                     self._close_plugin_overflow_drawer()
-                definitions = [*visible_static_definitions, *self._trailing_tab_definitions, *visible_plugins]
+                definitions = [*visible_builtin_definitions, *visible_plugins]
 
         self.nav_tabs.blockSignals(True)
         self.nav_tabs.clear()
@@ -2624,10 +2721,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.feiniu_page and self.feiniu_page is not None:
             self.feiniu_page.ensure_loaded()
             return
-        for page, _controller, _plugin_id in self._plugin_pages:
-            if widget is page:
-                page.ensure_loaded()
-                return
         if widget is self.browse_page:
             if hasattr(self.browse_controller, "load_folder"):
                 self.browse_page.ensure_loaded(self.config.last_path or "/")
@@ -2643,6 +2736,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.history_page:
             if hasattr(self.history_page.controller, "load_page"):
                 self.history_page.ensure_loaded()
+            return
+        for page, _controller, _plugin_id in self._plugin_pages:
+            if widget is page:
+                page.ensure_loaded()
+                return
 
     def _overflow_drawer_items(self) -> list[tuple[str, str, bool]]:
         active_key = self._tab_key_for_widget(self._active_widget or self.nav_tabs.currentWidget())
@@ -3937,8 +4035,21 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
-        dialog = PluginManagerDialog(self._plugin_manager, self)
+        dialog = PluginManagerDialog(
+            self._plugin_manager,
+            self,
+            builtin_tabs=[
+                {"key": definition.key, "title": definition.title}
+                for definition in self._builtin_tab_default_definitions()
+            ],
+            builtin_tab_overrides_json=getattr(self.config, "builtin_tab_overrides_json", ""),
+            save_builtin_tab_overrides=self._save_builtin_tab_overrides,
+        )
+        dialog.builtin_tabs_saved.connect(self._handle_builtin_tab_overrides_saved)
         dialog.exec()
+        if bool(getattr(dialog, "builtin_tabs_dirty", False)):
+            self._builtin_tab_definitions = self._build_builtin_tab_definitions()
+            self._refresh_navigation_tabs()
         if not bool(getattr(dialog, "plugin_tabs_dirty", False)):
             return
         changed_plugin_ids = [str(plugin_id) for plugin_id in getattr(dialog, "changed_plugin_ids", []) if str(plugin_id)]
@@ -3946,6 +4057,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._plugin_definitions = self._load_plugin_definitions_with_manager("load_enabled_plugins")
         self._rebuild_spider_plugin_tabs()
+
+    def _save_builtin_tab_overrides(self, payload: str) -> None:
+        self.config.builtin_tab_overrides_json = payload
+        self._save_config()
+
+    def _handle_builtin_tab_overrides_saved(self, payload: str) -> None:
+        if getattr(self.config, "builtin_tab_overrides_json", "") != payload:
+            self.config.builtin_tab_overrides_json = payload
+            self._save_config()
+        self._builtin_tab_definitions = self._build_builtin_tab_definitions()
+        self._refresh_navigation_tabs()
 
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:
