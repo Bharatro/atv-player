@@ -1221,6 +1221,7 @@ def _playback_platform_entries_from_record(record: MetadataRecord) -> list[Follo
         if isinstance(item, dict)
     }
     provider = str(getattr(record, "provider", "") or "").strip()
+    metric_label, metric_value = _compact_platform_metric(provider, field_map)
     entry = FollowingPlaybackPlatformEntry(
         provider=provider,
         label=_provider_label(provider),
@@ -1228,10 +1229,21 @@ def _playback_platform_entries_from_record(record: MetadataRecord) -> list[Follo
         latest_episode=_to_int(field_map.get("最新集数")),
         update_time_text=field_map.get("更新时间") or "",
         status_text=field_map.get("更新状态") or "",
+        metric_label=metric_label,
+        metric_value=metric_value,
     )
     if not any((entry.url, entry.latest_episode, entry.update_time_text, entry.status_text)):
         return []
     return [entry]
+
+
+def _compact_platform_metric(provider: str, field_map: dict[str, str]) -> tuple[str, str]:
+    provider_key = str(provider or "").strip()
+    if provider_key == "bilibili":
+        value = str(field_map.get("播放") or "").strip()
+        return ("播放", value) if value else ("", "")
+    value = str(field_map.get("热度") or "").strip()
+    return ("热度", value) if value else ("", "")
 
 
 def _record_detail_field_value(record: MetadataRecord, label: str) -> str:
@@ -1274,6 +1286,8 @@ def _merge_playback_platform_updates(
             latest_episode=new_entry.latest_episode or current.latest_episode,
             update_time_text=new_entry.update_time_text or current.update_time_text,
             status_text=new_entry.status_text or current.status_text,
+            metric_label=new_entry.metric_label or current.metric_label,
+            metric_value=new_entry.metric_value or current.metric_value,
         )
     return list(mapped.values())
 

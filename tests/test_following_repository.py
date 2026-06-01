@@ -136,6 +136,8 @@ def test_following_repository_persists_metadata_bundle(tmp_path: Path) -> None:
                             provider="iqiyi",
                             label="爱奇艺",
                             url="https://www.iqiyi.com/a_1.html",
+                            metric_label="热度",
+                            metric_value="9000",
                         )
                     ],
                 ),
@@ -171,6 +173,8 @@ def test_following_repository_persists_metadata_bundle(tmp_path: Path) -> None:
     assert loaded.metadata_bundle.source_snapshots["tmdb"].provider_id == "tv:272432:season:1"
     assert loaded.metadata_bundle.merged_snapshot.ratings[0].value == "8.1"
     assert loaded.metadata_bundle.merged_snapshot.playback_platforms[0].label == "爱奇艺"
+    assert loaded.metadata_bundle.merged_snapshot.playback_platforms[0].metric_label == "热度"
+    assert loaded.metadata_bundle.merged_snapshot.playback_platforms[0].metric_value == "9000"
 
 
 def test_following_repository_update_progress_clears_update_when_latest_watched(tmp_path: Path) -> None:

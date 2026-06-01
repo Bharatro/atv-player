@@ -68,6 +68,42 @@ def test_youku_metadata_provider_search_maps_page_component_to_series_match() ->
     ]
 
 
+def test_youku_metadata_provider_detail_exposes_site_metrics() -> None:
+    provider = YoukuMetadataProvider(
+        get=lambda url, **kwargs: httpx.Response(
+            200,
+            json={
+                "pageComponentList": [
+                    {
+                        "commonData": {
+                            "isYouku": 1,
+                            "titleDTO": {"displayName": "名侦探柯南"},
+                            "summary": "高中生侦探工藤新一被黑衣组织灌下毒药。",
+                            "year": "1996",
+                            "category": "动漫 / 推理",
+                            "score": 9.5,
+                            "heat": {"displayName": "8500"},
+                            "commentCount": "3.4万",
+                            "leftButtonDTO": {
+                                "action": {
+                                    "value": "https://v.youku.com/v_show/id_XNjUzNDA5NDEwNA==.html"
+                                }
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    match = provider.search(MetadataQuery(title="名侦探柯南", year="1996", category_name="动漫"))[0]
+    record = provider.get_detail(match)
+
+    assert {"label": "站内评分", "value": "9.5"} in record.detail_fields
+    assert {"label": "热度", "value": "8500"} in record.detail_fields
+    assert {"label": "评论", "value": "3.4万"} in record.detail_fields
+
+
 def test_youku_metadata_provider_search_maps_series_payload_to_series_match() -> None:
     provider = YoukuMetadataProvider(
         get=lambda url, **kwargs: httpx.Response(

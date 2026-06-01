@@ -1834,6 +1834,9 @@ def _playback_platform_text(entry: FollowingPlaybackPlatformEntry) -> str:
         parts.append(entry.update_time_text)
     if entry.status_text:
         parts.append(entry.status_text)
+    if entry.metric_value:
+        metric_label = str(entry.metric_label or "").strip()
+        parts.append(f"{metric_label} {entry.metric_value}".strip())
     return "  ·  ".join(part for part in parts if part)
 
 
@@ -1851,6 +1854,9 @@ def _playback_platform_entry_html(entry: FollowingPlaybackPlatformEntry) -> str:
         parts.append(html.escape(entry.update_time_text))
     if entry.status_text:
         parts.append(html.escape(entry.status_text))
+    if entry.metric_value:
+        metric_label = str(entry.metric_label or "").strip()
+        parts.append(html.escape(f"{metric_label} {entry.metric_value}".strip()))
     return " ".join(part for part in parts if part)
 
 

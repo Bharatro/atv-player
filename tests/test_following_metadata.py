@@ -131,6 +131,7 @@ def test_build_following_metadata_bundle_keeps_tmdb_primary_and_adds_douban_bang
         title="凡人修仙传",
         detail_fields=[
             {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+            {"label": "热度", "value": "9000"},
             {"label": "更新时间", "value": "2026-05-25"},
             {"label": "更新状态", "value": "更新至第128集"},
             {"label": "最新集数", "value": "128"},
@@ -163,6 +164,35 @@ def test_build_following_metadata_bundle_keeps_tmdb_primary_and_adds_douban_bang
     assert bundle.merged_snapshot.playback_platforms[0].label == "爱奇艺"
     assert bundle.merged_snapshot.playback_platforms[0].update_time_text == "2026-05-25"
     assert bundle.merged_snapshot.playback_platforms[0].status_text == "更新至第128集"
+    assert bundle.merged_snapshot.playback_platforms[0].metric_label == "热度"
+    assert bundle.merged_snapshot.playback_platforms[0].metric_value == "9000"
+
+
+def test_build_following_source_metadata_bundle_uses_bilibili_play_as_compact_metric() -> None:
+    from atv_player.following_metadata import build_following_source_metadata_bundle
+
+    detail_record = MetadataRecord(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        detail_fields=[
+            {"label": "播放链接", "value": "https://www.bilibili.com/bangumi/play/ss45969"},
+            {"label": "播放", "value": "18.0亿"},
+            {"label": "追番", "value": "653.8万追番"},
+        ],
+    )
+
+    bundle, _record, _snapshot = build_following_source_metadata_bundle(
+        base_record=FollowingRecord(id=1, title="牧神记", media_kind="anime"),
+        base_snapshot=FollowingDetailSnapshot(),
+        provider="bilibili",
+        provider_label="B站",
+        detail_record=detail_record,
+    )
+
+    platform = bundle.merged_snapshot.playback_platforms[0]
+    assert platform.metric_label == "播放"
+    assert platform.metric_value == "18.0亿"
 
 
 def test_build_following_metadata_bundle_ignores_provider_below_threshold() -> None:
