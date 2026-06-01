@@ -2316,6 +2316,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if definition.key == selected_key:
                 self.nav_tabs.setCurrentIndex(index)
                 return True
+        hidden_builtin_definition = self._builtin_tab_definition_by_key(selected_key)
+        if hidden_builtin_definition is not None:
+            self.nav_tabs.setCurrentWidget(hidden_builtin_definition.page)
+            return True
         return False
 
     def _tab_key_for_widget(self, widget: QWidget | None) -> str | None:
@@ -2328,13 +2332,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _remember_selected_tab(self, widget: QWidget) -> None:
         selected_key = self._tab_key_for_widget(widget)
+        if selected_key is not None and self.config.last_selected_tab == selected_key:
+            return
         if (
             self._startup_plugin_pending_tab_restore_key
             and self._startup_plugin_load_state == "loading"
             and selected_key != self._startup_plugin_pending_tab_restore_key
         ):
             return
-        if selected_key is None or self.config.last_selected_tab == selected_key:
+        if selected_key is None:
             return
         self.config.last_selected_tab = selected_key
         self._save_config()
