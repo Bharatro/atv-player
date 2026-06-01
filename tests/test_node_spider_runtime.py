@@ -882,6 +882,101 @@ module.exports = async (app, opt) => {
 
 
 @pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_bundled_crypto_js(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "crypto-js-plugin.cjs"
+    plugin_path.write_text(
+        """
+const CryptoJS = require("crypto-js");
+
+const meta = { name: "加密插件", api: "/video/crypto" };
+
+module.exports = async (app, opt) => {
+  app.get(meta.api, async () => ({
+    class: [{ type_id: "hash", type_name: "哈希" }],
+    list: [{
+      vod_id: CryptoJS.MD5("atv-player").toString(),
+      vod_name: "MD5"
+    }]
+  }));
+  opt.sites.push(meta);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=8
+    )
+
+    assert spider.getName() == "加密插件"
+    home = spider.homeContent(False)
+    assert home["list"][0] == {
+        "vod_id": "7d8f4b4835c22114a91d3eddea9da6a8",
+        "vod_name": "MD5",
+    }
+    spider.destroy()
+
+
+@pytestmark_node
+def test_node_bridge_supports_t4_plugin_with_xmlbuilder2_shim(
+    tmp_path: Path,
+) -> None:
+    plugin_path = tmp_path / "xmlbuilder2-plugin.cjs"
+    plugin_path.write_text(
+        """
+const axios = require("axios");
+const crypto = require("crypto");
+const CryptoJS = require("crypto-js");
+const { create } = require("xmlbuilder2");
+const fs = require("fs");
+const path = require("path");
+
+const meta = { name: "XML插件", api: "/video/xml" };
+
+module.exports = async (app, opt) => {
+  app.get(meta.api, async () => {
+    const xml = create({ version: "1.0", encoding: "UTF-8" })
+      .ele("root", { type: "demo" })
+      .ele("name")
+      .txt("ATV & TV")
+      .up()
+      .ele("hash")
+      .txt(CryptoJS.MD5("xml").toString())
+      .end();
+    return {
+      class: [{ type_id: "xml", type_name: path.basename(__dirname) }],
+      list: [{
+        vod_id: crypto.createHash("md5").update(xml).digest("hex"),
+        vod_name: fs.existsSync(__filename) && axios ? xml : ""
+      }]
+    };
+  });
+  opt.sites.push(meta);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spider = NodeSpider(
+        plugin_path=plugin_path, cache_dir=tmp_path / "cache", plugin_id=9
+    )
+
+    assert spider.getName() == "XML插件"
+    home = spider.homeContent(False)
+    assert home["list"][0] == {
+        "vod_id": "f7f3bccad74388a8a3e427fd72b14b45",
+        "vod_name": (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<root type="demo"><name>ATV &amp; TV</name>'
+            "<hash>0f635d0e0f3874fff8b581c132e6c7a7</hash></root>"
+        ),
+    }
+    spider.destroy()
+
+
+@pytestmark_node
 def test_node_bridge_supports_t4_plugin_with_server_log_info(
     tmp_path: Path,
 ) -> None:

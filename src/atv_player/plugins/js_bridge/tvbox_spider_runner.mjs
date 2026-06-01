@@ -203,6 +203,91 @@ function createAxiosClient(defaultOptions = {}) {
 const axiosShim = createAxiosClient();
 axiosShim.create = createAxiosClient;
 const cheerioShim = await import(new URL("./lib/cheerio.min.js", import.meta.url));
+const cryptoJsShim = require("./lib/crypto-js.js");
+
+function escapeXmlText(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeXmlAttribute(value) {
+  return escapeXmlText(value).replaceAll("\"", "&quot;");
+}
+
+class XmlBuilderNode {
+  constructor(name = null, attributes = {}, parent = null, document = null) {
+    this.name = name;
+    this.attributes = { ...(attributes || {}) };
+    this.parent = parent;
+    this.document = document || this;
+    this.children = [];
+  }
+
+  ele(name, attributes = {}) {
+    const child = new XmlBuilderNode(name, attributes, this, this.document);
+    this.children.push(child);
+    return child;
+  }
+
+  att(name, value) {
+    if (name && typeof name === "object") {
+      Object.assign(this.attributes, name);
+    } else {
+      this.attributes[name] = value;
+    }
+    return this;
+  }
+
+  txt(value) {
+    this.children.push({ text: String(value ?? "") });
+    return this;
+  }
+
+  up() {
+    return this.parent || this;
+  }
+
+  end() {
+    return renderXmlDocument(this.document);
+  }
+}
+
+function renderXmlDocument(document) {
+  const options = document.declaration || {};
+  const declaration = options.version
+    ? `<?xml version="${escapeXmlAttribute(options.version)}"${options.encoding ? ` encoding="${escapeXmlAttribute(options.encoding)}"` : ""}?>`
+    : "";
+  return `${declaration}${document.children.map(renderXmlNode).join("")}`;
+}
+
+function renderXmlNode(node) {
+  if (Object.prototype.hasOwnProperty.call(node, "text")) {
+    return escapeXmlText(node.text);
+  }
+  const attributes = Object.entries(node.attributes)
+    .map(([name, value]) => ` ${name}="${escapeXmlAttribute(value)}"`)
+    .join("");
+  if (node.children.length === 0) {
+    return `<${node.name}${attributes}/>`;
+  }
+  return `<${node.name}${attributes}>${node.children.map(renderXmlNode).join("")}</${node.name}>`;
+}
+
+function xmlbuilderCreate(options = {}) {
+  const document = new XmlBuilderNode();
+  document.declaration = (
+    options
+    && typeof options === "object"
+    && (options.version || options.encoding)
+  )
+    ? options
+    : {};
+  return document;
+}
+
+const xmlbuilder2Shim = { create: xmlbuilderCreate };
 
 function uuidV4() {
   const nodeCrypto = require("node:crypto");
@@ -244,6 +329,8 @@ async function loadPluginModule() {
   const pluginRequire = (name) => {
     if (name === "axios") return axiosShim;
     if (name === "cheerio") return cheerioShim;
+    if (name === "crypto-js") return cryptoJsShim;
+    if (name === "xmlbuilder2") return xmlbuilder2Shim;
     if (name === "uuid") return uuidShim;
     return pluginRequireBase(name);
   };
