@@ -858,13 +858,15 @@ def build_navigation_tabbar_qss(tokens: ThemeTokens) -> str:
         color: {tokens.accent};
         font-weight: 600;
     }}
-    QTabBar[hiddenPluginActive="true"]::tab:selected {{
+    QTabBar[hiddenPluginActive="true"]::tab:selected,
+    QTabBar[hiddenTabActive="true"]::tab:selected {{
         background: transparent;
         border-color: transparent;
         color: {tokens.text_primary};
         font-weight: 400;
     }}
-    QTabBar[hiddenPluginActive="true"]::tab:selected:hover {{
+    QTabBar[hiddenPluginActive="true"]::tab:selected:hover,
+    QTabBar[hiddenTabActive="true"]::tab:selected:hover {{
         background: {tokens.panel_alt_bg};
         border-color: {tokens.input_hover_border};
         color: {tokens.text_primary};

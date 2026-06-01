@@ -2320,6 +2320,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if definition.key == selected_key:
                 self.nav_tabs.setCurrentIndex(index)
                 return True
+        hidden_builtin_definition = self._builtin_tab_definition_by_key(selected_key)
+        if hidden_builtin_definition is not None:
+            self.nav_tabs.setCurrentWidget(hidden_builtin_definition.page)
+            return True
         return False
 
     def _tab_key_for_widget(self, widget: QWidget | None) -> str | None:
@@ -2834,8 +2838,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             definition.key == active_key
             for definition in self._hidden_plugin_tab_definitions
         )
+        hidden_builtin_active = (
+            active_key is not None
+            and active_key in getattr(self, "_builtin_hidden_keys", set())
+        )
         self.plugin_overflow_button.setChecked(hidden_plugin_active)
         self._set_dynamic_property(self.nav_tabs.tab_bar, "hiddenPluginActive", hidden_plugin_active)
+        self._set_dynamic_property(self.nav_tabs.tab_bar, "hiddenTabActive", hidden_plugin_active or hidden_builtin_active)
 
     @staticmethod
     def _set_dynamic_property(widget: QWidget, name: str, value: object) -> None:
@@ -2858,13 +2867,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _open_builtin_page_from_header(self, tab_key: str) -> None:
         definition = self._builtin_tab_definition_by_key(tab_key)
         if definition is None:
-            return
-        hidden_keys = getattr(self, "_builtin_hidden_keys", set())
-        if tab_key in hidden_keys:
-            self._select_first_visible_tab()
-            self._remember_selected_tab(self.nav_tabs.currentWidget() or definition.page)
-            definition.page.setVisible(True)
-            self.nav_tabs.content_stack.setCurrentWidget(definition.page)
             return
         self.nav_tabs.setCurrentWidget(definition.page)
 

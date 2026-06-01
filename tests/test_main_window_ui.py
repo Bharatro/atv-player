@@ -1654,7 +1654,7 @@ def test_main_window_builtin_tab_context_menu_hides_tab(qtbot, monkeypatch) -> N
     assert window.nav_tabs.currentWidget() is window.history_page
 
 
-def test_main_window_keeps_visible_tab_highlight_when_opening_hidden_builtin_from_header_button(qtbot) -> None:
+def test_main_window_clears_visible_tab_highlight_when_opening_hidden_builtin_from_header_button(qtbot) -> None:
     config = AppConfig(
         builtin_tab_overrides_json='{"order":["douban","telegram","live","browse","favorites","following","history"],"hidden":["history"]}'
     )
@@ -1675,12 +1675,12 @@ def test_main_window_keeps_visible_tab_highlight_when_opening_hidden_builtin_fro
 
     window.history_button.click()
 
-    assert config.last_selected_tab == "douban"
+    assert config.last_selected_tab == "history"
     assert window.nav_tabs.currentWidget() is window.history_page
-    assert window.nav_tabs.tab_bar.currentIndex() == 0
+    assert window.nav_tabs.tab_bar.property("hiddenTabActive") is True
 
 
-def test_main_window_restores_first_visible_tab_when_saved_builtin_tab_is_hidden(qtbot) -> None:
+def test_main_window_restores_hidden_builtin_tab_after_restart_without_visible_highlight(qtbot) -> None:
     config = AppConfig(
         builtin_tab_overrides_json='{"order":["douban","telegram","live","browse","favorites","following","history"],"hidden":["history"]}',
         last_selected_tab="history",
@@ -1701,8 +1701,8 @@ def test_main_window_restores_first_visible_tab_when_saved_builtin_tab_is_hidden
     window.show()
 
     assert "播放记录" not in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
-    assert window.nav_tabs.currentWidget() is window.douban_page
-    assert window.nav_tabs.tab_bar.currentIndex() == 0
+    assert window.nav_tabs.currentWidget() is window.history_page
+    assert window.nav_tabs.tab_bar.property("hiddenTabActive") is True
 
 
 def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qtbot) -> None:
