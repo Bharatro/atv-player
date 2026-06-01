@@ -115,11 +115,15 @@ class FakeController:
                                 latest_episode=128,
                                 update_time_text="2026-05-25",
                                 status_text="更新至第128集",
+                                metric_label="热度",
+                                metric_value="9000",
                             ),
                             FollowingPlaybackPlatformEntry(
                                 provider="tencent",
                                 label="腾讯",
                                 url="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                metric_label="热度",
+                                metric_value="24567",
                             )
                         ],
                     ),
@@ -160,11 +164,15 @@ class FakeController:
                                     latest_episode=128,
                                     update_time_text="2026-05-25",
                                     status_text="更新至第128集",
+                                    metric_label="热度",
+                                    metric_value="9000",
                                 ),
                                 FollowingPlaybackPlatformEntry(
                                     provider="tencent",
                                     label="腾讯",
                                     url="https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                    metric_label="热度",
+                                    metric_value="24567",
                                 )
                             ],
                         ),
@@ -216,6 +224,9 @@ class FakeController:
                             overview="爱奇艺简介",
                             metadata_fields=[
                                 {"label": "播放链接", "value": "https://www.iqiyi.com/a_1.html"},
+                                {"label": "站内评分", "value": "9.4"},
+                                {"label": "热度", "value": "9000"},
+                                {"label": "评论", "value": "1.2万"},
                                 {"label": "更新时间", "value": "2026-05-25"},
                                 {"label": "更新状态", "value": "更新至第128集"},
                             ],
@@ -227,6 +238,8 @@ class FakeController:
                                     latest_episode=128,
                                     update_time_text="2026-05-25",
                                     status_text="更新至第128集",
+                                    metric_label="热度",
+                                    metric_value="9000",
                                 )
                             ],
                         ),
@@ -312,6 +325,10 @@ def test_following_detail_page_shows_rating_strip_source_switcher_and_playback_p
     assert "爱奇艺" in platform_html
     assert "腾讯" in platform_html
     assert "更新至第128集" in platform_html
+    assert "热度 9000" in platform_html
+    assert "热度 24567" in platform_html
+    assert "站内评分" not in platform_html
+    assert "评论" not in platform_html
     assert platform_html.index("爱奇艺") < platform_html.index("腾讯")
 
 
@@ -330,6 +347,9 @@ def test_following_detail_page_switches_between_merged_and_provider_raw_views(qt
 
     assert "播放链接:" in page.overview_label.text()
     assert 'href="https://www.iqiyi.com/a_1.html"' in page.overview_label.text()
+    assert "站内评分: 9.4" in page.overview_label.text()
+    assert "热度: 9000" in page.overview_label.text()
+    assert "评论: 1.2万" in page.overview_label.text()
     assert "更新时间: 2026-05-25" in page.overview_label.text()
     assert "更新状态: 更新至第128集" in page.overview_label.text()
 

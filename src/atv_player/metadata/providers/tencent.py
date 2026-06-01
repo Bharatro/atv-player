@@ -166,6 +166,16 @@ class TencentMetadataProvider:
             "episode_sites": self._episode_sites(video_info),
             "play_sites": self._play_sites(video_info),
             "provider_id": self._provider_id(video_info, doc),
+            "siteScore": video_info.get("siteScore"),
+            "score": video_info.get("score"),
+            "rating": video_info.get("rating"),
+            "extraFields": video_info.get("extraFields"),
+            "heat": video_info.get("heat"),
+            "hot": video_info.get("hot"),
+            "popularity": video_info.get("popularity"),
+            "commentCount": video_info.get("commentCount"),
+            "comments": video_info.get("comments"),
+            "comment": video_info.get("comment"),
         }
 
     def _detail_fields(self, payload: dict, match: MetadataMatch) -> list[dict[str, str]]:
@@ -173,7 +183,41 @@ class TencentMetadataProvider:
         url = str(payload.get("provider_id") or match.provider_id or "").strip()
         if url:
             fields.append({"label": "播放链接", "value": url})
+        fields.extend(self._site_metric_fields(payload))
         return fields
+
+    def _site_metric_fields(self, payload: dict) -> list[dict[str, str]]:
+        video_info = payload.get("videoInfo") if isinstance(payload.get("videoInfo"), dict) else payload
+        fields: list[dict[str, str]] = []
+        for label, keys in (
+            ("站内评分", ("siteScore", "score", "rating", "extraFields.score")),
+            ("热度", ("heat", "hot", "popularity")),
+            ("评论", ("commentCount", "comments", "comment")),
+        ):
+            value = self._metric_value(video_info, keys)
+            if value:
+                fields.append({"label": label, "value": value})
+        return fields
+
+    def _metric_value(self, payload: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            if "." in key:
+                head, tail = key.split(".", 1)
+                value = payload.get(head)
+                if isinstance(value, dict):
+                    nested = value.get(tail)
+                    text = str(nested or "").strip()
+                else:
+                    text = ""
+            else:
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    text = str(value.get("value") or value.get("score") or value.get("text") or "").strip()
+                else:
+                    text = str(value or "").strip()
+            if text:
+                return text
+        return ""
 
     def _episode_sites(self, video_info: dict) -> list[dict]:
         return self._site_list(video_info.get("episodeSites"))

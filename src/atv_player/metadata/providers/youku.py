@@ -88,6 +88,7 @@ class YoukuMetadataProvider:
             detail_fields.append({"label": "优酷标签", "value": " / ".join(str(item) for item in badges if str(item).strip())})
         if page_url:
             detail_fields.append({"label": "播放链接", "value": page_url})
+        detail_fields.extend(self._site_metric_fields(payload))
         return MetadataRecord(
             provider=self.name,
             provider_id=page_url,
@@ -132,6 +133,15 @@ class YoukuMetadataProvider:
                 "provider_id": page_url,
                 "episodes": episodes,
                 "category": "优酷",
+                "siteScore": common.get("siteScore"),
+                "score": common.get("score"),
+                "rating": common.get("rating"),
+                "heat": common.get("heat"),
+                "hot": common.get("hot"),
+                "popularity": common.get("popularity"),
+                "commentCount": common.get("commentCount"),
+                "comments": common.get("comments"),
+                "comment": common.get("comment"),
             })
         return results
 
@@ -150,6 +160,15 @@ class YoukuMetadataProvider:
                         "provider_id": url,
                         "episodes": [{"title": item.get("title"), "url": url}],
                         "category": "优酷",
+                        "siteScore": item.get("siteScore"),
+                        "score": item.get("score"),
+                        "rating": item.get("rating"),
+                        "heat": item.get("heat"),
+                        "hot": item.get("hot"),
+                        "popularity": item.get("popularity"),
+                        "commentCount": item.get("commentCount"),
+                        "comments": item.get("comments"),
+                        "comment": item.get("comment"),
                     }
                 )
         return results
@@ -379,6 +398,35 @@ class YoukuMetadataProvider:
         if len(parts) >= 4:
             metadata["status"] = parts[3]
         return metadata
+
+    def _site_metric_fields(self, payload: dict[str, object]) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        for label, keys in (
+            ("站内评分", ("siteScore", "score", "rating")),
+            ("热度", ("heat", "hot", "popularity")),
+            ("评论", ("commentCount", "comments", "comment")),
+        ):
+            value = self._metric_value(payload, keys)
+            if value:
+                fields.append({"label": label, "value": value})
+        return fields
+
+    def _metric_value(self, payload: dict[str, object], keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                text = str(
+                    value.get("value")
+                    or value.get("displayName")
+                    or value.get("score")
+                    or value.get("text")
+                    or ""
+                ).strip()
+            else:
+                text = str(value or "").strip()
+            if text:
+                return text
+        return ""
 
     def _episode_number(self, title: object) -> int:
         match = re.search(r"(?:第\s*)?0*(\d{1,4})\s*(?:集|话|期)?\s*$", str(title or "").strip())

@@ -131,6 +131,7 @@ def test_iqiyi_metadata_provider_maps_movie_people_and_detail_fields() -> None:
     assert record.genres == ["冒险", "动画", "喜剧"]
     assert record.detail_fields == [
         {"label": "播放链接", "value": "https://www.iqiyi.com/v_demo.html"},
+        {"label": "站内评分", "value": "9.0"},
         {"label": "上映时间", "value": "2025-11-26"},
         {"label": "更新时间", "value": "每周六 10:00更新"},
         {"label": "片长", "value": "01:43:26"},
@@ -331,6 +332,37 @@ def test_iqiyi_metadata_provider_detail_omits_source_site_field() -> None:
         {"label": "上映时间", "value": "2025-11-26"},
         {"label": "片长", "value": "01:43:26"},
     ]
+
+
+def test_iqiyi_metadata_provider_detail_exposes_site_metrics() -> None:
+    payload = {
+        "data": {
+            "templates": [
+                {
+                    "template": 103,
+                    "albumInfo": {
+                        "title": "疯狂动物城2",
+                        "siteId": "iqiyi",
+                        "siteName": "爱奇艺",
+                        "pageUrl": "https://www.iqiyi.com/v_demo.html",
+                        "year": {"value": "2025"},
+                        "brief": {"value": "兔子朱迪与狐狸尼克正式组成搭档。"},
+                        "score": 9.4,
+                        "heat": {"value": "9000"},
+                        "commentCount": {"value": "1.2万"},
+                    }
+                }
+            ]
+        }
+    }
+    provider = IqiyiMetadataProvider(get=lambda url, **kwargs: JsonResponse(payload))
+
+    match = provider.search(MetadataQuery(title="疯狂动物城2", year="2025", category_name="电影"))[0]
+    record = provider.get_detail(match)
+
+    assert {"label": "站内评分", "value": "9.4"} in record.detail_fields
+    assert {"label": "热度", "value": "9000"} in record.detail_fields
+    assert {"label": "评论", "value": "1.2万"} in record.detail_fields
 
 
 def test_iqiyi_metadata_provider_search_prefers_category_matched_result_for_same_title() -> None:

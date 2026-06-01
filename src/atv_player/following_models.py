@@ -59,6 +59,8 @@ class FollowingPlaybackPlatformEntry:
     latest_episode: int = 0
     update_time_text: str = ""
     status_text: str = ""
+    metric_label: str = ""
+    metric_value: str = ""
 
 
 @dataclass(slots=True)

@@ -64,6 +64,7 @@ class IqiyiMetadataProvider:
         page_url = str(match.provider_id or payload.get("pageUrl") or "").strip()
         if page_url.startswith(("http://", "https://")):
             detail_fields.append({"label": "播放链接", "value": page_url})
+        detail_fields.extend(self._site_metric_fields(payload))
         for key in ("releaseTime", "updateTime", "timeLength"):
             item = payload.get(key)
             if not isinstance(item, dict):
@@ -213,3 +214,26 @@ class IqiyiMetadataProvider:
         if isinstance(payload, dict):
             return str(payload.get("value") or "").strip()
         return str(payload or "").strip()
+
+    def _site_metric_fields(self, payload: dict) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        for label, keys in (
+            ("站内评分", ("siteScore", "score", "rating")),
+            ("热度", ("heat", "hot", "popularity")),
+            ("评论", ("commentCount", "comments", "comment")),
+        ):
+            value = self._metric_value(payload, keys)
+            if value:
+                fields.append({"label": label, "value": value})
+        return fields
+
+    def _metric_value(self, payload: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                text = str(value.get("value") or value.get("score") or value.get("text") or "").strip()
+            else:
+                text = str(value or "").strip()
+            if text:
+                return text
+        return ""

@@ -135,6 +135,36 @@ def test_bilibili_metadata_provider_get_detail_maps_minimal_metadata_and_omits_r
     ]
 
 
+def test_bilibili_metadata_provider_get_detail_exposes_play_and_follow_counts() -> None:
+    provider = BilibiliMetadataProvider(get=lambda url, **kwargs: JsonResponse({"code": 0, "data": {}}))
+    match = MetadataMatch(
+        provider="bilibili",
+        provider_id="https://www.bilibili.com/bangumi/play/ss45969",
+        title="牧神记",
+        year="2024",
+        raw={
+            "title": "牧神记",
+            "desc": "主角秦牧在大墟成长。",
+            "styles": "小说改/玄幻/热血/战斗",
+            "genres": ["小说改", "玄幻", "热血", "战斗"],
+            "areas": "中国大陆",
+            "cover": "https://i0.hdslb.com/bfs/bangumi/image/demo.png",
+            "media_score": {"score": 9.6, "user_count": 19280},
+            "stat": {"views": 1795347758, "follow_text": "653.8万追番"},
+            "staff": "总导演：沈乐平",
+            "cv": "少年秦牧：张若瑜",
+            "season_type_name": "国创",
+            "index_show": "更新至第82话",
+            "subtitle": "国创 · 更新至第82话",
+        },
+    )
+
+    record = provider.get_detail(match)
+
+    assert {"label": "播放", "value": "18.0亿"} in record.detail_fields
+    assert {"label": "追番", "value": "653.8万追番"} in record.detail_fields
+
+
 def test_bilibili_metadata_provider_can_enrich_only_anime_context() -> None:
     provider = BilibiliMetadataProvider(get=lambda url, **kwargs: JsonResponse({"code": 0, "result": {}}))
 

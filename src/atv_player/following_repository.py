@@ -163,7 +163,7 @@ def _rating_entry_from_dict(value: object) -> FollowingRatingEntry:
 
 
 def _platform_entry_to_dict(entry: FollowingPlaybackPlatformEntry) -> dict[str, object]:
-    return {
+    data = {
         "provider": entry.provider,
         "label": entry.label,
         "url": entry.url,
@@ -171,6 +171,11 @@ def _platform_entry_to_dict(entry: FollowingPlaybackPlatformEntry) -> dict[str, 
         "update_time_text": entry.update_time_text,
         "status_text": entry.status_text,
     }
+    if entry.metric_label:
+        data["metric_label"] = entry.metric_label
+    if entry.metric_value:
+        data["metric_value"] = entry.metric_value
+    return data
 
 
 def _platform_entry_from_dict(value: object) -> FollowingPlaybackPlatformEntry:
@@ -182,6 +187,8 @@ def _platform_entry_from_dict(value: object) -> FollowingPlaybackPlatformEntry:
         latest_episode=int(data.get("latest_episode") or 0),
         update_time_text=str(data.get("update_time_text") or ""),
         status_text=str(data.get("status_text") or ""),
+        metric_label=str(data.get("metric_label") or ""),
+        metric_value=str(data.get("metric_value") or ""),
     )
 
 

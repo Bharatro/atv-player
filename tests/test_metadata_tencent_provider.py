@@ -106,7 +106,8 @@ def test_tencent_metadata_provider_search_keeps_only_datatype_2_and_omits_rating
     assert matches[0].raw["typeName"] == "少儿"
     assert record.genres == ["儿童剧", "情景喜剧"]
     assert record.detail_fields == [
-        {"label": "播放链接", "value": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"}
+        {"label": "播放链接", "value": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"},
+        {"label": "站内评分", "value": "9.8"},
     ]
 
 
@@ -433,6 +434,51 @@ def test_tencent_metadata_provider_detail_omits_source_site_field() -> None:
         {"label": "播放链接", "value": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"}
     ]
     assert all(field["label"] != "来源站点" for field in record.detail_fields)
+
+
+def test_tencent_metadata_provider_detail_exposes_site_metrics() -> None:
+    def fake_post(url: str, **kwargs):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return JsonResponse(
+            {
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "doc": {"dataType": 2, "id": "mzc002008bgugk0"},
+                                "videoInfo": {
+                                    "title": "米小圈上学记4",
+                                    "year": 2026,
+                                    "typeName": "少儿",
+                                    "playSites": [
+                                        {
+                                            "showName": "腾讯视频",
+                                            "episodeInfoList": [
+                                                {
+                                                    "url": "https://v.qq.com/x/cover/mzc002008bgugk0/d4101lrdi9t.html"
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                    "siteScore": {"key": "站内评分", "value": "9.7"},
+                                    "heat": {"key": "热度", "value": "24567"},
+                                    "commentCount": {"key": "评论", "value": "1.2万"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+    provider = TencentMetadataProvider(post=fake_post)
+
+    match = provider.search(MetadataQuery(title="米小圈上学记4", year="2026", category_name="少儿"))[0]
+    record = provider.get_detail(match)
+
+    assert {"label": "站内评分", "value": "9.7"} in record.detail_fields
+    assert {"label": "热度", "value": "24567"} in record.detail_fields
+    assert {"label": "评论", "value": "1.2万"} in record.detail_fields
 
 
 def test_tencent_metadata_provider_ignores_zero_year_values() -> None:
