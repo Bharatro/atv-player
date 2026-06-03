@@ -1,7 +1,18 @@
+from types import SimpleNamespace
+
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QSizePolicy, QStackedWidget
 
-from atv_player.models import AppConfig, DoubanCategory, VodItem
+from atv_player.following_models import FollowingCardItem, FollowingRecord
+from atv_player.models import (
+    AppConfig,
+    DoubanCategory,
+    FavoriteCardItem,
+    FavoriteRecord,
+    HistoryRecord,
+    PlayItem,
+    VodItem,
+)
 from atv_player.ui.main_window import MainWindow
 
 from tests.test_main_window_ui import (
@@ -51,6 +62,95 @@ class SimplifiedRecommendationController:
         ], 1
 
 
+class MediaHistoryController(DummyHistoryController):
+    def load_page(self, page: int, size: int, **kwargs):
+        del page, size, kwargs
+        return [
+            HistoryRecord(
+                id=1,
+                key="history-1",
+                vod_name="边水往事",
+                vod_pic="",
+                vod_remarks="第 2 集",
+                episode=1,
+                episode_url="https://media.example/2.m3u8",
+                position=120,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=1,
+                source_kind="telegram",
+            )
+        ], 1
+
+
+class MediaFollowingController:
+    def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+        del page, size, keyword, only_updates
+        record = FollowingRecord(
+            id=7,
+            title="凡人修仙传",
+            poster="",
+            current_episode=128,
+        )
+        return [
+            FollowingCardItem(
+                record=record,
+                display_title="凡人修仙传",
+                subtitle="动画",
+                progress_text="看到第 128 集",
+                update_text="更新 1 集",
+                updated_hint=True,
+            )
+        ], 1
+
+    def load_homepage_prompts(self):
+        return []
+
+    def clear_homepage_prompt(self, following_id: int) -> None:
+        del following_id
+
+
+class MediaFavoritesController:
+    def load_page(self, *, page: int, size: int, keyword: str):
+        del page, size, keyword
+        record = FavoriteRecord(
+            source_kind="emby",
+            source_key="",
+            source_name="Emby",
+            vod_id="favorite-1",
+            vod_name_snapshot="繁花",
+            latest_vod_name="繁花",
+            vod_pic="",
+            vod_remarks="收藏",
+            title_changed=False,
+            created_at=1,
+            updated_at=1,
+        )
+        return [
+            FavoriteCardItem(
+                record=record,
+                display_title="繁花",
+                source_label="Emby",
+                updated_hint=False,
+                secondary_text="",
+            )
+        ], 1
+
+    def is_favorited(self, *, source_kind: str, source_key: str, vod_id: str) -> bool:
+        del source_kind, source_key, vod_id
+        return False
+
+    def add_favorite(self, payload: dict[str, object]) -> None:
+        del payload
+
+    def remove_favorite(self, records: list[FavoriteRecord]) -> None:
+        del records
+
+    def clear_filtered(self, *, keyword: str) -> None:
+        del keyword
+
+
 def test_main_window_apply_home_mode_browse_shows_nav_tabs(qtbot) -> None:
     window = MainWindow(
         FakeStaticController(),
@@ -97,10 +197,10 @@ def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
     config.home_mode = "media"
     window.apply_home_mode("media")
 
-    # Media mode shows a placeholder page (not nav_tabs)
+    # Media mode shows the media-center style home page (not nav_tabs)
     assert window._home_stack is not None
-    assert hasattr(window, "_home_mode_placeholder")
-    assert window._home_stack.currentWidget() is window._home_mode_placeholder
+    assert hasattr(window, "_media_home_page")
+    assert window._home_stack.currentWidget() is window._media_home_page
     assert window.nav_tabs.isHidden()
     # Switching back to browse restores nav_tabs
     window.apply_home_mode("browse")
@@ -109,6 +209,133 @@ def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
     assert not hasattr(window, "_classic_home_page") or window.header_layout.indexOf(
         window._classic_home_page.source_button
     ) < 0
+
+
+def test_main_window_apply_home_mode_media_shows_local_media_sections(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "current-poster.png"
+    image = QImage(80, 120, QImage.Format.Format_RGB32)
+    image.fill(QColor("#3d8bff"))
+    assert image.save(str(poster_path))
+    window = MainWindow(
+        FakeStaticController(),
+        MediaHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        favorites_controller=MediaFavoritesController(),
+        following_controller=MediaFollowingController(),
+    )
+    qtbot.addWidget(window)
+    window.player_window = SimpleNamespace(
+        session=SimpleNamespace(
+            vod=VodItem(
+                vod_id="playing-1",
+                vod_name="正在看的剧",
+                vod_pic=str(poster_path),
+            ),
+            playlist=[PlayItem(title="第 3 集", url="https://media.example/3.m3u8")],
+        ),
+        current_index=0,
+    )
+
+    window.apply_home_mode("media")
+
+    assert hasattr(window, "_media_home_page")
+    page = window._media_home_page
+    assert window._home_stack.currentWidget() is page
+    assert window.nav_tabs.isHidden()
+    assert window.global_search_container.isHidden()
+    assert page.content_container.maximumWidth() > 100000
+    qtbot.waitUntil(lambda: page.current_playing_button is not None)
+    qtbot.waitUntil(lambda: len(page.continue_buttons) == 1)
+    qtbot.waitUntil(lambda: len(page.following_buttons) == 1)
+    qtbot.waitUntil(lambda: len(page.favorite_buttons) == 1)
+    assert "正在看的剧" in page.current_playing_button.text()
+    qtbot.waitUntil(lambda: not page.current_playing_button.icon().isNull())
+    assert "边水往事" in page.continue_buttons[0].toolTip()
+    assert "第 2 集" in page.continue_buttons[0].toolTip()
+    assert "第 2 集" in page.continue_buttons[0].text()
+    assert "凡人修仙传" in page.following_buttons[0].toolTip()
+    assert "繁花" in page.favorite_buttons[0].toolTip()
+
+
+def test_main_window_media_home_refreshes_current_playing_after_player_returns(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(home_mode="media"),
+    )
+    qtbot.addWidget(window)
+    page = window._media_home_page
+    qtbot.waitUntil(lambda: page.status_label.text() == "暂无媒体内容")
+
+    monkeypatch.setattr(window, "_restore_main_window_after_player", lambda: None)
+    window.player_window = SimpleNamespace(
+        session=SimpleNamespace(
+            vod=VodItem(vod_id="playing-2", vod_name="回来的剧", vod_pic=""),
+            playlist=[
+                PlayItem(title="第 1 集", url="https://media.example/1.m3u8"),
+                PlayItem(title="第 2 集", url="https://media.example/2.m3u8"),
+            ],
+            initial_vod_name="",
+        ),
+        current_index=1,
+    )
+
+    window._show_main_again()
+
+    qtbot.waitUntil(lambda: page.current_playing_button is not None)
+    assert "回来的剧" in page.current_playing_button.text()
+    assert "第 2 集" in page.current_playing_button.text()
+    assert "2/2" in page.current_playing_button.text()
+
+
+def test_main_window_media_home_shows_restorable_playback_as_current(qtbot) -> None:
+    config = AppConfig(
+        home_mode="media",
+        last_playback_source="telegram",
+        last_playback_mode="detail",
+        last_playback_vod_id="history-1",
+    )
+    window = MainWindow(
+        FakeStaticController(),
+        MediaHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+    page = window._media_home_page
+
+    qtbot.waitUntil(lambda: page.current_playing_button is not None)
+
+    assert "边水往事" in page.current_playing_button.text()
+    assert "第 2 集" in page.current_playing_button.text()
+    assert "可恢复播放" not in page.current_playing_button.text()
+
+
+def test_main_window_home_button_returns_from_builtin_page_to_media_home(qtbot) -> None:
+    config = AppConfig(home_mode="media")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+
+    assert not window.home_button.icon().isNull()
+    assert window.home_button.iconSize().width() == 22
+    window.browse_button.click()
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert window.nav_tabs.currentWidget() is window.browse_page
+
+    window.home_button.click()
+
+    assert window._home_stack.currentWidget() is window._media_home_page
+    assert window.nav_tabs.isHidden()
 
 
 def test_main_window_apply_home_mode_simplified_shows_search_home(qtbot) -> None:

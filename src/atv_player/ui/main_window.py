@@ -87,6 +87,11 @@ from atv_player.ui.help_dialog import (
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
+from atv_player.ui.media_home_page import (
+    MediaHomeCard,
+    MediaHomePage,
+    MediaHomeSections,
+)
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
@@ -1314,6 +1319,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
     _SEARCH_ICON_PATH = _ICONS_DIR / "search.svg"
     _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
+    _HOME_ICON_PATH = _ICONS_DIR / "home.svg"
     _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
     _FAVORITES_ICON_PATH = _ICONS_DIR / "favorite.svg"
     _FOLLOWING_ICON_PATH = _ICONS_DIR / "following.svg"
@@ -1447,6 +1453,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.startup_plugin_status_label = QLabel("")
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
+        self.home_button = QPushButton("")
         self.browse_button = QPushButton("")
         self.favorites_button = QPushButton("")
         self.following_button = QPushButton("")
@@ -1519,6 +1526,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self._favorites_controller = favorites_controller or _EmptyFavoritesController()
         self._following_controller = following_controller or _EmptyFollowingController()
+        self._history_controller = history_controller
         self.favorites_page = FavoritesPage(
             self._favorites_controller,
             source_label_resolver=self._favorite_record_source_label,
@@ -1655,6 +1663,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_button.setText("")
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_popup_button.setFixedSize(36, 36)
+        self._configure_header_icon_button(self.home_button, "首页")
+        self.home_button.setIconSize(QSize(22, 22))
         self._configure_header_icon_button(self.browse_button, "文件浏览")
         self._configure_header_icon_button(self.favorites_button, "我的收藏")
         self._configure_header_icon_button(self.following_button, "我的追更")
@@ -1758,6 +1768,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
         self._global_search_popup.hot_source_changed.connect(self._handle_global_search_hot_source_changed)
         self._global_search_popup.hot_tab_changed.connect(self._handle_global_search_hot_tab_changed)
+        self.home_button.clicked.connect(self._return_to_configured_home)
         search_layout = QHBoxLayout(self.global_search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(8)
@@ -1782,6 +1793,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.header_layout.addItem(self.header_center_spacer)
         self.header_layout.addWidget(self.startup_plugin_status_label)
         self.header_layout.addWidget(self.startup_plugin_retry_button)
+        self.header_layout.addWidget(self.home_button)
         self.header_layout.addWidget(self.browse_button)
         self.header_layout.addWidget(self.favorites_button)
         self.header_layout.addWidget(self.following_button)
@@ -2005,6 +2017,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         tokens = current_tokens()
         button_qss = build_round_icon_button_qss(tokens)
         button_icons = {
+            self.home_button: self._HOME_ICON_PATH,
             self.browse_button: self._BROWSE_ICON_PATH,
             self.favorites_button: self._FAVORITES_ICON_PATH,
             self.following_button: self._FOLLOWING_ICON_PATH,
@@ -2059,6 +2072,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._classic_home_page._apply_theme()
         if hasattr(self, "_simplified_home_page"):
             self._simplified_home_page._apply_theme()
+        if hasattr(self, "_media_home_page"):
+            self._media_home_page._apply_theme()
 
     _HOME_MODE_LABELS = {
         "classic": "经典模式 (TvBox)",
@@ -2084,6 +2099,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if normalized == "simplified":
             self._apply_simplified_home_mode()
             return
+        if normalized == "media":
+            self._apply_media_home_mode()
+            return
         # Placeholder for unimplemented modes
         if not hasattr(self, "_home_mode_placeholder"):
             from PySide6.QtWidgets import QVBoxLayout
@@ -2102,6 +2120,230 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setNavigationVisible(True)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
         self._hide_classic_header_source_picker()
+
+    def _apply_media_home_mode(self) -> None:
+        page = self._ensure_media_home_page()
+        self._hide_classic_header_source_picker()
+        self._home_stack.setCurrentWidget(page)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(False)
+        self.global_search_container.setVisible(False)
+        self._start_deferred_startup_plugin_load_if_needed()
+        page.refresh_content()
+
+    def _ensure_media_home_page(self) -> MediaHomePage:
+        if not hasattr(self, "_media_home_page"):
+            self._media_home_page = MediaHomePage(self._load_media_home_sections)
+            self._media_home_page.current_play_requested.connect(self.show_or_restore_player)
+            self._media_home_page.continue_requested.connect(self.open_history_detail)
+            self._media_home_page.following_requested.connect(self.open_following_detail)
+            self._media_home_page.favorite_requested.connect(self.open_favorite_detail)
+            self._home_stack.addWidget(self._media_home_page)
+        return self._media_home_page
+
+    def _refresh_media_home_if_active(self) -> None:
+        if not hasattr(self, "_media_home_page"):
+            return
+        if self._home_stack.currentWidget() is not self._media_home_page:
+            return
+        self._media_home_page.refresh_content()
+
+    def _load_media_home_sections(self) -> MediaHomeSections:
+        return MediaHomeSections(
+            current_playing=self._current_playing_media_home_card(),
+            continue_watching=self._continue_watching_media_home_cards(),
+            following=self._following_media_home_cards(),
+            favorites=self._favorite_media_home_cards(),
+        )
+
+    def _current_playing_media_home_card(self) -> MediaHomeCard | None:
+        if self.player_window is None or getattr(self.player_window, "session", None) is None:
+            return self._restorable_current_media_home_card()
+        session = self.player_window.session
+        vod = session.vod
+        playlist = list(getattr(session, "playlist", []) or [])
+        current_index = max(0, int(getattr(self.player_window, "current_index", 0) or 0))
+        current_item = playlist[current_index] if 0 <= current_index < len(playlist) else None
+        title_candidates = [
+            str(getattr(vod, "vod_name", "") or "").strip(),
+            str(getattr(session, "initial_vod_name", "") or "").strip(),
+        ]
+        if current_item is not None:
+            title_candidates.extend(
+                [
+                    str(getattr(current_item, "media_title", "") or "").strip(),
+                    str(getattr(current_item, "title", "") or "").strip(),
+                ]
+            )
+        title_candidates.append(str(getattr(vod, "vod_id", "") or "").strip())
+        title = next((candidate for candidate in title_candidates if candidate), "")
+        if not title:
+            title = "当前播放"
+        subtitle_parts = ["正在播放"]
+        if current_item is not None and str(current_item.title or "").strip():
+            subtitle_parts.append(str(current_item.title or "").strip())
+        if len(playlist) > 1:
+            subtitle_parts.append(f"{current_index + 1}/{len(playlist)}")
+        poster = str(getattr(vod, "vod_pic", "") or "").strip()
+        if current_item is not None:
+            poster = poster or str(getattr(current_item, "video_cover_override", "") or "").strip()
+        return MediaHomeCard(
+            title=title,
+            subtitle=" · ".join(subtitle_parts),
+            poster=poster,
+        )
+
+    def _restorable_current_media_home_card(self) -> MediaHomeCard | None:
+        playback_id = str(getattr(self.config, "last_playback_vod_id", "") or "").strip()
+        clicked_id = str(getattr(self.config, "last_playback_clicked_vod_id", "") or "").strip()
+        playback_path = str(getattr(self.config, "last_playback_path", "") or "").strip()
+        if not (playback_id or clicked_id or playback_path):
+            return None
+        record = self._find_restorable_history_record(
+            playback_id=playback_id,
+            clicked_id=clicked_id,
+        )
+        if record is not None:
+            card = self._history_media_home_card(record)
+            return MediaHomeCard(
+                title=card.title,
+                subtitle=card.subtitle,
+                poster=card.poster,
+                payload=card.payload,
+            )
+        source = str(getattr(self.config, "last_playback_source", "") or "browse")
+        source_key = str(getattr(self.config, "last_playback_source_key", "") or "")
+        title = playback_id or clicked_id or playback_path or "恢复播放"
+        return MediaHomeCard(
+            title=title,
+            subtitle=self._favorite_source_name(source, source_key),
+        )
+
+    def _find_restorable_history_record(
+        self,
+        *,
+        playback_id: str,
+        clicked_id: str,
+    ) -> HistoryRecord | None:
+        load_page = getattr(self._history_controller, "load_page", None)
+        if not callable(load_page):
+            return None
+        try:
+            records, _total = load_page(page=1, size=100, keyword="")
+        except TypeError:
+            return None
+        except Exception:
+            return None
+        source = str(getattr(self.config, "last_playback_source", "") or "").strip()
+        source_key = str(getattr(self.config, "last_playback_source_key", "") or "").strip()
+        candidates = {value for value in (playback_id, clicked_id) if value}
+        for record in records:
+            key = str(getattr(record, "key", "") or "").strip()
+            if key not in candidates:
+                continue
+            record_source = str(getattr(record, "source_kind", "") or "").strip()
+            if source == "plugin":
+                if record_source not in {"plugin", "spider_plugin"}:
+                    continue
+                record_key = str(getattr(record, "source_key", "") or "").strip()
+                record_plugin_id = str(getattr(record, "source_plugin_id", "") or "").strip()
+                if source_key and source_key not in {record_key, record_plugin_id}:
+                    continue
+            elif source and record_source and record_source != source:
+                continue
+            return record
+        return None
+
+    def _continue_watching_media_home_cards(self) -> list[MediaHomeCard]:
+        load_page = getattr(self._history_controller, "load_page", None)
+        if not callable(load_page):
+            return []
+        try:
+            records, _total = load_page(
+                page=1,
+                size=12,
+                keyword="",
+                continue_watching=True,
+            )
+        except TypeError:
+            try:
+                records, _total = load_page(page=1, size=12, keyword="")
+            except Exception:
+                return []
+            records = [record for record in records if int(getattr(record, "position", 0) or 0) > 0]
+        except Exception:
+            return []
+        return [self._history_media_home_card(record) for record in list(records)[:12]]
+
+    def _history_media_home_card(self, record: HistoryRecord) -> MediaHomeCard:
+        episode = int(getattr(record, "episode", 0) or 0)
+        remark = str(getattr(record, "vod_remarks", "") or "").strip()
+        subtitle = remark
+        if not subtitle and episode >= 0:
+            subtitle = f"第 {episode + 1} 集"
+        return MediaHomeCard(
+            title=str(getattr(record, "vod_name", "") or getattr(record, "key", "") or "播放记录"),
+            subtitle=subtitle,
+            poster=str(getattr(record, "vod_pic", "") or ""),
+            payload=record,
+        )
+
+    def _following_media_home_cards(self) -> list[MediaHomeCard]:
+        load_page = getattr(self._following_controller, "load_page", None)
+        if not callable(load_page):
+            return []
+        try:
+            items, _total = load_page(page=1, size=12, keyword="", only_updates=False)
+        except Exception:
+            return []
+        cards: list[MediaHomeCard] = []
+        for item in list(items)[:12]:
+            record = getattr(item, "record", item)
+            title = str(getattr(item, "display_title", "") or getattr(record, "title", "") or "追剧")
+            subtitle = str(
+                getattr(item, "update_text", "")
+                or getattr(item, "progress_text", "")
+                or getattr(item, "subtitle", "")
+                or ""
+            ).strip()
+            cards.append(
+                MediaHomeCard(
+                    title=title,
+                    subtitle=subtitle,
+                    poster=str(getattr(record, "poster", "") or ""),
+                    payload=int(getattr(record, "id", 0) or 0),
+                )
+            )
+        return cards
+
+    def _favorite_media_home_cards(self) -> list[MediaHomeCard]:
+        load_page = getattr(self._favorites_controller, "load_page", None)
+        if not callable(load_page):
+            return []
+        try:
+            items, _total = load_page(page=1, size=12, keyword="")
+        except Exception:
+            return []
+        cards: list[MediaHomeCard] = []
+        for item in list(items)[:12]:
+            record = getattr(item, "record", item)
+            title = str(
+                getattr(item, "display_title", "")
+                or getattr(record, "latest_vod_name", "")
+                or getattr(record, "vod_name_snapshot", "")
+                or "收藏"
+            )
+            source_label = self._favorite_record_source_label(record)
+            remark = str(getattr(record, "vod_remarks", "") or "").strip()
+            cards.append(
+                MediaHomeCard(
+                    title=title,
+                    subtitle=" · ".join(part for part in (source_label, remark) if part),
+                    poster=str(getattr(record, "vod_pic", "") or ""),
+                    payload=record,
+                )
+            )
+        return cards
 
     def _apply_simplified_home_mode(self) -> None:
         page = self._ensure_simplified_home_page()
@@ -3285,6 +3527,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self.config.last_selected_tab = tab_key
                 self._save_config()
         self._show_builtin_page_in_home_stack(definition)
+
+    def _return_to_configured_home(self) -> None:
+        self._dismiss_visible_global_search_popup()
+        self.apply_home_mode(getattr(self.config, "home_mode", "browse") or "browse")
 
     def _show_builtin_page_in_home_stack(self, definition: _BuiltinTabDefinition) -> None:
         self.nav_tabs.setNavigationVisible(False)
@@ -5676,6 +5922,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.config.last_active_window = "main"
         self._save_config()
         self._restore_main_window_after_player()
+        self._refresh_media_home_if_active()
         self.raise_()
         self.activateWindow()
 
