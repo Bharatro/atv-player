@@ -1912,6 +1912,45 @@ def test_main_window_shows_startup_plugin_loading_placeholder_tab(qtbot) -> None
     release_load.set()
 
 
+def test_main_window_does_not_precreate_global_search_popup_during_startup_plugin_load(qtbot) -> None:
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        load_started.set()
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return []
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    assert load_started.wait(timeout=1)
+    QApplication.processEvents()
+
+    top_level_popups = [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, main_window_module.GlobalSearchPopup)
+    ]
+    assert top_level_popups == []
+
+    release_load.set()
+
+
 def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot) -> None:
     release_load = threading.Event()
 
@@ -3940,7 +3979,7 @@ def test_main_window_global_search_popup_does_not_open_on_focus(qtbot) -> None:
     window.global_search_edit.setFocus()
     qtbot.wait(50)
 
-    assert window._global_search_popup.isVisible() is False
+    assert window._global_search_popup is None or window._global_search_popup.isVisible() is False
 
 
 def test_main_window_global_search_popup_button_opens_history_and_default_hot_tab(qtbot) -> None:
@@ -3972,6 +4011,7 @@ def test_main_window_global_search_popup_button_opens_history_and_default_hot_ta
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一", "综合-dsp"])
     assert _popup_history_texts(window) == ["庆余年", "琅琊榜"]
     assert _popup_hot_tab_titles(window) == ["综合", "电视剧", "电影", "综艺", "动漫"]
+    assert window._global_search_popup.windowTitle() == "全局搜索"
     assert window._global_search_popup.current_hot_tab_type() == "dsp"
     assert window._global_search_popup.hot_tab_bar.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert window._global_search_popup.width() >= 720

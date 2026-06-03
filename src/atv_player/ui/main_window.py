@@ -1449,7 +1449,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_popup_button = QPushButton("")
         self.global_search_clear_button = QPushButton("清空")
         self.global_search_status_label = QLabel("")
-        self._global_search_popup = GlobalSearchPopup()
+        self._global_search_popup: GlobalSearchPopup | None = None
         self.startup_plugin_status_label = QLabel("")
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
@@ -1763,11 +1763,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_edit.returnPressed.connect(self._start_global_search)
         self.global_search_edit.textChanged.connect(self._handle_global_search_text_changed)
         self.global_search_edit.escape_pressed.connect(self._hide_global_search_popup)
-        self._global_search_popup.item_clicked.connect(self._handle_global_search_popup_item_clicked)
-        self._global_search_popup.clear_history_requested.connect(self._clear_global_search_history)
-        self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
-        self._global_search_popup.hot_source_changed.connect(self._handle_global_search_hot_source_changed)
-        self._global_search_popup.hot_tab_changed.connect(self._handle_global_search_hot_tab_changed)
         self.home_button.clicked.connect(self._return_to_configured_home)
         search_layout = QHBoxLayout(self.global_search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
@@ -2046,7 +2041,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._apply_global_search_button_theme()
         self._apply_header_action_button_theme()
         self._apply_navigation_tab_theme()
-        self._global_search_popup._apply_theme()
+        if self._global_search_popup is not None:
+            self._global_search_popup._apply_theme()
         for page in (
             self.browse_page,
             self.history_page,
@@ -3141,24 +3137,40 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
 
     def _position_global_search_popup(self) -> None:
-        if not self._global_search_popup.isVisible():
+        if self._global_search_popup is None or not self._global_search_popup.isVisible():
             return
         pos = self.global_search_container.mapToGlobal(QPoint(0, self.global_search_container.height() + 4))
         self._global_search_popup.show_at(pos, self.global_search_container.width())
 
+    def _ensure_global_search_popup(self) -> GlobalSearchPopup:
+        if self._global_search_popup is None:
+            self._global_search_popup = GlobalSearchPopup()
+            self._global_search_popup.setObjectName("globalSearchPopup")
+            self._global_search_popup.setWindowTitle("全局搜索")
+            self._global_search_popup.hide()
+            self._global_search_popup.item_clicked.connect(self._handle_global_search_popup_item_clicked)
+            self._global_search_popup.clear_history_requested.connect(self._clear_global_search_history)
+            self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
+            self._global_search_popup.hot_source_changed.connect(self._handle_global_search_hot_source_changed)
+            self._global_search_popup.hot_tab_changed.connect(self._handle_global_search_hot_tab_changed)
+            self._global_search_popup._apply_theme()
+        return self._global_search_popup
+
     def _show_global_search_popup(self) -> None:
+        popup = self._ensure_global_search_popup()
         self._render_global_search_popup()
         pos = self.global_search_container.mapToGlobal(QPoint(0, self.global_search_container.height() + 4))
-        self._global_search_popup.show_at(pos, self.global_search_container.width())
+        popup.show_at(pos, self.global_search_container.width())
 
     def _hide_global_search_popup(self) -> None:
-        self._global_search_popup.hide()
+        if self._global_search_popup is not None:
+            self._global_search_popup.hide()
 
     def _dismiss_global_search_popup(self) -> None:
         self._hide_global_search_popup()
 
     def _dismiss_visible_global_search_popup(self) -> None:
-        if self._global_search_popup.isVisible():
+        if self._global_search_popup is not None and self._global_search_popup.isVisible():
             self._dismiss_global_search_popup()
 
     @staticmethod
@@ -3169,7 +3181,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return widget.rect().contains(local_pos)
 
     def _handle_global_search_global_mouse_press(self, global_pos: QPoint) -> None:
-        if not self._global_search_popup.isVisible():
+        if self._global_search_popup is None or not self._global_search_popup.isVisible():
             return
         if (
             self._widget_contains_global_pos(self.global_search_edit, global_pos)
@@ -3218,7 +3230,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_global_search()
 
     def _toggle_global_search_popup(self) -> None:
-        if self._global_search_popup.isVisible():
+        if self._global_search_popup is not None and self._global_search_popup.isVisible():
             self._hide_global_search_popup()
             return
         self._show_global_search_popup()
@@ -3262,6 +3274,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
 
     def _render_global_search_popup(self) -> None:
+        if self._global_search_popup is None:
+            return
         hot_categories = self._global_search_hot_categories(self._global_search_hotkey_active_source)
         self._global_search_hotkey_active_type = self._fallback_global_search_hot_category(
             self._global_search_hotkey_active_source,
