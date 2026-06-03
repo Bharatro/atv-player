@@ -12,7 +12,7 @@ import threading
 import time
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -569,7 +569,6 @@ class _PendingPlaybackPrepare:
     previous_url: str = ""
     previous_original_url: str = ""
     previous_selected_playback_quality_id: str = ""
-    previous_headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -1200,28 +1199,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
         controls.addStretch(1)
 
-        self.volume_group = QWidget()
-        self.volume_layout = QHBoxLayout(self.volume_group)
+        volume_group = QWidget()
+        self.volume_layout = QHBoxLayout(volume_group)
         self.volume_layout.setContentsMargins(0, 0, 0, 0)
         self.volume_layout.addWidget(self.mute_button)
         self.volume_layout.addWidget(self.volume_slider)
         self.volume_layout.addWidget(self.volume_value_label)
-        controls.addWidget(self.volume_group, 0, Qt.AlignmentFlag.AlignRight)
-        self._bottom_controls_after_fullscreen = (
-            self.danmaku_source_button,
-            self.danmaku_settings_button,
-            self.metadata_scrape_button,
-            self.speed_combo,
-            self.subtitle_combo,
-            self.danmaku_combo,
-            self.video_quality_combo,
-            self.audio_combo,
-            self.parse_combo,
-            self.opening_spin,
-            self.ending_spin,
-            self.volume_group,
-        )
-        self._hide_bottom_controls_after_fullscreen()
+        controls.addWidget(volume_group, 0, Qt.AlignmentFlag.AlignRight)
         bottom_layout.addLayout(controls)
 
         video_container = QWidget()
@@ -3370,19 +3354,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._apply_post_load_player_configuration(current_item)
         if self.session is not None:
             self.controller.on_item_started(self.session, self.current_index)
-            if (
-                str(getattr(self.session, "source_kind", "") or "") == "live"
-                and str(getattr(self.session, "source_key", "") or "") == "tv"
-                and callable(getattr(self.session, "playback_progress_reporter", None))
-            ):
-                try:
-                    self.session.playback_progress_reporter(
-                        current_item,
-                        effective_start_seconds * 1000,
-                        pause,
-                    )
-                except Exception as exc:
-                    self._append_log(f"直播频道状态保存失败: {exc}")
 
     def _uses_event_driven_track_refresh(self) -> bool:
         return self.video is self.video_widget
@@ -4274,7 +4245,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         previous_url: str = "",
         previous_original_url: str = "",
         previous_selected_playback_quality_id: str = "",
-        previous_headers: dict[str, str] | None = None,
     ) -> bool:
         if self.session is None:
             return False
@@ -4304,7 +4274,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             previous_url=previous_url,
             previous_original_url=previous_original_url,
             previous_selected_playback_quality_id=previous_selected_playback_quality_id,
-            previous_headers=dict(previous_headers or {}),
         )
 
         def prepare() -> None:
@@ -4399,7 +4368,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         item.url = pending_prepare.previous_url
         item.original_url = pending_prepare.previous_original_url
         item.selected_playback_quality_id = pending_prepare.previous_selected_playback_quality_id
-        item.headers = dict(pending_prepare.previous_headers)
         self._refresh_video_quality_state()
         return True
 
@@ -5103,13 +5071,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._sync_playlist_panel_mode()
             return
         previous_index = self.current_index
-        if (
-            str(getattr(self.session, "source_kind", "") or "") == "live"
-            and str(getattr(self.session, "source_key", "") or "") == "tv"
-        ):
-            target_index = 0
-        else:
-            target_index = min(previous_index, len(target_playlist) - 1)
+        target_index = min(previous_index, len(target_playlist) - 1)
         _, mapping = self._flatten_source_groups(source_groups)
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
@@ -7099,14 +7061,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             previous_selected_quality_id = current_item.selected_playback_quality_id
             previous_ytdl_format = current_item.ytdl_format
             previous_audio_url = current_item.audio_url
-            previous_headers = dict(current_item.headers)
             current_item.url = selected_quality.url
             if not target_quality_id.startswith("ytdlp_"):
                 current_item.original_url = selected_quality.url
             current_item.selected_playback_quality_id = target_quality_id
             current_item.ytdl_format = ""
             current_item.audio_url = ""
-            current_item.headers = dict(selected_quality.headers)
             if self._start_playback_prepare(
                 previous_index=self.current_index,
                 start_position_seconds=start_position_seconds,
@@ -7114,7 +7074,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 previous_url=previous_url,
                 previous_original_url=previous_original_url,
                 previous_selected_playback_quality_id=previous_selected_quality_id,
-                previous_headers=previous_headers,
             ):
                 return
             try:
@@ -7128,7 +7087,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 current_item.selected_playback_quality_id = previous_selected_quality_id
                 current_item.ytdl_format = previous_ytdl_format
                 current_item.audio_url = previous_audio_url
-                current_item.headers = previous_headers
                 self._refresh_video_quality_state()
                 self._append_log(f"清晰度切换失败: {exc}")
             return
@@ -9201,26 +9159,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not hasattr(self, "_width_adaptive_control_combos"):
             return
         compact = self.width() <= self._COMPACT_CONTROLS_WIDTH_THRESHOLD
-        hidden_controls = set(getattr(self, "_bottom_controls_after_fullscreen", ()))
         for combo in self._width_adaptive_control_combos:
-            if combo is self.video_quality_combo and self._should_show_video_track_combo():
-                combo.setHidden(False)
-                continue
-            if combo in hidden_controls:
-                combo.setHidden(True)
-                continue
             combo.setHidden(compact and not combo.isEnabled())
-        self._hide_bottom_controls_after_fullscreen()
-
-    def _should_show_video_track_combo(self) -> bool:
-        return self.video_quality_combo.isEnabled() and self.video_quality_combo.count() > 1
-
-    def _hide_bottom_controls_after_fullscreen(self) -> None:
-        for widget in getattr(self, "_bottom_controls_after_fullscreen", ()):
-            if widget is self.video_quality_combo and self._should_show_video_track_combo():
-                widget.setHidden(False)
-                continue
-            widget.setHidden(True)
 
     def _should_dock_log_to_sidebar_bottom(self) -> bool:
         return (

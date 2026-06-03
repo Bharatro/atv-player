@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,13 +9,10 @@ from atv_player.live_playlist_parser import parse_live_playlist
 from atv_player.m3u_parser import ParsedChannel, ParsedGroup, ParsedPlaylist
 from atv_player.models import (
     DoubanCategory,
-    LiveSourceChannelView,
     OpenPlayerRequest,
     PlayItem,
-    VideoQualityOption,
     VodItem,
 )
-from atv_player.paths import app_cache_dir
 
 
 class _HttpTextClient(Protocol):
@@ -189,142 +184,6 @@ class CustomLiveService:
         ]
         return items, len(items)
 
-    def load_channel_views(self, source_id: int) -> list[LiveSourceChannelView]:
-        source = self._repository.get_source(source_id)
-        cached_views = self._load_cached_channel_views(source)
-        if cached_views is not None:
-            return cached_views
-        playlist = self._load_playlist(source)
-        views: list[LiveSourceChannelView] = []
-        for view in self._iter_merged_channel_views(source.id, playlist):
-            first_line = next((line for line in view.lines if line.url.strip()), None)
-            if first_line is None:
-                continue
-            epg_current, epg_schedule = self._resolve_channel_epg(view.channel_name)
-            playback_qualities = [
-                VideoQualityOption(
-                    id=f"line-{index + 1}",
-                    label=f"线路 {index + 1}",
-                    url=line.url,
-                    headers=dict(line.headers),
-                )
-                for index, line in enumerate(view.lines)
-                if line.url.strip()
-            ]
-            views.append(
-                LiveSourceChannelView(
-                    source_id=view.source_id,
-                    channel_id=view.channel_id,
-                    group_key=view.group_key,
-                    channel_name=view.channel_name,
-                    stream_url=first_line.url,
-                    logo_url=view.logo_url or first_line.logo_url,
-                    headers=dict(first_line.headers),
-                    epg_current=epg_current,
-                    epg_schedule=epg_schedule,
-                    playback_qualities=playback_qualities,
-                )
-            )
-        self._save_cached_channel_views(source, views)
-        return views
-
-    def load_cached_channel_views(self, source_id: int) -> list[LiveSourceChannelView]:
-        source = self._repository.get_source(source_id)
-        return self._load_cached_channel_views(source) or []
-
-    def _load_cached_channel_views(self, source) -> list[LiveSourceChannelView] | None:
-        if getattr(source, "source_type", "") == "manual":
-            return None
-        path = self._channel_views_cache_path(source.id)
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if payload.get("signature") != self._channel_views_cache_signature(source):
-            return None
-        views: list[LiveSourceChannelView] = []
-        for item in payload.get("channels") or []:
-            channel_name = str(item.get("channel_name") or "")
-            epg_current, epg_schedule = self._resolve_channel_epg(channel_name)
-            qualities = [
-                VideoQualityOption(
-                    id=str(quality.get("id") or ""),
-                    label=str(quality.get("label") or ""),
-                    url=str(quality.get("url") or ""),
-                    headers=dict(quality.get("headers") or {}),
-                )
-                for quality in item.get("playback_qualities") or []
-            ]
-            views.append(
-                LiveSourceChannelView(
-                    source_id=int(item.get("source_id") or source.id),
-                    channel_id=str(item.get("channel_id") or ""),
-                    group_key=str(item.get("group_key") or ""),
-                    channel_name=channel_name,
-                    stream_url=str(item.get("stream_url") or ""),
-                    logo_url=str(item.get("logo_url") or ""),
-                    headers=dict(item.get("headers") or {}),
-                    epg_current=epg_current,
-                    epg_schedule=epg_schedule,
-                    playback_qualities=qualities,
-                )
-            )
-        return views
-
-    def _save_cached_channel_views(self, source, views: list[LiveSourceChannelView]) -> None:
-        if getattr(source, "source_type", "") == "manual":
-            return
-        path = self._channel_views_cache_path(source.id)
-        channels = []
-        for view in views:
-            channels.append(
-                {
-                    "source_id": view.source_id,
-                    "channel_id": view.channel_id,
-                    "group_key": view.group_key,
-                    "channel_name": view.channel_name,
-                    "stream_url": view.stream_url,
-                    "logo_url": view.logo_url,
-                    "headers": dict(view.headers),
-                    "playback_qualities": [
-                        {
-                            "id": quality.id,
-                            "label": quality.label,
-                            "url": quality.url,
-                            "headers": dict(quality.headers),
-                        }
-                        for quality in view.playback_qualities
-                    ],
-                }
-            )
-        payload = {
-            "version": 1,
-            "signature": self._channel_views_cache_signature(source),
-            "channels": channels,
-        }
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            return
-
-    @staticmethod
-    def _channel_views_cache_path(source_id: int) -> Path:
-        return app_cache_dir() / "live-channel-views" / f"{int(source_id)}.json"
-
-    @staticmethod
-    def _channel_views_cache_signature(source) -> str:
-        cache_text = str(getattr(source, "cache_text", "") or "")
-        cache_digest = hashlib.sha1(cache_text.encode("utf-8", errors="ignore")).hexdigest()
-        parts = [
-            str(getattr(source, "id", "") or ""),
-            str(getattr(source, "source_type", "") or ""),
-            str(getattr(source, "source_value", "") or ""),
-            str(getattr(source, "last_refreshed_at", "") or ""),
-            cache_digest,
-        ]
-        return "\0".join(parts)
-
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         _prefix, source_id_text, channel_key = vod_id.split(":", 2)
         source = self._repository.get_source(int(source_id_text))
@@ -364,7 +223,13 @@ class CustomLiveService:
 
     def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
         multi_line = len(view.lines) > 1
-        epg_current, epg_schedule = self._resolve_channel_epg(view.channel_name)
+        epg_current = ""
+        epg_schedule = ""
+        if self._epg_service is not None:
+            schedule = self._epg_service.get_schedule(view.channel_name)
+            if schedule is not None:
+                epg_current = schedule.current
+                epg_schedule = "\n".join(schedule.upcoming or [])
         source_vod_id = f"custom-channel:{view.source_id}:{view.channel_id}"
         return OpenPlayerRequest(
             vod=VodItem(
@@ -391,14 +256,6 @@ class CustomLiveService:
             source_vod_id=source_vod_id,
             use_local_history=False,
         )
-
-    def _resolve_channel_epg(self, channel_name: str) -> tuple[str, str]:
-        if self._epg_service is None:
-            return "", ""
-        schedule = self._epg_service.get_schedule(channel_name)
-        if schedule is None:
-            return "", ""
-        return schedule.current, "\n".join(schedule.upcoming or [])
 
     def _resolve_channel_poster(self, view: _MergedChannelView) -> str:
         if view.logo_url:

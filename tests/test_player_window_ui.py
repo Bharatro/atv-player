@@ -365,7 +365,6 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.duration_label.text() == "00:00"
     assert window.volume_layout.indexOf(window.mute_button) == 0
     assert window.volume_layout.indexOf(window.volume_slider) == 1
-    assert window.volume_group.isHidden() is True
     assert window.volume_slider.maximumWidth() == 180
     assert window.bottom_area.maximumHeight() == 88
     assert window.bottom_layout.spacing() == 4
@@ -373,8 +372,6 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.ending_spin.prefix() == "片尾 "
     assert window.opening_spin.width() == 105
     assert window.ending_spin.width() == 105
-    assert window.opening_spin.isHidden() is True
-    assert window.ending_spin.isHidden() is True
     assert "border: 1px solid" in window.opening_spin.styleSheet()
     assert "border: 1px solid" in window.ending_spin.styleSheet()
 
@@ -396,10 +393,10 @@ def test_player_window_hides_disabled_control_combos_when_width_is_tight(qtbot) 
     assert window.audio_combo.isHidden() is True
     assert window.parse_combo.isEnabled() is False
     assert window.parse_combo.isHidden() is True
-    assert window.speed_combo.isHidden() is True
+    assert window.speed_combo.isHidden() is False
 
 
-def test_player_window_keeps_controls_after_fullscreen_hidden_when_enabled(qtbot) -> None:
+def test_player_window_keeps_enabled_control_combos_visible_when_width_is_tight(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
 
     qtbot.addWidget(window)
@@ -407,7 +404,7 @@ def test_player_window_keeps_controls_after_fullscreen_hidden_when_enabled(qtbot
     window.show()
     window.resize(1000, 700)
 
-    assert window.danmaku_combo.isHidden() is True
+    assert window.danmaku_combo.isHidden() is False
     assert window.subtitle_combo.isHidden() is True
 
 
@@ -460,7 +457,6 @@ def test_player_window_shows_danmaku_source_button_with_custom_icon(qtbot) -> No
 
     assert window.danmaku_source_button.toolTip() == "弹幕源 (D)"
     assert window.danmaku_source_button.isEnabled() is True
-    assert window.danmaku_source_button.isHidden() is True
 
 
 def test_player_window_shows_danmaku_settings_button(qtbot) -> None:
@@ -469,7 +465,6 @@ def test_player_window_shows_danmaku_settings_button(qtbot) -> None:
 
     assert window.danmaku_settings_button.toolTip() == "弹幕设置 (Ctrl+D)"
     assert window.danmaku_settings_button.isEnabled() is True
-    assert window.danmaku_settings_button.isHidden() is True
     assert (
         window.danmaku_settings_button.icon().pixmap(24, 24).toImage()
         != window.danmaku_source_button.icon().pixmap(24, 24).toImage()
@@ -482,7 +477,6 @@ def test_player_window_shows_metadata_scrape_button_with_search_icon(qtbot) -> N
 
     assert window.metadata_scrape_button.toolTip() == "刮削 (S)"
     assert window.metadata_scrape_button.isEnabled() is True
-    assert window.metadata_scrape_button.isHidden() is True
 
 
 def test_player_window_places_metadata_scrape_button_in_playback_controls(qtbot) -> None:
@@ -4195,18 +4189,8 @@ def test_player_window_populates_spider_video_quality_options(qtbot) -> None:
                 title="正片",
                 url="https://media.example/video-1080.m3u8",
                 playback_qualities=[
-                    VideoQualityOption(
-                        id="1080p",
-                        label="1080P",
-                        url="https://media.example/video-1080.m3u8",
-                        headers={"User-Agent": "UA-1080"},
-                    ),
-                    VideoQualityOption(
-                        id="720p",
-                        label="720P",
-                        url="https://media.example/video-720.m3u8",
-                        headers={"User-Agent": "UA-720"},
-                    ),
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
                 ],
                 selected_playback_quality_id="1080p",
             )
@@ -4227,7 +4211,6 @@ def test_player_window_populates_spider_video_quality_options(qtbot) -> None:
     ]
     assert window.video_quality_combo.currentData() == "1080p"
     assert window.video_quality_combo.isEnabled() is True
-    assert window.video_quality_combo.isHidden() is False
 
 
 def test_player_window_switches_spider_video_quality_with_position_and_pause_preserved(qtbot) -> None:
@@ -4237,7 +4220,7 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
 
     class FakeVideo:
         def __init__(self) -> None:
-            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+            self.load_calls: list[tuple[str, bool, int]] = []
 
         def load(
             self,
@@ -4247,8 +4230,8 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
             headers: dict[str, str] | None = None,
             poster_image_path: str | None = None,
         ) -> None:
-            del poster_image_path
-            self.load_calls.append((url, pause, start_seconds, dict(headers or {})))
+            del headers, poster_image_path
+            self.load_calls.append((url, pause, start_seconds))
 
         def set_speed(self, speed: float) -> None:
             return None
@@ -4265,20 +4248,9 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
             PlayItem(
                 title="正片",
                 url="https://media.example/video-1080.m3u8",
-                headers={"User-Agent": "UA-1080"},
                 playback_qualities=[
-                    VideoQualityOption(
-                        id="1080p",
-                        label="1080P",
-                        url="https://media.example/video-1080.m3u8",
-                        headers={"User-Agent": "UA-1080"},
-                    ),
-                    VideoQualityOption(
-                        id="720p",
-                        label="720P",
-                        url="https://media.example/video-720.m3u8",
-                        headers={"User-Agent": "UA-720"},
-                    ),
+                    VideoQualityOption(id="1080p", label="1080P", url="https://media.example/video-1080.m3u8"),
+                    VideoQualityOption(id="720p", label="720P", url="https://media.example/video-720.m3u8"),
                 ],
                 selected_playback_quality_id="1080p",
             )
@@ -4294,15 +4266,14 @@ def test_player_window_switches_spider_video_quality_with_position_and_pause_pre
 
     window.open_session(session)
 
-    assert video.load_calls == [("https://media.example/video-1080.m3u8", False, 0, {"User-Agent": "UA-1080"})]
+    assert video.load_calls == [("https://media.example/video-1080.m3u8", False, 0)]
 
     window.is_playing = False
     window.video_quality_combo.setCurrentIndex(1)
 
     qtbot.waitUntil(lambda: len(video.load_calls) == 2)
-    assert video.load_calls[-1] == ("https://media.example/video-720.m3u8", True, 93, {"User-Agent": "UA-720"})
+    assert video.load_calls[-1] == ("https://media.example/video-720.m3u8", True, 93)
     assert session.playlist[0].selected_playback_quality_id == "720p"
-    assert session.playlist[0].headers == {"User-Agent": "UA-720"}
 
 
 def test_player_window_switches_ytdlp_quality_via_selected_ytdl_format_with_position_and_pause_preserved(qtbot) -> None:
@@ -9529,21 +9500,6 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.toggle_log_button.toolTip() == "播放日志"
     assert window.toggle_log_button.isCheckable() is True
     assert window.toggle_log_button.isChecked() is True
-    for widget in (
-        window.danmaku_source_button,
-        window.danmaku_settings_button,
-        window.metadata_scrape_button,
-        window.speed_combo,
-        window.subtitle_combo,
-        window.danmaku_combo,
-        window.video_quality_combo,
-        window.audio_combo,
-        window.parse_combo,
-        window.opening_spin,
-        window.ending_spin,
-        window.volume_group,
-    ):
-        assert widget.isHidden() is True
     assert isinstance(window.speed_combo, QComboBox)
     assert window.volume_slider.maximum() == 100
 
@@ -21203,7 +21159,7 @@ def test_player_window_toggling_wide_mode_updates_config_and_saves(qtbot) -> Non
     assert saved["count"] >= 2
 
 
-def test_player_window_keeps_controls_after_fullscreen_hidden_in_wide_mode(qtbot) -> None:
+def test_player_window_keeps_danmaku_source_button_visible_in_wide_mode(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.show()
@@ -21212,9 +21168,7 @@ def test_player_window_keeps_controls_after_fullscreen_hidden_in_wide_mode(qtbot
     qtbot.wait(10)
 
     assert window.sidebar_container.isHidden() is True
-    assert window.danmaku_source_button.isHidden() is True
-    assert window.danmaku_settings_button.isHidden() is True
-    assert window.metadata_scrape_button.isHidden() is True
+    assert window.danmaku_source_button.isVisible() is True
 
 
 def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(qtbot) -> None:

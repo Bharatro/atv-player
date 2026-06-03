@@ -231,7 +231,6 @@ class VideoQualityOption:
     label: str
     url: str = ""
     ytdl_format: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
     width: int = 0
     height: int = 0
     bandwidth: int = 0
@@ -430,9 +429,6 @@ class LiveSourceChannelView:
     stream_url: str
     logo_url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    epg_current: str = ""
-    epg_schedule: str = ""
-    playback_qualities: list[VideoQualityOption] = field(default_factory=list)
 
 
 @dataclass(slots=True)
