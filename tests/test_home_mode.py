@@ -20,6 +20,8 @@ from tests.test_main_window_ui import (
     DummyHistoryController,
     FakePlayerController,
     FakePluginManager,
+    SearchableController,
+    _vod,
 )
 
 
@@ -166,6 +168,7 @@ def test_main_window_apply_home_mode_browse_shows_nav_tabs(qtbot) -> None:
     assert isinstance(window._home_stack, QStackedWidget)
     assert window._home_stack.currentWidget() is window.nav_tabs
     assert not window.nav_tabs.isHidden()
+    assert window.home_button.isHidden()
 
 
 def test_main_window_default_home_mode_is_browse(qtbot) -> None:
@@ -180,6 +183,7 @@ def test_main_window_default_home_mode_is_browse(qtbot) -> None:
 
     assert hasattr(window, "_home_stack")
     assert window._home_stack.currentWidget() is window.nav_tabs
+    assert window.home_button.isHidden()
 
 
 def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
@@ -243,7 +247,7 @@ def test_main_window_apply_home_mode_media_shows_local_media_sections(qtbot, tmp
     page = window._media_home_page
     assert window._home_stack.currentWidget() is page
     assert window.nav_tabs.isHidden()
-    assert window.global_search_container.isHidden()
+    assert not window.global_search_container.isHidden()
     assert page.content_container.maximumWidth() > 100000
     qtbot.waitUntil(lambda: page.current_playing_button is not None)
     qtbot.waitUntil(lambda: len(page.continue_buttons) == 1)
@@ -256,6 +260,39 @@ def test_main_window_apply_home_mode_media_shows_local_media_sections(qtbot, tmp
     assert "第 2 集" in page.continue_buttons[0].text()
     assert "凡人修仙传" in page.following_buttons[0].toolTip()
     assert "繁花" in page.favorite_buttons[0].toolTip()
+
+
+def test_main_window_media_home_global_search_opens_results_and_clears_back(
+    qtbot,
+) -> None:
+    telegram = SearchableController([_vod("Telegram One")], total=1)
+    config = AppConfig(home_mode="media")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        telegram_controller=telegram,
+    )
+    qtbot.addWidget(window)
+
+    page = window._media_home_page
+    assert window._home_stack.currentWidget() is page
+    assert not window.global_search_container.isHidden()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: window.nav_tabs.count() == 1)
+    assert telegram.search_calls == [("庆余年", 1)]
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+
+    window.global_search_edit.clear()
+
+    assert window._home_stack.currentWidget() is page
+    assert window.nav_tabs.isHidden()
+    assert not window.global_search_container.isHidden()
 
 
 def test_main_window_media_home_refreshes_current_playing_after_player_returns(
@@ -328,6 +365,7 @@ def test_main_window_home_button_returns_from_builtin_page_to_media_home(qtbot) 
 
     assert not window.home_button.icon().isNull()
     assert window.home_button.iconSize().width() == 22
+    assert not window.home_button.isHidden()
     window.browse_button.click()
     assert window._home_stack.currentWidget() is window.nav_tabs
     assert window.nav_tabs.currentWidget() is window.browse_page
@@ -562,6 +600,7 @@ def test_main_window_apply_home_mode_classic_shows_classic_page(qtbot) -> None:
     assert hasattr(window, "_classic_home_page")
     assert window._home_stack.currentWidget() is window._classic_home_page
     assert window.nav_tabs.isHidden()
+    assert window.home_button.isHidden()
     assert (
         window.header_layout.indexOf(window._classic_home_page.source_button)
         < window.header_layout.indexOf(window.global_search_container)

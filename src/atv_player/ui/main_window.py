@@ -2090,6 +2090,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._home_stack.setCurrentWidget(self.nav_tabs)
             self.nav_tabs.setVisible(True)
             self.global_search_container.setVisible(True)
+            self.home_button.setVisible(False)
             self._refresh_navigation_tabs()
             self._start_deferred_startup_plugin_load_if_needed()
             return
@@ -2119,6 +2120,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setVisible(False)
         self.nav_tabs.setNavigationVisible(True)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
+        self.home_button.setVisible(True)
         self._hide_classic_header_source_picker()
 
     def _apply_media_home_mode(self) -> None:
@@ -2127,7 +2129,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._home_stack.setCurrentWidget(page)
         self.nav_tabs.setNavigationVisible(True)
         self.nav_tabs.setVisible(False)
-        self.global_search_container.setVisible(False)
+        self.global_search_container.setVisible(True)
+        self.home_button.setVisible(True)
         self._start_deferred_startup_plugin_load_if_needed()
         page.refresh_content()
 
@@ -2352,6 +2355,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setNavigationVisible(True)
         self.nav_tabs.setVisible(False)
         self.global_search_container.setVisible(False)
+        self.home_button.setVisible(True)
         self._start_deferred_startup_plugin_load_if_needed()
         page.refresh_content()
 
@@ -2535,6 +2539,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setNavigationVisible(False)
         self.nav_tabs.setVisible(False)
         self.global_search_container.setVisible(True)
+        self.home_button.setVisible(False)
         self._handle_classic_source_changed(self._classic_home_page.current_source_key())
 
     def _refresh_classic_source_entries_if_active(self) -> None:
@@ -4340,6 +4345,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_results = {}
         self._global_search_pending_keys = {definition.key for definition in searchable}
         self.global_search_status_label.setText("搜索中...")
+        if self._home_stack.currentWidget() is not self.nav_tabs:
+            self.nav_tabs.setNavigationVisible(True)
+            self.nav_tabs.setVisible(True)
+            self._home_stack.setCurrentWidget(self.nav_tabs)
         self._refresh_visible_tabs()
         self._sync_global_search_action_state()
         for definition in searchable:
@@ -4439,8 +4448,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
-        if (getattr(self.config, "home_mode", "browse") or "browse") == "simplified":
+        home_mode = getattr(self.config, "home_mode", "browse") or "browse"
+        if home_mode == "simplified":
             self._return_to_simplified_home_after_global_search_clear()
+        elif home_mode == "media":
+            self._apply_media_home_mode()
 
     def _return_to_simplified_home_after_global_search_clear(self) -> None:
         page = self._ensure_simplified_home_page()
