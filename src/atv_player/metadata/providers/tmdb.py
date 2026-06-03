@@ -284,6 +284,12 @@ def _search_result_raw(
     rating = _format_tmdb_rating(item.get("vote_average"))
     if rating:
         raw["rating"] = rating
+    original_language = str(item.get("original_language") or "").strip()
+    if original_language:
+        raw["original_language"] = original_language
+    original_name = str(item.get("original_name") or item.get("original_title") or "").strip()
+    if original_name:
+        raw["original_name"] = original_name
     return raw
 
 
@@ -900,6 +906,7 @@ class TMDBProvider:
             provider=self.name,
             provider_id=match.provider_id,
             title=str(payload.get("title") or payload.get("name") or match.title or "").strip(),
+            original_title=str(payload.get("original_title") or payload.get("original_name") or "").strip(),
             year=_extract_year(payload, media_type=media_type) or str(match.year or "").strip(),
             poster=str(payload.get("poster_url") or "").strip(),
             backdrop=str(payload.get("backdrop_url") or "").strip(),
@@ -990,6 +997,7 @@ class TMDBProvider:
             provider=self.name,
             provider_id=match.provider_id,
             title=str(payload.get("title") or payload.get("name") or match.title or "").strip(),
+            original_title=str(payload.get("original_title") or payload.get("original_name") or "").strip(),
             year=_extract_year(payload, media_type="tv") or str(match.year or "").strip(),
             poster=str(payload.get("poster_url") or "").strip(),
             backdrop=str(payload.get("backdrop_url") or "").strip(),

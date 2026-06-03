@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.ui.following_search_result_card import FollowingSearchResultCard, following_search_candidate_media_type
+from atv_player.ui.following_search_result_card import FollowingSearchResultCard, following_search_candidate_media_type, _following_display_title
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
@@ -80,7 +80,7 @@ class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.setPen(tokens.text_primary)
-        title = str(getattr(candidate, "title", "") or "未命名条目")
+        title = _following_display_title(candidate)
 
         title_full = f"{title}  {meta}" if meta else title
         title_right = rating_rect.left() - 8 if rating else content_right

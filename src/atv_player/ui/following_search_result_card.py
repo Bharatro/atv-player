@@ -24,6 +24,22 @@ def following_search_candidate_media_type(candidate) -> str:
     return ""
 
 
+def _following_display_title(candidate) -> str:
+    title = str(getattr(candidate, "title", "") or "未命名条目")
+    raw = dict(getattr(candidate, "raw", {}) or {})
+    original_language = str(
+        getattr(candidate, "original_language", "") or raw.get("original_language") or ""
+    ).strip()
+    if original_language == "zh":
+        return title
+    original_name = str(
+        getattr(candidate, "original_name", "") or raw.get("original_name") or ""
+    ).strip()
+    if not original_name or original_name == title:
+        return title
+    return f"{title} ({original_name})"
+
+
 class FollowingSearchResultCard(QFrame):
     image_loaded = Signal(object)
 
@@ -33,7 +49,7 @@ class FollowingSearchResultCard(QFrame):
         self._selected = False
         self._overview_full_text = self._overview_text()
         self.poster_label = QLabel("封面", self)
-        self.title_label = QLabel(str(getattr(candidate, "title", "") or "未命名条目"), self)
+        self.title_label = QLabel(_following_display_title(candidate), self)
         self.rating_label = QLabel(self._rating_text(), self)
         self.meta_label = QLabel(self._meta_text(), self)
         self.overview_label = QLabel(self._overview_full_text, self)

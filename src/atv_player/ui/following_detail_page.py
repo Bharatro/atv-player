@@ -47,6 +47,7 @@ from atv_player.ui.following_episode_browser import (
     FollowingEpisodeBrowser,
     build_episode_season_groups,
 )
+from atv_player.ui.following_search_result_card import _following_display_title
 from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
@@ -498,7 +499,7 @@ class FollowingRelatedRecommendationCard(QFrame):
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_label.setFixedSize(132, 188)
         self.poster_label.setStyleSheet(_image_placeholder_qss())
-        self.title_label = QLabel(item.title or "未命名", self)
+        self.title_label = QLabel(_following_display_title(item), self)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setWordWrap(True)
         self.title_label.setObjectName("relatedRecommendationTitle")
@@ -804,7 +805,11 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         )
         self.continue_play_button.setEnabled(has_binding)
         self.continue_play_button.setToolTip("从上次播放源继续" if has_binding else "暂无已绑定播放源，请先搜索播放")
-        self.title_label.setText(display_record.title)
+        display_title = display_record.title
+        original_title = str(display_record.original_title or "").strip()
+        if original_title and original_title != display_title:
+            display_title = f"{display_title} ({original_title})"
+        self.title_label.setText(display_title)
         self.meta_label.setText(_meta_text(display_record, snapshot))
         self._render_metadata_bundle(snapshot)
         self._render_poster_carousel(display_record, snapshot)
@@ -1673,7 +1678,7 @@ def _meta_text(record: FollowingRecord, snapshot: FollowingDetailSnapshot | None
         else:
             parts.append("未观看")
         if record.has_update:
-            parts.append("有更新")
+            parts.append("已上映")
         return " · ".join(parts)
     episode_parts = []
     completion_state = resolve_following_completion_state(

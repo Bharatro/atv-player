@@ -187,6 +187,8 @@ class FollowingController:
             backdrop=str(raw.get("backdrop") or raw.get("backdrop_url") or "").strip(),
             rating=str(raw.get("rating") or "").strip(),
             overview=str(raw.get("overview") or "").strip(),
+            original_language=str(raw.get("original_language") or "").strip(),
+            original_name=str(raw.get("original_name") or "").strip(),
             source_label="搜索",
         )
 

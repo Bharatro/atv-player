@@ -32,6 +32,8 @@ class DiscoveryItem:
     backdrop: str = ""
     rating: str = ""
     overview: str = ""
+    original_language: str = ""
+    original_name: str = ""
     source_label: str = ""
     is_following: bool = False
     is_favorited: bool = False
@@ -358,6 +360,8 @@ class TMDBDiscoveryService:
             backdrop=f"{self._client.image_base('backdrop')}{backdrop_path}" if backdrop_path else "",
             rating=rating,
             overview=str(raw.get("overview") or "").strip(),
+            original_language=str(raw.get("original_language") or "").strip(),
+            original_name=str(raw.get("original_name") or raw.get("original_title") or "").strip(),
             source_label=source_label,
         )
 
