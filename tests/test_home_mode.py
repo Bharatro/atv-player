@@ -171,6 +171,25 @@ def test_main_window_apply_home_mode_browse_shows_nav_tabs(qtbot) -> None:
     assert window.home_button.isHidden()
 
 
+def test_main_window_browse_mode_header_browse_keeps_nav_tabs_visible(qtbot) -> None:
+    config = AppConfig(home_mode="browse")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+
+    window.douban_page.setFocus()
+    window.browse_button.click()
+
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+    assert not window.nav_tabs.nav_row_widget.isHidden()
+    assert window.nav_tabs.currentWidget() is window.browse_page
+
+
 def test_main_window_default_home_mode_is_browse(qtbot) -> None:
     config = AppConfig()
     window = MainWindow(
@@ -374,6 +393,24 @@ def test_main_window_home_button_returns_from_builtin_page_to_media_home(qtbot) 
 
     assert window._home_stack.currentWidget() is window._media_home_page
     assert window.nav_tabs.isHidden()
+
+
+def test_main_window_media_mode_header_browse_hides_nav_tabs(qtbot) -> None:
+    config = AppConfig(home_mode="media")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+
+    window.browse_button.click()
+
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+    assert window.nav_tabs.nav_row_widget.isHidden()
+    assert window.nav_tabs.currentWidget() is window.browse_page
 
 
 def test_main_window_apply_home_mode_simplified_shows_search_home(qtbot) -> None:

@@ -2084,6 +2084,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def apply_home_mode(self, mode: str) -> None:
         normalized = mode if mode in {"browse", "classic", "simplified", "media", "tv"} else "browse"
+        self._active_home_mode = normalized
         if normalized == "browse":
             self._hide_classic_header_source_picker()
             self.nav_tabs.setNavigationVisible(True)
@@ -3531,14 +3532,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if self.config.last_selected_tab != tab_key:
                 self.config.last_selected_tab = tab_key
                 self._save_config()
-        self._show_builtin_page_in_home_stack(definition)
+        hide_navigation = (getattr(self, "_active_home_mode", getattr(self.config, "home_mode", "browse")) or "browse") != "browse"
+        self._show_builtin_page_in_home_stack(definition, hide_navigation=hide_navigation)
 
     def _return_to_configured_home(self) -> None:
         self._dismiss_visible_global_search_popup()
         self.apply_home_mode(getattr(self.config, "home_mode", "browse") or "browse")
 
-    def _show_builtin_page_in_home_stack(self, definition: _BuiltinTabDefinition) -> None:
-        self.nav_tabs.setNavigationVisible(False)
+    def _show_builtin_page_in_home_stack(
+        self,
+        definition: _BuiltinTabDefinition,
+        *,
+        hide_navigation: bool = True,
+    ) -> None:
+        self.nav_tabs.setNavigationVisible(not hide_navigation)
         self.nav_tabs.setVisible(True)
         self._home_stack.setCurrentWidget(self.nav_tabs)
         self.nav_tabs.setCurrentWidget(definition.page)
