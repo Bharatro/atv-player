@@ -766,6 +766,73 @@ def test_main_window_does_not_show_homepage_prompt_while_player_is_playing(qtbot
     assert following.snoozed == []
 
 
+def test_main_window_does_not_show_homepage_prompt_while_player_window_is_visible(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+    window.player_window = SimpleNamespace(
+        is_playing=False,
+        session=object(),
+        isVisible=lambda: True,
+    )
+
+    window.show_following_homepage_prompts()
+
+    assert window._following_prompt_dialog is None
+    assert following.cleared == []
+    assert following.snoozed == []
+
+
+def test_main_window_closes_visible_homepage_prompt_when_opening_player(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    following = FakeFollowingController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+    window.show_following_homepage_prompts()
+    assert window._following_prompt_dialog is not None
+
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="片名"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+        clicked_index=0,
+    )
+    session = window._create_player_session(request)
+    window._apply_open_player(request, session)
+
+    assert window._following_prompt_dialog is None
+    assert following.cleared == []
+
+
 def test_main_window_homepage_prompt_uses_tmdb_global_latest_count(qtbot) -> None:
     class LongRunningFollowingController(FakeFollowingController):
         def load_homepage_prompts(self):

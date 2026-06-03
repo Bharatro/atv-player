@@ -4622,7 +4622,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _player_window_is_playing(self) -> bool:
         if self.player_window is None:
             return False
-        return bool(getattr(self.player_window, "is_playing", False))
+        if bool(getattr(self.player_window, "is_playing", False)):
+            return True
+        is_visible = getattr(self.player_window, "isVisible", None)
+        if callable(is_visible):
+            try:
+                return bool(is_visible())
+            except RuntimeError:
+                return False
+        return False
 
     def show_following_homepage_prompts(self) -> None:
         if self._player_window_is_playing():
@@ -5155,6 +5163,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if hasattr(self.player_window, "global_search_requested"):
                 self.player_window.global_search_requested.connect(self._handle_favorite_global_search)
         self._close_help_dialog()
+        self._close_following_prompt_dialog(already_handled=True)
         self.config.last_active_window = "player"
         self.config.last_playback_source = request.source_kind
         self.config.last_playback_source_key = request.source_key
