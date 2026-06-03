@@ -89,6 +89,13 @@ class FollowingMetadataBundle:
 
 
 @dataclass(slots=True)
+class FollowingAISummary:
+    summary: str = ""
+    highlights: list[str] = field(default_factory=list)
+    next_hint: str = ""
+
+
+@dataclass(slots=True)
 class FollowingDetailSnapshot:
     following_id: int = 0
     overview: str = ""
@@ -101,6 +108,7 @@ class FollowingDetailSnapshot:
     posters: list[str] = field(default_factory=list)
     backdrops: list[str] = field(default_factory=list)
     metadata_bundle: FollowingMetadataBundle | None = None
+    ai_summary: FollowingAISummary | None = None
     refreshed_at: int = 0
 
 

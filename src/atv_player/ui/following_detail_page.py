@@ -583,6 +583,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.overview_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         self.overview_label.setOpenExternalLinks(False)
         self.overview_label.linkActivated.connect(self._open_external_link)
+        self.ai_summary_panel = QFrame()
+        self.ai_summary_panel.setObjectName("followingDetailAISummaryPanel")
+        self.ai_summary_label = QLabel()
+        self.ai_summary_label.setWordWrap(True)
         self.status_label = QLabel()
         self.continue_play_button = QPushButton("继续播放")
         self.search_play_button = QPushButton("搜索播放")
@@ -676,6 +680,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.meta_label.setTextInteractionFlags(selectable_flags)
         self.rating_strip.setTextInteractionFlags(selectable_flags)
         self.overview_label.setTextInteractionFlags(selectable_flags)
+        self.ai_summary_label.setTextInteractionFlags(selectable_flags)
         self.metadata_source_layout.setContentsMargins(0, 0, 0, 0)
         self.metadata_source_layout.setSpacing(8)
         self.playback_platform_layout.setContentsMargins(0, 0, 0, 0)
@@ -706,6 +711,11 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         metadata_layout.addWidget(self.metadata_source_bar)
         metadata_layout.addWidget(self.playback_platform_section)
         metadata_layout.addWidget(self.overview_label)
+        ai_summary_layout = QVBoxLayout(self.ai_summary_panel)
+        ai_summary_layout.setContentsMargins(12, 12, 12, 12)
+        ai_summary_layout.setSpacing(6)
+        ai_summary_layout.addWidget(self.ai_summary_label)
+        metadata_layout.addWidget(self.ai_summary_panel)
         metadata_layout.addStretch(1)
 
         self.poster_carousel_panel = QFrame(content)
@@ -812,6 +822,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.title_label.setText(display_title)
         self.meta_label.setText(_meta_text(display_record, snapshot))
         self._render_metadata_bundle(snapshot)
+        self._render_ai_summary(snapshot)
         self._render_poster_carousel(display_record, snapshot)
         groups = build_episode_season_groups(
             snapshot.episodes,
@@ -835,6 +846,22 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self._pending_people = [*snapshot.cast, *snapshot.crew]
         self._render_next_batch()
         self._start_related_recommendations_load()
+
+    def _render_ai_summary(self, snapshot: FollowingDetailSnapshot) -> None:
+        summary = getattr(snapshot, "ai_summary", None)
+        if summary is None:
+            self.ai_summary_label.setText("")
+            self.ai_summary_panel.setVisible(False)
+            return
+        lines = []
+        if summary.summary:
+            lines.append(summary.summary)
+        lines.extend(f"• {item}" for item in summary.highlights if item)
+        if summary.next_hint:
+            lines.append(summary.next_hint)
+        text = "\n".join(lines).strip()
+        self.ai_summary_label.setText(text)
+        self.ai_summary_panel.setVisible(bool(text))
 
     def _render_metadata_bundle(self, snapshot: FollowingDetailSnapshot) -> None:
         bundle = snapshot.metadata_bundle
@@ -1346,8 +1373,14 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
 
     def _load_detail_view(self, following_id: int):
         try:
-            return self.controller.load_detail(following_id, refresh_if_empty=False)
+            return self.controller.load_detail(
+                following_id,
+                refresh_if_empty=False,
+                include_ai_summary=False,
+            )
         except TypeError as exc:
+            if "include_ai_summary" in str(exc):
+                return self.controller.load_detail(following_id, refresh_if_empty=False)
             if "refresh_if_empty" not in str(exc):
                 raise
             return self.controller.load_detail(following_id)

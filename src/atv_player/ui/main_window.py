@@ -3638,8 +3638,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _searchable_tab_definitions(self) -> list[_TabDefinition]:
-        return [definition for definition in self._all_tab_definitions() if definition.search_controller is not None]
+    def _searchable_tab_definitions(
+        self,
+        *,
+        include_smart_search: bool = True,
+    ) -> list[_TabDefinition]:
+        return [
+            definition
+            for definition in self._all_tab_definitions()
+            if definition.search_controller is not None
+            and (include_smart_search or definition.key != "smart:search")
+        ]
 
     def _build_drive_detail_request(self, link: str) -> OpenPlayerRequest:
         if self._drive_detail_loader is None:
@@ -3967,7 +3976,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_open_request(lambda: self._build_parse_request(keyword))
         return True
 
-    def _start_global_search(self) -> None:
+    def _start_global_search(self, *, include_smart_search: bool = True) -> None:
         keyword = self.global_search_edit.text().strip()
         if not keyword:
             return
@@ -3975,7 +3984,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self._start_direct_open_from_global_search(keyword):
             return
         self._record_global_search_history(keyword)
-        searchable = self._searchable_tab_definitions()
+        searchable = self._searchable_tab_definitions(
+            include_smart_search=include_smart_search,
+        )
         if not searchable:
             self.global_search_status_label.setText("无可搜索来源")
             return
@@ -4889,7 +4900,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_edit.setText(view.record.title)
         self.nav_tabs.setCurrentWidget(self.douban_page)
         self._close_following_prompt_dialog(already_handled=True)
-        self._start_global_search()
+        self._start_global_search(include_smart_search=False)
 
     def open_following_bound_source(self, following_id: int) -> None:
         view = self._following_controller.load_detail(int(following_id))

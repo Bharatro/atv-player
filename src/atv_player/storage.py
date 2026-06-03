@@ -128,7 +128,7 @@ def _normalize_global_search_history(value: object) -> list[str]:
 
 
 def _normalize_ai_base_url(value: object) -> str:
-    return str(value or "").strip().rstrip("/")
+    return str(value or "").strip()
 
 
 def _normalize_ai_secret(value: object) -> str:
@@ -495,6 +495,10 @@ class SettingsRepository:
                     ai_api_key TEXT NOT NULL DEFAULT '',
                     ai_chat_model TEXT NOT NULL DEFAULT '',
                     ai_request_timeout_seconds INTEGER NOT NULL DEFAULT 30,
+                    ai_metadata_enrichment_enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_danmaku_enrichment_enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_episode_title_rewrite_enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_following_summary_enabled INTEGER NOT NULL DEFAULT 1,
                     following_episode_display_mode TEXT NOT NULL DEFAULT 'poster',
                     following_episode_grid_columns INTEGER NOT NULL DEFAULT 1,
                     home_mode TEXT NOT NULL DEFAULT 'browse'
@@ -804,6 +808,22 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN ai_request_timeout_seconds INTEGER NOT NULL DEFAULT 30"
                 )
+            if "ai_metadata_enrichment_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_metadata_enrichment_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "ai_danmaku_enrichment_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_danmaku_enrichment_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "ai_episode_title_rewrite_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_episode_title_rewrite_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "ai_following_summary_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN ai_following_summary_enabled INTEGER NOT NULL DEFAULT 1"
+                )
             if "following_episode_display_mode" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN following_episode_display_mode TEXT NOT NULL DEFAULT 'poster'"
@@ -900,6 +920,10 @@ class SettingsRepository:
                     ai_api_key,
                     ai_chat_model,
                     ai_request_timeout_seconds,
+                    ai_metadata_enrichment_enabled,
+                    ai_danmaku_enrichment_enabled,
+                    ai_episode_title_rewrite_enabled,
+                    ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
                     home_mode
@@ -907,7 +931,7 @@ class SettingsRepository:
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1, 'browse'
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -1042,6 +1066,10 @@ class SettingsRepository:
                     ai_api_key,
                     ai_chat_model,
                     ai_request_timeout_seconds,
+                    ai_metadata_enrichment_enabled,
+                    ai_danmaku_enrichment_enabled,
+                    ai_episode_title_rewrite_enabled,
+                    ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
                     home_mode
@@ -1128,6 +1156,10 @@ class SettingsRepository:
             ai_api_key,
             ai_chat_model,
             ai_request_timeout_seconds,
+            ai_metadata_enrichment_enabled,
+            ai_danmaku_enrichment_enabled,
+            ai_episode_title_rewrite_enabled,
+            ai_following_summary_enabled,
             following_episode_display_mode,
             following_episode_grid_columns,
             home_mode,
@@ -1227,6 +1259,10 @@ class SettingsRepository:
             ai_api_key=_normalize_ai_secret(ai_api_key),
             ai_chat_model=_normalize_ai_model(ai_chat_model),
             ai_request_timeout_seconds=_normalize_ai_timeout(ai_request_timeout_seconds),
+            ai_metadata_enrichment_enabled=bool(ai_metadata_enrichment_enabled),
+            ai_danmaku_enrichment_enabled=bool(ai_danmaku_enrichment_enabled),
+            ai_episode_title_rewrite_enabled=bool(ai_episode_title_rewrite_enabled),
+            ai_following_summary_enabled=bool(ai_following_summary_enabled),
             following_episode_display_mode=_normalize_following_episode_display_mode(
                 following_episode_display_mode
             ),
@@ -1323,6 +1359,10 @@ class SettingsRepository:
                     ai_api_key = ?,
                     ai_chat_model = ?,
                     ai_request_timeout_seconds = ?,
+                    ai_metadata_enrichment_enabled = ?,
+                    ai_danmaku_enrichment_enabled = ?,
+                    ai_episode_title_rewrite_enabled = ?,
+                    ai_following_summary_enabled = ?,
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?,
                     home_mode = ?
@@ -1421,6 +1461,10 @@ class SettingsRepository:
                     _normalize_ai_secret(config.ai_api_key),
                     _normalize_ai_model(config.ai_chat_model),
                     _normalize_ai_timeout(config.ai_request_timeout_seconds),
+                    int(config.ai_metadata_enrichment_enabled),
+                    int(config.ai_danmaku_enrichment_enabled),
+                    int(config.ai_episode_title_rewrite_enabled),
+                    int(config.ai_following_summary_enabled),
                     _normalize_following_episode_display_mode(config.following_episode_display_mode),
                     _normalize_following_episode_grid_columns(
                         config.following_episode_grid_columns

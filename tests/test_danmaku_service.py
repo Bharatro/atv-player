@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+from atv_player.ai.enrichment import DanmakuQueryRefinement
 from atv_player.danmaku.errors import DanmakuResolveError, ProviderNotSupportedError
 from atv_player.danmaku.models import (
     DanmakuRecord,
@@ -69,6 +70,21 @@ class SlowSearchProvider(FakeProvider):
         return list(self.items)
 
 
+class AIRefinesDanmakuQuery:
+    def __init__(self) -> None:
+        self.inputs = []
+
+    def refine_danmaku_query(self, data):
+        self.inputs.append(data)
+        return DanmakuQueryRefinement(queries=["黑镜 第3集"])
+
+
+class AIEmptyDanmakuQuery:
+    def refine_danmaku_query(self, data):
+        del data
+        return DanmakuQueryRefinement()
+
+
 def test_search_danmu_prefers_provider_from_reg_src() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -87,6 +103,48 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert [item.provider for item in results] == ["tencent"]
     assert tencent.search_calls == ["剑来"]
     assert youku.search_calls == []
+
+
+def test_danmaku_service_uses_ai_refined_query_before_original() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="黑镜 第3集",
+                url="https://v.qq.com/x/3",
+                ratio=1.0,
+                simi=1.0,
+                duration_seconds=3600,
+            )
+        ],
+        [],
+    )
+    ai = AIRefinesDanmakuQuery()
+    service = DanmakuService(
+        {"tencent": tencent},
+        provider_order=["tencent"],
+        ai_enrichment_service=ai,
+    )
+
+    results = service.search_danmu("Black.Mirror.S01E03")
+
+    assert ai.inputs[0].title == "Black.Mirror.S01E03"
+    assert tencent.search_calls[0] == "黑镜 第3集"
+    assert results[0].name == "黑镜 第3集"
+
+
+def test_danmaku_service_falls_back_when_ai_query_empty() -> None:
+    tencent = FakeProvider("tencent", [], [])
+    service = DanmakuService(
+        {"tencent": tencent},
+        provider_order=["tencent"],
+        ai_enrichment_service=AIEmptyDanmakuQuery(),
+    )
+
+    service.search_danmu("Black.Mirror.S01E03")
+
+    assert tencent.search_calls[0] == "Black.Mirror.S01E03"
 
 
 def test_create_default_danmaku_service_excludes_disabled_providers() -> None:

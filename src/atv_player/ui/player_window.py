@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import html
+import inspect
 import json
 import logging
 import queue
@@ -4653,7 +4654,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
-        if force_restart_episode_titles or self._should_restart_episode_title_enhancement(previous_vod, updated_vod):
+        if force_restart_episode_titles:
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
 
@@ -8045,7 +8046,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         str(getattr(candidate, "provider_id", "") or "").strip(),
                         extra={"log_category": "metadata", "log_source": "app"},
                     )
-                    updated_playlist = build_playlist(updated_vod, playlist_snapshot, preferred_candidate=candidate)
+                    parameters = inspect.signature(build_playlist).parameters
+                    if "allow_ai_fallback" in parameters:
+                        updated_playlist = build_playlist(
+                            updated_vod,
+                            playlist_snapshot,
+                            preferred_candidate=candidate,
+                            allow_ai_fallback=False,
+                        )
+                    else:
+                        updated_playlist = build_playlist(
+                            updated_vod,
+                            playlist_snapshot,
+                            preferred_candidate=candidate,
+                        )
                 except Exception as exc:
                     episode_title_error = str(exc)
             binding_error = ""

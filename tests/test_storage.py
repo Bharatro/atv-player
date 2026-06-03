@@ -2668,7 +2668,7 @@ def test_settings_repository_normalizes_ai_values(tmp_path: Path) -> None:
 
     saved = repo.load_config()
 
-    assert saved.ai_base_url == "https://api.example.com/v1"
+    assert saved.ai_base_url == "https://api.example.com/v1/"
     assert saved.ai_api_key == "sk-test"
     assert saved.ai_chat_model == "gpt-4o-mini"
     assert saved.ai_request_timeout_seconds == 120

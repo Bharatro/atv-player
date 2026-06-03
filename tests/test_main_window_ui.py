@@ -3858,6 +3858,34 @@ def test_global_search_includes_smart_match_tab_when_controller_present(qtbot) -
     )
 
 
+def test_following_search_play_skips_smart_match_controller(qtbot) -> None:
+    telegram = SearchableController([_vod("Telegram Result")], total=1)
+    smart_controller = SmartSearchGlobalController()
+    following = FakeFollowingController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        telegram_controller=telegram,
+        following_controller=following,
+        smart_search_controller=smart_controller,
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.search_play_for_following(1)
+
+    qtbot.waitUntil(lambda: telegram.search_calls == [("凡人修仙传", 1)], timeout=1000)
+    qtbot.wait(50)
+    assert smart_controller.calls == []
+    assert all(
+        window.nav_tabs.tabText(index) != "智能匹配(1)"
+        for index in range(window.nav_tabs.count())
+    )
+
+
 def test_main_window_global_search_history_result_opens_existing_history_route(qtbot, monkeypatch) -> None:
     history = GlobalSearchHistoryController([_history_record("庆余年", key="telegram-detail-1")])
     telegram = FakeSpiderController("电报影视")
