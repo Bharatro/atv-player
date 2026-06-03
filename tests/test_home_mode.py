@@ -1,6 +1,7 @@
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QSizePolicy, QStackedWidget
 
-from atv_player.models import AppConfig, DoubanCategory
+from atv_player.models import AppConfig, DoubanCategory, VodItem
 from atv_player.ui.main_window import MainWindow
 
 from tests.test_main_window_ui import (
@@ -25,6 +26,29 @@ class ClassicCategoryController:
         del filters
         self.item_calls.append((category_id, page))
         return [], 0
+
+
+class SimplifiedRecommendationController:
+    def __init__(self) -> None:
+        self.item_calls: list[tuple[str, int]] = []
+
+    def load_categories(self):
+        return [
+            DoubanCategory(type_id="movie", type_name="电影"),
+            DoubanCategory(type_id="hot", type_name="热门推荐"),
+        ]
+
+    def load_items(self, category_id: str, page: int, filters=None):
+        del filters
+        self.item_calls.append((category_id, page))
+        return [
+            VodItem(
+                vod_id="hot-1",
+                vod_name="漫长的季节",
+                vod_pic="",
+                vod_remarks="9.4",
+            ),
+        ], 1
 
 
 def test_main_window_apply_home_mode_browse_shows_nav_tabs(qtbot) -> None:
@@ -85,6 +109,173 @@ def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
     assert not hasattr(window, "_classic_home_page") or window.header_layout.indexOf(
         window._classic_home_page.source_button
     ) < 0
+
+
+def test_main_window_apply_home_mode_simplified_shows_search_home(qtbot) -> None:
+    douban_controller = SimplifiedRecommendationController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        douban_controller=douban_controller,
+        global_search_hotkey_loader=lambda source, hot_type: [
+            {"title": f"{source}-{hot_type}-热搜", "query": "热搜查询"},
+        ],
+    )
+    qtbot.addWidget(window)
+
+    window.apply_home_mode("simplified")
+
+    assert hasattr(window, "_simplified_home_page")
+    assert window._home_stack.currentWidget() is window._simplified_home_page
+    assert window.nav_tabs.isHidden()
+    assert window.global_search_container.isHidden()
+    qtbot.waitUntil(lambda: len(window._simplified_home_page.hotword_buttons) == 1)
+    qtbot.waitUntil(
+        lambda: len(window._simplified_home_page.recommendation_buttons) == 1
+    )
+    assert ("hot", 1) in douban_controller.item_calls
+
+
+def test_main_window_simplified_search_box_starts_global_search(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        global_search_hotkey_loader=lambda source, hot_type: [],
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("simplified")
+    started_keywords: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_start_global_search",
+        lambda: started_keywords.append(window.global_search_edit.text()),
+    )
+
+    window._simplified_home_page.search_edit.setText("庆余年")
+    window._simplified_home_page.search_button.click()
+
+    assert started_keywords == ["庆余年"]
+    assert window.global_search_edit.text() == "庆余年"
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+    assert not window.global_search_container.isHidden()
+
+
+def test_main_window_simplified_clear_search_returns_to_search_home(
+    qtbot,
+    monkeypatch,
+) -> None:
+    config = AppConfig(home_mode="simplified")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        global_search_hotkey_loader=lambda source, hot_type: [],
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("simplified")
+
+    def mark_search_active() -> None:
+        window._global_search_active = True
+
+    monkeypatch.setattr(window, "_start_global_search", mark_search_active)
+    window._simplified_home_page.search_edit.setText("庆余年")
+    window._simplified_home_page.search_button.click()
+
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.global_search_container.isHidden()
+
+    window.global_search_edit.clear()
+
+    assert window._home_stack.currentWidget() is window._simplified_home_page
+    assert window.nav_tabs.isHidden()
+    assert window.global_search_container.isHidden()
+    assert window.global_search_edit.text() == ""
+    assert window._simplified_home_page.search_edit.text() == ""
+
+
+def test_main_window_simplified_hotword_and_recommendation_start_global_search(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        global_search_hotkey_loader=lambda source, hot_type: [],
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("simplified")
+    page = window._simplified_home_page
+    page.set_hotwords([{"title": "热搜一", "query": "热搜查询"}])
+    page.set_recommendations(
+        [VodItem(vod_id="rec-1", vod_name="繁花", vod_pic="", vod_remarks="热门")]
+    )
+    started_keywords: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_start_global_search",
+        lambda: started_keywords.append(window.global_search_edit.text()),
+    )
+
+    page.hotword_buttons[0].click()
+    window.apply_home_mode("simplified")
+    page.set_recommendations(
+        [VodItem(vod_id="rec-1", vod_name="繁花", vod_pic="", vod_remarks="热门")]
+    )
+    page.recommendation_buttons[0].click()
+
+    assert started_keywords == ["热搜查询", "繁花"]
+
+
+def test_main_window_simplified_recommendation_shows_poster_cover(
+    qtbot,
+    tmp_path,
+) -> None:
+    poster_path = tmp_path / "poster.png"
+    image = QImage(80, 120, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ff6a3d"))
+    assert image.save(str(poster_path))
+
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(home_mode="simplified"),
+        global_search_hotkey_loader=lambda source, hot_type: [],
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("simplified")
+    qtbot.waitUntil(
+        lambda: window._simplified_home_page.recommendations_status_label.text()
+        == "暂无热门推荐"
+    )
+
+    window._simplified_home_page.set_recommendations(
+        [
+            VodItem(
+                vod_id="rec-1",
+                vod_name="繁花",
+                vod_pic=str(poster_path),
+                vod_remarks="热门",
+            )
+        ]
+    )
+
+    qtbot.waitUntil(
+        lambda: not window._simplified_home_page.recommendation_buttons[0]
+        .icon()
+        .isNull()
+    )
 
 
 def test_main_window_switching_from_classic_to_browse_starts_deferred_plugin_load(qtbot) -> None:

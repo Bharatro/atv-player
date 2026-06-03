@@ -94,6 +94,7 @@ from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.simplified_home_page import SimplifiedHomePage
 from atv_player.ui.theme import (
     build_navigation_tabbar_qss,
     build_pill_button_qss,
@@ -2056,6 +2057,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 apply_theme()
         if hasattr(self, "_classic_home_page"):
             self._classic_home_page._apply_theme()
+        if hasattr(self, "_simplified_home_page"):
+            self._simplified_home_page._apply_theme()
 
     _HOME_MODE_LABELS = {
         "classic": "经典模式 (TvBox)",
@@ -2078,6 +2081,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if normalized == "classic":
             self._apply_classic_home_mode()
             return
+        if normalized == "simplified":
+            self._apply_simplified_home_mode()
+            return
         # Placeholder for unimplemented modes
         if not hasattr(self, "_home_mode_placeholder"):
             from PySide6.QtWidgets import QVBoxLayout
@@ -2096,6 +2102,91 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setNavigationVisible(True)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
         self._hide_classic_header_source_picker()
+
+    def _apply_simplified_home_mode(self) -> None:
+        page = self._ensure_simplified_home_page()
+        self._hide_classic_header_source_picker()
+        self._home_stack.setCurrentWidget(page)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(False)
+        self.global_search_container.setVisible(False)
+        self._start_deferred_startup_plugin_load_if_needed()
+        page.refresh_content()
+
+    def _ensure_simplified_home_page(self) -> SimplifiedHomePage:
+        if not hasattr(self, "_simplified_home_page"):
+            self._simplified_home_page = SimplifiedHomePage(
+                hotword_loader=self._load_simplified_hotwords,
+                recommendation_loader=self._load_simplified_recommendations,
+            )
+            self._simplified_home_page.search_requested.connect(self._handle_simplified_search_requested)
+            self._home_stack.addWidget(self._simplified_home_page)
+        return self._simplified_home_page
+
+    def _handle_simplified_search_requested(self, keyword: str) -> None:
+        normalized_keyword = str(keyword or "").strip()
+        if not normalized_keyword:
+            return
+        self.global_search_edit.setText(normalized_keyword)
+        self.global_search_container.setVisible(True)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
+        self._start_deferred_startup_plugin_load_if_needed()
+        self._start_global_search()
+
+    def _load_simplified_hotwords(self) -> list[dict[str, str]]:
+        source = self._global_search_hotkey_active_source
+        hot_type = self._fallback_global_search_hot_category(
+            source,
+            self._global_search_hotkey_preferred_type,
+        )
+        payload = self._call_global_search_hotkey_loader(source, hot_type)
+        result = self._normalize_global_search_hotkey_load_result(source, hot_type, payload)
+        return [
+            {
+                "title": str(item.get("title") or "").strip(),
+                "query": str(item.get("query") or item.get("title") or "").strip(),
+            }
+            for item in result.items
+            if str(item.get("title") or "").strip()
+        ]
+
+    def _load_simplified_recommendations(self) -> list[VodItem]:
+        controller = getattr(self.douban_page, "controller", None)
+        if controller is None or not callable(getattr(controller, "load_items", None)):
+            return []
+        category_id = self._simplified_recommendation_category_id(controller)
+        if not category_id:
+            return []
+        items, _total = self._load_controller_items(controller, category_id, 1)
+        return list(items)
+
+    def _simplified_recommendation_category_id(self, controller: Any) -> str:
+        load_categories = getattr(controller, "load_categories", None)
+        if not callable(load_categories):
+            return ""
+        try:
+            categories = list(load_categories())
+        except Exception:
+            return ""
+        if not categories:
+            return ""
+        preferred_terms = ("热门推荐", "热门", "推荐", "热映", "电影")
+        for term in preferred_terms:
+            for category in categories:
+                category_id = str(getattr(category, "type_id", "") or "").strip()
+                category_title = str(getattr(category, "type_name", "") or "").strip()
+                if category_id and term in f"{category_id} {category_title}":
+                    return category_id
+        return str(getattr(categories[0], "type_id", "") or "").strip()
+
+    @staticmethod
+    def _load_controller_items(controller: Any, category_id: str, page: int) -> tuple[list[Any], int]:
+        try:
+            return controller.load_items(category_id, page, filters=None)
+        except TypeError:
+            return controller.load_items(category_id, page)
 
     def _start_deferred_startup_plugin_load_if_needed(self) -> None:
         if self._startup_plugin_load_started or not callable(self._plugin_loader_task):
@@ -4102,6 +4193,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
+        if (getattr(self.config, "home_mode", "browse") or "browse") == "simplified":
+            self._return_to_simplified_home_after_global_search_clear()
+
+    def _return_to_simplified_home_after_global_search_clear(self) -> None:
+        page = self._ensure_simplified_home_page()
+        page.search_edit.blockSignals(True)
+        page.search_edit.clear()
+        page.search_edit.blockSignals(False)
+        page._sync_search_button()
+        self._apply_simplified_home_mode()
 
     def _show_global_search_result(self, result: _GlobalSearchResult) -> None:
         page_loader = self._build_global_search_page_loader(result.key)
