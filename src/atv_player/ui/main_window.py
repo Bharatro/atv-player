@@ -2078,7 +2078,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         entries = self._build_plugin_source_entries()
         if not entries:
             return
-        initial_key = entries[0].key
+        initial_key = ""
+        saved_tab = getattr(self.config, "last_selected_tab", "") or ""
+        if saved_tab.startswith("plugin:"):
+            matching = [e for e in entries if e.key == saved_tab]
+            if matching:
+                initial_key = saved_tab
+        if not initial_key:
+            initial_key = entries[0].key
         if not hasattr(self, "_classic_home_page"):
             self._classic_home_page = ClassicHomePage(entries, initial_source_key=initial_key)
             self._classic_home_page.grid_page.item_open_requested.connect(self._handle_classic_item_open)
