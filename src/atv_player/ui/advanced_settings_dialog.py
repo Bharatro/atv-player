@@ -100,6 +100,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.theme_mode_combo.addItem("浅色", "light")
         self.theme_mode_combo.addItem("深色", "dark")
         self.theme_mode_combo.addItem("跟随系统", "system")
+        self.home_mode_combo = FlatComboBox()
+        self.home_mode_combo.addItem("浏览", "browse")
+        self.home_mode_combo.addItem("经典 (TvBox)", "classic")
+        self.home_mode_combo.addItem("精简 (搜索)", "simplified")
+        self.home_mode_combo.addItem("媒体 (Emby)", "media")
+        self.home_mode_combo.addItem("电视 (直播)", "tv")
         self.theme_hint_label = QLabel("跟随系统会在应用启动时读取当前系统浅深色；播放器播放区保持偏暗。")
         self.theme_hint_label.setWordWrap(True)
         self.metadata_group = QGroupBox("元数据增强配置")
@@ -289,6 +295,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             checkbox.setChecked(source.id not in disabled_danmaku_sources)
             self.danmaku_source_checkboxes[source.id] = checkbox
         self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
+        self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
@@ -351,6 +358,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         appearance_layout = QFormLayout()
         appearance_layout.addRow("界面主题", self.theme_mode_combo)
+        appearance_layout.addRow("首页模式", self.home_mode_combo)
         appearance_layout.addRow("说明", self.theme_hint_label)
         self.appearance_group.setLayout(appearance_layout)
         appearance_tab_layout = QVBoxLayout(self.appearance_tab)
@@ -1007,6 +1015,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if ai_values is None:
             return
         self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
+        self._config.home_mode = str(self.home_mode_combo.currentData() or "browse")
         self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
         self._config.episode_title_enhancement_enabled = self.episode_title_enhancement_checkbox.isChecked()
