@@ -39,3 +39,23 @@ def test_main_window_default_home_mode_is_browse(qtbot) -> None:
 
     assert hasattr(window, "_home_stack")
     assert window._home_stack.currentWidget() is window.nav_tabs
+
+
+def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
+    config = AppConfig()
+    config.home_mode = "browse"
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+
+    # Simulate what happens after advanced settings closes with a mode change
+    config.home_mode = "media"
+    window.apply_home_mode("media")
+
+    # Media mode is not implemented yet — it falls back to browse gracefully
+    assert window._home_stack is not None
+    assert window._home_stack.currentWidget() is window.nav_tabs

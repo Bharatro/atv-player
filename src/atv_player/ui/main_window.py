@@ -4182,6 +4182,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.player_window.refresh_runtime_video_output_settings()
         if self.youtube_page is not None:
             self.youtube_page.reload_categories()
+        self.apply_home_mode(getattr(self.config, "home_mode", "browse") or "browse")
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         page.invalidate_pending_item_requests()
