@@ -56,6 +56,12 @@ def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
     config.home_mode = "media"
     window.apply_home_mode("media")
 
-    # Media mode is not implemented yet — it falls back to browse gracefully
+    # Media mode shows a placeholder page (not nav_tabs)
     assert window._home_stack is not None
+    assert hasattr(window, "_home_mode_placeholder")
+    assert window._home_stack.currentWidget() is window._home_mode_placeholder
+    assert window.nav_tabs.isHidden()
+    # Switching back to browse restores nav_tabs
+    window.apply_home_mode("browse")
     assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()

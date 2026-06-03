@@ -2030,12 +2030,37 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if callable(apply_theme):
                 apply_theme()
 
+    _HOME_MODE_LABELS = {
+        "classic": "经典模式 (TvBox)",
+        "simplified": "精简模式 (搜索)",
+        "media": "媒体模式 (Emby)",
+        "tv": "电视模式 (直播)",
+    }
+
     def apply_home_mode(self, mode: str) -> None:
         normalized = mode if mode in {"browse", "classic", "simplified", "media", "tv"} else "browse"
         if normalized == "browse":
             self._home_stack.setCurrentWidget(self.nav_tabs)
             self.nav_tabs.setVisible(True)
+            self.global_search_container.setVisible(True)
             self._refresh_navigation_tabs()
+            return
+        # Placeholder for unimplemented modes
+        if not hasattr(self, "_home_mode_placeholder"):
+            from PySide6.QtWidgets import QVBoxLayout
+            self._home_mode_placeholder = QWidget()
+            layout = QVBoxLayout(self._home_mode_placeholder)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._home_mode_placeholder_label = QLabel()
+            self._home_mode_placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._home_mode_placeholder_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+            layout.addWidget(self._home_mode_placeholder_label)
+            self._home_stack.addWidget(self._home_mode_placeholder)
+        label = self._HOME_MODE_LABELS.get(normalized, normalized)
+        self._home_mode_placeholder_label.setText(f"{label}\n\n开发中…")
+        self._home_stack.setCurrentWidget(self._home_mode_placeholder)
+        self.nav_tabs.setVisible(False)
+        self.global_search_container.setVisible(normalized in {"classic", "simplified"})
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
