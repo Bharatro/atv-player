@@ -1077,6 +1077,63 @@ def test_app_coordinator_startup_plugin_loader_prioritizes_last_plugin_restore_t
     assert captured["prioritized_plugin_ids"] == ("plugin-9", "plugin-2")
 
 
+def test_app_coordinator_classic_mode_startup_plugin_loader_only_loads_selected_plugin(
+    monkeypatch, tmp_path,
+) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            base_url="http://127.0.0.1:4567",
+            token="token-123",
+            vod_token="vod-123",
+            home_mode="classic",
+            last_playback_source="plugin",
+            last_playback_source_key="plugin-9",
+            last_selected_tab="plugin:plugin-2",
+        )
+    )
+    captured = {"plugin_loader_task": None, "plugin_ids": None}
+
+    class FakeSignal:
+        def connect(self, callback) -> None:
+            return None
+
+    class FakeMainWindow:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["plugin_loader_task"] = kwargs.get("plugin_loader_task")
+            self.logout_requested = FakeSignal()
+
+    class FakePluginManager:
+        def load_plugins(self, plugin_ids, drive_detail_loader=None, offline_download_detail_loader=None):
+            del drive_detail_loader, offline_download_detail_loader
+            captured["plugin_ids"] = tuple(plugin_ids)
+            return []
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+
+    coordinator = AppCoordinator(repo)
+    coordinator._show_main()
+
+    assert callable(captured["plugin_loader_task"])
+    list(captured["plugin_loader_task"]())
+    assert captured["plugin_ids"] == ("plugin-2",)
+
+
 def test_app_coordinator_wires_danmaku_service_into_plugin_manager(monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))

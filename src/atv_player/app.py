@@ -1732,7 +1732,7 @@ class AppCoordinator(QObject):
     def _call_plugin_loader(
         self,
         loader,
-        *,
+        *args,
         drive_detail_loader,
         offline_download_detail_loader,
         prioritized_plugin_ids: tuple[str, ...] = (),
@@ -1755,7 +1755,7 @@ class AppCoordinator(QObject):
             kwargs["prioritized_plugin_ids"] = prioritized_plugin_ids
         if accepts_kwargs or "initialize_plugins" in parameters:
             kwargs["initialize_plugins"] = initialize_plugins
-        return loader(**kwargs)
+        return loader(*args, **kwargs)
 
     def _startup_prioritized_plugin_ids(self, config: AppConfig) -> tuple[str, ...]:
         prioritized: list[str] = []
@@ -1807,6 +1807,21 @@ class AppCoordinator(QObject):
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
         prioritized_plugin_ids = self._startup_prioritized_plugin_ids(config)
         def plugin_loader_task():
+            if getattr(config, "home_mode", "browse") == "classic":
+                selected_plugin_id = ""
+                if config.last_selected_tab.startswith("plugin:"):
+                    selected_plugin_id = config.last_selected_tab.removeprefix("plugin:")
+                if not selected_plugin_id:
+                    return []
+                load_plugins = getattr(self._plugin_manager, "load_plugins", None)
+                if callable(load_plugins):
+                    return self._call_plugin_loader(
+                        load_plugins,
+                        [selected_plugin_id],
+                        drive_detail_loader=drive_detail_loader,
+                        offline_download_detail_loader=offline_download_detail_loader,
+                    )
+                return []
             return self._load_startup_spider_plugins(
                 drive_detail_loader,
                 offline_download_detail_loader,

@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QStackedWidget,
     QTabBar,
     QVBoxLayout,
@@ -1193,7 +1195,9 @@ class _NavigationTabs(QWidget):
         nav_row.setSpacing(8)
         nav_row.addWidget(self.tab_bar, 1)
         nav_row.addWidget(self.plugin_overflow_button, 0)
-        layout.addLayout(nav_row)
+        self.nav_row_widget = QWidget(self)
+        self.nav_row_widget.setLayout(nav_row)
+        layout.addWidget(self.nav_row_widget)
         layout.addWidget(self.content_stack, 1)
         self.tab_bar.currentChanged.connect(self._handle_tab_bar_changed)
 
@@ -1287,6 +1291,9 @@ class _NavigationTabs(QWidget):
         previous = super().blockSignals(block)
         self.tab_bar.blockSignals(block)
         return previous
+
+    def setNavigationVisible(self, visible: bool) -> None:
+        self.nav_row_widget.setVisible(visible)
 
     def minimumSizeHint(self) -> QSize:
         content_hint = self.content_stack.minimumSizeHint()
@@ -1402,15 +1409,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
         self._builtin_tab_definitions: list[_BuiltinTabDefinition] = []
         self._defer_navigation_refresh = True
+        self._classic_startup_mode = (getattr(config, "home_mode", "browse") or "browse") == "classic"
         self._startup_plugin_load_started = False
         self._startup_plugin_load_request_id = 0
-        self._startup_plugin_load_state = "loading" if callable(plugin_loader_task) else "idle"
+        self._startup_plugin_load_state = (
+            "loading" if callable(plugin_loader_task) and not self._classic_startup_mode else "idle"
+        )
         self._startup_plugin_load_error = ""
         self._startup_selected_category_id = str(getattr(config, "last_selected_category_id", "") or "").strip()
         selected_tab = str(getattr(config, "last_selected_tab", "") or "")
         self._startup_pending_tab_restore_key = selected_tab
         self._startup_plugin_pending_tab_restore_key = (
-            selected_tab if callable(plugin_loader_task) and selected_tab.startswith("plugin:") else ""
+            selected_tab
+            if callable(plugin_loader_task) and not self._classic_startup_mode and selected_tab.startswith("plugin:")
+            else ""
         )
         self._startup_plugin_pending_player_restore = False
         self._active_widget: QWidget | None = None
@@ -1752,9 +1764,21 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         search_layout.addWidget(self.global_search_button)
         search_layout.addWidget(self.global_search_popup_button)
         self.header_layout = QHBoxLayout()
-        self.header_layout.addStretch(1)
+        self.header_leading_spacer = QSpacerItem(
+            0,
+            0,
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
+        self.header_center_spacer = QSpacerItem(
+            0,
+            0,
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
+        self.header_layout.addItem(self.header_leading_spacer)
         self.header_layout.addWidget(self.global_search_container)
-        self.header_layout.addStretch(1)
+        self.header_layout.addItem(self.header_center_spacer)
         self.header_layout.addWidget(self.startup_plugin_status_label)
         self.header_layout.addWidget(self.startup_plugin_retry_button)
         self.header_layout.addWidget(self.browse_button)
@@ -2030,6 +2054,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             apply_theme = getattr(page, "_apply_theme", None)
             if callable(apply_theme):
                 apply_theme()
+        if hasattr(self, "_classic_home_page"):
+            self._classic_home_page._apply_theme()
 
     _HOME_MODE_LABELS = {
         "classic": "经典模式 (TvBox)",
@@ -2041,10 +2067,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def apply_home_mode(self, mode: str) -> None:
         normalized = mode if mode in {"browse", "classic", "simplified", "media", "tv"} else "browse"
         if normalized == "browse":
+            self._hide_classic_header_source_picker()
+            self.nav_tabs.setNavigationVisible(True)
             self._home_stack.setCurrentWidget(self.nav_tabs)
             self.nav_tabs.setVisible(True)
             self.global_search_container.setVisible(True)
             self._refresh_navigation_tabs()
+            self._start_deferred_startup_plugin_load_if_needed()
             return
         if normalized == "classic":
             self._apply_classic_home_mode()
@@ -2064,49 +2093,253 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._home_mode_placeholder_label.setText(f"{label}\n\n开发中…")
         self._home_stack.setCurrentWidget(self._home_mode_placeholder)
         self.nav_tabs.setVisible(False)
+        self.nav_tabs.setNavigationVisible(True)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
+        self._hide_classic_header_source_picker()
 
-    def _build_plugin_source_entries(self) -> list[SourceEntry]:
-        entries: list[SourceEntry] = []
+    def _start_deferred_startup_plugin_load_if_needed(self) -> None:
+        if self._startup_plugin_load_started or not callable(self._plugin_loader_task):
+            return
+        self._startup_plugin_load_state = "loading"
+        self._startup_plugin_load_error = ""
+        self._sync_startup_plugin_loading_ui()
+        self._start_startup_plugin_load()
+
+    def _build_classic_source_entries(self) -> list[SourceEntry]:
+        builtin_entries: list[SourceEntry] = []
+        plugin_entries: list[SourceEntry] = []
+        for definition in self._visible_builtin_tab_definitions():
+            if definition.global_search_only:
+                continue
+            page = definition.page
+            controller = definition.search_controller
+            if controller is None and isinstance(page, PosterGridPage):
+                controller = getattr(page, "controller", None)
+            builtin_entries.append(
+                SourceEntry(
+                    key=definition.key,
+                    title=definition.title,
+                    controller=controller,
+                    search_enabled=controller is not None and callable(getattr(controller, "search_items", None)),
+                    source_kind="builtin",
+                )
+            )
+        loaded_plugin_entries: dict[str, SourceEntry] = {}
         for definition in self._plugin_tab_definitions:
             controller = definition.search_controller
             if controller is not None:
-                entries.append(SourceEntry(key=definition.key, title=definition.title, controller=controller))
+                loaded_plugin_entries[definition.key] = SourceEntry(
+                    key=definition.key,
+                    title=definition.title,
+                    controller=controller,
+                    search_enabled=callable(getattr(controller, "search_items", None)),
+                    source_kind="plugin",
+                )
+        plugin_metadata_entries = self._classic_plugin_metadata_entries()
+        if plugin_metadata_entries:
+            for entry in plugin_metadata_entries:
+                plugin_entries.append(loaded_plugin_entries.pop(entry.key, entry))
+            plugin_entries.extend(loaded_plugin_entries.values())
+        else:
+            plugin_entries.extend(loaded_plugin_entries.values())
+        return [*builtin_entries, *plugin_entries]
+
+    def _classic_plugin_metadata_entries(self) -> list[SourceEntry]:
+        if self._plugin_manager is None:
+            return []
+        list_plugins = getattr(self._plugin_manager, "list_plugins", None)
+        if not callable(list_plugins):
+            return []
+        entries: list[SourceEntry] = []
+        try:
+            plugins = list_plugins()
+        except Exception:
+            return []
+        for plugin in plugins or []:
+            if not bool(getattr(plugin, "enabled", False)):
+                continue
+            plugin_id = str(getattr(plugin, "id", "") or "")
+            if not plugin_id:
+                continue
+            title = str(getattr(plugin, "display_name", "") or getattr(plugin, "name", "") or "插件")
+            entries.append(
+                SourceEntry(
+                    key=f"plugin:{plugin_id}",
+                    title=title,
+                    controller=None,
+                    search_enabled=True,
+                    source_kind="plugin",
+                )
+            )
         return entries
 
     def _apply_classic_home_mode(self) -> None:
-        entries = self._build_plugin_source_entries()
+        entries = self._build_classic_source_entries()
         if not entries:
             return
         initial_key = ""
         saved_tab = getattr(self.config, "last_selected_tab", "") or ""
-        if saved_tab.startswith("plugin:"):
+        if saved_tab:
             matching = [e for e in entries if e.key == saved_tab]
             if matching:
                 initial_key = saved_tab
         if not initial_key:
             initial_key = entries[0].key
         if not hasattr(self, "_classic_home_page"):
-            self._classic_home_page = ClassicHomePage(entries, initial_source_key=initial_key)
-            self._classic_home_page.grid_page.item_open_requested.connect(self._handle_classic_item_open)
+            self._classic_home_page = ClassicHomePage(
+                entries,
+                initial_source_key=initial_key,
+                initial_category_id=self._initial_category_id_for_tab(initial_key),
+            )
+            self._classic_home_page.item_open_requested.connect(self._handle_classic_item_open)
+            self._classic_home_page.source_changed.connect(self._handle_classic_source_changed)
+            self._classic_home_page.category_selected.connect(self._handle_classic_category_selected)
             self._home_stack.addWidget(self._classic_home_page)
+        else:
+            self._classic_home_page.set_source_entries(entries, preferred_key=initial_key)
+        self._show_classic_header_source_picker()
         self._home_stack.setCurrentWidget(self._classic_home_page)
+        self.nav_tabs.setNavigationVisible(False)
         self.nav_tabs.setVisible(False)
         self.global_search_container.setVisible(True)
+        self._handle_classic_source_changed(self._classic_home_page.current_source_key())
+
+    def _refresh_classic_source_entries_if_active(self) -> None:
+        if not hasattr(self, "_classic_home_page"):
+            return
+        preferred_key = str(getattr(self.config, "last_selected_tab", "") or "")
+        self._classic_home_page.set_source_entries(self._build_classic_source_entries(), preferred_key=preferred_key)
+
+    def _handle_classic_source_changed(self, source_key: str) -> None:
+        if source_key and self.config.last_selected_tab != source_key:
+            self.config.last_selected_tab = source_key
+            self._save_config()
+        if source_key and not source_key.startswith("plugin:"):
+            definition = self._builtin_tab_definition_by_key(source_key)
+            if definition is not None and not isinstance(definition.page, PosterGridPage):
+                self._show_builtin_page_in_home_stack(definition)
+            elif hasattr(self, "_classic_home_page"):
+                self._home_stack.setCurrentWidget(self._classic_home_page)
+                self.nav_tabs.setNavigationVisible(False)
+                self.nav_tabs.setVisible(False)
+        if not source_key.startswith("plugin:"):
+            return
+        if hasattr(self, "_classic_home_page"):
+            self._home_stack.setCurrentWidget(self._classic_home_page)
+            self.nav_tabs.setNavigationVisible(False)
+            self.nav_tabs.setVisible(False)
+        if next((entry for entry in self._build_classic_source_entries() if entry.key == source_key and entry.controller is not None), None):
+            return
+        plugin_id = source_key.removeprefix("plugin:")
+        loaded_definitions = self._load_plugin_definitions_with_manager("load_plugins", [plugin_id])
+        if not loaded_definitions:
+            return
+        loaded_by_id = {str(_plugin_value(definition, "id") or ""): definition for definition in loaded_definitions}
+        definition = loaded_by_id.get(plugin_id)
+        if definition is None:
+            return
+        existing_index = next(
+            (index for index, current in enumerate(self._plugin_definitions) if str(_plugin_value(current, "id") or "") == plugin_id),
+            -1,
+        )
+        if existing_index >= 0:
+            self._plugin_definitions[existing_index] = definition
+        else:
+            self._plugin_definitions.append(definition)
+        page_entry = next((entry for entry in self._plugin_pages if entry[2] == plugin_id), None)
+        if page_entry is not None:
+            page_entry[0].deleteLater()
+            self._plugin_pages = [entry for entry in self._plugin_pages if entry[2] != plugin_id]
+            self._plugin_tab_definitions = [
+                current for current in self._plugin_tab_definitions if current.key != source_key
+            ]
+        page, controller, current_plugin_id, tab_definition = self._create_plugin_page_entry(definition)
+        self._plugin_pages.append((page, controller, current_plugin_id))
+        self._plugin_tab_definitions.append(tab_definition)
+        self._refresh_classic_source_entries_if_active()
+        self._refresh_visible_tabs()
+
+    def _handle_classic_category_selected(self, category_id: str) -> None:
+        if not hasattr(self, "_classic_home_page"):
+            return
+        self._remember_selected_category_key(self._classic_home_page.current_source_key(), category_id)
+
+    def _show_classic_header_source_picker(self) -> None:
+        if not hasattr(self, "_classic_home_page"):
+            return
+        source_button = self._classic_home_page.source_button
+        if self.header_layout.indexOf(source_button) < 0:
+            self.header_layout.insertWidget(0, source_button)
+        source_button.show()
+        self.header_layout.invalidate()
+
+    def _hide_classic_header_source_picker(self) -> None:
+        if hasattr(self, "_classic_home_page"):
+            source_button = self._classic_home_page.source_button
+            if self.header_layout.indexOf(source_button) >= 0:
+                self.header_layout.removeWidget(source_button)
+                source_button.setParent(self._classic_home_page)
+                source_button.hide()
+            self._classic_home_page._hide_source_popup()
+        self.header_layout.invalidate()
 
     def _handle_classic_item_open(self, item) -> None:
         if not hasattr(self, "_classic_home_page"):
             return
         source_key = self._classic_home_page.current_source_key()
         entry = next(
-            (e for e in self._build_plugin_source_entries() if e.key == source_key),
+            (e for e in self._build_classic_source_entries() if e.key == source_key),
             None,
         )
         if entry is None:
             return
         controller = entry.controller
-        plugin_id = source_key.replace("plugin:", "", 1) if source_key.startswith("plugin:") else ""
-        self._open_spider_item(controller, plugin_id, item)
+        if source_key.startswith("plugin:"):
+            plugin_id = source_key.replace("plugin:", "", 1)
+            self._open_spider_item(controller, plugin_id, item)
+            return
+        self._handle_classic_builtin_item_open(source_key, controller, item)
+
+    def _handle_classic_builtin_item_open(self, source_key: str, controller: Any, item: Any) -> None:
+        if source_key == "telegram":
+            self._skip_next_telegram_open_request_vod_id = str(getattr(item, "vod_id", "") or "")
+
+            def build_request() -> OpenPlayerRequest:
+                request = controller.build_request(getattr(item, "vod_id", ""))
+                return self._apply_request_fallback_metadata(request, item, prefer_fallback_media_title=True)
+
+            self._start_open_request(build_request)
+            return
+        if source_key in {"bilibili", "emby", "jellyfin", "feiniu"} and getattr(item, "vod_tag", "") == "folder":
+            if hasattr(self, "_classic_home_page"):
+                self._open_media_folder(self._classic_home_page.grid_page, controller, item)
+            return
+        if source_key == "youtube":
+            fast_request_builder = getattr(controller, "build_request_from_item", None)
+            if callable(fast_request_builder):
+                try:
+                    request = fast_request_builder(item)
+                except Exception as exc:
+                    self.show_error(str(exc))
+                    return
+                self.open_player(request)
+                return
+            normalized_vod_id = str(getattr(item, "vod_id", "") or "").strip()
+            if normalized_vod_id and normalized_vod_id == self._youtube_open_request_vod_id:
+                self._append_player_status_log("详情仍在加载中...")
+                return
+            self._youtube_open_request_vod_id = normalized_vod_id
+            placeholder_request = self._build_placeholder_player_request(item, source_kind="youtube")
+            self._open_player_immediately(placeholder_request)
+
+            def build_request() -> OpenPlayerRequest:
+                request = controller.build_request(getattr(item, "vod_id", ""))
+                return self._apply_request_fallback_metadata(request, item)
+
+            self._youtube_open_request_id = self._start_open_request(build_request)
+            return
+        if callable(getattr(controller, "build_request", None)):
+            self._start_open_request(lambda: controller.build_request(getattr(item, "vod_id", "")))
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
@@ -2433,6 +2666,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         selected_key = self._tab_key_for_widget(widget)
         if selected_key is None:
+            return
+        self._remember_selected_category_key(selected_key, category_id)
+
+    def _remember_selected_category_key(self, selected_key: str, category_id: str) -> None:
+        if not selected_key or not category_id:
             return
         if (
             self.config.last_selected_category_tab == selected_key
@@ -2785,7 +3023,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._sync_plugin_overflow_drawer()
         if self._global_search_active:
             return
-        self._remember_selected_tab(widget)
+        if (getattr(self.config, "home_mode", "browse") or "browse") != "classic":
+            self._remember_selected_tab(widget)
         if isinstance(widget, PosterGridPage):
             self._remember_selected_category(widget, widget.selected_category_id)
         if widget is self.douban_page:
@@ -2949,6 +3188,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         definition = self._builtin_tab_definition_by_key(tab_key)
         if definition is None:
             return
+        if hasattr(self, "_classic_home_page"):
+            self._classic_home_page.select_source_key(tab_key, emit=False)
+            if self.config.last_selected_tab != tab_key:
+                self.config.last_selected_tab = tab_key
+                self._save_config()
+        self._show_builtin_page_in_home_stack(definition)
+
+    def _show_builtin_page_in_home_stack(self, definition: _BuiltinTabDefinition) -> None:
+        self.nav_tabs.setNavigationVisible(False)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
         self.nav_tabs.setCurrentWidget(definition.page)
 
     def _handle_tab_context_menu_requested(self, pos: QPoint) -> None:
@@ -4224,6 +4474,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._save_config()
         self._builtin_tab_definitions = self._build_builtin_tab_definitions()
         self._refresh_navigation_tabs()
+        self._refresh_classic_source_entries_if_active()
 
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:
@@ -5743,7 +5994,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             app.applicationStateChanged.connect(self._handle_application_state_changed)
             self._app_state_signal_connected = True
         self._refresh_navigation_tabs()
-        self._start_startup_plugin_load()
+        if (getattr(self.config, "home_mode", "browse") or "browse") != "classic":
+            self._start_startup_plugin_load()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

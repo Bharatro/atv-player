@@ -96,6 +96,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.cache_tab = QWidget()
         self.logs_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
+        self.homepage_group = QGroupBox("首页模式")
         self.theme_mode_combo = FlatComboBox()
         self.theme_mode_combo.addItem("浅色", "light")
         self.theme_mode_combo.addItem("深色", "dark")
@@ -358,11 +359,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         appearance_layout = QFormLayout()
         appearance_layout.addRow("界面主题", self.theme_mode_combo)
-        appearance_layout.addRow("首页模式", self.home_mode_combo)
         appearance_layout.addRow("说明", self.theme_hint_label)
         self.appearance_group.setLayout(appearance_layout)
+        homepage_layout = QFormLayout()
+        homepage_layout.addRow("模式", self.home_mode_combo)
+        self.homepage_group.setLayout(homepage_layout)
         appearance_tab_layout = QVBoxLayout(self.appearance_tab)
         appearance_tab_layout.addWidget(self.appearance_group)
+        appearance_tab_layout.addWidget(self.homepage_group)
         appearance_tab_layout.addStretch(1)
 
         metadata_layout = QFormLayout()
@@ -555,6 +559,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         line_edit_qss = build_form_line_edit_qss(tokens)
         for combo in (
             self.theme_mode_combo,
+            self.home_mode_combo,
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
             self.youtube_max_height_combo,

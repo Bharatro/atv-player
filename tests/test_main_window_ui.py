@@ -6405,10 +6405,27 @@ def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None
     qtbot.addWidget(dialog)
 
     assert "QComboBox::drop-down" in dialog.theme_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.styleSheet() == dialog.home_mode_combo.styleSheet()
     assert dialog.theme_mode_combo.styleSheet() == dialog.network_proxy_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.property("flat_combo_border_color") == dialog.home_mode_combo.property(
+        "flat_combo_border_color"
+    )
     assert dialog.theme_mode_combo.property("flat_combo_border_color") == dialog.network_proxy_mode_combo.property(
         "flat_combo_border_color"
     )
+
+
+def test_advanced_settings_dialog_keeps_home_mode_in_separate_appearance_area(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.appearance_group.title() == "外观"
+    assert dialog.homepage_group.title() == "首页模式"
+    assert dialog.appearance_group.layout().labelForField(dialog.theme_mode_combo).text() == "界面主题"
+    assert dialog.appearance_group.layout().labelForField(dialog.home_mode_combo) is None
+    assert dialog.homepage_group.layout().labelForField(dialog.home_mode_combo).text() == "模式"
 
 
 def test_advanced_settings_dialog_applies_branded_line_edit_styles(qtbot) -> None:
