@@ -135,6 +135,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         search_enabled: bool = False,
         folder_navigation_enabled: bool = False,
         initial_category_id: str = "",
+        category_layout: str = "list",
     ) -> None:
         super().__init__()
         self._init_async_guard()
@@ -143,6 +144,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_enabled = search_enabled
         self._folder_navigation_enabled = folder_navigation_enabled
         self._initial_category_id = initial_category_id
+        self._category_layout = category_layout
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
@@ -154,6 +156,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_row: QHBoxLayout | None = None
         self._search_controls_container: QWidget | None = None
         self.category_list = QListWidget()
+        if self._category_layout == "tabs":
+            self.category_list.setHidden(True)
         self.keyword_edit = QLineEdit()
         self.keyword_edit.setClearButtonEnabled(True)
         self.search_button = QPushButton("搜索")
@@ -362,6 +366,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             0,
         )
         self.category_list.setCurrentRow(target_row)
+        if self._category_layout == "tabs":
+            self.category_list.setHidden(True)
 
     def _current_category(self):
         row = self.category_list.currentRow()
@@ -770,7 +776,10 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.load_items(self.selected_category_id, self.current_page)
 
     def _sync_category_list_visibility(self) -> None:
-        self.category_list.setHidden(self._external_results_active)
+        if self._category_layout == "tabs":
+            self.category_list.setHidden(True)
+        else:
+            self.category_list.setHidden(self._external_results_active)
 
     def _sync_search_controls_visibility(self) -> None:
         if self._search_controls_container is None:
