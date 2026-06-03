@@ -73,6 +73,7 @@ from atv_player.player.startup import PlaybackStartupStage
 from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.browse_page import BrowsePage
+from atv_player.ui.classic_home_page import ClassicHomePage, SourceEntry
 from atv_player.ui.favorites_page import FavoritesPage
 from atv_player.ui.following_detail_page import FollowingDetailPage
 from atv_player.ui.following_page import FollowingPage
@@ -2045,6 +2046,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.global_search_container.setVisible(True)
             self._refresh_navigation_tabs()
             return
+        if normalized == "classic":
+            self._apply_classic_home_mode()
+            return
         # Placeholder for unimplemented modes
         if not hasattr(self, "_home_mode_placeholder"):
             from PySide6.QtWidgets import QVBoxLayout
@@ -2061,6 +2065,41 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._home_stack.setCurrentWidget(self._home_mode_placeholder)
         self.nav_tabs.setVisible(False)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
+
+    def _build_plugin_source_entries(self) -> list[SourceEntry]:
+        entries: list[SourceEntry] = []
+        for definition in self._plugin_tab_definitions:
+            controller = definition.search_controller
+            if controller is not None:
+                entries.append(SourceEntry(key=definition.key, title=definition.title, controller=controller))
+        return entries
+
+    def _apply_classic_home_mode(self) -> None:
+        entries = self._build_plugin_source_entries()
+        if not entries:
+            return
+        initial_key = entries[0].key
+        if not hasattr(self, "_classic_home_page"):
+            self._classic_home_page = ClassicHomePage(entries, initial_source_key=initial_key)
+            self._classic_home_page.grid_page.item_open_requested.connect(self._handle_classic_item_open)
+            self._home_stack.addWidget(self._classic_home_page)
+        self._home_stack.setCurrentWidget(self._classic_home_page)
+        self.nav_tabs.setVisible(False)
+        self.global_search_container.setVisible(True)
+
+    def _handle_classic_item_open(self, item) -> None:
+        if not hasattr(self, "_classic_home_page"):
+            return
+        source_key = self._classic_home_page.current_source_key()
+        entry = next(
+            (e for e in self._build_plugin_source_entries() if e.key == source_key),
+            None,
+        )
+        if entry is None:
+            return
+        controller = entry.controller
+        plugin_id = source_key.replace("plugin:", "", 1) if source_key.startswith("plugin:") else ""
+        self._open_spider_item(controller, plugin_id, item)
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)

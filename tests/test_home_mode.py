@@ -65,3 +65,27 @@ def test_main_window_applies_home_mode_after_config_change(qtbot) -> None:
     window.apply_home_mode("browse")
     assert window._home_stack.currentWidget() is window.nav_tabs
     assert not window.nav_tabs.isHidden()
+
+
+def test_main_window_apply_home_mode_classic_shows_classic_page(qtbot) -> None:
+    from atv_player.ui.main_window import _TabDefinition
+
+    config = AppConfig()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+
+    # Inject a fake plugin tab definition so _build_plugin_source_entries finds one
+    window._plugin_tab_definitions = [
+        _TabDefinition("plugin:1", "测试源", None, FakeStaticController()),
+    ]
+
+    window.apply_home_mode("classic")
+
+    assert hasattr(window, "_classic_home_page")
+    assert window._home_stack.currentWidget() is window._classic_home_page
+    assert window.nav_tabs.isHidden()
