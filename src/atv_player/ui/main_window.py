@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
 from atv_player.controllers.browse_controller import _map_vod_item
+from atv_player.controllers.live_controller import _looks_like_stream_url
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
@@ -65,9 +66,13 @@ from atv_player.models import (
     BuiltinTabOverrides,
     FavoriteRecord,
     HistoryRecord,
+    LiveSourceConfig,
     OpenPlayerRequest,
+    PlaybackSource,
+    PlaybackSourceGroup,
     PlaybackDetailFieldAction,
     PlayItem,
+    VideoQualityOption,
     VodItem,
 )
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -1416,11 +1421,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._hidden_plugin_tab_definitions: list[_TabDefinition] = []
         self._builtin_tab_definitions: list[_BuiltinTabDefinition] = []
         self._defer_navigation_refresh = True
-        self._classic_startup_mode = (getattr(config, "home_mode", "browse") or "browse") == "classic"
+        startup_home_mode = getattr(config, "home_mode", "browse") or "browse"
+        self._classic_startup_mode = startup_home_mode == "classic"
+        self._startup_plugin_load_deferred_by_home_mode = startup_home_mode in {"classic", "tv"}
         self._startup_plugin_load_started = False
         self._startup_plugin_load_request_id = 0
         self._startup_plugin_load_state = (
-            "loading" if callable(plugin_loader_task) and not self._classic_startup_mode else "idle"
+            "loading" if callable(plugin_loader_task) and not self._startup_plugin_load_deferred_by_home_mode else "idle"
         )
         self._startup_plugin_load_error = ""
         self._startup_selected_category_id = str(getattr(config, "last_selected_category_id", "") or "").strip()
@@ -1428,7 +1435,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._startup_pending_tab_restore_key = selected_tab
         self._startup_plugin_pending_tab_restore_key = (
             selected_tab
-            if callable(plugin_loader_task) and not self._classic_startup_mode and selected_tab.startswith("plugin:")
+            if callable(plugin_loader_task) and not self._startup_plugin_load_deferred_by_home_mode and selected_tab.startswith("plugin:")
             else ""
         )
         self._startup_plugin_pending_player_restore = False
@@ -1572,6 +1579,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_snooze_button: QPushButton | None = None
         self._following_prompt_close_handled = False
         self._open_request_id = 0
+        self._tv_open_request_id = 0
+        self._tv_auto_open_scheduled = False
+        self._tv_playlist_request_id = 0
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
@@ -1580,6 +1590,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
         self._connect_async_signal(self._open_request_signals.failed, self._handle_open_request_failed)
+        self._tv_playlist_signals = _AsyncRequestSignals()
+        self._connect_async_signal(self._tv_playlist_signals.succeeded, self._handle_tv_playlist_enrichment_succeeded)
+        self._connect_async_signal(self._tv_playlist_signals.failed, self._handle_tv_playlist_enrichment_failed)
         self._plugin_open_request_id = 0
         self._plugin_open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(
@@ -2084,6 +2097,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def apply_home_mode(self, mode: str) -> None:
         normalized = mode if mode in {"browse", "classic", "simplified", "media", "tv"} else "browse"
+        self._active_home_mode = normalized
         if normalized == "browse":
             self._hide_classic_header_source_picker()
             self.nav_tabs.setNavigationVisible(True)
@@ -2091,7 +2105,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.nav_tabs.setVisible(True)
             self.global_search_container.setVisible(True)
             self._refresh_navigation_tabs()
-            self._start_deferred_startup_plugin_load_if_needed()
+            self._start_deferred_startup_plugin_load_if_needed(force=True)
             return
         if normalized == "classic":
             self._apply_classic_home_mode()
@@ -2102,7 +2116,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if normalized == "media":
             self._apply_media_home_mode()
             return
-        # Placeholder for unimplemented modes
+        if normalized == "tv":
+            self._apply_tv_home_mode()
+            return
+        # Placeholder for future modes
         if not hasattr(self, "_home_mode_placeholder"):
             from PySide6.QtWidgets import QVBoxLayout
             self._home_mode_placeholder = QWidget()
@@ -2120,6 +2137,512 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.nav_tabs.setNavigationVisible(True)
         self.global_search_container.setVisible(normalized in {"classic", "simplified"})
         self._hide_classic_header_source_picker()
+
+    def _apply_tv_home_mode(self) -> None:
+        self._hide_classic_header_source_picker()
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(False)
+        self.global_search_container.setVisible(False)
+        self.global_search_status_label.setText("正在打开电视直播...")
+        self._tv_open_request_id = self._start_open_request(self._build_tv_live_player_request)
+
+    def _ordered_enabled_live_sources(self) -> list[LiveSourceConfig]:
+        list_sources = getattr(self._live_source_manager, "list_sources", None)
+        if not callable(list_sources):
+            return []
+        sources = [source for source in list_sources() if bool(getattr(source, "enabled", False))]
+        return sorted(
+            sources,
+            key=lambda source: (
+                not bool(getattr(source, "is_default", False)),
+                int(getattr(source, "sort_order", 0) or 0),
+                int(getattr(source, "id", 0) or 0),
+            ),
+        )
+
+    def _build_tv_live_player_request(self) -> OpenPlayerRequest:
+        sources = self._ordered_enabled_live_sources()
+        if not sources:
+            raise ValueError("暂无启用的直播源")
+
+        playback_sources: list[PlaybackSource] = []
+        resolved_vod_by_id: dict[str, VodItem] = {}
+        for source in sources:
+            playlist = self._load_tv_live_source_playlist(source, resolved_vod_by_id)
+            if not playlist:
+                continue
+            label = str(getattr(source, "display_name", "") or "").strip() or f"直播源 {getattr(source, 'id', '')}"
+            playback_sources.append(PlaybackSource(label=label, playlist=playlist))
+
+        if not playback_sources:
+            raise ValueError("启用的直播源没有可播放频道")
+
+        selected_source_index, selected_item_index = self._preferred_tv_live_source_item_index(playback_sources)
+        selected_playlist = playback_sources[selected_source_index].playlist
+        selected_item = selected_playlist[selected_item_index]
+        selected_vod = resolved_vod_by_id.get(selected_item.vod_id) or VodItem(
+            vod_id=selected_item.vod_id,
+            vod_name=selected_item.title,
+            vod_pic=selected_item.video_cover_override,
+            detail_style="live",
+            type_name=selected_item.type_name,
+            category_name=selected_item.category_name,
+        )
+        source_groups = [PlaybackSourceGroup(label="直播源", sources=playback_sources)]
+        return OpenPlayerRequest(
+            vod=selected_vod,
+            playlist=selected_playlist,
+            clicked_index=selected_item_index,
+            playlists=[source.playlist for source in playback_sources],
+            playlist_index=selected_source_index,
+            source_groups=source_groups,
+            source_group_index=0,
+            source_index=selected_source_index,
+            source_kind="live",
+            source_key="tv",
+            source_mode="tv",
+            source_vod_id=selected_item.vod_id,
+            source_clicked_vod_id=selected_item.vod_id,
+            detail_resolver=lambda item, resolved=resolved_vod_by_id: resolved.get(item.vod_id),
+            resolved_vod_by_id=resolved_vod_by_id,
+            playback_progress_reporter=self._record_tv_live_playback_progress,
+            use_local_history=False,
+        )
+
+    def _preferred_tv_live_source_item_index(self, playback_sources: list[PlaybackSource]) -> tuple[int, int]:
+        preferred_vod_id = self._preferred_tv_live_vod_id()
+        if preferred_vod_id:
+            for source_index, source in enumerate(playback_sources):
+                for item_index, item in enumerate(source.playlist):
+                    if str(item.vod_id or "").strip() == preferred_vod_id:
+                        return source_index, item_index
+        return 0, 0
+
+    def _load_tv_live_source_playlist(
+        self,
+        source: LiveSourceConfig,
+        resolved_vod_by_id: dict[str, VodItem],
+    ) -> list[PlayItem]:
+        source_id = int(getattr(source, "id", 0) or 0)
+        if source_id <= 0:
+            return []
+        load_channel_views = getattr(self._live_source_manager, "load_channel_views", None)
+        if callable(load_channel_views):
+            playlist = self._load_tv_live_channel_views_playlist(
+                list(load_channel_views(source_id)),
+                source,
+                resolved_vod_by_id,
+            )
+            if playlist:
+                return playlist
+        items, _total = self.live_controller.load_items(f"custom:{source_id}", 1)
+        return self._load_tv_live_items_playlist(
+            list(items),
+            source,
+            resolved_vod_by_id,
+        )
+
+    def _load_tv_live_channel_views_playlist(
+        self,
+        views: list[Any],
+        source: LiveSourceConfig,
+        resolved_vod_by_id: dict[str, VodItem],
+    ) -> list[PlayItem]:
+        playlist: list[PlayItem] = []
+        source_id = int(getattr(source, "id", 0) or 0)
+        source_label = str(getattr(source, "display_name", "") or "").strip()
+        for view in views:
+            stream_url = str(getattr(view, "stream_url", "") or "").strip()
+            if not _looks_like_stream_url(stream_url):
+                continue
+            channel_id = str(getattr(view, "channel_id", "") or "").strip()
+            vod_id = f"custom-channel:{source_id}:{channel_id}" if source_id > 0 and channel_id else channel_id
+            channel_title = str(getattr(view, "channel_name", "") or "").strip() or "直播频道"
+            poster = str(getattr(view, "logo_url", "") or "").strip()
+            epg_current = str(getattr(view, "epg_current", "") or "").strip()
+            epg_schedule = str(getattr(view, "epg_schedule", "") or "").strip()
+            playback_qualities = list(getattr(view, "playback_qualities", []) or [])
+            play_item = PlayItem(
+                title=channel_title,
+                url=stream_url,
+                vod_id=vod_id,
+                index=len(playlist),
+                headers=dict(getattr(view, "headers", {}) or {}),
+                video_cover_override=poster,
+                play_source=source_label,
+                media_title=channel_title,
+                type_name="直播",
+                category_name=source_label,
+                playback_qualities=playback_qualities,
+                selected_playback_quality_id=playback_qualities[0].id if playback_qualities else "",
+            )
+            playlist.append(play_item)
+            if vod_id and vod_id not in resolved_vod_by_id:
+                resolved_vod_by_id[vod_id] = VodItem(
+                    vod_id=vod_id,
+                    vod_name=channel_title,
+                    vod_pic=poster,
+                    detail_style="live",
+                    type_name="直播",
+                    category_name=source_label,
+                    epg_current=epg_current,
+                    epg_schedule=epg_schedule,
+                )
+        return playlist
+
+    def _load_tv_live_items_playlist(
+        self,
+        items: list[VodItem],
+        source: LiveSourceConfig,
+        resolved_vod_by_id: dict[str, VodItem],
+    ) -> list[PlayItem]:
+        playlist: list[PlayItem] = []
+        for item in items:
+            if getattr(item, "vod_tag", "") == "folder":
+                try:
+                    child_items, _total = self.live_controller.load_folder_items(item.vod_id)
+                except Exception:
+                    continue
+                playlist.extend(
+                    self._load_tv_live_items_playlist(
+                        list(child_items),
+                        source,
+                        resolved_vod_by_id,
+                    )
+                )
+                continue
+            built = self._build_tv_live_channel_play_item(item, source)
+            if built is None:
+                continue
+            play_item, resolved_vod = built
+            play_item.index = len(playlist)
+            playlist.append(play_item)
+            if play_item.vod_id and play_item.vod_id not in resolved_vod_by_id:
+                resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        return playlist
+
+    def _build_tv_live_channel_play_item(
+        self,
+        item: VodItem,
+        source: LiveSourceConfig,
+    ) -> tuple[PlayItem, VodItem] | None:
+        try:
+            request = self.live_controller.build_request(item.vod_id)
+            normalized = self._normalize_tv_live_player_request(request, source=source)
+        except Exception:
+            return None
+        if not normalized.playlist:
+            return None
+        return normalized.playlist[0], normalized.vod
+
+    def _start_tv_playlist_enrichment(self, active_vod_id: str, *, full: bool) -> None:
+        self._tv_playlist_request_id += 1
+        request_id = self._tv_playlist_request_id
+
+        def run() -> None:
+            try:
+                if full:
+                    payload = self._build_tv_live_full_playlist_payload(active_vod_id)
+                else:
+                    payload = self._build_tv_live_current_source_playlist_payload(active_vod_id)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._tv_playlist_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._tv_playlist_signals.succeeded.emit(request_id, payload)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _build_tv_live_current_source_playlist_payload(self, active_vod_id: str) -> dict[str, object]:
+        sources = self._ordered_enabled_live_sources()
+        if not sources:
+            raise ValueError("暂无启用的直播源")
+        active_source = self._tv_live_source_for_vod_id(active_vod_id, sources) or sources[0]
+        active_source_id = int(getattr(active_source, "id", 0) or 0)
+        resolved_vod_by_id: dict[str, VodItem] = {}
+        playback_sources: list[PlaybackSource] = []
+        for source in sources:
+            source_id = int(getattr(source, "id", 0) or 0)
+            label = str(getattr(source, "display_name", "") or "").strip() or f"直播源 {source_id}"
+            playlist = (
+                self._load_tv_live_source_playlist(source, resolved_vod_by_id)
+                if source_id == active_source_id
+                else []
+            )
+            playback_sources.append(PlaybackSource(label=label, playlist=playlist))
+        if not any(source.playlist for source in playback_sources):
+            raise ValueError("当前直播源没有可播放频道")
+        return {
+            "stage": "current",
+            "active_vod_id": active_vod_id,
+            "source_groups": [PlaybackSourceGroup(label="直播源", sources=playback_sources)],
+            "resolved_vod_by_id": resolved_vod_by_id,
+        }
+
+    def _build_tv_live_full_playlist_payload(self, active_vod_id: str) -> dict[str, object]:
+        playback_sources: list[PlaybackSource] = []
+        resolved_vod_by_id: dict[str, VodItem] = {}
+        for source in self._ordered_enabled_live_sources():
+            playlist = self._load_tv_live_source_playlist(source, resolved_vod_by_id)
+            if not playlist:
+                continue
+            label = str(getattr(source, "display_name", "") or "").strip() or f"直播源 {getattr(source, 'id', '')}"
+            playback_sources.append(PlaybackSource(label=label, playlist=playlist))
+        if not playback_sources:
+            raise ValueError("启用的直播源没有可播放频道")
+        return {
+            "stage": "full",
+            "active_vod_id": active_vod_id,
+            "source_groups": [PlaybackSourceGroup(label="直播源", sources=playback_sources)],
+            "resolved_vod_by_id": resolved_vod_by_id,
+        }
+
+    def _handle_tv_playlist_enrichment_succeeded(self, request_id: int, payload: object) -> None:
+        if request_id != self._tv_playlist_request_id or not isinstance(payload, dict):
+            return
+        player = self.player_window
+        session = getattr(player, "session", None)
+        if player is None or session is None:
+            return
+        if str(getattr(session, "source_kind", "") or "") != "live":
+            return
+        if str(getattr(session, "source_key", "") or "") != "tv":
+            return
+        source_groups = list(payload.get("source_groups") or [])
+        if not source_groups:
+            return
+        current_vod_id = self._current_player_vod_id() or str(payload.get("active_vod_id", "") or "").strip()
+        location = self._find_vod_in_source_groups(source_groups, current_vod_id)
+        if location is None:
+            return
+        group_index, source_index, item_index = location
+        flatten = getattr(player, "_flatten_source_groups", None)
+        if not callable(flatten):
+            return
+        playlists, mapping = flatten(source_groups)
+        if (group_index, source_index) not in mapping:
+            return
+        session.source_groups = source_groups
+        session.playlists = playlists
+        session.source_group_index = group_index
+        session.source_index = source_index
+        session.playlist_index = mapping[(group_index, source_index)]
+        session.playlist = source_groups[group_index].sources[source_index].playlist
+        session.resolved_vod_by_id = dict(payload.get("resolved_vod_by_id") or {})
+        session.detail_resolver = lambda item, resolved=session.resolved_vod_by_id: resolved.get(item.vod_id)
+        player.current_index = item_index
+        for method_name in (
+            "_render_playlist_source_combos",
+            "_render_playlist_title_tabs",
+            "_render_playlist_items",
+            "_render_bilibili_playlist_tree",
+            "_sync_playlist_panel_mode",
+        ):
+            method = getattr(player, method_name, None)
+            if callable(method):
+                method()
+        append_status_log = getattr(player, "append_status_log", None)
+        if callable(append_status_log):
+            append_status_log("直播源列表已加载")
+        if str(payload.get("stage", "") or "") == "current":
+            self._start_tv_playlist_enrichment(current_vod_id, full=True)
+
+    def _handle_tv_playlist_enrichment_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._tv_playlist_request_id:
+            return
+        self._append_player_status_log(message or "直播源列表加载失败")
+
+    def _current_player_vod_id(self) -> str:
+        player = self.player_window
+        session = getattr(player, "session", None)
+        if player is None or session is None:
+            return ""
+        playlist = list(getattr(session, "playlist", []) or [])
+        current_index = int(getattr(player, "current_index", 0) or 0)
+        if not (0 <= current_index < len(playlist)):
+            return ""
+        return str(getattr(playlist[current_index], "vod_id", "") or "").strip()
+
+    @staticmethod
+    def _find_vod_in_source_groups(
+        source_groups: list[PlaybackSourceGroup],
+        vod_id: str,
+    ) -> tuple[int, int, int] | None:
+        if not vod_id:
+            return None
+        for group_index, group in enumerate(source_groups):
+            for source_index, source in enumerate(group.sources):
+                for item_index, item in enumerate(source.playlist):
+                    if str(getattr(item, "vod_id", "") or "").strip() == vod_id:
+                        return group_index, source_index, item_index
+        return None
+
+    def _preferred_tv_live_vod_id(self) -> str:
+        if str(getattr(self.config, "last_playback_source", "") or "") != "live":
+            return ""
+        if str(getattr(self.config, "last_playback_source_key", "") or "") != "tv":
+            return ""
+        if str(getattr(self.config, "last_playback_mode", "") or "") != "tv":
+            return ""
+        return (
+            str(getattr(self.config, "last_playback_vod_id", "") or "").strip()
+            or str(getattr(self.config, "last_playback_clicked_vod_id", "") or "").strip()
+        )
+
+    def _record_tv_live_playback_progress(self, item: PlayItem, position_ms: int, paused: bool) -> None:
+        del position_ms, paused
+        vod_id = str(getattr(item, "vod_id", "") or "").strip()
+        if not vod_id:
+            return
+        self.config.last_active_window = "player"
+        self.config.last_playback_source = "live"
+        self.config.last_playback_source_key = "tv"
+        self.config.last_playback_mode = "tv"
+        self.config.last_playback_vod_id = vod_id
+        self.config.last_playback_clicked_vod_id = vod_id
+        self._save_config()
+
+    @staticmethod
+    def _tv_live_source_id_from_vod_id(vod_id: str) -> int:
+        parts = str(vod_id or "").strip().split(":", 2)
+        if len(parts) != 3 or parts[0] != "custom-channel":
+            return 0
+        try:
+            return int(parts[1])
+        except ValueError:
+            return 0
+
+    def _tv_live_source_for_vod_id(
+        self,
+        vod_id: str,
+        sources: list[LiveSourceConfig],
+    ) -> LiveSourceConfig | None:
+        source_id = self._tv_live_source_id_from_vod_id(vod_id)
+        if source_id <= 0:
+            return None
+        return next((source for source in sources if int(getattr(source, "id", 0) or 0) == source_id), None)
+
+    def _first_tv_live_channel_vod_id(self, source: LiveSourceConfig) -> str:
+        source_id = int(getattr(source, "id", 0) or 0)
+        if source_id <= 0:
+            return ""
+        items, _total = self.live_controller.load_items(f"custom:{source_id}", 1)
+        return self._first_tv_live_channel_vod_id_from_items(list(items))
+
+    def _first_tv_live_channel_vod_id_from_items(self, items: list[VodItem]) -> str:
+        for item in items:
+            vod_id = str(getattr(item, "vod_id", "") or "").strip()
+            if getattr(item, "vod_tag", "") == "folder":
+                try:
+                    child_items, _total = self.live_controller.load_folder_items(vod_id)
+                except Exception:
+                    continue
+                child_vod_id = self._first_tv_live_channel_vod_id_from_items(list(child_items))
+                if child_vod_id:
+                    return child_vod_id
+                continue
+            if vod_id.startswith("custom-channel:"):
+                return vod_id
+        return ""
+
+    def _normalize_tv_live_player_request(
+        self,
+        request: OpenPlayerRequest,
+        *,
+        source: LiveSourceConfig,
+        all_sources: list[LiveSourceConfig] | None = None,
+    ) -> OpenPlayerRequest:
+        playable_items = [
+            item for item in request.playlist if _looks_like_stream_url(str(getattr(item, "url", "") or ""))
+        ]
+        if not playable_items:
+            raise ValueError("启用的直播源没有可播放频道")
+        selected = playable_items[0]
+        source_label = str(getattr(source, "display_name", "") or "").strip() or f"直播源 {getattr(source, 'id', '')}"
+        vod_id = str(request.source_vod_id or selected.vod_id or request.vod.vod_id or "").strip()
+        title = str(request.vod.vod_name or selected.media_title or selected.title or "").strip() or "直播频道"
+        qualities = [
+            VideoQualityOption(
+                id=f"line-{index + 1}",
+                label=f"线路 {index + 1}" if len(playable_items) > 1 else "默认线路",
+                url=item.url,
+                headers=dict(getattr(item, "headers", {}) or {}),
+            )
+            for index, item in enumerate(playable_items)
+        ]
+        play_item = PlayItem(
+            title=title,
+            url=selected.url,
+            original_url=selected.original_url,
+            video_cover_override=request.vod.vod_pic or selected.video_cover_override,
+            vod_id=vod_id,
+            index=0,
+            headers=dict(getattr(selected, "headers", {}) or {}),
+            detail_actions=list(getattr(selected, "detail_actions", []) or []),
+            detail_fields=list(getattr(selected, "detail_fields", []) or []),
+            play_source=source_label,
+            media_title=title,
+            type_name=request.vod.type_name or selected.type_name or "直播",
+            category_name=request.vod.category_name or selected.category_name or source_label,
+            playback_qualities=qualities,
+            selected_playback_quality_id=qualities[0].id if qualities else "",
+        )
+        vod = VodItem(
+            vod_id=vod_id,
+            vod_name=title,
+            vod_pic=request.vod.vod_pic or selected.video_cover_override,
+            detail_style=request.vod.detail_style or "live",
+            type_name=request.vod.type_name or play_item.type_name,
+            category_name=request.vod.category_name or play_item.category_name,
+            epg_current=request.vod.epg_current,
+            epg_schedule=request.vod.epg_schedule,
+        )
+        source_entries: list[PlaybackSource] = []
+        source_index = 0
+        active_source_id = int(getattr(source, "id", 0) or 0)
+        for candidate in all_sources or [source]:
+            candidate_id = int(getattr(candidate, "id", 0) or 0)
+            candidate_label = (
+                str(getattr(candidate, "display_name", "") or "").strip()
+                or f"直播源 {candidate_id or getattr(candidate, 'id', '')}"
+            )
+            if candidate_id == active_source_id:
+                source_index = len(source_entries)
+                source_entries.append(PlaybackSource(label=candidate_label, playlist=[play_item]))
+            else:
+                source_entries.append(PlaybackSource(label=candidate_label, playlist=[]))
+        source_group = PlaybackSourceGroup(label="直播源", sources=source_entries)
+        resolved_vod_by_id = {vod_id: vod} if vod_id else {}
+        return OpenPlayerRequest(
+            vod=vod,
+            playlist=[play_item],
+            clicked_index=0,
+            playlists=[source.playlist for source in source_entries],
+            playlist_index=source_index,
+            source_groups=[source_group],
+            source_group_index=0,
+            source_index=source_index,
+            source_kind="live",
+            source_key="tv",
+            source_mode="tv",
+            source_vod_id=vod_id,
+            source_clicked_vod_id=vod_id,
+            detail_resolver=lambda item, resolved=resolved_vod_by_id: resolved.get(item.vod_id),
+            resolved_vod_by_id=resolved_vod_by_id,
+            playback_progress_reporter=self._record_tv_live_playback_progress,
+            use_local_history=False,
+        )
+
+    def _show_tv_home_mode_fallback(self, message: str) -> None:
+        self.global_search_status_label.setText(message or "没有可播放的直播频道")
+        self._hide_classic_header_source_picker()
+        self.nav_tabs.setNavigationVisible(False)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
+        self.nav_tabs.setCurrentWidget(self.live_page)
+        self.global_search_container.setVisible(True)
+        self.live_page.ensure_loaded()
 
     def _apply_media_home_mode(self) -> None:
         page = self._ensure_media_home_page()
@@ -2430,13 +2953,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         except TypeError:
             return controller.load_items(category_id, page)
 
-    def _start_deferred_startup_plugin_load_if_needed(self) -> None:
+    def _start_deferred_startup_plugin_load_if_needed(self, *, force: bool = False) -> None:
         if self._startup_plugin_load_started or not callable(self._plugin_loader_task):
+            return
+        if not force and self._current_home_mode_defers_startup_plugin_load():
             return
         self._startup_plugin_load_state = "loading"
         self._startup_plugin_load_error = ""
         self._sync_startup_plugin_loading_ui()
         self._start_startup_plugin_load()
+
+    def _current_home_mode_defers_startup_plugin_load(self) -> bool:
+        return (getattr(self.config, "home_mode", "browse") or "browse") in {"classic", "tv"}
 
     def _build_classic_source_entries(self) -> list[SourceEntry]:
         builtin_entries: list[SourceEntry] = []
@@ -5535,6 +6063,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if request_id == self._youtube_open_request_id:
             self._youtube_open_request_id = 0
             self._youtube_open_request_vod_id = ""
+        if request_id == self._tv_open_request_id:
+            self._tv_open_request_id = 0
+            self.global_search_status_label.setText("")
         if request_id != self._open_request_id:
             return
         self.open_player(request)
@@ -5543,6 +6074,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if request_id == self._youtube_open_request_id:
             self._youtube_open_request_id = 0
             self._youtube_open_request_vod_id = ""
+        if request_id == self._tv_open_request_id:
+            self._tv_open_request_id = 0
+            if request_id == self._open_request_id:
+                self.global_search_status_label.setText(message or "没有可播放的直播频道")
+            return
         if request_id != self._open_request_id:
             return
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
@@ -6353,7 +6889,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             app.applicationStateChanged.connect(self._handle_application_state_changed)
             self._app_state_signal_connected = True
         self._refresh_navigation_tabs()
-        if (getattr(self.config, "home_mode", "browse") or "browse") != "classic":
+        if not self._current_home_mode_defers_startup_plugin_load():
             self._start_startup_plugin_load()
 
     def resizeEvent(self, event) -> None:
@@ -6372,6 +6908,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._deactivate_async_guard()
         self._startup_plugin_load_request_id += 1
+        self._tv_playlist_request_id += 1
         self._close_plugin_overflow_drawer()
         self._hide_global_search_popup()
         app = QApplication.instance()
