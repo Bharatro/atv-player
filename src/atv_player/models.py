@@ -101,6 +101,7 @@ class AppConfig:
     ai_request_timeout_seconds: int = 30
     following_episode_display_mode: str = "poster"
     following_episode_grid_columns: int = 1
+    home_mode: str = "browse"
 
 
 @dataclass(slots=True, frozen=True)

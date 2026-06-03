@@ -89,6 +89,29 @@ def test_settings_repository_round_trips_builtin_tab_overrides(tmp_path: Path) -
     )
 
 
+def test_settings_repository_round_trips_home_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.home_mode == "browse"
+
+    config.home_mode = "media"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.home_mode == "media"
+
+
+def test_settings_repository_normalizes_invalid_home_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+
+    config.home_mode = "nonexistent"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.home_mode == "browse"
+
+
 def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 

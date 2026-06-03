@@ -34,6 +34,7 @@ _VALID_MPV_RENDER_PROFILES = {
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "auto-copy", "no"}
 _VALID_FOLLOWING_EPISODE_DISPLAY_MODES = {"compact", "poster", "full"}
 _VALID_FOLLOWING_EPISODE_GRID_COLUMNS = {1, 2, 3}
+_VALID_HOME_MODES = {"browse", "classic", "simplified", "media", "tv"}
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _APP_IDENTITY_HASH_LENGTH = 16
 _DEFAULT_NETWORK_PROXY_BYPASS_RULES = [
@@ -367,6 +368,11 @@ def _following_episode_grid_columns_from_legacy_mode(value: object) -> int:
     return 1
 
 
+def _normalize_home_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_HOME_MODES else "browse"
+
+
 class SettingsRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -490,7 +496,8 @@ class SettingsRepository:
                     ai_chat_model TEXT NOT NULL DEFAULT '',
                     ai_request_timeout_seconds INTEGER NOT NULL DEFAULT 30,
                     following_episode_display_mode TEXT NOT NULL DEFAULT 'poster',
-                    following_episode_grid_columns INTEGER NOT NULL DEFAULT 1
+                    following_episode_grid_columns INTEGER NOT NULL DEFAULT 1,
+                    home_mode TEXT NOT NULL DEFAULT 'browse'
                 )
                 """
             )
@@ -809,6 +816,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN network_proxy_rules TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "home_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN home_mode TEXT NOT NULL DEFAULT 'browse'"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -890,12 +901,13 @@ class SettingsRepository:
                     ai_chat_model,
                     ai_request_timeout_seconds,
                     following_episode_display_mode,
-                    following_episode_grid_columns
+                    following_episode_grid_columns,
+                    home_mode
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 'poster', 1, 'browse'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -1031,7 +1043,8 @@ class SettingsRepository:
                     ai_chat_model,
                     ai_request_timeout_seconds,
                     following_episode_display_mode,
-                    following_episode_grid_columns
+                    following_episode_grid_columns,
+                    home_mode
                 FROM app_config
                 WHERE id = 1
                 """
@@ -1117,6 +1130,7 @@ class SettingsRepository:
             ai_request_timeout_seconds,
             following_episode_display_mode,
             following_episode_grid_columns,
+            home_mode,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -1223,6 +1237,7 @@ class SettingsRepository:
                     following_episode_display_mode
                 )
             ),
+            home_mode=_normalize_home_mode(home_mode),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1309,7 +1324,8 @@ class SettingsRepository:
                     ai_chat_model = ?,
                     ai_request_timeout_seconds = ?,
                     following_episode_display_mode = ?,
-                    following_episode_grid_columns = ?
+                    following_episode_grid_columns = ?,
+                    home_mode = ?
                 WHERE id = 1
                 """,
                 (
@@ -1409,6 +1425,7 @@ class SettingsRepository:
                     _normalize_following_episode_grid_columns(
                         config.following_episode_grid_columns
                     ),
+                    _normalize_home_mode(config.home_mode),
                 ),
             )
 
