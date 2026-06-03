@@ -100,6 +100,7 @@ _OFFICIAL_LINK_HOST_LABELS = {
     "www.bilibili.com": "B站",
     "www.mgtv.com": "芒果TV",
     "tv.sohu.com": "搜狐视频",
+    "www.miguvideo.com": "咪咕",
 }
 _OFFICIAL_LINK_HOST_KEYS = {
     "v.qq.com": "tencent",
@@ -111,6 +112,7 @@ _OFFICIAL_LINK_HOST_KEYS = {
     "www.bilibili.com": "bilibili",
     "www.mgtv.com": "mgtv",
     "tv.sohu.com": "sohu",
+    "www.miguvideo.com": "miguvideo",
 }
 _OFFICIAL_LINK_LABEL_KEYS = {
     "腾讯": "tencent",
@@ -123,10 +125,12 @@ _OFFICIAL_LINK_LABEL_KEYS = {
     "芒果": "mgtv",
     "搜狐视频": "sohu",
     "搜狐": "sohu",
+    "咪咕": "miguvideo",
 }
 _OFFICIAL_LINK_PROVIDER_KEYS = {
     "bilibili": "bilibili",
     "iqiyi": "iqiyi",
+    "migu": "miguvideo",
     "sohu": "sohu",
     "tencent": "tencent",
     "youku": "youku",

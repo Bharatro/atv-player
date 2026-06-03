@@ -88,9 +88,11 @@ class MiguMetadataProvider:
         type_name = str(payload.get("type") or "").strip()
         if type_name:
             detail_fields.append({"label": "类型", "value": type_name})
-        url = str(payload.get("url") or match.provider_id or "").strip()
-        if url:
-            detail_fields.append({"label": "播放链接", "value": url})
+        provider_id = str(match.provider_id or "").strip()
+        if provider_id:
+            detail_fields.append(
+                {"label": "播放链接", "value": f"https://www.miguvideo.com/p/detail/{provider_id}"}
+            )
         return MetadataRecord(
             provider=self.name,
             provider_id=str(match.provider_id or "").strip(),
@@ -109,12 +111,6 @@ class MiguMetadataProvider:
             "year": str(asset.get("year") or "").strip(),
             "poster": self._poster(asset),
             "type": str(asset.get("contDisplayName") or "").strip(),
-            "url": (
-                f"https://v3-sc.miguvideo.com/program/v4/cont/content-info/"
-                f"{provider_id}/1"
-            )
-            if provider_id
-            else "",
         }
 
     def _provider_id(self, asset: dict[str, object]) -> str:
