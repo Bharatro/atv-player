@@ -1770,7 +1770,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         container_layout = QVBoxLayout(container)
         container_layout.addLayout(self.header_layout)
         container_layout.addWidget(self.global_search_status_label)
-        container_layout.addWidget(self.nav_tabs)
+        self._home_stack = QStackedWidget()
+        self._home_stack.addWidget(self.nav_tabs)
+        container_layout.addWidget(self._home_stack)
         self.content_layout().addWidget(container)
         if self.config.main_window_geometry:
             self._restore_saved_geometry(apply_maximized=True)
@@ -1936,6 +1938,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.help_shortcut.activated.connect(self._show_shortcut_help)
 
         self._refresh_navigation_tabs()
+        self.apply_home_mode(getattr(self.config, "home_mode", "browse") or "browse")
         self._sync_startup_plugin_loading_ui()
         self._sync_global_search_action_state()
         self._apply_theme()
@@ -2026,6 +2029,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             apply_theme = getattr(page, "_apply_theme", None)
             if callable(apply_theme):
                 apply_theme()
+
+    def apply_home_mode(self, mode: str) -> None:
+        normalized = mode if mode in {"browse", "classic", "simplified", "media", "tv"} else "browse"
+        if normalized == "browse":
+            self._home_stack.setCurrentWidget(self.nav_tabs)
+            self.nav_tabs.setVisible(True)
+            self._refresh_navigation_tabs()
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
