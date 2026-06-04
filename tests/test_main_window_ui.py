@@ -59,12 +59,17 @@ class FakeSpiderController:
     def __init__(self, name: str) -> None:
         self.name = name
         self.open_calls: list[str] = []
+        self.folder_calls: list[str] = []
 
     def load_categories(self):
         return []
 
     def load_items(self, category_id: str, page: int):
         return [], 0
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="child-1", vod_name="子目录", vod_tag="folder")], 1
 
     def build_request(self, vod_id: str):
         self.open_calls.append(vod_id)
@@ -75,6 +80,83 @@ class FakeSpiderController:
             source_mode="detail",
             source_vod_id=vod_id,
         )
+
+
+def test_main_window_plugin_folder_click_loads_folder_in_plugin_page(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("目录插件")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "目录插件", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    shown = []
+    monkeypatch.setattr(window._plugin_pages[0][0], "show_items", lambda items, total, **kwargs: shown.append((items, total, kwargs)))
+
+    window._open_spider_item(
+        controller,
+        "plugin-1",
+        VodItem(vod_id="folder-1", vod_name="分区", vod_tag="folder"),
+    )
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
+    assert controller.open_calls == []
+    assert shown[0][1] == 1
+    assert shown[0][2]["empty_message"] == "当前文件夹暂无内容"
+    assert window._plugin_pages[0][0]._folder_breadcrumbs[-1] == {
+        "id": "folder-1",
+        "label": "分区",
+        "kind": "folder",
+    }
+
+
+def test_main_window_classic_plugin_folder_click_loads_folder_in_classic_grid(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("目录插件")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(home_mode="classic", last_selected_tab="plugin:plugin-1"),
+        spider_plugins=[{"id": "plugin-1", "title": "目录插件", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    classic_shown = []
+    hidden_plugin_shown = []
+    monkeypatch.setattr(
+        window._classic_home_page.grid_page,
+        "show_items",
+        lambda items, total, **kwargs: classic_shown.append((items, total, kwargs)),
+    )
+    monkeypatch.setattr(
+        window._plugin_pages[0][0],
+        "show_items",
+        lambda items, total, **kwargs: hidden_plugin_shown.append((items, total, kwargs)),
+    )
+
+    window._handle_classic_item_open(VodItem(vod_id="folder-1", vod_name="分区", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(classic_shown) == 1, timeout=1000)
+    assert hidden_plugin_shown == []
+    assert classic_shown[0][1] == 1
+    assert window._classic_home_page.grid_page._folder_breadcrumbs[-1] == {
+        "id": "folder-1",
+        "label": "分区",
+        "kind": "folder",
+    }
 
 
 class FakePluginManager:
@@ -3050,6 +3132,43 @@ def test_main_window_hidden_plugin_context_menu_rename_updates_drawer_items(qtbo
     assert result is True
     assert manager.rename_calls == [(2, "重命名插件")]
     assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["重命名插件", "插件3"]
+
+
+def test_main_window_hidden_plugin_reload_keeps_active_hidden_plugin(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 100)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+    window._plugin_overflow_drawer.select_plugin_by_title("插件3")
+    active_before_reload = window.nav_tabs.currentWidget()
+
+    result = window._run_plugin_context_action("refresh", "3")
+
+    assert result is True
+    assert manager.refresh_calls == [3]
+    assert manager.load_plugins_calls[-1] == ["3"]
+    assert window.nav_tabs.currentWidget() is not active_before_reload
+    assert window.nav_tabs.currentWidget() is window._plugin_pages[2][0]
+    assert window.plugin_overflow_button.isChecked() is True
+    assert window.nav_tabs.tab_bar.property("hiddenPluginActive") is True
 
 
 def test_main_window_manage_categories_context_action_reloads_only_target_plugin(qtbot, monkeypatch) -> None:

@@ -600,6 +600,8 @@ class _PluginController(Protocol):
 
     def load_items(self, category_id: str, page: int): ...
 
+    def load_folder_items(self, vod_id: str): ...
+
     def build_request(self, vod_id: str) -> OpenPlayerRequest: ...
 
 
@@ -2528,6 +2530,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._classic_home_page.item_open_requested.connect(self._handle_classic_item_open)
             self._classic_home_page.source_changed.connect(self._handle_classic_source_changed)
             self._classic_home_page.category_selected.connect(self._handle_classic_category_selected)
+            self._classic_home_page.folder_breadcrumb_requested.connect(self._handle_classic_folder_breadcrumb_requested)
             self._home_stack.addWidget(self._classic_home_page)
         else:
             self._classic_home_page.set_source_entries(entries, preferred_key=initial_key)
@@ -2667,6 +2670,24 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._open_spider_item(controller, plugin_id, item)
             return
         self._handle_classic_builtin_item_open(source_key, controller, item)
+
+    def _handle_classic_folder_breadcrumb_requested(self, node_id: str, kind: str, index: int) -> None:
+        if not hasattr(self, "_classic_home_page"):
+            return
+        source_key = self._classic_home_page.current_source_key()
+        entry = next(
+            (e for e in self._build_classic_source_entries() if e.key == source_key),
+            None,
+        )
+        if entry is None or entry.controller is None:
+            return
+        self._handle_media_breadcrumb_requested(
+            self._classic_home_page.grid_page,
+            entry.controller,
+            node_id,
+            kind,
+            index,
+        )
 
     def _handle_classic_builtin_item_open(self, source_key: str, controller: Any, item: Any) -> None:
         if source_key == "douban":
@@ -4583,6 +4604,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             click_action="open",
             search_enabled=bool(_plugin_value(definition, "search_enabled")),
             initial_category_id=self._initial_category_id_for_tab(f"plugin:{plugin_id}"),
+            folder_navigation_enabled=True,
             parent=self.nav_tabs.content_stack,
         )
         page.item_open_requested.connect(
@@ -4590,6 +4612,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 controller,
                 plugin_id,
                 item,
+            )
+        )
+        page.folder_breadcrumb_requested.connect(
+            lambda node_id, kind, index, page=page, controller=controller: self._handle_media_breadcrumb_requested(
+                page,
+                controller,
+                node_id,
+                kind,
+                index,
             )
         )
         self._connect_video_item_context_menu(page)
@@ -4654,6 +4685,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if not callable(list_plugins) or not callable(load_plugins):
             return False
 
+        active_key = self._tab_key_for_widget(self._active_widget or self.nav_tabs.currentWidget())
         current_plugins = list_plugins()
         enabled_order = [str(plugin.id) for plugin in current_plugins if getattr(plugin, "enabled", False)]
         changed_id_set = {str(plugin_id) for plugin_id in changed_plugin_ids if str(plugin_id)}
@@ -4696,6 +4728,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_definitions = ordered_definitions
         self._plugin_pages = ordered_pages
         self._plugin_tab_definitions = ordered_tabs
+        if active_key is not None:
+            active_definition = next((definition for definition in ordered_tabs if definition.key == active_key), None)
+            if active_definition is not None:
+                self._active_widget = active_definition.page
         self._refresh_visible_tabs()
         self._refresh_classic_source_entries_if_active()
         return True
@@ -4858,6 +4894,26 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._show_main_again()
 
     def _open_spider_item(self, controller, plugin_id: str, item: Any) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            page = None
+            if (
+                hasattr(self, "_classic_home_page")
+                and self._classic_home_page.current_source_key() == f"plugin:{plugin_id}"
+                and getattr(self._classic_home_page.grid_page, "controller", None) is controller
+            ):
+                page = self._classic_home_page.grid_page
+            if page is None:
+                page = next(
+                    (
+                        plugin_page
+                        for plugin_page, plugin_controller, current_plugin_id in self._plugin_pages
+                        if plugin_controller is controller and str(current_plugin_id) == str(plugin_id)
+                    ),
+                    None,
+                )
+            if page is not None:
+                self._open_media_folder(page, controller, item)
+            return
         placeholder_request = self._build_placeholder_player_request(item, source_kind="plugin", source_key=plugin_id)
         self._open_player_immediately(placeholder_request)
 

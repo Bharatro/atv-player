@@ -225,6 +225,7 @@ class ClassicHomePage(QWidget):
     category_selected = Signal(str)
     source_changed = Signal(str)
     item_open_requested = Signal(object)
+    folder_breadcrumb_requested = Signal(str, str, int)
 
     def __init__(
         self,
@@ -290,8 +291,10 @@ class ClassicHomePage(QWidget):
             search_enabled=bool(initial_entry.search_enabled) if initial_entry else False,
             initial_category_id=self._initial_category_id,
             category_layout="tabs",
+            folder_navigation_enabled=self._entry_folder_navigation_enabled(initial_entry),
         )
         self.grid_page.item_open_requested.connect(self.item_open_requested.emit)
+        self.grid_page.folder_breadcrumb_requested.connect(self.folder_breadcrumb_requested.emit)
 
         category_row = QHBoxLayout()
         category_row.setContentsMargins(0, 0, 0, 0)
@@ -459,14 +462,22 @@ class ClassicHomePage(QWidget):
             search_enabled=bool(entry.search_enabled),
             initial_category_id=self._initial_category_id,
             category_layout="tabs",
+            folder_navigation_enabled=self._entry_folder_navigation_enabled(entry),
         )
         new_page.item_open_requested.connect(self.item_open_requested.emit)
+        new_page.folder_breadcrumb_requested.connect(self.folder_breadcrumb_requested.emit)
         layout = self.layout()
         old_page = self.grid_page
         layout.replaceWidget(old_page, new_page)
         old_page.deleteLater()
         self.grid_page = new_page
         self._load_categories_from_controller(entry.controller)
+
+    @staticmethod
+    def _entry_folder_navigation_enabled(entry: SourceEntry | None) -> bool:
+        if entry is None:
+            return False
+        return callable(getattr(entry.controller, "load_folder_items", None))
 
     def _handle_category_changed(self, index: int) -> None:
         if self._refreshing_category_tabs:

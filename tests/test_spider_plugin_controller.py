@@ -812,6 +812,36 @@ def test_controller_search_and_category_mapping() -> None:
     assert category_items[0].vod_name == "tv-2"
 
 
+def test_controller_load_folder_items_uses_category_content_with_folder_id() -> None:
+    class FolderSpider(FakeSpider):
+        def __init__(self) -> None:
+            self.category_calls = []
+
+        def categoryContent(self, tid, pg, filter, extend):
+            self.category_calls.append((tid, pg, filter, extend))
+            return {
+                "list": [
+                    {
+                        "vod_id": "child-1",
+                        "vod_name": "子目录",
+                        "vod_tag": "folder",
+                    }
+                ],
+                "total": 1,
+            }
+
+    spider = FolderSpider()
+    controller = SpiderPluginController(spider, plugin_name="目录插件", search_enabled=True)
+
+    items, total = controller.load_folder_items("folder-1")
+
+    assert spider.category_calls == [("folder-1", 1, False, {})]
+    assert total == 1
+    assert [(item.vod_id, item.vod_name, item.vod_tag) for item in items] == [
+        ("child-1", "子目录", "folder")
+    ]
+
+
 def test_controller_passes_selected_category_into_search_content() -> None:
     spider = SearchCategorySpider()
     controller = SpiderPluginController(spider, plugin_name="分类搜索插件", search_enabled=True)
