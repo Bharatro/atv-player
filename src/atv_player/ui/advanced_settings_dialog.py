@@ -110,7 +110,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.home_mode_combo.addItem("经典 (TvBox)", "classic")
         self.home_mode_combo.addItem("精简 (搜索)", "simplified")
         self.home_mode_combo.addItem("媒体 (Emby)", "media")
-        self.home_mode_combo.addItem("电视 (直播)", "tv")
+        # self.home_mode_combo.addItem("电视 (直播)", "tv")
         self.theme_hint_label = QLabel("跟随系统会在应用启动时读取当前系统浅深色；播放器播放区保持偏暗。")
         self.theme_hint_label.setWordWrap(True)
         self.metadata_group = QGroupBox("元数据增强配置")
