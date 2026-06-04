@@ -117,7 +117,15 @@ class NodeSpider:
     def _read_stderr(self, process: subprocess.Popen[str]) -> None:
         assert process.stderr is not None
         for line in iter(process.stderr.readline, ""):
-            self._stderr_lines.put(line.rstrip())
+            stripped = line.rstrip()
+            try:
+                record = json.loads(stripped)
+                if isinstance(record, dict) and "level" in record and "message" in record:
+                    print(f"[JS:{record.get('level', 'info')}] {record['message']}")
+                    continue
+            except (json.JSONDecodeError, ValueError):
+                pass
+            self._stderr_lines.put(stripped)
 
     def _call(self, method: str, *args: Any):
         with self._lock:

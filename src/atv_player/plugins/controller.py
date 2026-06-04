@@ -981,6 +981,13 @@ class SpiderPluginController:
         total = int(payload.get("total") or 0)
         if total <= 0:
             total = len(items)
+        self._log_spider_method_call(
+            "categoryContent",
+            items=len(items),
+            total=total,
+        )
+        if len(items) > 0:
+            print(items[0])
         return items, total
 
     def search_items(

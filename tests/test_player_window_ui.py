@@ -9392,6 +9392,162 @@ def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
     assert window.video.seek_calls == [75]
 
 
+def test_player_window_ignores_playback_finished_immediately_after_progress_seek(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    video.load_calls.clear()
+    window.progress.setValue(75)
+
+    window._seek_from_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+    assert video.load_calls == []
+    assert video.seek_calls == [75]
+
+
+def test_player_window_reloads_current_item_when_seek_finished_unloads_media(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._duration = 0
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    resume_seek_calls: list[tuple[int, int]] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        window,
+        "_attempt_resume_seek",
+        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
+    )
+    window.open_session(make_player_session(start_index=0))
+
+    try:
+        video.load_calls.clear()
+        window.progress.setMaximum(120)
+        window.progress.setValue(75)
+
+        window._seek_from_slider()
+        window.video_widget.playback_finished.emit()
+
+        assert window.current_index == 0
+        assert window.playlist.currentRow() == 0
+        assert video.seek_calls == [75]
+        assert video.load_calls == [("http://m/1.m3u8", 0)]
+        assert resume_seek_calls == [(75, 5)]
+    finally:
+        monkeypatch.undo()
+
+
+def test_player_window_reloads_current_item_when_progress_seek_fails_after_unloading_media(qtbot) -> None:
+    class SeekFailingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._duration = 0
+            raise RuntimeError("('Error running mpv command', -12)")
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekFailingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    resume_seek_calls: list[tuple[int, int]] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        window,
+        "_attempt_resume_seek",
+        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
+    )
+    window.open_session(make_player_session(start_index=0))
+
+    try:
+        video.load_calls.clear()
+        window.progress.setMaximum(120)
+        window.progress.setValue(75)
+
+        window._seek_from_slider()
+
+        assert window.current_index == 0
+        assert window.playlist.currentRow() == 0
+        assert video.seek_calls == [75]
+        assert video.load_calls == [("http://m/1.m3u8", 0)]
+        assert resume_seek_calls == [(75, 5)]
+    finally:
+        monkeypatch.undo()
+
+
+def test_player_window_advances_after_progress_seek_near_end(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._position = 30
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._position = seconds
+
+        def position_seconds(self) -> int:
+            return self._position
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    video.load_calls.clear()
+    window.progress.setMaximum(120)
+    window.progress.setValue(119)
+
+    window._seek_from_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+    assert video.seek_calls == [119]
+
+
 def test_player_window_clicking_progress_track_seeks_immediately(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
