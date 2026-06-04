@@ -897,6 +897,88 @@ def test_main_window_classic_source_picker_loads_selected_plugin_on_demand(qtbot
     assert window._classic_home_page.current_source_key() == "plugin:2"
 
 
+def test_main_window_classic_global_search_loads_and_searches_all_enabled_plugins(qtbot) -> None:
+    class SearchablePluginManager(FakePluginManager):
+        def __init__(self) -> None:
+            super().__init__()
+            self.controllers: dict[str, SearchableController] = {}
+
+        def load_plugins(self, plugin_ids, drive_detail_loader=None, offline_download_detail_loader=None):
+            del drive_detail_loader, offline_download_detail_loader
+            requested = {str(plugin_id) for plugin_id in plugin_ids}
+            self.load_plugins_calls.append(sorted(requested))
+            definitions = []
+            for plugin in self.plugins:
+                plugin_id = str(plugin.id)
+                if not plugin.enabled or plugin_id not in requested:
+                    continue
+                controller = SearchableController([_vod(f"{plugin.display_name}结果")], total=1)
+                self.controllers[plugin_id] = controller
+                definitions.append(
+                    {
+                        "id": plugin_id,
+                        "title": plugin.display_name,
+                        "controller": controller,
+                        "search_enabled": True,
+                    }
+                )
+            return definitions
+
+    config = AppConfig(home_mode="classic")
+    manager = SearchablePluginManager()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        telegram_controller=SearchableController([]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: manager.load_plugins_calls == [["1", "2", "3"]])
+    qtbot.waitUntil(
+        lambda: sorted(definition.key for definition in window._plugin_tab_definitions)
+        == ["plugin:1", "plugin:2", "plugin:3"]
+    )
+    qtbot.waitUntil(
+        lambda: all(
+            controller.search_calls == [("庆余年", 1)]
+            for controller in manager.controllers.values()
+        )
+    )
+
+
+def test_main_window_classic_clear_global_search_returns_to_classic_home(qtbot) -> None:
+    config = AppConfig(home_mode="classic", last_selected_tab="douban")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        telegram_controller=SearchableController([_vod("Telegram One")], total=1),
+    )
+    qtbot.addWidget(window)
+
+    assert window._home_stack.currentWidget() is window._classic_home_page
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: window._home_stack.currentWidget() is window.nav_tabs)
+    assert not window.nav_tabs.isHidden()
+
+    window.global_search_edit.clear()
+
+    assert window._home_stack.currentWidget() is window._classic_home_page
+    assert window.nav_tabs.isHidden()
+    assert not window.global_search_container.isHidden()
+    assert window.header_layout.indexOf(window._classic_home_page.source_button) == 0
+
+
 def test_main_window_classic_source_picker_persists_selected_source(qtbot) -> None:
     config = AppConfig()
     manager = FakePluginManager()

@@ -2566,33 +2566,66 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if next((entry for entry in self._build_classic_source_entries() if entry.key == source_key and entry.controller is not None), None):
             return
         plugin_id = source_key.removeprefix("plugin:")
-        loaded_definitions = self._load_plugin_definitions_with_manager("load_plugins", [plugin_id])
+        self._ensure_classic_plugin_sources_loaded([plugin_id])
+
+    def _ensure_classic_global_search_plugins_loaded(self) -> None:
+        missing_plugin_ids = [
+            entry.key.removeprefix("plugin:")
+            for entry in self._build_classic_source_entries()
+            if entry.key.startswith("plugin:") and entry.controller is None
+        ]
+        self._ensure_classic_plugin_sources_loaded(missing_plugin_ids)
+
+    def _ensure_classic_plugin_sources_loaded(self, plugin_ids: Iterable[str]) -> bool:
+        requested_ids: list[str] = []
+        loaded_plugin_ids = {
+            definition.key.removeprefix("plugin:")
+            for definition in self._plugin_tab_definitions
+            if definition.key.startswith("plugin:")
+        }
+        for plugin_id in plugin_ids:
+            normalized_id = str(plugin_id or "").strip().removeprefix("plugin:")
+            if not normalized_id or normalized_id in loaded_plugin_ids or normalized_id in requested_ids:
+                continue
+            requested_ids.append(normalized_id)
+        if not requested_ids:
+            return False
+        loaded_definitions = self._load_plugin_definitions_with_manager("load_plugins", requested_ids)
         if not loaded_definitions:
-            return
+            return False
         loaded_by_id = {str(_plugin_value(definition, "id") or ""): definition for definition in loaded_definitions}
-        definition = loaded_by_id.get(plugin_id)
-        if definition is None:
-            return
-        existing_index = next(
-            (index for index, current in enumerate(self._plugin_definitions) if str(_plugin_value(current, "id") or "") == plugin_id),
-            -1,
-        )
-        if existing_index >= 0:
-            self._plugin_definitions[existing_index] = definition
-        else:
-            self._plugin_definitions.append(definition)
-        page_entry = next((entry for entry in self._plugin_pages if entry[2] == plugin_id), None)
-        if page_entry is not None:
-            page_entry[0].deleteLater()
-            self._plugin_pages = [entry for entry in self._plugin_pages if entry[2] != plugin_id]
-            self._plugin_tab_definitions = [
-                current for current in self._plugin_tab_definitions if current.key != source_key
-            ]
-        page, controller, current_plugin_id, tab_definition = self._create_plugin_page_entry(definition)
-        self._plugin_pages.append((page, controller, current_plugin_id))
-        self._plugin_tab_definitions.append(tab_definition)
-        self._refresh_classic_source_entries_if_active()
-        self._refresh_visible_tabs()
+        changed = False
+        for plugin_id in requested_ids:
+            definition = loaded_by_id.get(plugin_id)
+            if definition is None:
+                continue
+            existing_index = next(
+                (
+                    index
+                    for index, current in enumerate(self._plugin_definitions)
+                    if str(_plugin_value(current, "id") or "") == plugin_id
+                ),
+                -1,
+            )
+            if existing_index >= 0:
+                self._plugin_definitions[existing_index] = definition
+            else:
+                self._plugin_definitions.append(definition)
+            page_entry = next((entry for entry in self._plugin_pages if entry[2] == plugin_id), None)
+            if page_entry is not None:
+                page_entry[0].deleteLater()
+                self._plugin_pages = [entry for entry in self._plugin_pages if entry[2] != plugin_id]
+                self._plugin_tab_definitions = [
+                    current for current in self._plugin_tab_definitions if current.key != f"plugin:{plugin_id}"
+                ]
+            page, controller, current_plugin_id, tab_definition = self._create_plugin_page_entry(definition)
+            self._plugin_pages.append((page, controller, current_plugin_id))
+            self._plugin_tab_definitions.append(tab_definition)
+            changed = True
+        if changed:
+            self._refresh_classic_source_entries_if_active()
+            self._refresh_visible_tabs()
+        return changed
 
     def _handle_classic_category_selected(self, category_id: str) -> None:
         if not hasattr(self, "_classic_home_page"):
@@ -4350,6 +4383,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self._start_direct_open_from_global_search(keyword):
             return
         self._record_global_search_history(keyword)
+        active_home_mode = getattr(self, "_active_home_mode", getattr(self.config, "home_mode", "browse")) or "browse"
+        if active_home_mode == "classic":
+            self._ensure_classic_global_search_plugins_loaded()
         searchable = self._searchable_tab_definitions(
             include_smart_search=include_smart_search,
         )
@@ -4472,11 +4508,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_restore_plugin_keys = []
         self._sync_global_search_action_state()
         self._hide_global_search_popup()
-        home_mode = getattr(self.config, "home_mode", "browse") or "browse"
+        home_mode = getattr(self, "_active_home_mode", getattr(self.config, "home_mode", "browse")) or "browse"
         if home_mode == "simplified":
             self._return_to_simplified_home_after_global_search_clear()
         elif home_mode == "media":
             self._apply_media_home_mode()
+        elif home_mode == "classic":
+            self._apply_classic_home_mode()
 
     def _return_to_simplified_home_after_global_search_clear(self) -> None:
         page = self._ensure_simplified_home_page()
