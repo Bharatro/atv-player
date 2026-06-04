@@ -4697,6 +4697,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_pages = ordered_pages
         self._plugin_tab_definitions = ordered_tabs
         self._refresh_visible_tabs()
+        self._refresh_classic_source_entries_if_active()
         return True
 
     def _rebuild_spider_plugin_tabs(self) -> None:
@@ -4896,6 +4897,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._plugin_definitions = self._load_plugin_definitions_with_manager("load_enabled_plugins")
         self._rebuild_spider_plugin_tabs()
+        self._refresh_classic_source_entries_if_active()
 
     def _save_builtin_tab_overrides(self, payload: str) -> None:
         self.config.builtin_tab_overrides_json = payload

@@ -1000,6 +1000,53 @@ def test_main_window_classic_source_picker_persists_selected_source(qtbot) -> No
     assert save_calls[-1] == "plugin:2"
 
 
+def test_main_window_classic_source_picker_refreshes_after_plugin_added(qtbot) -> None:
+    config = AppConfig(home_mode="classic")
+    manager = FakePluginManager()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+
+    manager.plugins.append(
+        SimpleNamespace(
+            id=4,
+            display_name="插件4",
+            enabled=True,
+            config_text="token=4\n",
+            sort_order=3,
+        )
+    )
+
+    assert window._reload_changed_plugin_tabs(["4"]) is True
+
+    assert "plugin:4" in window._classic_home_page.source_popup.source_buttons
+    assert window._classic_home_page.source_popup.source_button("plugin:4").text() == "插件4"
+
+
+def test_main_window_classic_source_picker_refreshes_after_plugin_deleted(qtbot) -> None:
+    config = AppConfig(home_mode="classic")
+    manager = FakePluginManager()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+
+    manager.plugins = [plugin for plugin in manager.plugins if plugin.id != 2]
+
+    assert window._reload_changed_plugin_tabs(["2"]) is True
+
+    assert "plugin:2" not in window._classic_home_page.source_popup.source_buttons
+
+
 def test_main_window_classic_restores_last_selected_source(qtbot) -> None:
     config = AppConfig()
     config.home_mode = "classic"
