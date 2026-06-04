@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 import shiboken6
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, QEvent, Qt
+from PySide6.QtWidgets import QApplication, QWidget
 
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
@@ -1973,6 +1973,55 @@ def test_main_window_creates_startup_plugin_pages_under_navigation_stack(qtbot) 
 
     assert page.parent() is window.nav_tabs.content_stack
     assert page.window() is window
+
+
+def test_startup_plugin_page_construction_does_not_show_unparented_child_widgets(qtbot) -> None:
+    unparented_shows: list[str] = []
+
+    class TopLevelShowRecorder(QObject):
+        def eventFilter(self, watched, event) -> bool:
+            if (
+                event.type() == QEvent.Type.Show
+                and isinstance(watched, QWidget)
+                and watched.parent() is None
+                and watched.isWindow()
+            ):
+                class_name = type(watched).__name__
+                if class_name != "MainWindow":
+                    unparented_shows.append(class_name)
+            return False
+
+    app = QApplication.instance()
+    recorder = TopLevelShowRecorder()
+    app.installEventFilter(recorder)
+    try:
+        window = MainWindow(
+            douban_controller=FakeStaticController(),
+            telegram_controller=FakeStaticController(),
+            live_controller=FakeStaticController(),
+            emby_controller=FakeStaticController(),
+            jellyfin_controller=FakeStaticController(),
+            browse_controller=FakeStaticController(),
+            history_controller=FakeStaticController(),
+            player_controller=FakePlayerController(),
+            config=AppConfig(),
+            spider_plugins=[],
+            plugin_manager=WidthAwarePluginManager(),
+        )
+        qtbot.addWidget(window)
+        window._create_plugin_page_entry(
+            {
+                "id": "plugin-1",
+                "title": "红果短剧",
+                "controller": FakeSpiderController("红果短剧"),
+                "search_enabled": True,
+            }
+        )
+        QApplication.processEvents()
+    finally:
+        app.removeEventFilter(recorder)
+
+    assert unparented_shows == []
 
 
 def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot) -> None:
