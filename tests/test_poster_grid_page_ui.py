@@ -137,6 +137,21 @@ class VariablePageSizePosterController(FakeDoubanController):
         return items, 41
 
 
+class ExplicitPageCountPosterController(FakeDoubanController):
+    uses_page_count_for_pagination = True
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        items = [
+            VodItem(
+                vod_id=f"{category_id}-{page}-{index}",
+                vod_name=f"{category_id}-{page}-{index}",
+                vod_pic="poster-cat",
+            )
+            for index in range(30)
+        ]
+        return items, 4
+
+
 class FilterablePosterController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -351,6 +366,15 @@ def test_poster_grid_page_prefers_inferred_page_size_over_default_page_size(qtbo
     qtbot.waitUntil(lambda: len(page.card_buttons) == 20)
 
     assert page.page_label.text() == "第 1 / 3 页"
+    assert page.next_page_button.isEnabled() is True
+
+
+def test_poster_grid_page_uses_controller_pagecount_return_value(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(ExplicitPageCountPosterController()))
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 30)
+
+    assert page.page_label.text() == "第 1 / 4 页"
     assert page.next_page_button.isEnabled() is True
 
 

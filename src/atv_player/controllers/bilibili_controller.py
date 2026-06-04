@@ -9,6 +9,7 @@ import httpx
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_categories, _map_item
+from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.controllers.telegram_search_controller import _parse_playlist
 from atv_player.models import (
     DoubanCategory,
@@ -165,6 +166,7 @@ def _format_bilibili_stat_value(raw_value: object) -> str:
 
 class BilibiliController:
     _PAGE_SIZE = 30
+    uses_page_count_for_pagination = True
 
     def __init__(
         self,
@@ -271,31 +273,20 @@ class BilibiliController:
     ) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_bilibili_items(category_id, page=page, filters=filters)
         items = self._map_bilibili_items(payload)
-        total_raw = payload.get("total")
-        if total_raw is not None:
-            total = int(total_raw)
-        else:
-            pagecount = int(payload.get("pagecount") or 0)
-            total = pagecount * self._PAGE_SIZE
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_bilibili_items(keyword, page=page)
         items = self._map_bilibili_items(payload)
-        total_raw = payload.get("total")
-        if total_raw is not None:
-            total = int(total_raw)
-        else:
-            pagecount = int(payload.get("pagecount") or 0)
-            total = pagecount * self._PAGE_SIZE
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_bilibili_items(vod_id, page=1)
         items = self._map_bilibili_items(payload)
-        total_raw = payload.get("total")
-        total = int(total_raw) if total_raw is not None else len(items)
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def resolve_playlist_item(self, item: PlayItem) -> VodItem | None:
         if not item.vod_id:

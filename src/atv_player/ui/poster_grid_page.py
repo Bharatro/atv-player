@@ -35,7 +35,7 @@ from atv_player.ui.theme import build_accent_label_qss, build_pill_button_qss, b
 
 class _PosterGridSignals(QObject):
     categories_loaded = Signal(int, object)
-    items_loaded = Signal(int, object, int)
+    items_loaded = Signal(int, object, object)
     failed = Signal(str, int, str)
     unauthorized = Signal(int, str)
     poster_loaded = Signal(object, object)
@@ -154,6 +154,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._external_page_loader: Callable[[int], None] | None = None
         self._external_loading = False
         self._infer_page_size_from_items = bool(getattr(controller, "uses_result_length_for_pagination", False))
+        self._total_is_page_count = bool(getattr(controller, "uses_page_count_for_pagination", False))
         self._search_row: QHBoxLayout | None = None
         self._search_controls_container: QWidget | None = None
         self.category_list = QListWidget(self)
@@ -427,7 +428,6 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         container = QWidget(self.filter_panel)
         layout = _FlowLayout(container, spacing=8)
         merged_options = list(options)
-        print(merged_options)
         if not any(option.value == "" for option in merged_options) and not any(option.name == "全部" for option in merged_options):
             merged_options = [CategoryFilterOption(name="默认", value=""), *merged_options]
         if selected_value not in {option.value for option in merged_options}:
@@ -528,7 +528,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             return
         self.load_items(self.selected_category_id, self.current_page)
 
-    def _handle_items_loaded(self, request_id: int, items, total: int) -> None:
+    def _handle_items_loaded(self, request_id: int, items, total: object) -> None:
         if request_id != self._items_request_id:
             return
         self.show_items(items, total)
@@ -591,6 +591,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         return self._estimated_page_size or self.page_size
 
     def _total_pages(self) -> int:
+        if self._total_is_page_count:
+            return max(1, self.total_items)
         page_size = max(1, self._effective_page_size())
         return max(1, (self.total_items + page_size - 1) // page_size)
 
@@ -732,7 +734,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def show_items(
         self,
         items,
-        total: int,
+        total: object,
         page: int | None = None,
         empty_message: str = "当前分类暂无内容",
     ) -> None:
@@ -740,8 +742,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if page is not None:
             self.current_page = page
         self.items = list(items)
-        self.total_items = total
-        self._update_page_size_estimate(len(self.items), total, self.current_page)
+        self.total_items = max(0, int(total or 0))
+        self._update_page_size_estimate(len(self.items), self.total_items, self.current_page)
         self.status_label.setText("" if self.items else empty_message)
         self._render_cards()
         self._update_pagination()
@@ -749,7 +751,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def show_external_results(
         self,
         items,
-        total: int,
+        total: object,
         page: int = 1,
         empty_message: str = "无搜索结果",
         page_loader: Callable[[int], None] | None = None,

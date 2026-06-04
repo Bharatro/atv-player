@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
+from atv_player.controllers.pagination import page_count_from_payload, page_count_from_total
 from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
 
 
@@ -51,6 +52,7 @@ def _parse_live_playlist(vod_play_from: str, vod_play_url: str) -> list[PlayItem
 
 class LiveController:
     _PAGE_SIZE = 30
+    uses_page_count_for_pagination = True
 
     def __init__(self, api_client, custom_live_service=None) -> None:
         self._api_client = api_client
@@ -75,25 +77,21 @@ class LiveController:
         filters: dict[str, str] | None = None,
     ) -> tuple[list[VodItem], int]:
         if category_id.startswith("custom:") and self._custom_live_service is not None:
-            return self._custom_live_service.load_items(category_id, page)
+            items, total = self._custom_live_service.load_items(category_id, page)
+            return items, page_count_from_total(total, page_size=self._PAGE_SIZE)
         payload = self._api_client.list_live_items(category_id, page=page)
         items = self._map_live_items(payload)
-        total_raw = payload.get("total")
-        if total_raw is not None:
-            total = int(total_raw)
-        else:
-            pagecount = int(payload.get("pagecount") or 0)
-            total = pagecount * self._PAGE_SIZE
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
         if vod_id.startswith("custom-folder:") and self._custom_live_service is not None:
-            return self._custom_live_service.load_folder_items(vod_id)
+            items, total = self._custom_live_service.load_folder_items(vod_id)
+            return items, page_count_from_total(total, page_size=self._PAGE_SIZE)
         payload = self._api_client.list_live_items(vod_id, page=1)
         items = self._map_live_items(payload)
-        total_raw = payload.get("total")
-        total = int(total_raw) if total_raw is not None else len(items)
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def _build_playlist(self, detail: VodItem) -> list[PlayItem]:
         detail_items = [item for item in detail.items if item.url.strip()]

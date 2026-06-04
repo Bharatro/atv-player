@@ -7,6 +7,7 @@ from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
 from atv_player.api import ApiError
+from atv_player.controllers.pagination import page_count_from_total
 from atv_player.controllers.youtube_category_config import normalize_youtube_vod_id, plan_youtube_query
 from atv_player.models import (
     AppConfig,
@@ -23,6 +24,13 @@ from atv_player.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _page_count_for_loaded_youtube_page(page_number: int, item_count: int) -> int:
+    normalized_page = max(1, int(page_number or 1))
+    if item_count >= 30:
+        return normalized_page + 1
+    return normalized_page if item_count > 0 else 0
 
 _DEFAULT_CATEGORIES = [
     {"id": "cat_recommend", "name": "首页推荐", "query": "推荐", "order": 1},
@@ -409,6 +417,7 @@ def _detail_fields_with_video_id(
 
 class YouTubeController:
     supports_search = True
+    uses_page_count_for_pagination = True
 
     def __init__(
         self,
@@ -682,19 +691,19 @@ class YouTubeController:
             )
             if category_id == "cat_sub_channels":
                 items = self._enrich_channel_thumbnails(items)
-            total = (page_number - 1) * 30 + len(items)
+            page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
             if items:
-                self._store_login_list_cache(cache_key, items, total)
+                self._store_login_list_cache(cache_key, items, page_count)
             logger.info(
                 "YouTube login list loaded via yt-dlp category=%s page=%s items=%s missing_pic=%s total=%s sample_pic=%s",
                 category_id,
                 page_number,
                 len(items),
                 _missing_pic_count(items),
-                total,
+                page_count,
                 _first_pic_sample(items),
             )
-            return items, total
+            return items, page_count
         default_category_ids = {str(item["id"]) for item in _DEFAULT_CATEGORIES}
         if category_id in default_category_ids:
             query, playlist_only = self._resolve_category_query(category_id, filters or {})
@@ -719,7 +728,7 @@ class YouTubeController:
                     )
                     for item in request.playlist
                 ]
-                return items, len(items)
+                return items, page_count_from_total(len(items))
             if plan.kind == "playlist":
                 request = self._build_playlist_request(plan.value, _youtube_playlist_vod_id(plan.value))
                 items = [
@@ -731,7 +740,7 @@ class YouTubeController:
                     )
                     for item in request.playlist
                 ]
-                return items, len(items)
+                return items, page_count_from_total(len(items))
             query = plan.value
         entries = self._flat_entries(f"ytsearchall:{query}", page_number)
         items = self._map_entries(entries)
@@ -744,7 +753,8 @@ class YouTubeController:
             _missing_pic_count(items),
             _first_pic_sample(items),
         )
-        return items, (page_number - 1) * 30 + len(items)
+        page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
+        return items, page_count
 
     def search_items(
         self,
@@ -767,7 +777,8 @@ class YouTubeController:
             _missing_pic_count(items),
             _first_pic_sample(items),
         )
-        return items, (page_number - 1) * 30 + len(items)
+        page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
+        return items, page_count
 
     def _entry_for_video(self, video_id: str) -> dict:
         entries = self._flat_entries(_youtube_video_url(video_id), 1, 1)

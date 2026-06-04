@@ -20,7 +20,7 @@ class FakeBrowseController:
         return f"/resolved/{item.vod_id}"
 
 
-def test_pansou_controller_search_items_uses_browse_search_and_counts_results() -> None:
+def test_pansou_controller_search_items_uses_browse_search_and_returns_page_count() -> None:
     browse = FakeBrowseController()
     controller = PansouController(browse)
 
@@ -28,7 +28,7 @@ def test_pansou_controller_search_items_uses_browse_search_and_counts_results() 
 
     assert browse.search_calls == ["庆余年"]
     assert [item.vod_id for item in items] == ["pan-1", "pan-2"]
-    assert total == 2
+    assert total == 1
 
 
 def test_pansou_controller_resolve_search_result_delegates_to_browse_controller() -> None:

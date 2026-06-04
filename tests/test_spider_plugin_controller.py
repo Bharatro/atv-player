@@ -808,8 +808,64 @@ def test_controller_search_and_category_mapping() -> None:
 
     assert total == 1
     assert items[0].vod_name == "庆余年"
-    assert category_total == 90
+    assert category_total == 3
     assert category_items[0].vod_name == "tv-2"
+
+
+def test_controller_returns_pagecount_for_category_and_search_results() -> None:
+    class PageCountSpider(FakeSpider):
+        def categoryContent(self, tid, pg, filter, extend):
+            return {
+                "list": [{"vod_id": f"/detail/{tid}-{pg}", "vod_name": f"{tid}-{pg}"}],
+                "total": 47,
+                "pagecount": 4,
+            }
+
+        def searchContent(self, key, quick, pg=1, category=""):
+            return {
+                "list": [{"vod_id": f"/detail/{key}", "vod_name": key}],
+                "total": 11,
+                "pagecount": 2,
+            }
+
+    controller = SpiderPluginController(
+        PageCountSpider(),
+        plugin_name="页数插件",
+        search_enabled=True,
+    )
+
+    _category_items, category_total = controller.load_items("tv", 1)
+    _search_items, search_total = controller.search_items("庆余年", 1)
+
+    assert category_total == 4
+    assert search_total == 2
+
+
+def test_controller_calculates_pagecount_from_total_when_pagecount_is_missing() -> None:
+    class TotalOnlySpider(FakeSpider):
+        def categoryContent(self, tid, pg, filter, extend):
+            return {
+                "list": [{"vod_id": f"/detail/{tid}-{pg}", "vod_name": f"{tid}-{pg}"}],
+                "total": 61,
+            }
+
+        def searchContent(self, key, quick, pg=1, category=""):
+            return {
+                "list": [{"vod_id": f"/detail/{key}", "vod_name": key}],
+                "total": 31,
+            }
+
+    controller = SpiderPluginController(
+        TotalOnlySpider(),
+        plugin_name="页数插件",
+        search_enabled=True,
+    )
+
+    _category_items, category_total = controller.load_items("tv", 1)
+    _search_items, search_total = controller.search_items("庆余年", 1)
+
+    assert category_total == 3
+    assert search_total == 2
 
 
 def test_controller_load_folder_items_uses_category_content_with_folder_id() -> None:
