@@ -163,7 +163,12 @@ class FollowingUpdateService(QObject):
                 current_fallback_season=record.season_number,
                 latest_fallback_season=record.season_number,
             )
-            homepage_prompt = bool(has_update and caught_up and record.prompt_snoozed_until <= now)
+            homepage_prompt = bool(
+                has_update
+                and caught_up
+                and record.prompt_snoozed_until <= now
+                and latest > record.prompt_dismissed_latest_episode
+            )
             if not is_tmdb_fallback and self._has_metadata_update(refreshed_record):
                 self._repository.update_metadata(record.id, refreshed_record)
             self._repository.update_check_state(

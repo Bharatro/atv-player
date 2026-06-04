@@ -629,6 +629,7 @@ class FollowingController:
             new_episode_count=0 if watched_latest else existing.new_episode_count,
             homepage_prompt_pending=False if watched_latest else existing.homepage_prompt_pending,
             prompt_snoozed_until=existing.prompt_snoozed_until,
+            prompt_dismissed_latest_episode=existing.prompt_dismissed_latest_episode,
             created_at=existing.created_at or record.created_at,
             last_played_at=existing.last_played_at if keep_position else 0,
             last_checked_at=existing.last_checked_at,
@@ -1141,6 +1142,9 @@ class FollowingController:
 
     def snooze_prompt(self, following_id: int) -> None:
         self._repository.snooze_prompt(following_id, until=self._now() + 24 * 3600)
+
+    def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
+        self._repository.dismiss_prompt_until_next_episode(following_id)
 
     def load_homepage_prompts(self) -> list[FollowingRecord]:
         return self._repository.load_homepage_prompt_records(now=self._now())

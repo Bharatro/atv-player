@@ -221,6 +221,54 @@ def test_following_repository_filters_updates_and_snoozes_prompt(tmp_path: Path)
     assert repo.load_homepage_prompt_records(now=998) == []
 
 
+def test_following_repository_dismisses_prompt_until_next_episode(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        _record(
+            latest_episode=128,
+            has_update=True,
+            new_episode_count=1,
+            homepage_prompt_pending=True,
+        )
+    )
+
+    repo.dismiss_prompt_until_next_episode(following_id)
+    repo.update_check_state(
+        following_id,
+        latest_episode=128,
+        total_episodes=156,
+        checked_at=200,
+        next_check_after=300,
+        has_update=True,
+        new_episode_count=1,
+        homepage_prompt_pending=True,
+        last_error="",
+    )
+
+    record = repo.get(following_id)
+    assert record is not None
+    assert record.prompt_dismissed_latest_episode == 128
+    assert record.homepage_prompt_pending is False
+    assert repo.load_homepage_prompt_records(now=250) == []
+
+    repo.update_check_state(
+        following_id,
+        latest_episode=129,
+        total_episodes=156,
+        checked_at=300,
+        next_check_after=400,
+        has_update=True,
+        new_episode_count=2,
+        homepage_prompt_pending=True,
+        last_error="",
+    )
+
+    record = repo.get(following_id)
+    assert record is not None
+    assert record.homepage_prompt_pending is True
+    assert [item.id for item in repo.load_homepage_prompt_records(now=350)] == [following_id]
+
+
 def test_following_repository_normalizes_tmdb_identity_and_migrates_existing_season_key(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     legacy_id = repo.upsert(

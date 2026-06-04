@@ -105,6 +105,47 @@ def test_update_service_does_not_reprompt_after_homepage_prompt_is_cleared(tmp_p
     assert record.homepage_prompt_pending is False
 
 
+def test_update_service_does_not_prompt_after_dismiss_until_new_episode(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(prompt_dismissed_latest_episode=2))
+    service = FollowingUpdateService(repo, metadata_gateway=FakeMetadataGateway(), now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.latest_episode == 2
+    assert record.has_update is True
+    assert record.homepage_prompt_pending is False
+
+
+def test_update_service_prompts_again_after_dismissed_episode_advances(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(prompt_dismissed_latest_episode=2))
+    gateway = FakeMetadataGateway()
+    gateway.responses["bangumi"] = (
+        replace(_record(id=record_id), latest_episode=3, total_episodes=3),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            overview="简介",
+            episodes=[
+                FollowingEpisode(episode_number=1, title="第一集"),
+                FollowingEpisode(episode_number=2, title="第二集"),
+                FollowingEpisode(episode_number=3, title="第三集"),
+            ],
+            refreshed_at=200,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 200)
+
+    service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert record is not None
+    assert record.latest_episode == 3
+    assert record.homepage_prompt_pending is True
+
+
 def test_update_service_does_not_prompt_when_user_is_behind(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     record_id = repo.upsert(_record(current_episode=0, watched_latest_episode=False))

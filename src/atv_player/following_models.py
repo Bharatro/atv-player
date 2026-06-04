@@ -138,6 +138,7 @@ class FollowingRecord:
     new_episode_count: int = 0
     homepage_prompt_pending: bool = False
     prompt_snoozed_until: int = 0
+    prompt_dismissed_latest_episode: int = 0
     created_at: int = 0
     updated_at: int = 0
     last_played_at: int = 0

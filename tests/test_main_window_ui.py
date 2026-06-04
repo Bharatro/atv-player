@@ -326,6 +326,7 @@ class FakeFollowingController:
         self.load_calls: list[tuple[int, int, str, bool]] = []
         self.cleared: list[int] = []
         self.snoozed: list[int] = []
+        self.dismissed_until_next: list[int] = []
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         self.load_calls.append((page, size, keyword, only_updates))
@@ -362,6 +363,9 @@ class FakeFollowingController:
 
     def snooze_prompt(self, following_id: int) -> None:
         self.snoozed.append(following_id)
+
+    def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
+        self.dismissed_until_next.append(following_id)
 
 
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
@@ -827,6 +831,25 @@ def test_main_window_homepage_prompt_actions(qtbot) -> None:
     assert window._following_prompt_dialog is not None
     window._following_prompt_detail_button.click()
     assert following.cleared == [1]
+
+
+def test_main_window_homepage_prompt_dismiss_until_next_episode(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    window.show_following_homepage_prompts()
+
+    assert window._following_prompt_dialog is not None
+    window._following_prompt_dismiss_until_next_button.click()
+    assert following.dismissed_until_next == [1]
+    assert window._following_prompt_dialog is None
 
 
 def test_main_window_does_not_show_homepage_prompt_while_player_is_playing(qtbot) -> None:

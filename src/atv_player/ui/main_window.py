@@ -198,6 +198,9 @@ class _EmptyFollowingController:
     def snooze_prompt(self, following_id: int) -> None:
         del following_id
 
+    def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
+        del following_id
+
 
 class _HistoryGlobalSearchAdapter:
     page_size = 100
@@ -1575,6 +1578,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_detail_button: QPushButton | None = None
         self._following_prompt_search_button: QPushButton | None = None
         self._following_prompt_snooze_button: QPushButton | None = None
+        self._following_prompt_dismiss_until_next_button: QPushButton | None = None
         self._following_prompt_close_handled = False
         self._open_request_id = 0
         self._media_request_id = 0
@@ -5471,6 +5475,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_controller.snooze_prompt(following_id)
         self._close_following_prompt_dialog(already_handled=True)
 
+    def _dismiss_following_prompt_until_next_episode(self, following_id: int) -> None:
+        self._following_controller.dismiss_prompt_until_next_episode(following_id)
+        self._close_following_prompt_dialog(already_handled=True)
+
     def _dismiss_following_prompt(self, following_id: int) -> None:
         if not self._following_prompt_close_handled:
             self._following_controller.clear_homepage_prompt(following_id)
@@ -5542,9 +5550,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._following_prompt_detail_button = QPushButton("查看详情", dialog)
         self._following_prompt_search_button = QPushButton("搜索播放", dialog)
         self._following_prompt_snooze_button = QPushButton("稍后提醒", dialog)
+        self._following_prompt_dismiss_until_next_button = QPushButton("不再提示", dialog)
         button_row.addWidget(self._following_prompt_detail_button)
         button_row.addWidget(self._following_prompt_search_button)
         button_row.addWidget(self._following_prompt_snooze_button)
+        button_row.addWidget(self._following_prompt_dismiss_until_next_button)
         layout.addWidget(title_label)
         layout.addWidget(detail_label)
         layout.addLayout(button_row)
@@ -5556,6 +5566,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         self._following_prompt_snooze_button.clicked.connect(
             lambda: self._snooze_following_prompt(record.id)
+        )
+        self._following_prompt_dismiss_until_next_button.clicked.connect(
+            lambda: self._dismiss_following_prompt_until_next_episode(record.id)
         )
 
         def handle_finished(_result, following_id=record.id):
