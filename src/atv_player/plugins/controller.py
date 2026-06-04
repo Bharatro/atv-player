@@ -971,9 +971,9 @@ class SpiderPluginController:
             return list(self._home_items), 1
         return self._load_category_items(category_id, page, filters=filters)
 
-    def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
+    def load_folder_items(self, vod_id: str, page: int = 1) -> tuple[list[VodItem], int]:
         self._ensure_home_loaded()
-        return self._load_category_items(str(vod_id or ""), 1, filters={})
+        return self._load_category_items(str(vod_id or ""), page, filters={})
 
     def _load_category_items(
         self,
@@ -1003,7 +1003,7 @@ class SpiderPluginController:
         self._log_spider_method_call(
             "categoryContent",
             items=len(items),
-            total=total,
+            pagecount=total,
         )
         return items, total
 

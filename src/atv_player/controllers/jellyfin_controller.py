@@ -55,8 +55,8 @@ class JellyfinController:
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count
 
-    def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
-        payload = self._api_client.list_jellyfin_items(vod_id, page=1)
+    def load_folder_items(self, vod_id: str, page: int = 1) -> tuple[list[VodItem], int]:
+        payload = self._api_client.list_jellyfin_items(vod_id, page=page)
         items = self._map_jellyfin_items(payload)
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count

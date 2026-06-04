@@ -152,6 +152,16 @@ class ExplicitPageCountPosterController(FakeDoubanController):
         return items, 4
 
 
+class FolderPagingPosterController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.folder_page_calls: list[tuple[str, int]] = []
+
+    def load_folder_page(self, folder_id: str, page: int):
+        self.folder_page_calls.append((folder_id, page))
+        return [VodItem(vod_id=f"{folder_id}-{page}", vod_name=f"文件夹第 {page} 页")], 60
+
+
 class FilterablePosterController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -401,6 +411,29 @@ def test_poster_grid_page_external_results_can_request_next_page(qtbot) -> None:
     page.next_page()
 
     assert requested_pages == [2]
+
+
+def test_poster_grid_page_folder_view_requests_next_folder_page(qtbot) -> None:
+    controller = FolderPagingPosterController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, folder_navigation_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    initial_category_calls = list(controller.item_calls)
+    page.show_folder_items(
+        [VodItem(vod_id="folder-1-1", vod_name="文件夹第 1 页")],
+        60,
+        folder_id="folder-1",
+        page_loader=controller.load_folder_page,
+        page=1,
+    )
+
+    page.next_page()
+
+    qtbot.waitUntil(lambda: controller.folder_page_calls == [("folder-1", 2)])
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "文件夹第 2 页")
+    assert controller.item_calls == initial_category_calls
+    assert page.page_label.text() == "第 2 / 2 页"
 
 
 def test_poster_grid_page_hides_search_controls_in_external_results_mode(qtbot) -> None:

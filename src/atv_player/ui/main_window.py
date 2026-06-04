@@ -1144,6 +1144,9 @@ class _MediaLoadResult:
     empty_message: str
     push_breadcrumb: tuple[str, str] | None = None
     trim_breadcrumbs_to: int | None = None
+    folder_id: str = ""
+    folder_page_loader: Any | None = None
+    page_number: int = 1
 
 
 @dataclass(slots=True)
@@ -4999,11 +5002,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         page.invalidate_pending_item_requests()
+        folder_id = str(getattr(item, "vod_id", "") or "")
         self._start_media_load(
             page,
-            lambda: controller.load_folder_items(item.vod_id),
+            lambda: self._load_media_folder_page(controller, folder_id, 1),
             empty_message="当前文件夹暂无内容",
-            push_breadcrumb=(item.vod_id, item.vod_name),
+            push_breadcrumb=(folder_id, item.vod_name),
+            folder_id=folder_id,
+            folder_page_loader=lambda current_folder_id, current_page: self._load_media_folder_page(
+                controller,
+                current_folder_id,
+                current_page,
+            ),
         )
 
     def _handle_media_breadcrumb_requested(
@@ -5018,9 +5028,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if kind == "folder":
             self._start_media_load(
                 page,
-                lambda: controller.load_folder_items(node_id),
+                lambda: self._load_media_folder_page(controller, node_id, 1),
                 empty_message="当前文件夹暂无内容",
                 trim_breadcrumbs_to=index,
+                folder_id=node_id,
+                folder_page_loader=lambda current_folder_id, current_page: self._load_media_folder_page(
+                    controller,
+                    current_folder_id,
+                    current_page,
+                ),
             )
             return
         category_id = page.selected_category_id
@@ -5032,6 +5048,30 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             empty_message="当前分类暂无内容",
             trim_breadcrumbs_to=1,
         )
+
+    def _load_media_folder_page(self, controller: Any, folder_id: str, page: int):
+        load_folder_items = getattr(controller, "load_folder_items")
+        try:
+            signature = inspect.signature(load_folder_items)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None:
+            parameters = list(signature.parameters.values())
+            accepts_page = (
+                any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+                or len(parameters) >= 2
+            )
+            if accepts_page:
+                return load_folder_items(folder_id, page)
+        if page <= 1:
+            return load_folder_items(folder_id)
+        load_items = getattr(controller, "load_items", None)
+        if callable(load_items):
+            try:
+                return load_items(folder_id, page, filters={})
+            except TypeError:
+                return load_items(folder_id, page)
+        return load_folder_items(folder_id)
 
     def _find_plugin_controller(self, plugin_id: int):
         for definition in self._plugin_definitions:
@@ -5713,6 +5753,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         empty_message: str,
         push_breadcrumb: tuple[str, str] | None = None,
         trim_breadcrumbs_to: int | None = None,
+        folder_id: str = "",
+        folder_page_loader: Any | None = None,
+        page_number: int = 1,
     ) -> int:
         self._media_request_id += 1
         request_id = self._media_request_id
@@ -5734,6 +5777,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                         empty_message=empty_message,
                         push_breadcrumb=push_breadcrumb,
                         trim_breadcrumbs_to=trim_breadcrumbs_to,
+                        folder_id=folder_id,
+                        folder_page_loader=folder_page_loader,
+                        page_number=page_number,
                     ),
                 )
 
@@ -5743,7 +5789,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _handle_media_load_succeeded(self, request_id: int, result: _MediaLoadResult) -> None:
         if request_id != self._media_request_id:
             return
-        result.page.show_items(result.items, result.total, page=1, empty_message=result.empty_message)
+        if result.folder_id and result.folder_page_loader is not None:
+            result.page.show_folder_items(
+                result.items,
+                result.total,
+                folder_id=result.folder_id,
+                page_loader=result.folder_page_loader,
+                page=result.page_number,
+                empty_message=result.empty_message,
+            )
+        else:
+            result.page.clear_folder_view()
+            result.page.show_items(result.items, result.total, page=result.page_number, empty_message=result.empty_message)
         if result.push_breadcrumb is not None:
             breadcrumb_id, label = result.push_breadcrumb
             result.page.push_folder_breadcrumb(breadcrumb_id, label)

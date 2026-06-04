@@ -84,11 +84,11 @@ class LiveController:
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count
 
-    def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
+    def load_folder_items(self, vod_id: str, page: int = 1) -> tuple[list[VodItem], int]:
         if vod_id.startswith("custom-folder:") and self._custom_live_service is not None:
             items, total = self._custom_live_service.load_folder_items(vod_id)
             return items, page_count_from_total(total, page_size=self._PAGE_SIZE)
-        payload = self._api_client.list_live_items(vod_id, page=1)
+        payload = self._api_client.list_live_items(vod_id, page=page)
         items = self._map_live_items(payload)
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count
