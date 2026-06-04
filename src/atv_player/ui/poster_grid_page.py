@@ -136,8 +136,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         folder_navigation_enabled: bool = False,
         initial_category_id: str = "",
         category_layout: str = "list",
+        parent: QWidget | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(parent)
         self._init_async_guard()
         self.controller = controller
         self._click_action = click_action

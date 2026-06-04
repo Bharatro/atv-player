@@ -1951,6 +1951,30 @@ def test_main_window_does_not_precreate_global_search_popup_during_startup_plugi
     release_load.set()
 
 
+def test_main_window_creates_startup_plugin_pages_under_navigation_stack(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    page, _controller, _plugin_id, _tab_definition = window._create_plugin_page_entry(
+        {"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True}
+    )
+
+    assert page.parent() is window.nav_tabs.content_stack
+    assert page.window() is window
+
+
 def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot) -> None:
     release_load = threading.Event()
 

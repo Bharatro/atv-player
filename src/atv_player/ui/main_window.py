@@ -4542,6 +4542,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             click_action="open",
             search_enabled=bool(_plugin_value(definition, "search_enabled")),
             initial_category_id=self._initial_category_id_for_tab(f"plugin:{plugin_id}"),
+            parent=self.nav_tabs.content_stack,
         )
         page.item_open_requested.connect(
             lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(
