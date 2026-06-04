@@ -2636,6 +2636,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._handle_classic_builtin_item_open(source_key, controller, item)
 
     def _handle_classic_builtin_item_open(self, source_key: str, controller: Any, item: Any) -> None:
+        if source_key == "douban":
+            self._handle_douban_search_requested(str(getattr(item, "vod_name", "") or ""))
+            return
         if source_key == "telegram":
             self._skip_next_telegram_open_request_vod_id = str(getattr(item, "vod_id", "") or "")
 
@@ -2645,7 +2648,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
             self._start_open_request(build_request)
             return
-        if source_key in {"bilibili", "emby", "jellyfin", "feiniu"} and getattr(item, "vod_tag", "") == "folder":
+        if source_key in {"bilibili", "live", "emby", "jellyfin", "feiniu"} and getattr(item, "vod_tag", "") == "folder":
             if hasattr(self, "_classic_home_page"):
                 self._open_media_folder(self._classic_home_page.grid_page, controller, item)
             return

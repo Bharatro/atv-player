@@ -715,6 +715,50 @@ def test_main_window_classic_selecting_builtin_non_grid_source_opens_builtin_pag
     assert config.last_selected_tab == "favorites"
 
 
+def test_main_window_classic_douban_card_starts_global_search(qtbot) -> None:
+    config = AppConfig(home_mode="classic", last_selected_tab="douban")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("classic")
+
+    window._classic_home_page.item_open_requested.emit(VodItem(vod_id="douban-1", vod_name="漫长的季节"))
+
+    assert window.global_search_edit.text() == "漫长的季节"
+
+
+def test_main_window_classic_live_folder_card_opens_folder(qtbot) -> None:
+    class LiveFolderController(FakeStaticController):
+        def __init__(self) -> None:
+            self.folder_calls: list[str] = []
+
+        def load_folder_items(self, vod_id: str):
+            self.folder_calls.append(vod_id)
+            return [VodItem(vod_id="live-child", vod_name="直播子频道")], 1
+
+    controller = LiveFolderController()
+    config = AppConfig(home_mode="classic", last_selected_tab="live")
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        config,
+        live_controller=controller,
+    )
+    qtbot.addWidget(window)
+    window.apply_home_mode("classic")
+
+    window._classic_home_page.item_open_requested.emit(
+        VodItem(vod_id="folder-1", vod_name="央视频道", vod_tag="folder")
+    )
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"], timeout=2000)
+
+
 def test_main_window_classic_header_builtin_shortcut_opens_builtin_page(qtbot) -> None:
     config = AppConfig()
     save_calls = []
