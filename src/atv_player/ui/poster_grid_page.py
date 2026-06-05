@@ -5,7 +5,7 @@ from collections.abc import Callable
 from threading import BoundedSemaphore
 from typing import cast
 
-from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -189,6 +189,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.cards_scroll = QScrollArea(self)
         self.cards_scroll.setWidgetResizable(True)
         self.cards_scroll.setWidget(self.cards_widget)
+        self.cards_scroll.viewport().installEventFilter(self)
         self.card_buttons: list[QToolButton] = []
         self._folder_breadcrumbs: list[dict[str, str]] = []
         self.filter_buttons: dict[str, list[QPushButton]] = {}
@@ -580,6 +581,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.card_buttons.append(button)
             self._start_card_poster_load(button, item)
         self._relayout_cards()
+        QTimer.singleShot(0, self._relayout_cards)
 
     def _relayout_cards(self) -> None:
         while self.cards_layout.count():
@@ -1000,6 +1002,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._deactivate_async_guard()
         super().closeEvent(event)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.cards_scroll.viewport() and event.type() == QEvent.Type.Resize and self.card_buttons:
+            self._relayout_cards()
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

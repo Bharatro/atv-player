@@ -370,6 +370,36 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.category_list.isHidden() is True
 
 
+def test_poster_grid_page_reflows_external_results_after_layout_width_settles(qtbot, monkeypatch) -> None:
+    controller = ExternalResultController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2 and len(page.card_buttons) == 1)
+    page.resize(1500, 900)
+    qtbot.waitUntil(lambda: page.cards_scroll.viewport().width() > PosterGridPage._CARD_WIDTH * 2)
+
+    original_column_count = page._column_count_for_width
+    calls = {"count": 0}
+
+    def column_count_with_stale_first_width(available_width: int) -> int:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return 1
+        return original_column_count(available_width)
+
+    monkeypatch.setattr(page, "_column_count_for_width", column_count_with_stale_first_width)
+    page.show_external_results(
+        items=[VodItem(vod_id=f"s{index}", vod_name=f"全局搜索结果-{index}") for index in range(6)],
+        total=6,
+        page=1,
+        empty_message="无搜索结果",
+    )
+
+    qtbot.waitUntil(lambda: page.cards_layout.count() == 6 and calls["count"] >= 2)
+
+    assert page._current_card_columns > 1
+    assert page.cards_layout.getItemPosition(1)[:2] == (0, 1)
+
+
 def test_poster_grid_page_prefers_inferred_page_size_over_default_page_size(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(VariablePageSizePosterController()))
 
