@@ -941,23 +941,56 @@ class FollowingRepository:
 
     def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
         with self._connect() as conn:
+            row = conn.execute(f"{self._select_sql()} WHERE id = ?", (following_id,)).fetchone()
+            if row is None:
+                return
+            record = self._record_from_row(row)
+            latest_episode = max(0, int(record.latest_episode or 0))
+            if latest_episode <= 0:
+                conn.execute("UPDATE following SET homepage_prompt_pending = 0 WHERE id = ?", (following_id,))
+                return
+            latest_season = self._prompt_latest_season_number(conn, record)
             conn.execute(
                 """
                 UPDATE following
                 SET homepage_prompt_pending = 0,
-                    prompt_dismissed_latest_episode = CASE
-                        WHEN latest_episode > 0 THEN latest_episode
-                        ELSE prompt_dismissed_latest_episode
-                    END,
-                    prompt_dismissed_latest_season = CASE
-                        WHEN latest_episode > 0 AND season_number > 0 THEN season_number
-                        WHEN latest_episode > 0 THEN 1
-                        ELSE prompt_dismissed_latest_season
-                    END
+                    prompt_dismissed_latest_episode = ?,
+                    prompt_dismissed_latest_season = ?
                 WHERE id = ?
                 """,
-                (following_id,),
+                (latest_episode, latest_season, following_id),
             )
+
+    def _prompt_latest_season_number(self, conn, record: FollowingRecord) -> int:
+        latest_episode = max(0, int(record.latest_episode or 0))
+        latest_season = resolve_progress_season(
+            record.season_number,
+            latest_episode,
+            fallback_season=record.season_number,
+        )
+        row = conn.execute(
+            """
+            SELECT seasons_json, episodes_json
+            FROM following_detail_snapshots
+            WHERE following_id = ?
+            """,
+            (record.id,),
+        ).fetchone()
+        if row is None:
+            return latest_season
+        snapshot_seasons = [
+            season.season_number
+            for season in (_season_from_dict(item) for item in _json_loads(row[0], []))
+            if season.season_number > 0
+        ]
+        snapshot_seasons.extend(
+            episode.season_number
+            for episode in (_episode_from_dict(item) for item in _json_loads(row[1], []))
+            if episode.season_number > 0 and not episode.is_special
+        )
+        if snapshot_seasons:
+            return max(latest_season, max(snapshot_seasons))
+        return latest_season
 
     def _record_params(self, record: FollowingRecord) -> tuple[object, ...]:
         return (

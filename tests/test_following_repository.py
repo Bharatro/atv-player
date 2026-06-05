@@ -270,6 +270,55 @@ def test_following_repository_dismisses_prompt_until_next_episode(tmp_path: Path
     assert [item.id for item in repo.load_homepage_prompt_records(now=350)] == [following_id]
 
 
+def test_following_repository_dismisses_prompt_for_latest_snapshot_season(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    following_id = repo.upsert(
+        _record(
+            season_number=1,
+            current_season_number=1,
+            current_episode=12,
+            latest_episode=1,
+            has_update=True,
+            new_episode_count=1,
+            homepage_prompt_pending=True,
+        )
+    )
+    repo.save_detail_snapshot(
+        following_id,
+        FollowingDetailSnapshot(
+            following_id=following_id,
+            seasons=[
+                FollowingSeason(season_number=1, episode_count=12),
+                FollowingSeason(season_number=2, episode_count=1),
+            ],
+            episodes=[
+                FollowingEpisode(season_number=2, episode_number=1, title="第二季第一集"),
+            ],
+        ),
+    )
+
+    repo.dismiss_prompt_until_next_episode(following_id)
+    repo.update_check_state(
+        following_id,
+        latest_episode=1,
+        latest_season_number=2,
+        total_episodes=13,
+        checked_at=200,
+        next_check_after=300,
+        has_update=True,
+        new_episode_count=1,
+        homepage_prompt_pending=True,
+        last_error="",
+    )
+
+    record = repo.get(following_id)
+    assert record is not None
+    assert record.prompt_dismissed_latest_episode == 1
+    assert record.prompt_dismissed_latest_season == 2
+    assert record.homepage_prompt_pending is False
+    assert repo.load_homepage_prompt_records(now=250) == []
+
+
 def test_following_repository_normalizes_tmdb_identity_and_migrates_existing_season_key(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     legacy_id = repo.upsert(
