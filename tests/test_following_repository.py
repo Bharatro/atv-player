@@ -248,6 +248,7 @@ def test_following_repository_dismisses_prompt_until_next_episode(tmp_path: Path
     record = repo.get(following_id)
     assert record is not None
     assert record.prompt_dismissed_latest_episode == 128
+    assert record.prompt_dismissed_latest_season == 1
     assert record.homepage_prompt_pending is False
     assert repo.load_homepage_prompt_records(now=250) == []
 

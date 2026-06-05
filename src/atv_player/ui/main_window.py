@@ -2743,6 +2743,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def show_browse_path(self, path: str) -> None:
         self.browse_page.load_path(path)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
         self.nav_tabs.setCurrentWidget(self.browse_page)
 
     def _all_tab_definitions(self) -> list[_TabDefinition]:
@@ -5409,6 +5412,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def open_following_detail(self, following_id: int) -> None:
         following_id = int(following_id)
         self._following_controller.clear_homepage_prompt(following_id)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
         self.nav_tabs.setCurrentWidget(self.following_detail_page)
         self._close_following_prompt_dialog(already_handled=True)
         QTimer.singleShot(0, lambda: self.following_detail_page.load_record(following_id))

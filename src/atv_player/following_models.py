@@ -139,6 +139,7 @@ class FollowingRecord:
     homepage_prompt_pending: bool = False
     prompt_snoozed_until: int = 0
     prompt_dismissed_latest_episode: int = 0
+    prompt_dismissed_latest_season: int = 0
     created_at: int = 0
     updated_at: int = 0
     last_played_at: int = 0
@@ -236,6 +237,34 @@ def progress_at_or_beyond(
         current_fallback_season=current_fallback_season,
         target_fallback_season=latest_fallback_season,
     ) >= 0
+
+
+def progress_after_dismissed_prompt(
+    latest_season_number: int,
+    latest_episode: int,
+    dismissed_latest_season: int,
+    dismissed_latest_episode: int,
+    *,
+    dismissed_fallback_season: int = 0,
+    latest_fallback_season: int = 0,
+) -> bool:
+    normalized_latest_episode = max(0, int(latest_episode or 0))
+    if normalized_latest_episode <= 0:
+        return False
+    normalized_dismissed_episode = max(0, int(dismissed_latest_episode or 0))
+    if normalized_dismissed_episode <= 0:
+        return True
+    return (
+        compare_progress(
+            dismissed_latest_season,
+            normalized_dismissed_episode,
+            latest_season_number,
+            normalized_latest_episode,
+            current_fallback_season=dismissed_fallback_season,
+            target_fallback_season=latest_fallback_season,
+        )
+        < 0
+    )
 
 
 def resolve_absolute_episode_count(

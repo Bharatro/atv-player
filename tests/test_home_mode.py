@@ -281,6 +281,66 @@ def test_main_window_apply_home_mode_media_shows_local_media_sections(qtbot, tmp
     assert "繁花" in page.favorite_buttons[0].toolTip()
 
 
+def test_main_window_media_home_following_card_opens_visible_detail(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        MediaHistoryController(),
+        FakePlayerController(),
+        AppConfig(home_mode="media"),
+        favorites_controller=MediaFavoritesController(),
+        following_controller=MediaFollowingController(),
+    )
+    qtbot.addWidget(window)
+    page = window._media_home_page
+    qtbot.waitUntil(lambda: len(page.following_buttons) == 1)
+
+    loaded_ids: list[int] = []
+    monkeypatch.setattr(
+        window.following_detail_page,
+        "load_record",
+        lambda following_id: loaded_ids.append(following_id),
+    )
+
+    page.following_buttons[0].click()
+
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+    assert window.nav_tabs.currentWidget() is window.following_detail_page
+    qtbot.waitUntil(lambda: loaded_ids == [7])
+
+
+def test_main_window_pansou_resolve_keeps_browse_path_visible_in_media_mode(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(home_mode="media"),
+    )
+    qtbot.addWidget(window)
+
+    loaded_paths: list[str] = []
+    monkeypatch.setattr(
+        window.browse_page,
+        "load_path",
+        lambda path: loaded_paths.append(path),
+    )
+    window._global_search_active = True
+    window._pansou_resolve_request_id = 3
+
+    window._handle_pansou_resolve_succeeded(3, "/Movies/Resolved")
+
+    assert loaded_paths == ["/Movies/Resolved"]
+    assert window._home_stack.currentWidget() is window.nav_tabs
+    assert not window.nav_tabs.isHidden()
+    assert window.nav_tabs.currentWidget() is window.browse_page
+
+
 def test_main_window_media_home_global_search_opens_results_and_clears_back(
     qtbot,
 ) -> None:

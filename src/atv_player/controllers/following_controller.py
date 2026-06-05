@@ -630,6 +630,7 @@ class FollowingController:
             homepage_prompt_pending=False if watched_latest else existing.homepage_prompt_pending,
             prompt_snoozed_until=existing.prompt_snoozed_until,
             prompt_dismissed_latest_episode=existing.prompt_dismissed_latest_episode,
+            prompt_dismissed_latest_season=existing.prompt_dismissed_latest_season,
             created_at=existing.created_at or record.created_at,
             last_played_at=existing.last_played_at if keep_position else 0,
             last_checked_at=existing.last_checked_at,
