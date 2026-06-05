@@ -587,7 +587,7 @@ def test_manager_import_github_repository_overwrites_existing_plugin_with_same_m
     assert plugins[0].enabled is False
 
 
-def test_manager_import_github_repository_overwrites_valid_state_for_same_manifest_id_version(
+def test_manager_import_github_repository_skips_same_id_version_valid_state(
     tmp_path: Path,
 ) -> None:
     plugin_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%90%8C%E6%BA%90.txt"
@@ -608,7 +608,14 @@ def test_manager_import_github_repository_overwrites_valid_state_for_same_manife
         ),
     }
 
-    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+    requested_urls: list[str] = []
+
+    def fake_get(
+        url: str,
+        timeout: float = 15.0,
+        follow_redirects: bool = False,
+    ) -> httpx.Response:
+        requested_urls.append(url)
         response = responses.get(url)
         if response is None:
             raise AssertionError(f"Unexpected URL: {url}")
@@ -629,10 +636,18 @@ def test_manager_import_github_repository_overwrites_valid_state_for_same_manife
 
     plugins = repository.list_plugins()
 
-    assert result == SpiderPluginImportResult(imported_count=0, updated_count=1, skipped_count=0)
+    assert result == SpiderPluginImportResult(
+        imported_count=0,
+        updated_count=0,
+        skipped_count=1,
+    )
     assert [plugin.id for plugin in plugins] == [existing.id]
-    assert plugins[0].enabled is False
+    assert plugins[0].enabled is True
     assert plugins[0].plugin_version == 6
+    assert requested_urls == [
+        "https://api.github.com/repos/har01d5/tvbox",
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json",
+    ]
 
 
 def test_manager_import_github_repository_skips_entries_with_invalid_manifest_version(tmp_path: Path) -> None:
@@ -796,6 +811,120 @@ def test_manager_import_plugins_accepts_direct_manifest_url_with_absolute_files(
 
     assert result == SpiderPluginImportResult(imported_count=1, updated_count=0, skipped_count=0)
     assert [plugin.source_value for plugin in plugins] == [plugin_url]
+
+
+def test_manager_import_plugins_skips_same_ids_versions_across_sources(
+    tmp_path: Path,
+) -> None:
+    direct_manifest_url = "https://d.har01d.cn/spiders_v2.json"
+    direct_hongguo_url = "https://d.har01d.cn/py/%E7%BA%A2%E6%9E%9C.txt"
+    direct_shuangxing_url = "https://d.har01d.cn/py/%E5%8F%8C%E6%98%9F.txt"
+    github_manifest_url = (
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json"
+    )
+    github_hongguo_url = (
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/"
+        "%E7%BA%A2%E6%9E%9C.txt"
+    )
+    github_shuangxing_url = (
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/py/"
+        "%E5%8F%8C%E6%98%9F.txt"
+    )
+    responses = {
+        direct_manifest_url: httpx.Response(
+            200,
+            json=[
+                {"id": "hongguo", "file": "py/红果.txt", "valid": True, "version": 8},
+                {"id": "shuangxing", "file": "py/双星.txt", "valid": False, "version": 3},
+            ],
+        ),
+        direct_hongguo_url: httpx.Response(
+            200,
+            text="//@version:8\nprint('hongguo')\n",
+        ),
+        direct_shuangxing_url: httpx.Response(
+            200,
+            text="//@version:3\nprint('shuangxing')\n",
+        ),
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        github_manifest_url: httpx.Response(
+            200,
+            json=[
+                {"id": "hongguo", "file": "py/红果.txt", "valid": True, "version": 8},
+                {"id": "shuangxing", "file": "py/双星.txt", "valid": False, "version": 3},
+            ],
+        ),
+        github_hongguo_url: httpx.Response(
+            200,
+            text="//@version:8\nprint('hongguo')\n",
+        ),
+        github_shuangxing_url: httpx.Response(
+            200,
+            text="//@version:3\nprint('shuangxing')\n",
+        ),
+    }
+
+    def fake_get(
+        url: str,
+        timeout: float = 15.0,
+        follow_redirects: bool = False,
+    ) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    class RecordingLoader(FakeLoader):
+        def __init__(self) -> None:
+            self.loaded_plugin_ids: list[int] = []
+
+        def load(
+            self,
+            config: SpiderPluginConfig,
+            force_refresh: bool = False,
+            initialize: bool = True,
+        ) -> LoadedSpiderPlugin:
+            self.loaded_plugin_ids.append(config.id)
+            return super().load(
+                config,
+                force_refresh=force_refresh,
+                initialize=initialize,
+            )
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    loader = RecordingLoader()
+    manager = SpiderPluginManager(repository, loader, get=fake_get)
+
+    first_result = manager.import_plugins(direct_manifest_url)
+    first_plugins = repository.list_plugins()
+
+    second_result = manager.import_plugins("https://github.com/har01d5/tvbox")
+    second_plugins = repository.list_plugins()
+
+    assert first_result == SpiderPluginImportResult(
+        imported_count=2,
+        updated_count=0,
+        skipped_count=0,
+    )
+    assert second_result == SpiderPluginImportResult(
+        imported_count=0,
+        updated_count=0,
+        skipped_count=2,
+    )
+    assert [plugin.id for plugin in second_plugins] == [
+        plugin.id for plugin in first_plugins
+    ]
+    assert [plugin.source_value for plugin in second_plugins] == [
+        direct_hongguo_url,
+        direct_shuangxing_url,
+    ]
+    assert [plugin.plugin_version for plugin in second_plugins] == [8, 3]
+    assert loader.loaded_plugin_ids == [
+        plugin.id for plugin in first_plugins
+    ]
 
 
 def test_manager_import_plugins_skips_relative_entries_with_parent_traversal(tmp_path: Path) -> None:

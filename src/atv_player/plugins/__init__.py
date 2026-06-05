@@ -568,11 +568,18 @@ class SpiderPluginManager:
                     result.skipped_count += 1
                     continue
                 self._raise_if_import_cancelled(cancel_callback, result)
-                self._fetch_text(source_url)
                 existing = self._repository.find_plugin_by_manifest_id(manifest_id)
                 matched_by_manifest_id = existing is not None
                 if existing is None:
                     existing = self._repository.find_plugin_by_source_value(source_url)
+                if existing is not None and existing.plugin_version == plugin_version:
+                    if matched_by_manifest_id or (
+                        existing.source_value == source_url
+                        and existing.manifest_id == manifest_id
+                    ):
+                        result.skipped_count += 1
+                        continue
+                self._fetch_text(source_url)
                 if existing is None:
                     plugin = self._repository.add_plugin(
                         "remote",
@@ -585,14 +592,6 @@ class SpiderPluginManager:
                     result.imported_count += 1
                     self._raise_if_import_cancelled(cancel_callback, result)
                     self.refresh_plugin(plugin.id)
-                    continue
-                if (
-                    not matched_by_manifest_id
-                    and existing.plugin_version == plugin_version
-                    and existing.source_value == source_url
-                    and existing.manifest_id == manifest_id
-                ):
-                    result.skipped_count += 1
                     continue
                 self._repository.update_plugin(
                     existing.id,
