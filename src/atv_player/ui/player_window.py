@@ -69,7 +69,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.utils import infer_playlist_episode_number
-from atv_player.heat import heat_identity_from_vod
+from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
@@ -2388,7 +2388,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if item is None or heat_controller is None or not hasattr(heat_controller, "maybe_record_effective_watch"):
             return
         media = self._current_heat_identity()
-        if media is None:
+        if not has_required_heat_external_id(media):
             return
         try:
             heat_controller.maybe_record_effective_watch(

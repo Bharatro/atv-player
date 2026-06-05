@@ -79,7 +79,16 @@ def test_heat_controller_uses_short_media_threshold() -> None:
 
     sent = controller.maybe_record_effective_watch(
         HeatMediaIdentity(media_key="tmdb:movie:1", title="短片"),
-        position_seconds=180,
+        position_seconds=59,
+        duration_seconds=300,
+    )
+
+    assert sent is False
+    assert service.events == []
+
+    sent = controller.maybe_record_effective_watch(
+        HeatMediaIdentity(media_key="tmdb:movie:1", title="短片"),
+        position_seconds=60,
         duration_seconds=300,
     )
 

@@ -59,7 +59,7 @@ from atv_player.controllers.telegram_search_controller import build_detail_playl
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
 from atv_player.following_progress import resolve_following_playback_progress
-from atv_player.heat import heat_identity_from_vod
+from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.log_store import AppLogFilter
 from atv_player.models import (
     AppConfig,
@@ -85,6 +85,7 @@ from atv_player.ui.help_dialog import (
     shortcut_entries_for,
     show_shortcut_help_dialog,
 )
+from atv_player.ui.heat_recommendations_dialog import HeatRecommendationsDialog
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
@@ -1401,6 +1402,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
     _SEARCH_ICON_PATH = _ICONS_DIR / "search.svg"
     _SEARCH_POPUP_ICON_PATH = _ICONS_DIR / "rank.svg"
+    _HEAT_RECOMMENDATIONS_ICON_PATH = _ICONS_DIR / "fire.svg"
     _HOME_ICON_PATH = _ICONS_DIR / "home.svg"
     _BROWSE_ICON_PATH = _ICONS_DIR / "folder.svg"
     _FAVORITES_ICON_PATH = _ICONS_DIR / "favorite.svg"
@@ -1531,9 +1533,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.global_search_edit = SearchInputWithHotkey()
         self.global_search_button = QPushButton("搜索")
         self.global_search_popup_button = QPushButton("")
+        self.heat_recommendations_button = QPushButton("")
         self.global_search_clear_button = QPushButton("清空")
         self.global_search_status_label = QLabel("")
         self._global_search_popup: GlobalSearchPopup | None = None
+        self._heat_recommendations_dialog: HeatRecommendationsDialog | None = None
         self.startup_plugin_status_label = QLabel("")
         self.startup_plugin_retry_button = QPushButton("重试加载插件")
         self.startup_plugin_retry_button.hide()
@@ -1746,13 +1750,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._last_normal_geometry = QRect(0, 0, self.width(), self.height())
 
         tokens = current_tokens()
-        self.global_search_container.setFixedWidth(400)
+        self.global_search_container.setFixedWidth(444)
         self.global_search_edit.setPlaceholderText("搜索")
         self.global_search_edit.setClearButtonEnabled(True)
         self.global_search_edit.setStyleSheet(build_search_line_edit_qss(tokens, border_radius=18, min_height=36))
         self.global_search_button.setText("")
         self.global_search_button.setFixedSize(36, 36)
         self.global_search_popup_button.setFixedSize(36, 36)
+        self.heat_recommendations_button.setFixedSize(36, 36)
+        self.global_search_popup_button.setToolTip("搜索热榜")
+        self.global_search_popup_button.setAccessibleName("搜索热榜")
+        self.heat_recommendations_button.setToolTip("大家在看")
+        self.heat_recommendations_button.setAccessibleName("大家在看")
+        self.heat_recommendations_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._configure_header_icon_button(self.home_button, "首页")
         self.home_button.setIconSize(QSize(22, 22))
         self._configure_header_icon_button(self.browse_button, "文件浏览")
@@ -1849,6 +1859,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.advanced_settings_button.clicked.connect(self._open_advanced_settings)
         self.global_search_button.clicked.connect(self._start_global_search)
         self.global_search_popup_button.clicked.connect(self._toggle_global_search_popup)
+        self.heat_recommendations_button.clicked.connect(self._show_heat_recommendations_dialog)
         self.global_search_clear_button.clicked.connect(self._clear_global_search)
         self.global_search_edit.returnPressed.connect(self._start_global_search)
         self.global_search_edit.textChanged.connect(self._handle_global_search_text_changed)
@@ -1860,6 +1871,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         search_layout.addWidget(self.global_search_edit, 1)
         search_layout.addWidget(self.global_search_button)
         search_layout.addWidget(self.global_search_popup_button)
+        search_layout.addWidget(self.heat_recommendations_button)
         self.header_layout = QHBoxLayout()
         self.header_leading_spacer = QSpacerItem(
             0,
@@ -2080,8 +2092,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         self.global_search_button.setStyleSheet(button_qss)
         self.global_search_popup_button.setStyleSheet(button_qss)
+        self.heat_recommendations_button.setStyleSheet(button_qss)
         self.global_search_button.setIcon(load_tinted_icon(self._SEARCH_ICON_PATH, tokens.text_primary))
         self.global_search_popup_button.setIcon(load_tinted_icon(self._SEARCH_POPUP_ICON_PATH, tokens.text_primary))
+        self.heat_recommendations_button.setIcon(
+            load_tinted_icon(self._HEAT_RECOMMENDATIONS_ICON_PATH, tokens.text_primary)
+        )
 
     def _configure_header_icon_button(self, button: QPushButton, tooltip: str) -> None:
         button.setText("")
@@ -2133,6 +2149,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._apply_navigation_tab_theme()
         if self._global_search_popup is not None:
             self._global_search_popup._apply_theme()
+        if self._heat_recommendations_dialog is not None:
+            self._heat_recommendations_dialog._apply_theme()
         for page in (
             self.browse_page,
             self.history_page,
@@ -3385,6 +3403,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self.global_search_edit.setText(title)
         self._hide_global_search_popup()
+        if self._heat_recommendations_dialog is not None:
+            self._heat_recommendations_dialog.hide()
         self._start_global_search(heat_source_kind="heat_recommendation")
 
     def _record_heat_media_event(
@@ -3401,6 +3421,23 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             heat_controller.record_media_event(event_type, media, context=context or {})
         except Exception:
             pass
+
+    def _ensure_heat_recommendations_dialog(self) -> HeatRecommendationsDialog:
+        if self._heat_recommendations_dialog is None:
+            self._heat_recommendations_dialog = HeatRecommendationsDialog(self)
+            self._heat_recommendations_dialog.item_clicked.connect(
+                self._handle_global_search_popup_heat_item_clicked
+            )
+        return self._heat_recommendations_dialog
+
+    def _show_heat_recommendations_dialog(self) -> None:
+        self._hide_global_search_popup()
+        dialog = self._ensure_heat_recommendations_dialog()
+        dialog.set_loading()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._refresh_heat_recommendations()
 
     def _toggle_global_search_popup(self) -> None:
         if self._global_search_popup is not None and self._global_search_popup.isVisible():
@@ -3471,14 +3508,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
 
     def _refresh_heat_recommendations(self) -> None:
-        if self._heat_controller is None or self._global_search_popup is None:
+        if self._heat_controller is None:
+            if self._heat_recommendations_dialog is not None:
+                self._heat_recommendations_dialog.set_items([])
             return
         self._heat_recommendation_request_id += 1
         request_id = self._heat_recommendation_request_id
 
         def run() -> None:
             try:
-                items = list(self._heat_controller.load_recommendations(limit=24))
+                items = list(self._heat_controller.load_recommendations(limit=30))
             except Exception:
                 items = []
             if self._is_window_alive():
@@ -3487,11 +3526,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
 
     def _handle_heat_recommendations_loaded(self, request_id: int, items: object) -> None:
-        if request_id != self._heat_recommendation_request_id or self._global_search_popup is None:
+        if request_id != self._heat_recommendation_request_id:
             return
         if not isinstance(items, Iterable):
             items = []
-        self._global_search_popup.set_heat_items(list(items))
+        loaded_items = list(items)
+        if self._global_search_popup is not None:
+            self._global_search_popup.set_heat_items(loaded_items)
+        if self._heat_recommendations_dialog is not None:
+            self._heat_recommendations_dialog.set_items(loaded_items)
 
     def _request_global_search_hotkeys(self, source: str, hot_type: str) -> None:
         self._global_search_hotkey_request_id += 1
@@ -5505,11 +5548,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             mark_current_episode=mark_current_episode,
         )
         self.following_page.load_page()
-        self._record_heat_media_event(
-            "following_add",
-            heat_identity_from_vod(self.player_window.session.vod, item),
-            context={"source_kind": source_kind, "source_key": source_key},
-        )
+        media = heat_identity_from_vod(self.player_window.session.vod, item)
+        if has_required_heat_external_id(media):
+            self._record_heat_media_event(
+                "following_add",
+                media,
+                context={"source_kind": source_kind, "source_key": source_key},
+            )
 
     def _player_window_reached_playing(self) -> bool:
         if self.player_window is None:
@@ -6245,23 +6290,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.config.main_window_geometry = self._capture_main_window_geometry()
         self._save_config()
         self.player_window.open_session(session, start_paused=start_paused)
-        current_item = None
-        playlist = list(getattr(session, "playlist", []) or [])
-        try:
-            start_index = int(getattr(session, "start_index", 0) or 0)
-        except (TypeError, ValueError):
-            start_index = 0
-        if 0 <= start_index < len(playlist):
-            current_item = playlist[start_index]
-        self._record_heat_media_event(
-            "play_start",
-            heat_identity_from_vod(request.vod, current_item),
-            context={
-                "source_kind": str(getattr(request, "source_kind", "") or ""),
-                "source_key": str(getattr(request, "source_key", "") or ""),
-                "episode_index": start_index,
-            },
-        )
         self.player_window.show()
         self.player_window.raise_()
         self.player_window.activateWindow()

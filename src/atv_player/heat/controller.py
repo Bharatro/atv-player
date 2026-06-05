@@ -72,7 +72,7 @@ class HeatController:
             return False
         threshold = 600
         if duration_seconds > 0:
-            threshold = min(threshold, max(1, int(duration_seconds * 0.3)))
+            threshold = min(threshold, max(1, int(duration_seconds * 0.2)))
         if int(position_seconds or 0) < threshold:
             return False
         self._effective_watch_keys.add(media.media_key)

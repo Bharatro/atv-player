@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from atv_player.following_models import FollowingRecord
-from atv_player.heat.identity import heat_identity_from_following, heat_identity_from_vod
+from atv_player.heat.identity import (
+    has_required_heat_external_id,
+    heat_identity_from_following,
+    heat_identity_from_vod,
+)
 from atv_player.models import PlaybackDetailField, PlayItem, VodItem
 
 
@@ -20,6 +24,46 @@ def test_heat_identity_prefers_tmdb_detail_field() -> None:
     assert identity is not None
     assert identity.media_key == "tmdb:tv:1399"
     assert identity.external_ids["tmdb"] == "tv:1399"
+
+
+def test_heat_identity_includes_all_scraped_external_ids() -> None:
+    identity = heat_identity_from_vod(
+        VodItem(
+            vod_id="plugin-id",
+            vod_name="黑袍纠察队",
+            type_name="剧集",
+            detail_fields=[
+                PlaybackDetailField("TMDB ID", "76479"),
+                PlaybackDetailField("豆瓣ID", "30318230"),
+                PlaybackDetailField("Bangumi ID", "526975"),
+            ],
+        )
+    )
+
+    assert identity is not None
+    assert identity.media_key == "tmdb:tv:76479"
+    assert identity.external_ids == {
+        "tmdb": "tv:76479",
+        "douban": "30318230",
+        "bangumi": "526975",
+    }
+
+
+def test_heat_identity_uses_vod_dbid_as_douban_external_id() -> None:
+    identity = heat_identity_from_vod(
+        VodItem(
+            vod_id="plugin-id",
+            vod_name="豆瓣条目",
+            type_name="电影",
+            detail_fields=[PlaybackDetailField("TMDB ID", "34541")],
+            dbid=19971621,
+        )
+    )
+
+    assert identity is not None
+    assert identity.media_key == "tmdb:movie:34541"
+    assert identity.external_ids["tmdb"] == "movie:34541"
+    assert identity.external_ids["douban"] == "19971621"
 
 
 def test_heat_identity_extracts_douban_when_tmdb_missing() -> None:
@@ -42,6 +86,7 @@ def test_heat_identity_falls_back_to_normalized_title() -> None:
 
     assert identity is not None
     assert identity.media_key == "title:测试电影"
+    assert has_required_heat_external_id(identity) is False
 
 
 def test_heat_identity_merges_play_item_fields() -> None:
@@ -58,6 +103,7 @@ def test_heat_identity_merges_play_item_fields() -> None:
     assert identity is not None
     assert identity.media_key == "bangumi:526975"
     assert identity.title == "单集名"
+    assert has_required_heat_external_id(identity) is True
 
 
 def test_heat_identity_from_following_uses_provider_identity() -> None:

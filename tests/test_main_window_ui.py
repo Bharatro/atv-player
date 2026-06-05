@@ -602,7 +602,11 @@ def test_main_window_reports_heat_following_add_from_player(qtbot) -> None:
     item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="vod-1")
     window.player_window = SimpleNamespace(
         session=PlayerSession(
-            vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+            vod=VodItem(
+                vod_id="vod-1",
+                vod_name="凡人修仙传",
+                detail_fields=[PlaybackDetailField(label="Bangumi ID", value="526975")],
+            ),
             playlist=[item],
             start_index=0,
             start_position_seconds=0,
@@ -622,6 +626,48 @@ def test_main_window_reports_heat_following_add_from_player(qtbot) -> None:
     assert event_type == "following_add"
     assert media.title == "凡人修仙传"
     assert context == {"source_kind": "browse", "source_key": ""}
+
+
+def test_main_window_skips_heat_following_add_without_external_media_id(qtbot) -> None:
+    class AddTrackingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.add_from_player_calls: list[dict[str, object]] = []
+
+        def add_from_player(self, **kwargs) -> None:
+            self.add_from_player_calls.append(kwargs)
+
+    following = AddTrackingFollowingController()
+    heat = FakeHeatController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="vod-1")
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="vod-1", vod_name="未刮削追更"),
+            playlist=[item],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="browse",
+            source_key="",
+        ),
+        _startup_state=SimpleNamespace(stage=PlaybackStartupStage.PLAYING),
+        video=SimpleNamespace(position_seconds=lambda: 0),
+    )
+
+    window._toggle_player_item_following(item)
+
+    assert following.add_from_player_calls
+    assert heat.media_events == []
 
 
 def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> None:
@@ -1417,11 +1463,15 @@ def test_main_window_global_search_icon_buttons_use_dark_theme_contrast_treatmen
 
     raw_search = load_icon(window._SEARCH_ICON_PATH).pixmap(24, 24).toImage()
     raw_hot = load_icon(window._SEARCH_POPUP_ICON_PATH).pixmap(24, 24).toImage()
+    raw_heat = load_icon(window._HEAT_RECOMMENDATIONS_ICON_PATH).pixmap(24, 24).toImage()
 
     assert window.global_search_button.icon().pixmap(24, 24).toImage() != raw_search
     assert window.global_search_popup_button.icon().pixmap(24, 24).toImage() != raw_hot
+    assert window.heat_recommendations_button.icon().pixmap(24, 24).toImage() != raw_heat
     assert window.global_search_button.width() == 36
     assert window.global_search_popup_button.width() == 36
+    assert window.heat_recommendations_button.width() == 36
+    assert window.heat_recommendations_button.toolTip() == "大家在看"
 
 
 def test_main_window_navigation_tabs_use_explicit_dark_theme_text_colors(qtbot) -> None:
@@ -4417,6 +4467,50 @@ def test_global_search_popup_renders_heat_recommendations(qtbot) -> None:
     assert popup.heat_item_button("权力的游戏").toolTip() == "23 人正在播放"
 
 
+def test_heat_recommendations_dialog_renders_poster_cards(qtbot) -> None:
+    dialog = main_window_module.HeatRecommendationsDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_items(
+        [
+            SimpleNamespace(
+                media_key="tmdb:tv:1399",
+                title="权力的游戏",
+                poster="",
+                heat_score=98,
+                reason="23 人正在播放",
+            )
+        ]
+    )
+
+    assert dialog.item_titles() == ["权力的游戏"]
+    assert dialog.item_button("权力的游戏").text() == "权力的游戏\n热度 98"
+    assert dialog.item_button("权力的游戏").toolTip() == "权力的游戏\n热度 98\n23 人正在播放"
+    assert dialog.width() >= 920
+    assert dialog.height() >= 720
+
+
+def test_heat_recommendations_dialog_shows_at_most_thirty_cards(qtbot) -> None:
+    dialog = main_window_module.HeatRecommendationsDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_items(
+        [
+            SimpleNamespace(
+                media_key=f"tmdb:movie:{index}",
+                title=f"电影 {index:02d}",
+                poster="",
+                heat_score=100 - index,
+            )
+            for index in range(35)
+        ]
+    )
+
+    assert len(dialog.item_titles()) == 30
+    assert dialog.item_titles()[0] == "电影 00"
+    assert dialog.item_titles()[-1] == "电影 29"
+
+
 def test_main_window_reports_global_search_event(qtbot) -> None:
     class FakeHeatController:
         def __init__(self) -> None:
@@ -4531,6 +4625,61 @@ def test_main_window_clicking_heat_recommendation_reports_recommendation_search_
     qtbot.waitUntil(lambda: window._global_search_popup.heat_item_texts() == ["权力的游戏"])
     qtbot.mouseClick(window._global_search_popup.heat_item_button("权力的游戏"), Qt.MouseButton.LeftButton)
 
+    assert heat.searches == [("权力的游戏", "heat_recommendation", None)]
+
+
+def test_main_window_heat_recommendations_button_opens_poster_dialog(qtbot, monkeypatch) -> None:
+    class FakeHeatController:
+        def __init__(self) -> None:
+            self.searches = []
+            self.recommendation_limits = []
+
+        def record_search(self, query, *, source_kind="global_search", media=None) -> None:
+            self.searches.append((query, source_kind, media))
+
+        def load_recommendations(self, *, limit=24):
+            self.recommendation_limits.append(limit)
+            return [
+                SimpleNamespace(
+                    media_key="tmdb:tv:1399",
+                    title="权力的游戏",
+                    poster="",
+                    watching_now=23,
+                    heat_score=98,
+                )
+            ]
+
+    heat = FakeHeatController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=heat,
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "_start_global_search", lambda **kwargs: MainWindow._start_global_search(window, **kwargs))
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.heat_recommendations_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window._heat_recommendations_dialog is not None)
+    dialog = window._heat_recommendations_dialog
+    qtbot.waitUntil(lambda: dialog.item_titles() == ["权力的游戏"])
+    assert dialog.windowTitle() == "大家在看"
+    assert dialog.item_button("权力的游戏").text() == "权力的游戏\n热度 98"
+
+    qtbot.mouseClick(dialog.item_button("权力的游戏"), Qt.MouseButton.LeftButton)
+
+    assert heat.recommendation_limits == [30]
     assert heat.searches == [("权力的游戏", "heat_recommendation", None)]
 
 
@@ -7994,7 +8143,7 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
     window.close()
 
 
-def test_main_window_reports_heat_play_start_when_player_opens(qtbot, monkeypatch) -> None:
+def test_main_window_does_not_report_heat_when_player_opens(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
             return None
@@ -8028,7 +8177,11 @@ def test_main_window_reports_heat_play_start_when_player_opens(qtbot, monkeypatc
     )
     qtbot.addWidget(window)
     request = OpenPlayerRequest(
-        vod=VodItem(vod_id="vod-1", vod_name="黑袍纠察队"),
+        vod=VodItem(
+            vod_id="vod-1",
+            vod_name="黑袍纠察队",
+            detail_fields=[PlaybackDetailField(label="TMDB ID", value="76479")],
+        ),
         playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="episode-1")],
         clicked_index=0,
         source_kind="browse",
@@ -8037,11 +8190,53 @@ def test_main_window_reports_heat_play_start_when_player_opens(qtbot, monkeypatc
 
     window._open_player_immediately(request)
 
-    assert len(heat.media_events) == 1
-    event_type, media, context = heat.media_events[0]
-    assert event_type == "play_start"
-    assert media.title == "黑袍纠察队"
-    assert context == {"source_kind": "browse", "source_key": "", "episode_index": 0}
+    assert heat.media_events == []
+
+
+def test_main_window_skips_heat_play_start_without_external_media_id(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.closed_to_main = FakeSignal()
+            self.global_search_requested = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    heat = FakeHeatController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+
+    window._open_player_immediately(
+        OpenPlayerRequest(
+            vod=VodItem(vod_id="vod-1", vod_name="未刮削影片"),
+            playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+            clicked_index=0,
+            source_kind="browse",
+        )
+    )
+
+    assert heat.media_events == []
 
 
 def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, monkeypatch) -> None:

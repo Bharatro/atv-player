@@ -9,6 +9,9 @@ from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import FavoriteRecord, PlaybackDetailField, PlayItem, VodItem
 
 
+HEAT_REQUIRED_EXTERNAL_ID_KEYS = {"tmdb", "douban", "bangumi"}
+
+
 def normalize_heat_title(value: object) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[第][一二三四五六七八九十0-9]+[季部]?", "", text)
@@ -40,6 +43,21 @@ def _tmdb_media_type(vod: VodItem, explicit: str = "") -> str:
     return inferred or "movie"
 
 
+def _tmdb_external_id(value: str, media_type: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return normalized if ":" in normalized else f"{media_type}:{normalized}"
+
+
+def _positive_int_text(value: object) -> str:
+    try:
+        normalized = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    return str(normalized) if normalized > 0 else ""
+
+
 def heat_identity_from_vod(
     vod: VodItem,
     item: PlayItem | None = None,
@@ -59,23 +77,30 @@ def heat_identity_from_vod(
     media_type = _tmdb_media_type(vod)
     external_ids: dict[str, str] = {}
     tmdb_id = _field_value(fields, {"TMDB ID", "tmdb id"})
-    if tmdb_id:
-        external_ids["tmdb"] = f"{media_type}:{tmdb_id}"
-        media_key = f"tmdb:{media_type}:{tmdb_id}"
+    tmdb_value = _tmdb_external_id(tmdb_id, media_type)
+    douban_id = (
+        _field_value(fields, {"豆瓣ID", "豆瓣id", "豆瓣 ID", "豆瓣 id", "dbid", "douban id"})
+        or _positive_int_text(getattr(vod, "dbid", 0))
+    )
+    bangumi_id = _field_value(fields, {"Bangumi ID", "bangumi id"})
+    if tmdb_value:
+        external_ids["tmdb"] = tmdb_value
+    if douban_id:
+        external_ids["douban"] = douban_id
+    if bangumi_id:
+        external_ids["bangumi"] = bangumi_id
+
+    if tmdb_value:
+        media_key = f"tmdb:{tmdb_value}"
+    elif douban_id:
+        media_key = f"douban:{douban_id}"
+    elif bangumi_id:
+        media_key = f"bangumi:{bangumi_id}"
     else:
-        douban_id = _field_value(fields, {"豆瓣ID", "豆瓣id", "dbid", "douban id"})
-        bangumi_id = _field_value(fields, {"Bangumi ID", "bangumi id"})
-        if douban_id:
-            external_ids["douban"] = douban_id
-            media_key = f"douban:{douban_id}"
-        elif bangumi_id:
-            external_ids["bangumi"] = bangumi_id
-            media_key = f"bangumi:{bangumi_id}"
-        else:
-            normalized_title = normalize_heat_title(title)
-            if not normalized_title:
-                return None
-            media_key = f"title:{normalized_title}"
+        normalized_title = normalize_heat_title(title)
+        if not normalized_title:
+            return None
+        media_key = f"title:{normalized_title}"
 
     poster = str(getattr(vod, "vod_pic", "") or "").strip()
     if item is not None:
@@ -153,3 +178,10 @@ def heat_identity_from_favorite(record: FavoriteRecord) -> HeatMediaIdentity | N
         title=title,
         poster=str(getattr(record, "vod_pic", "") or "").strip(),
     )
+
+
+def has_required_heat_external_id(media: HeatMediaIdentity | None) -> bool:
+    if media is None:
+        return False
+    external_ids = dict(getattr(media, "external_ids", {}) or {})
+    return any(str(external_ids.get(key) or "").strip() for key in HEAT_REQUIRED_EXTERNAL_ID_KEYS)

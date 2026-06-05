@@ -2,6 +2,7 @@ from atv_player.heat.identity import (
     heat_identity_from_favorite,
     heat_identity_from_following,
     heat_identity_from_vod,
+    has_required_heat_external_id,
     normalize_heat_title,
 )
 from atv_player.heat.controller import HeatController
@@ -26,5 +27,6 @@ __all__ = [
     "heat_identity_from_favorite",
     "heat_identity_from_following",
     "heat_identity_from_vod",
+    "has_required_heat_external_id",
     "normalize_heat_title",
 ]
