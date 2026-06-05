@@ -11,6 +11,9 @@ from atv_player.heat.models import HeatClientContext, HeatEvent, HeatMediaIdenti
 from atv_player.heat.service import HeatService
 
 
+MOVIE_PROGRESS_INTERVAL_SECONDS = 600
+
+
 class HeatController:
     def __init__(
         self,
@@ -67,24 +70,42 @@ class HeatController:
         position_seconds: int,
         duration_seconds: int,
         episode_index: int = 0,
+        episode_number: int = 0,
     ) -> bool:
-        if media is None or media.media_key in self._effective_watch_keys:
+        if media is None:
             return False
+        normalized_position = int(position_seconds or 0)
+        normalized_duration = int(duration_seconds or 0)
+        normalized_episode_number = int(episode_number or 0)
         threshold = 600
-        if duration_seconds > 0:
-            threshold = min(threshold, max(1, int(duration_seconds * 0.2)))
-        if int(position_seconds or 0) < threshold:
+        if normalized_duration > 0:
+            threshold = min(threshold, max(1, int(normalized_duration * 0.2)))
+        if normalized_position < threshold:
             return False
-        self._effective_watch_keys.add(media.media_key)
+        context: dict[str, object] = {
+            "position_seconds": normalized_position,
+            "duration_seconds": normalized_duration,
+            "episode_index": int(episode_index or 0),
+            "episode_number": normalized_episode_number,
+            "effective_watch": True,
+        }
+        media_type = str(getattr(media, "media_type", "") or "").strip()
+        if media_type == "movie" and normalized_episode_number <= 0:
+            progress_bucket = normalized_position // MOVIE_PROGRESS_INTERVAL_SECONDS
+            watch_key = f"{media.media_key}:movie_progress:{progress_bucket}"
+        else:
+            watch_key = (
+                f"{media.media_key}:episode:{normalized_episode_number}"
+                if normalized_episode_number > 0
+                else media.media_key
+            )
+        if watch_key in self._effective_watch_keys:
+            return False
+        self._effective_watch_keys.add(watch_key)
         self.record_media_event(
             "watch_progress",
             media,
-            context={
-                "position_seconds": int(position_seconds or 0),
-                "duration_seconds": int(duration_seconds or 0),
-                "episode_index": int(episode_index or 0),
-                "effective_watch": True,
-            },
+            context=context,
         )
         return True
 

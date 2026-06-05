@@ -317,6 +317,37 @@ def test_player_window_reports_effective_watch_to_heat_controller(qtbot) -> None
     assert call["position_seconds"] == 60
     assert call["duration_seconds"] == 120
     assert call["episode_index"] == 0
+    assert call["episode_number"] == 0
+
+
+def test_player_window_reports_effective_watch_episode_number(qtbot) -> None:
+    heat = FakeHeatController()
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller, heat_controller=heat)
+    qtbot.addWidget(window)
+    session = make_player_session(start_index=2)
+    session.vod = VodItem(
+        vod_id="movie-1",
+        vod_name="Movie",
+        type_name="剧集",
+        detail_fields=[PlaybackDetailField(label="TMDB ID", value="123")],
+    )
+    window.open_session(session)
+    window.video = type(
+        "Video",
+        (),
+        {
+            "position_seconds": lambda _self: 60,
+            "duration_seconds": lambda _self: 120,
+        },
+    )()
+
+    window.report_progress()
+
+    assert len(heat.effective_watch_calls) == 1
+    call = heat.effective_watch_calls[0]
+    assert call["episode_index"] == 2
+    assert call["episode_number"] == 3
 
 
 def test_player_window_skips_effective_watch_without_external_media_id(qtbot) -> None:

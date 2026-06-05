@@ -2396,9 +2396,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 position_seconds=int(position_seconds or 0),
                 duration_seconds=int(duration_seconds or 0),
                 episode_index=int(self.current_index or 0),
+                episode_number=self._current_heat_episode_number(item, media),
             )
         except Exception:
             pass
+
+    def _current_heat_episode_number(self, item: PlayItem, media) -> int:
+        if str(getattr(media, "media_type", "") or "").strip() == "movie":
+            return 0
+        playlist = list(getattr(self.session, "playlist", []) or []) if self.session is not None else []
+        inferred = infer_playlist_episode_number(item, playlist)
+        if inferred is not None and inferred > 0:
+            return int(inferred)
+        return max(0, int(self.current_index or 0) + 1)
 
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
