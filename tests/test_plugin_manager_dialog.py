@@ -859,6 +859,7 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     dialog._toggle_selected_enabled()
     dialog._move_selected(-1)
     dialog._delete_selected()
+    qtbot.waitUntil(lambda: manager.delete_calls == [2], timeout=1000)
 
     assert manager.add_local_calls == ["/plugins/红果短剧.py"]
     assert manager.add_remote_calls == ["https://example.com/红果短剧.py"]
@@ -1021,6 +1022,55 @@ def test_plugin_manager_dialog_bulk_refresh_runs_selected_plugins_in_background(
     qtbot.waitUntil(lambda: reload_calls == ["reload"], timeout=1000)
 
 
+def test_plugin_manager_dialog_delete_runs_in_background_and_reloads_on_completion(qtbot, monkeypatch) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    _select_rows(dialog, 0, 1)
+
+    reload_calls: list[str] = []
+    original_reload = dialog.reload_plugins
+
+    def tracked_reload(selected_plugin_ids=None) -> None:
+        reload_calls.append("reload")
+        if selected_plugin_ids is None:
+            original_reload()
+        else:
+            original_reload(selected_plugin_ids)
+
+    started_threads: list[object] = []
+
+    class FakeThread:
+        def __init__(self, *, target, daemon) -> None:
+            self.target = target
+            self.daemon = daemon
+            self.started = False
+            started_threads.append(self)
+
+        def start(self) -> None:
+            self.started = True
+
+    monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
+    monkeypatch.setattr(
+        plugin_manager_dialog_module,
+        "threading",
+        types.SimpleNamespace(Thread=FakeThread),
+        raising=False,
+    )
+
+    dialog._delete_selected()
+
+    assert manager.delete_calls == []
+    assert len(started_threads) == 1
+    assert started_threads[0].started is True
+    assert dialog.delete_button.isEnabled() is False
+
+    started_threads[0].target()
+    qtbot.waitUntil(lambda: manager.delete_calls == [1, 2], timeout=1000)
+    qtbot.waitUntil(lambda: reload_calls == ["reload"], timeout=1000)
+
+
 def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
@@ -1030,6 +1080,7 @@ def test_plugin_manager_dialog_deletes_all_selected_plugins(qtbot) -> None:
     _select_rows(dialog, 0, 1)
 
     dialog._delete_selected()
+    qtbot.waitUntil(lambda: manager.delete_calls == [1, 2], timeout=1000)
 
     assert manager.delete_calls == [1, 2]
 
@@ -1054,6 +1105,8 @@ def test_plugin_manager_dialog_bulk_delete_keeps_remaining_selected_rows_visible
     _select_rows(dialog, 1, 2)
 
     dialog._delete_selected()
+    qtbot.waitUntil(lambda: manager.delete_calls == [2, 3], timeout=1000)
+    qtbot.waitUntil(lambda: _visible_plugin_ids(dialog) == [1], timeout=1000)
 
     assert manager.delete_calls == [2, 3]
     assert _visible_plugin_ids(dialog) == [1]

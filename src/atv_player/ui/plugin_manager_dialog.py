@@ -60,6 +60,11 @@ class _PluginRefreshSignals(QObject):
     failed = Signal(str)
 
 
+class _PluginDeleteSignals(QObject):
+    completed = Signal()
+    failed = Signal(str)
+
+
 @dataclass(slots=True)
 class _BuiltinTabRow:
     key: str
@@ -92,6 +97,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._import_in_progress = False
         self._refresh_in_progress = False
         self._refresh_target_plugin_ids: list[int] = []
+        self._delete_in_progress = False
         self._initial_plugin_snapshot: dict[int, tuple] = {}
         self._initial_plugin_snapshot_captured = False
         self._all_plugins = []
@@ -182,6 +188,9 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._refresh_signals = _PluginRefreshSignals(self)
         self._connect_async_signal(self._refresh_signals.completed, self._handle_refresh_completed)
         self._connect_async_signal(self._refresh_signals.failed, self._handle_refresh_failed)
+        self._delete_signals = _PluginDeleteSignals(self)
+        self._connect_async_signal(self._delete_signals.completed, self._handle_delete_completed)
+        self._connect_async_signal(self._delete_signals.failed, self._handle_delete_failed)
         self._plugin_action_reload_timer = QTimer(self)
         self._plugin_action_reload_timer.setSingleShot(True)
         self._plugin_action_reload_timer.timeout.connect(self._load_pending_plugin_actions)
@@ -600,7 +609,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         return any(not bool(plugin.enabled) for plugin in self._selected_plugins())
 
     def _sync_action_state(self) -> None:
-        if self._refresh_in_progress:
+        if self._refresh_in_progress or self._delete_in_progress:
             self.add_local_button.setEnabled(False)
             self.add_remote_button.setEnabled(False)
             self.import_github_button.setEnabled(False)
@@ -957,7 +966,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.reload_plugins()
 
     def _refresh_selected(self) -> None:
-        if self._refresh_in_progress:
+        if self._refresh_in_progress or self._delete_in_progress:
             return
         plugin_ids = self._selected_plugin_ids()
         if not plugin_ids:
@@ -992,13 +1001,34 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         QMessageBox.warning(self, "刷新失败", message)
 
     def _delete_selected(self) -> None:
+        if self._delete_in_progress or self._refresh_in_progress:
+            return
         plugin_ids = self._selected_plugin_ids()
         if not plugin_ids:
             return
-        for plugin_id in plugin_ids:
-            self.plugin_manager.delete_plugin(plugin_id)
+        self._delete_in_progress = True
+        self._sync_action_state()
+
+        def run() -> None:
+            try:
+                for plugin_id in plugin_ids:
+                    self.plugin_manager.delete_plugin(plugin_id)
+            except Exception as exc:
+                self._delete_signals.failed.emit(str(exc))
+                return
+            self._delete_signals.completed.emit()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_delete_completed(self) -> None:
+        self._delete_in_progress = False
         self.plugin_tabs_dirty = True
         self.reload_plugins()
+
+    def _handle_delete_failed(self, message: str) -> None:
+        self._delete_in_progress = False
+        self.reload_plugins()
+        QMessageBox.warning(self, "删除失败", message)
 
     def _show_logs(self) -> None:
         plugin_id = self._selected_plugin_id()
