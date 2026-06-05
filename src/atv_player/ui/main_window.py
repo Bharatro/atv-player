@@ -59,6 +59,7 @@ from atv_player.controllers.telegram_search_controller import build_detail_playl
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
 from atv_player.following_progress import resolve_following_playback_progress
+from atv_player.heat import heat_identity_from_vod
 from atv_player.log_store import AppLogFilter
 from atv_player.models import (
     AppConfig,
@@ -3386,6 +3387,21 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._hide_global_search_popup()
         self._start_global_search(heat_source_kind="heat_recommendation")
 
+    def _record_heat_media_event(
+        self,
+        event_type: str,
+        media,
+        *,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        heat_controller = self._heat_controller
+        if media is None or heat_controller is None or not hasattr(heat_controller, "record_media_event"):
+            return
+        try:
+            heat_controller.record_media_event(event_type, media, context=context or {})
+        except Exception:
+            pass
+
     def _toggle_global_search_popup(self) -> None:
         if self._global_search_popup is not None and self._global_search_popup.isVisible():
             self._hide_global_search_popup()
@@ -3891,6 +3907,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if payload is None:
             return
         self._favorites_controller.add_favorite(payload)
+        self._record_heat_media_event(
+            "favorite_add",
+            heat_identity_from_vod(item),
+            context={
+                "source_kind": str(payload.get("source_kind") or ""),
+                "source_key": str(payload.get("source_key") or ""),
+            },
+        )
 
     def _video_item_favorite_source(self, page: PosterGridPage) -> tuple[str, str, str] | None:
         static_sources = {
@@ -5315,6 +5339,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 "updated_at": now,
             }
         )
+        self._record_heat_media_event(
+            "favorite_add",
+            heat_identity_from_vod(item),
+            context={"source_kind": "browse", "source_key": ""},
+        )
 
     def _current_player_favorite_payload(self, item: PlayItem) -> dict[str, object] | None:
         if self.player_window is None or self.player_window.session is None:
@@ -5362,6 +5391,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._favorites_controller.remove_favorite([self._favorite_record_for_identity(source_kind, source_key, vod_id)])
             return
         self._favorites_controller.add_favorite(payload)
+        session = self.player_window.session if self.player_window is not None else None
+        self._record_heat_media_event(
+            "favorite_add",
+            heat_identity_from_vod(session.vod, item) if session is not None else None,
+            context={"source_kind": source_kind, "source_key": source_key},
+        )
 
     def _player_following_identity(self, item: PlayItem) -> tuple[str, str, str] | None:
         if self.player_window is None or self.player_window.session is None:
@@ -5470,6 +5505,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             mark_current_episode=mark_current_episode,
         )
         self.following_page.load_page()
+        self._record_heat_media_event(
+            "following_add",
+            heat_identity_from_vod(self.player_window.session.vod, item),
+            context={"source_kind": source_kind, "source_key": source_key},
+        )
 
     def _player_window_reached_playing(self) -> bool:
         if self.player_window is None:
@@ -6204,6 +6244,23 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.config.main_window_geometry = self._capture_main_window_geometry()
         self._save_config()
         self.player_window.open_session(session, start_paused=start_paused)
+        current_item = None
+        playlist = list(getattr(session, "playlist", []) or [])
+        try:
+            start_index = int(getattr(session, "start_index", 0) or 0)
+        except (TypeError, ValueError):
+            start_index = 0
+        if 0 <= start_index < len(playlist):
+            current_item = playlist[start_index]
+        self._record_heat_media_event(
+            "play_start",
+            heat_identity_from_vod(request.vod, current_item),
+            context={
+                "source_kind": str(getattr(request, "source_kind", "") or ""),
+                "source_key": str(getattr(request, "source_key", "") or ""),
+                "episode_index": start_index,
+            },
+        )
         self.player_window.show()
         self.player_window.raise_()
         self.player_window.activateWindow()

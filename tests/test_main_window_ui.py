@@ -369,6 +369,21 @@ class FakeFollowingController:
         self.dismissed_until_next.append(following_id)
 
 
+class FakeHeatController:
+    def __init__(self) -> None:
+        self.media_events: list[tuple[str, object, dict[str, object]]] = []
+        self.searches: list[tuple[str, str, object]] = []
+
+    def record_search(self, query, *, source_kind="global_search", media=None) -> None:
+        self.searches.append((query, source_kind, media))
+
+    def record_media_event(self, event_type: str, media, *, context=None) -> None:
+        self.media_events.append((event_type, media, dict(context or {})))
+
+    def load_recommendations(self, *, limit=24):
+        return []
+
+
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
     deadline = time.perf_counter() + timeout_seconds
     while time.perf_counter() < deadline:
@@ -561,6 +576,52 @@ def test_main_window_adds_failed_player_item_without_marking_current_episode(qtb
 
     assert following.add_from_player_calls
     assert following.add_from_player_calls[0]["mark_current_episode"] is False
+
+
+def test_main_window_reports_heat_following_add_from_player(qtbot) -> None:
+    class AddTrackingFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.add_from_player_calls: list[dict[str, object]] = []
+
+        def add_from_player(self, **kwargs) -> None:
+            self.add_from_player_calls.append(kwargs)
+
+    following = AddTrackingFollowingController()
+    heat = FakeHeatController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="vod-1")
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="vod-1", vod_name="凡人修仙传"),
+            playlist=[item],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="browse",
+            source_key="",
+        ),
+        _startup_state=SimpleNamespace(stage=PlaybackStartupStage.PLAYING),
+        video=SimpleNamespace(position_seconds=lambda: 0),
+    )
+
+    window._toggle_player_item_following(item)
+
+    assert following.add_from_player_calls
+    assert len(heat.media_events) == 1
+    event_type, media, context = heat.media_events[0]
+    assert event_type == "following_add"
+    assert media.title == "凡人修仙传"
+    assert context == {"source_kind": "browse", "source_key": ""}
 
 
 def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> None:
@@ -3566,6 +3627,33 @@ def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -
     assert isinstance(payload["updated_at"], int)
 
 
+def test_main_window_reports_heat_favorite_add_from_video_context(qtbot) -> None:
+    favorites = FakeFavoritesController()
+    heat = FakeHeatController()
+    window = MainWindow(
+        telegram_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=favorites,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+
+    window._handle_video_item_context_favorite(
+        window.telegram_page,
+        VodItem(vod_id="vod-1", vod_name="测试影片", vod_pic="poster.jpg"),
+    )
+
+    assert len(favorites.add_calls) == 1
+    assert len(heat.media_events) == 1
+    event_type, media, context = heat.media_events[0]
+    assert event_type == "favorite_add"
+    assert media.title == "测试影片"
+    assert context == {"source_kind": "telegram", "source_key": ""}
+
+
 def test_main_window_player_favorite_uses_plugin_display_name(qtbot) -> None:
     window = MainWindow(
         browse_controller=FakeStaticController(),
@@ -3629,6 +3717,37 @@ def test_main_window_player_favorite_payload_includes_tmdb_identity_from_detail_
     assert payload["tmdb_provider_id"] == "tv:76479"
     assert payload["tmdb_id"] == "76479"
     assert payload["tmdb_media_type"] == "tv"
+
+
+def test_main_window_reports_heat_favorite_add_from_player(qtbot) -> None:
+    favorites = FakeFavoritesController()
+    heat = FakeHeatController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        favorites_controller=favorites,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="vod-1")
+    window.player_window = SimpleNamespace(
+        session=SimpleNamespace(
+            vod=VodItem(vod_id="vod-1", vod_name="黑袍纠察队", vod_pic="poster.jpg"),
+            source_kind="browse",
+            source_key="",
+        )
+    )
+
+    window._toggle_player_item_favorite(item)
+
+    assert len(favorites.add_calls) == 1
+    assert len(heat.media_events) == 1
+    event_type, media, context = heat.media_events[0]
+    assert event_type == "favorite_add"
+    assert media.title == "黑袍纠察队"
+    assert context == {"source_kind": "browse", "source_key": ""}
 
 
 def test_main_window_favorites_page_resolves_saved_plugin_source_name(qtbot) -> None:
@@ -7873,6 +7992,56 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
     assert config.last_playback_vod_id == "vod-1"
     assert config.last_player_paused is False
     window.close()
+
+
+def test_main_window_reports_heat_play_start_when_player_opens(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.closed_to_main = FakeSignal()
+            self.global_search_requested = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    heat = FakeHeatController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="黑袍纠察队"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="episode-1")],
+        clicked_index=0,
+        source_kind="browse",
+        source_vod_id="vod-1",
+    )
+
+    window._open_player_immediately(request)
+
+    assert len(heat.media_events) == 1
+    event_type, media, context = heat.media_events[0]
+    assert event_type == "play_start"
+    assert media.title == "黑袍纠察队"
+    assert context == {"source_kind": "browse", "source_key": "", "episode_index": 0}
 
 
 def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, monkeypatch) -> None:
