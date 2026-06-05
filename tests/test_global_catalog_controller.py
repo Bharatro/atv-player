@@ -163,3 +163,21 @@ def test_global_catalog_controller_default_factory_uses_tmdb_key() -> None:
     items, total = controller.load_items("unknown", 1)
     assert items == []
     assert total == 0
+
+
+def test_global_catalog_service_returns_error_item_on_tmdb_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"status_message": "down"})
+
+    service = GlobalCatalogService(tmdb_api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    items, total = service.load_items("movies", 1, {"movie_source": "general", "general_sort": "popular"})
+
+    assert total == 1
+    assert items == [
+        VodItem(
+            vod_id="global_catalog:error",
+            vod_name="环球片单加载失败",
+            vod_content="当前榜单暂时无法获取",
+        )
+    ]
