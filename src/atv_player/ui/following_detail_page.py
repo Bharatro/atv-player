@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
@@ -42,6 +41,7 @@ from atv_player.following_models import (
 from atv_player.metadata.discovery import DiscoveryItem
 from atv_player.models import AppConfig
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.detail_scaffold import MediaDetailScaffold, detail_scaffold_qss
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.following_episode_browser import (
     FollowingEpisodeBrowser,
@@ -612,10 +612,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         self.playback_platform_widgets: list[QLabel] = []
         self._selected_metadata_source_key = "merged"
         self.related_recommendation_cards: list[FollowingRelatedRecommendationCard] = []
-        self.related_recommendation_section = QFrame()
-        self.related_recommendation_section.setObjectName("followingRelatedRecommendationSection")
         self.related_recommendation_status_label = QLabel()
-        self.related_recommendation_scroll = QScrollArea()
         self._related_recommendation_container = QWidget()
         self._related_recommendation_layout = QHBoxLayout(self._related_recommendation_container)
         self._related_recommendation_layout.setContentsMargins(0, 0, 0, 0)
@@ -696,103 +693,39 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         action_row.addWidget(self.set_progress_button)
         action_row.addWidget(self.unfollow_button)
 
-        content = QWidget(self)
-
-        self.metadata_panel = QFrame(content)
-        self.metadata_panel.setObjectName("followingDetailMetadataPanel")
-        metadata_layout = QVBoxLayout(self.metadata_panel)
-        metadata_layout.setContentsMargins(18, 18, 18, 18)
-        metadata_layout.setSpacing(12)
-        metadata_layout.addLayout(action_row)
-        metadata_layout.addWidget(self.status_label)
-        metadata_layout.addWidget(self.title_label)
-        metadata_layout.addWidget(self.meta_label)
-        metadata_layout.addWidget(self.rating_strip)
-        metadata_layout.addWidget(self.metadata_source_bar)
-        metadata_layout.addWidget(self.playback_platform_section)
-        metadata_layout.addWidget(self.overview_label)
         ai_summary_layout = QVBoxLayout(self.ai_summary_panel)
         ai_summary_layout.setContentsMargins(12, 12, 12, 12)
         ai_summary_layout.setSpacing(6)
         ai_summary_layout.addWidget(self.ai_summary_label)
-        metadata_layout.addWidget(self.ai_summary_panel)
-        metadata_layout.addStretch(1)
-
-        self.poster_carousel_panel = QFrame(content)
-        self.poster_carousel_panel.setObjectName("followingDetailPosterCarousel")
-        poster_layout = QVBoxLayout(self.poster_carousel_panel)
-        poster_layout.setContentsMargins(0, 0, 0, 0)
-        poster_layout.setSpacing(0)
-        poster_layout.addWidget(self.poster_carousel_label)
-
-        self.top_section = QWidget(content)
-        self.top_section.setObjectName("followingDetailTopSection")
-        top_layout = QHBoxLayout(self.top_section)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(18)
-        top_layout.addWidget(self.metadata_panel, 3)
-        top_layout.addWidget(self.poster_carousel_panel, 2)
-
-        self.cast_scroll = QScrollArea()
-        self.cast_scroll.setWidgetResizable(True)
-        self.cast_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.cast_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.cast_scroll.setWidget(self._cast_container)
-        self.cast_scroll.setMinimumHeight(270)
-        self.cast_scroll.setMaximumHeight(300)
-
-        self.related_recommendation_scroll.setWidgetResizable(True)
-        self.related_recommendation_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.related_recommendation_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.related_recommendation_scroll.setWidget(self._related_recommendation_container)
-        self.related_recommendation_scroll.setMinimumHeight(286)
-        self.related_recommendation_scroll.setMaximumHeight(308)
-
-        related_section_layout = QVBoxLayout(self.related_recommendation_section)
-        related_section_layout.setContentsMargins(14, 14, 14, 14)
-        related_section_layout.setSpacing(10)
-        related_section_layout.addWidget(QLabel("关联媒体推荐", self.related_recommendation_section))
-        related_section_layout.addWidget(self.related_recommendation_status_label)
-        related_section_layout.addWidget(self.related_recommendation_scroll)
-
-        self.episodes_section = QFrame(content)
-        self.episodes_section.setObjectName("followingDetailEpisodesSection")
-        self.episodes_section.setMinimumHeight(480)
-        episodes_section_layout = QVBoxLayout(self.episodes_section)
-        episodes_section_layout.setContentsMargins(14, 14, 14, 14)
-        episodes_section_layout.setSpacing(10)
-        episodes_section_layout.addWidget(QLabel("分集详情", self.episodes_section))
         self.episode_browser.season_list.setMaximumWidth(180)
         self.episode_browser.browser_frame.layout().setStretch(0, 0)
         self.episode_browser.browser_frame.layout().setStretch(1, 1)
-        episodes_section_layout.addWidget(self.episode_browser)
-
-        self.cast_section = QFrame(content)
-        self.cast_section.setObjectName("followingDetailCastSection")
-        cast_section_layout = QVBoxLayout(self.cast_section)
-        cast_section_layout.setContentsMargins(14, 14, 14, 14)
-        cast_section_layout.setSpacing(10)
-        cast_section_layout.addWidget(QLabel("演职员列表", self.cast_section))
-        cast_section_layout.addWidget(self.cast_scroll)
-
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(18, 18, 18, 18)
-        content_layout.setSpacing(18)
-        content_layout.addWidget(self.top_section)
-        content_layout.addWidget(self.episodes_section)
-        content_layout.addWidget(self.related_recommendation_section)
-        content_layout.addWidget(self.cast_section)
-        content_layout.addStretch(1)
-
-        self.page_scroll = QScrollArea(self)
-        self.page_scroll.setWidgetResizable(True)
-        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.page_scroll.setWidget(content)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.page_scroll)
+        self.detail_scaffold = MediaDetailScaffold(
+            self,
+            action_row=action_row,
+            status_label=self.status_label,
+            title_label=self.title_label,
+            meta_label=self.meta_label,
+            rating_label=self.rating_strip,
+            metadata_source_bar=self.metadata_source_bar,
+            playback_platform_section=self.playback_platform_section,
+            overview_label=self.overview_label,
+            extra_metadata_widgets=[self.ai_summary_panel],
+            poster_carousel_label=self.poster_carousel_label,
+            episode_widget=self.episode_browser,
+            related_status_label=self.related_recommendation_status_label,
+            related_container=self._related_recommendation_container,
+            cast_container=self._cast_container,
+        )
+        self.metadata_panel = self.detail_scaffold.metadata_panel
+        self.poster_carousel_panel = self.detail_scaffold.poster_carousel_panel
+        self.top_section = self.detail_scaffold.top_section
+        self.cast_scroll = self.detail_scaffold.cast_scroll
+        self.related_recommendation_scroll = self.detail_scaffold.related_recommendation_scroll
+        self.related_recommendation_section = self.detail_scaffold.related_recommendation_section
+        self.episodes_section = self.detail_scaffold.episodes_section
+        self.cast_section = self.detail_scaffold.cast_section
+        self.page_scroll = self.detail_scaffold.page_scroll
 
     def _connect_actions(self) -> None:
         self.back_button.clicked.connect(self.back_requested.emit)
@@ -1386,64 +1319,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             return self.controller.load_detail(following_id)
 
     def _apply_style(self) -> None:
-        tokens = current_tokens()
-        self.setStyleSheet(
-            f"""
-            QWidget {{
-                color: {tokens.text_primary};
-            }}
-            QLabel#followingDetailTitle {{
-                font-size: 26px;
-                font-weight: 700;
-            }}
-            QFrame#personCard {{
-                border: 1px solid {tokens.border_subtle};
-                border-radius: 14px;
-                background: {tokens.panel_bg};
-            }}
-            QLabel#personAvatar {{
-                border: 0;
-                border-radius: 10px;
-                background: {tokens.panel_alt_bg};
-                color: {tokens.text_secondary};
-                font-size: 24px;
-                font-weight: 600;
-            }}
-            QLabel#personName, QLabel#personRole {{
-                border: 0;
-                border-radius: 0;
-                background: transparent;
-                color: {tokens.text_secondary};
-            }}
-            QPushButton {{
-                border: 1px solid {tokens.border_subtle};
-                border-radius: 12px;
-                background: {tokens.button_bg};
-                padding: 8px 14px;
-            }}
-            QPushButton:hover {{
-                border-color: {tokens.accent};
-            }}
-            QPushButton:checked {{
-                border-color: {tokens.accent};
-                background: {tokens.panel_alt_bg};
-            }}
-            QSpinBox {{
-                border: 1px solid {tokens.border_subtle};
-                border-radius: 10px;
-                background: {tokens.button_bg};
-                color: {tokens.text_primary};
-                padding: 6px 10px;
-            }}
-            QScrollArea {{
-                border: 0;
-                background: transparent;
-            }}
-            QLabel {{
-                background: transparent;
-            }}
-            """
-        )
+        self.setStyleSheet(detail_scaffold_qss())
 
 def _clear_layout(layout: QHBoxLayout) -> None:
     while layout.count():

@@ -646,12 +646,15 @@ def test_following_detail_page_related_recommendation_context_menu_adds_followin
 
 
 def test_following_detail_page_uses_top_split_and_two_bottom_rows(qtbot) -> None:
+    from atv_player.ui.detail_scaffold import MediaDetailScaffold
+
     page = FollowingDetailPage(FakeController())
     qtbot.addWidget(page)
     page.show()
 
     page.load_record(1)
 
+    assert isinstance(page.detail_scaffold, MediaDetailScaffold)
     assert page.top_section.objectName() == "followingDetailTopSection"
     assert page.metadata_panel.objectName() == "followingDetailMetadataPanel"
     assert page.poster_carousel_panel.objectName() == "followingDetailPosterCarousel"

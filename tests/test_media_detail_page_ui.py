@@ -7,6 +7,11 @@ from atv_player.controllers.media_detail_controller import MediaDetailIdentity
 from atv_player.controllers.media_detail_controller import MediaDetailPerson
 from atv_player.controllers.media_detail_controller import MediaDetailRecommendation
 from atv_player.controllers.media_detail_controller import MediaDetailView
+from atv_player.ui.detail_scaffold import MediaDetailScaffold
+from atv_player.ui.following_detail_page import FollowingPersonCard
+from atv_player.ui.following_detail_page import FollowingRelatedRecommendationCard
+from atv_player.ui.following_episode_browser import FollowingEpisodeBrowser
+from atv_player.ui.following_episode_browser import EPISODE_ROLE
 from atv_player.ui.media_detail_page import MediaDetailPage
 
 
@@ -51,17 +56,32 @@ def test_media_detail_page_renders_sections_and_actions(qtbot) -> None:
     page.load_view(_sample_view())
 
     assert page.title_label.text() == "权力的游戏"
+    assert isinstance(page.detail_scaffold, MediaDetailScaffold)
     assert "2011" in page.meta_label.text()
     assert "剧情 / 科幻奇幻" in page.meta_label.text()
-    assert "8.4" in page.rating_label.text()
+    assert "8.4" in page.rating_strip.text()
     assert "九大家族" in page.overview_label.text()
-    assert page.episode_buttons[0].text() == "S1E1 凛冬将至\n2011-04-17"
-    assert page.person_labels[0].text() == "Emilia Clarke\nDaenerys Targaryen"
-    assert page.person_labels[1].text() == "David Benioff\nCreator"
-    assert page.related_buttons[0].text() == "绿箭侠\n2012 · 6.8"
+    assert page.metadata_panel.objectName() == "followingDetailMetadataPanel"
+    assert page.poster_carousel_panel.objectName() == "followingDetailPosterCarousel"
+    assert page.top_section.objectName() == "followingDetailTopSection"
+    assert page.episodes_section.objectName() == "followingDetailEpisodesSection"
+    assert page.related_recommendation_section.objectName() == "followingRelatedRecommendationSection"
+    assert page.cast_section.objectName() == "followingDetailCastSection"
+    assert isinstance(page.episode_browser, FollowingEpisodeBrowser)
+    episode_index = page.episode_browser.episode_model.index(0, 0)
+    assert episode_index.data(EPISODE_ROLE).title == "凛冬将至"
+    assert isinstance(page.person_cards[0], FollowingPersonCard)
+    assert page.person_cards[0].name_label.text() == "Emilia Clarke"
+    assert page.person_cards[0].role_label.text() == "Daenerys Targaryen"
+    assert isinstance(page.related_cards[0], FollowingRelatedRecommendationCard)
+    assert page.related_cards[0].title_label.text() == "绿箭侠"
     assert page.search_play_button.text() == "搜索播放"
     assert page.add_following_button.text() == "加入追更"
     assert page.refresh_metadata_button.text() == "更新元数据"
+    assert not hasattr(page, "continue_play_button")
+    assert not hasattr(page, "manual_check_button")
+    assert not hasattr(page, "set_progress_button")
+    assert not hasattr(page, "unfollow_button")
 
 
 def test_media_detail_page_emits_action_signals(qtbot) -> None:
@@ -89,6 +109,6 @@ def test_media_detail_page_related_click_emits_identity(qtbot) -> None:
     page.load_view(_sample_view())
 
     with qtbot.waitSignal(page.related_open_requested) as related_signal:
-        qtbot.mouseClick(page.related_buttons[0], Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(page.related_cards[0], Qt.MouseButton.LeftButton)
 
     assert related_signal.args == [MediaDetailIdentity(media_type="tv", tmdb_id="1412", title="绿箭侠")]

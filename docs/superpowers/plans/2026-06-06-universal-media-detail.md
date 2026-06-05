@@ -4,7 +4,7 @@
 
 **Goal:** Build a reusable detail page for `环球片单`, `大家在看`, and related recommendation cards.
 
-**Architecture:** Add a focused `MediaDetailController` that resolves TMDB-backed identities into a display model, plus a `MediaDetailPage` that renders that model and emits actions. `MainWindow` owns the hidden page, wires list/recommendation clicks into it, and handles search/follow/refresh actions.
+**Architecture:** Add a focused `MediaDetailController` that resolves TMDB-backed identities into a display model. `FollowingDetailPage` and `MediaDetailPage` share `MediaDetailScaffold` for identical layout/styling, while each page supplies its own action row and data rendering. `MainWindow` owns the hidden universal page, wires list/recommendation clicks into it, and handles search/follow/refresh actions.
 
 **Tech Stack:** Python, PySide6, existing TMDB client, existing `FollowingController.add_candidate`, pytest/pytest-qt.
 
@@ -43,8 +43,11 @@ Commit message: `feat: add universal media detail controller`
 ### Task 2: Detail Page UI
 
 **Files:**
+- Create: `src/atv_player/ui/detail_scaffold.py`
 - Create: `src/atv_player/ui/media_detail_page.py`
+- Modify: `src/atv_player/ui/following_detail_page.py`
 - Test: `tests/test_media_detail_page_ui.py`
+- Test: `tests/test_following_detail_page_ui.py`
 
 - [ ] **Step 1: Write failing UI tests**
 
@@ -58,7 +61,7 @@ Expected: import failure because the page does not exist.
 
 - [ ] **Step 3: Implement the page**
 
-Use PySide6 widgets and existing theme conventions. Keep it independent from `FollowingDetailPage` models, but mirror its structure: top metadata, action row, episode section, people section, recommendations section.
+Use PySide6 widgets and existing theme conventions. Extract the shared layout and QSS into `MediaDetailScaffold`, then make both `FollowingDetailPage` and `MediaDetailPage` use it. Keep business models independent:追更详情 still renders `FollowingRecord` data, while the universal page maps `MediaDetailView` into the shared episode browser, person cards, and related cards.
 
 - [ ] **Step 4: Run tests to verify pass**
 

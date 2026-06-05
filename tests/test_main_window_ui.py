@@ -1912,7 +1912,7 @@ def test_global_catalog_card_click_opens_universal_media_detail(qtbot) -> None:
     assert detail_controller.vod_calls == [item]
     assert window.nav_tabs.currentWidget() is window.media_detail_page
     assert window.media_detail_page.title_label.text() == "权力的游戏"
-    assert window.media_detail_page.episode_buttons[0].text().startswith("S1E1")
+    assert window.media_detail_page.episode_browser.episode_model.rowCount() == 1
 
 
 def test_heat_recommendation_click_opens_universal_media_detail(qtbot) -> None:
@@ -1937,7 +1937,8 @@ def test_heat_recommendation_click_opens_universal_media_detail(qtbot) -> None:
 
     assert detail_controller.heat_calls == [heat_item]
     assert window.nav_tabs.currentWidget() is window.media_detail_page
-    assert window.media_detail_page.person_labels[0].text() == "Emilia Clarke\nDaenerys Targaryen"
+    assert window.media_detail_page.person_cards[0].name_label.text() == "Emilia Clarke"
+    assert window.media_detail_page.person_cards[0].role_label.text() == "Daenerys Targaryen"
 
 
 def test_media_detail_actions_search_follow_refresh_and_related(qtbot, monkeypatch) -> None:
