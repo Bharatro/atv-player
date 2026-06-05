@@ -3563,7 +3563,7 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     assert item.danmaku_search_provider == "youku"
 
 
-def test_player_window_danmaku_search_provider_combo_includes_sohu(qtbot) -> None:
+def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qtbot) -> None:
     item = PlayItem(
         title="第1集",
         url="https://stream.example/1.m3u8",
@@ -3602,6 +3602,8 @@ def test_player_window_danmaku_search_provider_combo_includes_sohu(qtbot) -> Non
         ("iqiyi", "爱奇艺"),
         ("mgtv", "芒果"),
         ("sohu", "搜狐"),
+        ("migu", "咪咕"),
+        ("renren", "人人"),
     ]
 
 

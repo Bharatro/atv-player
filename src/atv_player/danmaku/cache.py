@@ -12,7 +12,7 @@ from atv_player.paths import app_cache_dir
 DANMAKU_CACHE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60
 _DANMAKU_ASS_CACHE_VERSION = "v6"
 _DANMAKU_XML_CACHE_VERSION = "v1"
-_DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v3"
+_DANMAKU_SOURCE_SEARCH_CACHE_VERSION = "v4"
 
 
 def danmaku_cache_dir() -> Path:

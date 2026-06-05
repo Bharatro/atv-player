@@ -14,6 +14,7 @@ from atv_player.danmaku.providers import (
     IqiyiDanmakuProvider,
     MiguDanmakuProvider,
     MgtvDanmakuProvider,
+    RenrenDanmakuProvider,
     SohuDanmakuProvider,
     TencentDanmakuProvider,
     YoukuDanmakuProvider,
@@ -89,6 +90,7 @@ _PROVIDER_LABELS = {
     "mgtv": "芒果",
     "sohu": "搜狐",
     "migu": "咪咕",
+    "renren": "人人",
 }
 
 
@@ -812,10 +814,11 @@ def create_default_danmaku_service(
         "mgtv": MgtvDanmakuProvider(get=get),
         "sohu": SohuDanmakuProvider(get=get),
         "migu": MiguDanmakuProvider(get=get, post=post),
+        "renren": RenrenDanmakuProvider(get=get),
     }
     provider_order = [
         key
-        for key in ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu"]
+        for key in ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu", "renren"]
         if key not in disabled
     ]
     if disabled_provider_ids_loader is None and disabled:

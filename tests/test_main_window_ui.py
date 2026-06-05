@@ -6675,6 +6675,24 @@ def test_advanced_settings_dialog_exposes_migu_source_options(qtbot) -> None:
     assert "migu" in config.disabled_metadata_provider_ids
 
 
+def test_advanced_settings_dialog_exposes_renren_danmaku_source(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    assert dialog.danmaku_source_checkboxes["renren"].text() == "人人"
+    assert "renren" not in dialog.metadata_source_checkboxes
+
+    dialog.danmaku_source_checkboxes["renren"].setChecked(False)
+    dialog._save()
+
+    assert "renren" in config.disabled_danmaku_provider_ids
+    assert "renren" not in config.disabled_metadata_provider_ids
+
+
 def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

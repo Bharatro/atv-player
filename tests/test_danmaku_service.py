@@ -150,7 +150,13 @@ def test_danmaku_service_falls_back_when_ai_query_empty() -> None:
 def test_create_default_danmaku_service_excludes_disabled_providers() -> None:
     service = create_default_danmaku_service(disabled_provider_ids=["youku", "mgtv"])
 
-    assert service.provider_order == ["tencent", "bilibili", "iqiyi", "sohu", "migu"]
+    assert service.provider_order == ["tencent", "bilibili", "iqiyi", "sohu", "migu", "renren"]
+
+
+def test_create_default_danmaku_service_can_disable_renren_provider() -> None:
+    service = create_default_danmaku_service(disabled_provider_ids=["renren"])
+
+    assert "renren" not in service.provider_order
 
 
 def test_search_danmu_searches_providers_with_max_concurrency_of_four() -> None:
@@ -1418,7 +1424,16 @@ def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
 def test_default_service_has_fixed_provider_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu"]
+    assert service.provider_order == [
+        "tencent",
+        "youku",
+        "bilibili",
+        "iqiyi",
+        "mgtv",
+        "sohu",
+        "migu",
+        "renren",
+    ]
 
 
 def test_danmaku_search_item_accepts_bilibili_metadata() -> None:
@@ -1451,7 +1466,16 @@ def test_match_provider_maps_bilibili_domains() -> None:
 def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu"]
+    assert service.provider_order == [
+        "tencent",
+        "youku",
+        "bilibili",
+        "iqiyi",
+        "mgtv",
+        "sohu",
+        "migu",
+        "renren",
+    ]
 
 
 def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
