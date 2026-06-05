@@ -13,6 +13,7 @@ import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.following_controller import FollowingDetailView
+from atv_player.controllers.pagination import PageInfo
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import (
     DanmakuSourceGroup,
@@ -1510,6 +1511,17 @@ class PagedSearchableController(FakeStaticController):
     def search_items(self, keyword: str, page: int):
         self.search_calls.append((keyword, page))
         return self.results_by_page.get(page, ([], 0))
+
+
+class PageInfoSearchableController(FakeStaticController):
+    uses_page_count_for_pagination = True
+
+    def __init__(self) -> None:
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return [_vod(f"Telegram Page {page}")], PageInfo(2, 61)
 
 
 class VariablePageSizeSearchableController(FakeStaticController):
@@ -4016,6 +4028,40 @@ def test_main_window_global_search_results_can_paginate_current_source_only(qtbo
     assert telegram.search_calls == [("庆余年", 1), ("庆余年", 2)]
     assert emby.search_calls == [("庆余年", 1)]
     assert window.telegram_page.page_label.text() == "第 2 / 3 页"
+
+
+def test_main_window_global_search_uses_total_count_for_tab_and_pagecount_for_pagination(qtbot) -> None:
+    telegram = PageInfoSearchableController()
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(61)"])
+    assert window.telegram_page.page_label.text() == "第 1 / 2 页"
+
+    window.telegram_page.next_page()
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 2"])
+    assert telegram.search_calls == [("庆余年", 1), ("庆余年", 2)]
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(61)"]
+    assert window.telegram_page.page_label.text() == "第 2 / 2 页"
 
 
 def test_main_window_global_search_prefers_inferred_page_size(qtbot) -> None:

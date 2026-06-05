@@ -839,6 +839,10 @@ def test_controller_returns_pagecount_for_category_and_search_results() -> None:
 
     assert category_total == 4
     assert search_total == 2
+    assert category_total.pagecount == 4
+    assert category_total.total == 47
+    assert search_total.pagecount == 2
+    assert search_total.total == 11
 
 
 def test_controller_calculates_pagecount_from_total_when_pagecount_is_missing() -> None:

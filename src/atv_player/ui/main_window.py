@@ -1177,7 +1177,8 @@ class _GlobalSearchResult:
     title: str
     page: QWidget
     items: list[Any]
-    total: int
+    total_count: int
+    page_count: int
     page_number: int
 
 
@@ -2853,7 +2854,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _global_search_title_overrides(self) -> dict[str, str]:
         return {
-            key: f"{result.title}({result.total})"
+            key: f"{result.title}({result.total_count})"
             for key, result in self._global_search_results.items()
         }
 
@@ -4462,11 +4463,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self._global_search_signals.failed.emit(request_id, definition.key)
             return
         try:
-            items, total = controller.search_items(keyword, page_number)
+            items, page_count = controller.search_items(keyword, page_number)
         except Exception:
             if self._is_window_alive():
                 self._global_search_signals.failed.emit(request_id, definition.key)
             return
+        total_count = max(0, int(getattr(page_count, "total", page_count) or 0))
+        normalized_page_count = max(0, int(page_count or 0))
         if self._is_window_alive():
             self._global_search_signals.succeeded.emit(
                 request_id,
@@ -4475,7 +4478,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                     title=definition.title,
                     page=definition.page,
                     items=list(items),
-                    total=total,
+                    total_count=total_count,
+                    page_count=normalized_page_count,
                     page_number=page_number,
                 ),
             )
@@ -4557,14 +4561,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if isinstance(result.page, HistoryPage):
             result.page.show_external_results(
                 result.items,
-                result.total,
+                result.page_count,
                 page=result.page_number,
                 page_loader=page_loader,
             )
         elif isinstance(result.page, (FavoritesPage, FollowingPage)):
             result.page.show_external_results(
                 result.items,
-                result.total,
+                result.page_count,
                 page=result.page_number,
                 empty_message="无搜索结果",
                 page_loader=page_loader,
@@ -4572,7 +4576,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         else:
             cast(PosterGridPage, result.page).show_external_results(
                 result.items,
-                result.total,
+                result.page_count,
                 page=result.page_number,
                 empty_message="无搜索结果",
                 page_loader=page_loader,

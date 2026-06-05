@@ -117,6 +117,22 @@ def test_search_items_uses_pagecount_when_total_is_missing() -> None:
     assert total == 3
 
 
+def test_search_items_returns_pagecount_and_total_when_both_are_available() -> None:
+    api = FakeApiClient()
+    api.search_payload = {
+        "list": [{"vod_id": "1", "vod_name": "黑袍纠察队"}],
+        "pagecount": 2,
+        "total": 31,
+    }
+    controller = TelegramSearchController(api)
+
+    _items, total = controller.search_items("黑袍纠察队", page=1)
+
+    assert total == 2
+    assert total.pagecount == 2
+    assert total.total == 31
+
+
 def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> None:
     api = FakeApiClient()
     api.detail_payload = {
