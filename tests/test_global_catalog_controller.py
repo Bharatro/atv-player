@@ -154,3 +154,12 @@ def test_global_catalog_external_title_source_returns_empty_item_when_no_titles_
 
     assert total == 1
     assert items == [VodItem(vod_id="global_catalog:empty", vod_name="暂无数据", vod_content="当前外部榜单暂未返回内容")]
+
+
+def test_global_catalog_controller_default_factory_uses_tmdb_key() -> None:
+    controller = GlobalCatalogController.from_config_tmdb_key("abc123")
+
+    assert isinstance(controller, GlobalCatalogController)
+    items, total = controller.load_items("unknown", 1)
+    assert items == []
+    assert total == 0

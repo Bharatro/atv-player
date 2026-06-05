@@ -650,6 +650,10 @@ class GlobalCatalogController:
     _service: GlobalCatalogServiceProtocol
     uses_page_count_for_pagination: bool = True
 
+    @classmethod
+    def from_config_tmdb_key(cls, tmdb_api_key: str) -> "GlobalCatalogController":
+        return cls(GlobalCatalogService(tmdb_api_key=tmdb_api_key))
+
     def load_categories(self) -> list[DoubanCategory]:
         return _categories()
 

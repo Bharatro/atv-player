@@ -32,6 +32,7 @@ from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.favorites_controller import FavoritesController
 from atv_player.controllers.following_controller import FollowingController
 from atv_player.controllers.douban_controller import DoubanController
+from atv_player.controllers.global_catalog_controller import GlobalCatalogController
 from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.controllers.emby_controller import EmbyController
 from atv_player.controllers.feiniu_controller import FeiniuController
@@ -1900,6 +1901,7 @@ class AppCoordinator(QObject):
             epg_service=live_epg_service,
         )
         douban_controller = DoubanController(self._api_client)
+        global_catalog_controller = GlobalCatalogController.from_config_tmdb_key(config.metadata_tmdb_api_key)
         telegram_controller = TelegramSearchController(
             self._api_client,
             playback_history_loader=None
@@ -2066,6 +2068,7 @@ class AppCoordinator(QObject):
             save_config=lambda: self._save_shared_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
             douban_controller=douban_controller,
+            global_catalog_controller=global_catalog_controller,
             telegram_controller=telegram_controller,
             bilibili_controller=bilibili_controller,
             youtube_controller=youtube_controller,
