@@ -636,6 +636,7 @@ class _StartupPluginLoadSignals(QObject):
 
 class _GlobalSearchPopupSignals(QObject):
     hotkeys_loaded = Signal(int, object)
+    heat_recommendations_loaded = Signal(int, object)
 
 
 class _HelpPayloadSignals(QObject):
@@ -670,6 +671,7 @@ class SearchInputWithHotkey(QLineEdit):
 
 class GlobalSearchPopup(QWidget):
     item_clicked = Signal(str)
+    heat_item_clicked = Signal(object)
     clear_history_requested = Signal()
     delete_history_requested = Signal(str)
     hot_source_changed = Signal(str)
@@ -818,11 +820,15 @@ class GlobalSearchPopup(QWidget):
         self._history_item_buttons: dict[str, QPushButton] = {}
         self._history_item_rows: dict[str, QWidget] = {}
         self._hot_item_buttons: dict[str, QPushButton] = {}
+        self._heat_item_buttons: dict[str, QPushButton] = {}
         self._history_delete_buttons: dict[str, QPushButton] = {}
         self._hot_source_types: list[str] = []
         self._hot_tab_types: list[str] = []
         self._hot_item_texts: list[str] = []
+        self._heat_item_texts: list[str] = []
+        self._heat_items_by_title: dict[str, object] = {}
         self._hot_rank_labels: list[QLabel] = []
+        self._heat_title_label: QLabel | None = None
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
@@ -864,6 +870,8 @@ class GlobalSearchPopup(QWidget):
             self._history_title_label.setStyleSheet(self._section_title_qss())
         if self._hot_title_label is not None:
             self._hot_title_label.setStyleSheet(self._section_title_qss())
+        if self._heat_title_label is not None:
+            self._heat_title_label.setStyleSheet(self._section_title_qss())
         if self.clear_history_button is not None:
             self.clear_history_button.setStyleSheet(self._action_button_qss())
         self.hot_source_tab_bar.setStyleSheet(self._hot_tab_qss())
@@ -878,12 +886,17 @@ class GlobalSearchPopup(QWidget):
             label.setStyleSheet(self._hot_rank_qss())
         for button in self._hot_item_buttons.values():
             button.setStyleSheet(self._hot_button_qss())
+        for button in self._heat_item_buttons.values():
+            button.setStyleSheet(self._hot_button_qss())
 
     def history_item_texts(self) -> list[str]:
         return [button.text() for button in self._history_item_buttons.values()]
 
     def hot_item_texts(self) -> list[str]:
         return list(self._hot_item_texts)
+
+    def heat_item_texts(self) -> list[str]:
+        return list(self._heat_item_texts)
 
     def hot_source_titles(self) -> list[str]:
         return [self.hot_source_tab_bar.tabText(index) for index in range(self.hot_source_tab_bar.count())]
@@ -909,6 +922,9 @@ class GlobalSearchPopup(QWidget):
     def hot_item_button(self, text: str) -> QPushButton:
         return self._hot_item_buttons[text]
 
+    def heat_item_button(self, text: str) -> QPushButton:
+        return self._heat_item_buttons[text]
+
     def history_delete_button(self, keyword: str) -> QPushButton:
         return self._history_delete_buttons[keyword]
 
@@ -931,6 +947,22 @@ class GlobalSearchPopup(QWidget):
         self._set_hot_sources(hot_sources, hot_source)
         self._set_hot_categories(hot_categories, hot_type)
         self._set_hot_items(hotkeys)
+        self.adjustSize()
+
+    def set_heat_items(self, items: Iterable[object]) -> None:
+        self._clear_layout(self._heat_items_layout)
+        self._heat_item_buttons = {}
+        self._heat_item_texts = []
+        self._heat_items_by_title = {}
+        item_exists = False
+        for item in list(items)[:6]:
+            title = str(getattr(item, "title", "") or "").strip()
+            if not title:
+                continue
+            item_exists = True
+            self._add_heat_item(item, title)
+        self._heat_title_label.setVisible(item_exists)
+        self._heat_items_widget.setVisible(item_exists)
         self.adjustSize()
 
     def _build_history_panel(self) -> None:
@@ -957,6 +989,19 @@ class GlobalSearchPopup(QWidget):
         self._history_layout.addWidget(self._history_items_widget, 1)
 
     def _build_hot_panel(self) -> None:
+        heat_title = QLabel("大家在看", self._hot_panel)
+        heat_title.setContentsMargins(16, 14, 16, 8)
+        heat_title.setStyleSheet(self._section_title_qss())
+        heat_title.hide()
+        self._heat_title_label = heat_title
+        self._hot_layout.addWidget(heat_title)
+        self._heat_items_widget = QWidget(self._hot_panel)
+        self._heat_items_layout = QVBoxLayout(self._heat_items_widget)
+        self._heat_items_layout.setContentsMargins(8, 0, 8, 10)
+        self._heat_items_layout.setSpacing(0)
+        self._heat_items_widget.hide()
+        self._hot_layout.addWidget(self._heat_items_widget)
+
         title = QLabel("热搜", self._hot_panel)
         title.setContentsMargins(16, 14, 16, 10)
         title.setStyleSheet(self._section_title_qss())
@@ -1104,6 +1149,29 @@ class GlobalSearchPopup(QWidget):
         self._hot_item_texts.append(text)
         self._hot_items_layout.addWidget(row)
 
+    def _add_heat_item(self, item: object, title: str) -> None:
+        row = QWidget(self._heat_items_widget)
+        row.setFixedHeight(self.HOT_ITEM_HEIGHT)
+        row.setStyleSheet(self._hot_row_qss())
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 6, 12, 6)
+        row_layout.setSpacing(10)
+
+        button = QPushButton(title, row)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFlat(True)
+        button.setStyleSheet(self._hot_button_qss())
+        reason = str(getattr(item, "reason", "") or "").strip()
+        if reason:
+            button.setToolTip(reason)
+        button.clicked.connect(lambda checked=False, current_item=item: self._on_heat_item_clicked(current_item))
+
+        row_layout.addWidget(button, 1)
+        self._heat_item_buttons[title] = button
+        self._heat_item_texts.append(title)
+        self._heat_items_by_title[title] = item
+        self._heat_items_layout.addWidget(row)
+
     @staticmethod
     def _clear_layout(layout) -> None:
         while layout.count():
@@ -1122,6 +1190,10 @@ class GlobalSearchPopup(QWidget):
     def _on_item_clicked(self, query: str) -> None:
         self.hide()
         self.item_clicked.emit(query)
+
+    def _on_heat_item_clicked(self, item: object) -> None:
+        self.hide()
+        self.heat_item_clicked.emit(item)
 
     def _on_clear_clicked(self) -> None:
         self.hide()
@@ -1382,6 +1454,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             playback_parser_service=None,
             yt_dlp_service=None,
             smart_search_controller=None,
+            heat_controller=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
             danmaku_controller_factory=None,
@@ -1398,6 +1471,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._playback_parser_service = playback_parser_service
         self._yt_dlp_service = yt_dlp_service
         self._smart_search_controller = smart_search_controller
+        self._heat_controller = heat_controller
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
         self._danmaku_controller_factory = danmaku_controller_factory
@@ -1644,10 +1718,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_restore_plugin_keys: list[str] = []
         self._global_search_popup_signals = _GlobalSearchPopupSignals()
         self._connect_async_signal(self._global_search_popup_signals.hotkeys_loaded, self._handle_global_search_hotkeys_loaded)
+        self._connect_async_signal(
+            self._global_search_popup_signals.heat_recommendations_loaded,
+            self._handle_heat_recommendations_loaded,
+        )
         self._help_payload_signals = _HelpPayloadSignals()
         self._connect_async_signal(self._help_payload_signals.loaded, self._handle_help_payload_loaded)
         self._help_payload_request_id = 0
         self._global_search_hotkey_request_id = 0
+        self._heat_recommendation_request_id = 0
         self._global_search_hotkey_cache: dict[tuple[str, str], list[dict[str, str]]] = {}
         self._global_search_hot_categories_by_source = {
             source: list(categories)
@@ -3217,6 +3296,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._global_search_popup.setWindowTitle("全局搜索")
             self._global_search_popup.hide()
             self._global_search_popup.item_clicked.connect(self._handle_global_search_popup_item_clicked)
+            self._global_search_popup.heat_item_clicked.connect(self._handle_global_search_popup_heat_item_clicked)
             self._global_search_popup.clear_history_requested.connect(self._clear_global_search_history)
             self._global_search_popup.delete_history_requested.connect(self._delete_global_search_history)
             self._global_search_popup.hot_source_changed.connect(self._handle_global_search_hot_source_changed)
@@ -3227,6 +3307,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _show_global_search_popup(self) -> None:
         popup = self._ensure_global_search_popup()
         self._render_global_search_popup()
+        self._refresh_heat_recommendations()
         pos = self.global_search_container.mapToGlobal(QPoint(0, self.global_search_container.height() + 4))
         popup.show_at(pos, self.global_search_container.width())
 
@@ -3297,6 +3378,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._hide_global_search_popup()
         self._start_global_search()
 
+    def _handle_global_search_popup_heat_item_clicked(self, item: object) -> None:
+        title = str(getattr(item, "title", "") or "").strip()
+        if not title:
+            return
+        self.global_search_edit.setText(title)
+        self._hide_global_search_popup()
+        self._start_global_search(heat_source_kind="heat_recommendation")
+
     def _toggle_global_search_popup(self) -> None:
         if self._global_search_popup is not None and self._global_search_popup.isVisible():
             self._hide_global_search_popup()
@@ -3364,6 +3453,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             hot_categories,
             hotkeys,
         )
+
+    def _refresh_heat_recommendations(self) -> None:
+        if self._heat_controller is None or self._global_search_popup is None:
+            return
+        self._heat_recommendation_request_id += 1
+        request_id = self._heat_recommendation_request_id
+
+        def run() -> None:
+            try:
+                items = list(self._heat_controller.load_recommendations(limit=24))
+            except Exception:
+                items = []
+            if self._is_window_alive():
+                self._global_search_popup_signals.heat_recommendations_loaded.emit(request_id, items)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_heat_recommendations_loaded(self, request_id: int, items: object) -> None:
+        if request_id != self._heat_recommendation_request_id or self._global_search_popup is None:
+            return
+        if not isinstance(items, Iterable):
+            items = []
+        self._global_search_popup.set_heat_items(list(items))
 
     def _request_global_search_hotkeys(self, source: str, hot_type: str) -> None:
         self._global_search_hotkey_request_id += 1
@@ -4406,7 +4518,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_open_request(lambda: self._build_parse_request(keyword))
         return True
 
-    def _start_global_search(self, *, include_smart_search: bool = True) -> None:
+    def _start_global_search(
+        self,
+        *,
+        include_smart_search: bool = True,
+        heat_source_kind: str = "global_search",
+    ) -> None:
         keyword = self.global_search_edit.text().strip()
         if not keyword:
             return
@@ -4414,6 +4531,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self._start_direct_open_from_global_search(keyword):
             return
         self._record_global_search_history(keyword)
+        heat_controller = self._heat_controller
+        if heat_controller is not None and hasattr(heat_controller, "record_search"):
+            try:
+                heat_controller.record_search(keyword, source_kind=heat_source_kind)
+            except Exception:
+                pass
         active_home_mode = getattr(self, "_active_home_mode", getattr(self.config, "home_mode", "browse")) or "browse"
         if active_home_mode == "classic":
             self._ensure_classic_global_search_plugins_loaded()

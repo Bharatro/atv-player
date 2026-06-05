@@ -62,6 +62,7 @@ from atv_player.favorites_repository import FavoritesRepository
 from atv_player.following_metadata import FollowingMetadataGateway
 from atv_player.following_repository import FollowingRepository
 from atv_player.following_update_service import FollowingUpdateService
+from atv_player.heat import HeatController, HeatService
 from atv_player.metadata import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     MetadataBindingRepository,
@@ -2038,6 +2039,11 @@ class AppCoordinator(QObject):
             following_controller=following_controller,
             history_controller=history_controller,
         )
+        app_identity = self.repo.ensure_app_identity()
+        heat_controller = HeatController(
+            HeatService(),
+            installation_id=app_identity.installation_id,
+        )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
@@ -2101,6 +2107,7 @@ class AppCoordinator(QObject):
             playback_parser_service=self._playback_parser_service,
             yt_dlp_service=self._yt_dlp_service,
             smart_search_controller=smart_search_controller,
+            heat_controller=heat_controller,
             youtube_category_text_loader=self._api_client.get_text if self._api_client is not None else None,
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,

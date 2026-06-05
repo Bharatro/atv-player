@@ -4279,6 +4279,142 @@ def test_main_window_global_search_popup_button_opens_history_and_default_hot_ta
     assert window._global_search_popup.width() >= 720
 
 
+def test_global_search_popup_renders_heat_recommendations(qtbot) -> None:
+    popup = main_window_module.GlobalSearchPopup()
+    qtbot.addWidget(popup)
+
+    popup.set_heat_items(
+        [
+            SimpleNamespace(
+                media_key="tmdb:tv:1399",
+                title="权力的游戏",
+                poster="",
+                reason="23 人正在播放",
+            )
+        ]
+    )
+
+    assert popup.heat_item_texts() == ["权力的游戏"]
+    assert popup.heat_item_button("权力的游戏").toolTip() == "23 人正在播放"
+
+
+def test_main_window_reports_global_search_event(qtbot) -> None:
+    class FakeHeatController:
+        def __init__(self) -> None:
+            self.searches = []
+
+        def record_search(self, query, *, source_kind="global_search", media=None) -> None:
+            self.searches.append((query, source_kind, media))
+
+        def load_recommendations(self, *, limit=24):
+            return []
+
+    heat = FakeHeatController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=heat,
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.global_search_edit.setText("权力的游戏")
+    window._start_global_search()
+
+    assert heat.searches == [("权力的游戏", "global_search", None)]
+
+
+def test_main_window_global_search_popup_loads_heat_recommendations(qtbot) -> None:
+    class FakeHeatController:
+        def record_search(self, query, *, source_kind="global_search", media=None) -> None:
+            return None
+
+        def load_recommendations(self, *, limit=24):
+            return [
+                SimpleNamespace(
+                    media_key="tmdb:tv:1399",
+                    title="权力的游戏",
+                    poster="",
+                    reason="23 人正在播放",
+                )
+            ]
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=FakeHeatController(),
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window._global_search_popup.heat_item_texts() == ["权力的游戏"])
+
+
+def test_main_window_clicking_heat_recommendation_reports_recommendation_search_once(qtbot, monkeypatch) -> None:
+    class FakeHeatController:
+        def __init__(self) -> None:
+            self.searches = []
+
+        def record_search(self, query, *, source_kind="global_search", media=None) -> None:
+            self.searches.append((query, source_kind, media))
+
+        def load_recommendations(self, *, limit=24):
+            return [
+                SimpleNamespace(
+                    media_key="tmdb:tv:1399",
+                    title="权力的游戏",
+                    poster="",
+                    reason="23 人正在播放",
+                )
+            ]
+
+    heat = FakeHeatController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=heat,
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+    monkeypatch.setattr(window, "_start_global_search", lambda **kwargs: MainWindow._start_global_search(window, **kwargs))
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.global_search_popup_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window._global_search_popup.heat_item_texts() == ["权力的游戏"])
+    qtbot.mouseClick(window._global_search_popup.heat_item_button("权力的游戏"), Qt.MouseButton.LeftButton)
+
+    assert heat.searches == [("权力的游戏", "heat_recommendation", None)]
+
+
 def test_load_tencent_hot_searches_reads_rank_item_list(monkeypatch) -> None:
     class _FakeResponse:
         def raise_for_status(self) -> None:
