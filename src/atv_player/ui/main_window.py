@@ -1431,6 +1431,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             save_config=None,
             apply_theme=None,
             douban_controller=None,
+            global_catalog_controller=None,
             telegram_controller=None,
             bilibili_controller=None,
             youtube_controller=None,
@@ -1560,6 +1561,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.douban_page = PosterGridPage(
             douban_controller or _EmptyDoubanController(),
             initial_category_id=self._initial_category_id_for_tab("douban"),
+        )
+        self.global_catalog_page = PosterGridPage(
+            global_catalog_controller or _EmptyDoubanController(),
+            initial_category_id=self._initial_category_id_for_tab("global_catalog"),
         )
         self.telegram_page = PosterGridPage(
             telegram_controller or _EmptyTelegramController(),
@@ -1785,6 +1790,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
         self._static_tab_definitions = [
             _TabDefinition("douban", "豆瓣电影", self.douban_page),
+            _TabDefinition("global_catalog", "环球片单", self.global_catalog_page),
             _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
         if self.bilibili_page is not None:
@@ -1950,6 +1956,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self._connect_video_item_context_menu(self.douban_page)
+        self.global_catalog_page.search_requested.connect(self._handle_douban_search_requested)
+        self._connect_video_item_context_menu(self.global_catalog_page)
         self._connect_video_item_context_menu(self.telegram_page)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
@@ -2026,6 +2034,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.douban_page.selected_category_changed.connect(
             lambda category_id, page=self.douban_page: self._handle_selected_category_changed(page, category_id)
+        )
+        self.global_catalog_page.unauthorized.connect(self.logout_requested.emit)
+        self.global_catalog_page.selected_category_changed.connect(
+            lambda category_id, page=self.global_catalog_page: self._handle_selected_category_changed(page, category_id)
         )
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.selected_category_changed.connect(
@@ -2161,6 +2173,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.history_page,
             self.global_history_page,
             self.douban_page,
+            self.global_catalog_page,
             self.telegram_page,
             self.live_page,
             self.emby_page,
@@ -2873,6 +2886,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _builtin_tab_default_definitions(self) -> list[_BuiltinTabDefinition]:
         definitions: list[_BuiltinTabDefinition] = [
             _BuiltinTabDefinition("douban", "豆瓣电影", self.douban_page),
+            _BuiltinTabDefinition("global_catalog", "环球片单", self.global_catalog_page),
             _BuiltinTabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
         if self.bilibili_page is not None:
@@ -3692,6 +3706,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             and self._startup_plugin_load_state == "loading"
             and widget is not self._startup_plugin_placeholder_page
             and selected_key != self._startup_plugin_pending_tab_restore_key
+            and selected_key is not None
+            and selected_key.startswith("plugin:")
         ):
             self._startup_plugin_pending_tab_restore_key = ""
         self._sync_plugin_overflow_drawer()
@@ -3703,6 +3719,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._remember_selected_category(widget, widget.selected_category_id)
         if widget is self.douban_page:
             self.douban_page.ensure_loaded()
+            return
+        if widget is self.global_catalog_page:
+            self.global_catalog_page.ensure_loaded()
             return
         if widget is self.telegram_page:
             self.telegram_page.ensure_loaded()

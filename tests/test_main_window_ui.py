@@ -1788,6 +1788,7 @@ def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> No
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
+        "环球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -1800,6 +1801,26 @@ def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> No
         "红果短剧",
         "短剧二号",
     ]
+
+
+def test_main_window_places_global_catalog_after_douban(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "环球片单", "电报影视"]
+    assert window._builtin_tab_definitions[1].key == "global_catalog"
 
 
 def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qtbot) -> None:
@@ -1833,6 +1854,7 @@ def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qt
         "文件浏览",
         "我的收藏",
         "我的追更",
+        "环球片单",
         "Emby",
         "Jellyfin",
         "飞牛影视",
@@ -1867,7 +1889,7 @@ def test_main_window_refreshes_builtin_tabs_after_saving_overrides(qtbot) -> Non
     )
 
     assert config.builtin_tab_overrides_json == '{"order":["history","douban"],"hidden":["history"],"renames":{"douban":"电影"}}'
-    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:2] == ["电影", "电报影视"]
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:3] == ["电影", "环球片单", "电报影视"]
 
 
 def test_main_window_builtin_tab_context_menu_renames_tab(qtbot, monkeypatch) -> None:
@@ -1905,7 +1927,7 @@ def test_main_window_builtin_tab_context_menu_renames_tab(qtbot, monkeypatch) ->
 
     window._open_builtin_tab_context_menu("douban", window.mapToGlobal(window.rect().center()))
 
-    assert config.builtin_tab_overrides_json == '{"order":["douban","telegram","live","emby","jellyfin","feiniu","browse","favorites","following","history"],"renames":{"douban":"电影"}}'
+    assert config.builtin_tab_overrides_json == '{"order":["douban","global_catalog","telegram","live","emby","jellyfin","feiniu","browse","favorites","following","history"],"renames":{"douban":"电影"}}'
     assert window.nav_tabs.tabText(0) == "电影"
 
 
@@ -2095,6 +2117,7 @@ def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> 
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
+        "环球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -2286,6 +2309,7 @@ def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot)
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
+            "环球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2345,6 +2369,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
         lambda: len(window._plugin_pages) == 1
         and [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
+            "环球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2365,6 +2390,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
+            "环球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2894,6 +2920,7 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
+        "环球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -2911,7 +2938,7 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
     assert [definition.title for definition in window._hidden_plugin_tab_definitions] == ["插件3", "插件4", "插件5"]
 
 
-def test_main_window_keeps_personal_tabs_before_plugins_with_more_button(qtbot) -> None:
+def test_main_window_keeps_personal_tabs_before_plugins_with_more_button(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeStaticController(),
         telegram_controller=FakeStaticController(),
@@ -2937,6 +2964,9 @@ def test_main_window_keeps_personal_tabs_before_plugins_with_more_button(qtbot) 
     )
 
     qtbot.addWidget(window)
+    window.resize(1280, 520)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 0)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
     window.show()
     window._refresh_navigation_tabs()
 
