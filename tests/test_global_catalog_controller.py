@@ -1,3 +1,6 @@
+import httpx
+
+from atv_player.controllers.global_catalog_controller import GlobalCatalogService
 from atv_player.controllers.global_catalog_controller import GlobalCatalogController
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 
@@ -38,3 +41,66 @@ def test_global_catalog_categories_expose_seven_modules_and_representative_filte
     )
     assert any(filter_group.key == "platform" for filter_group in categories[5].filters)
     assert any(filter_group.key == "region" for filter_group in categories[6].filters)
+
+
+def test_global_catalog_tmdb_anime_maps_discover_results_to_vod_items() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/3/discover/tv"
+        assert request.url.params["api_key"] == "tmdb-key"
+        assert request.url.params["with_genres"] == "16"
+        return httpx.Response(
+            200,
+            json={
+                "total_pages": 4,
+                "results": [
+                    {
+                        "id": 76479,
+                        "name": "黑袍纠察队动画",
+                        "first_air_date": "2026-04-01",
+                        "poster_path": "/poster.jpg",
+                        "backdrop_path": "/backdrop.jpg",
+                        "genre_ids": [16, 10765],
+                        "overview": "简介",
+                        "vote_average": 8.3,
+                    }
+                ],
+            },
+        )
+
+    service = GlobalCatalogService(tmdb_api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    items, total = service.load_items("anime", 2, {"anime_source": "tmdb", "tmdb_sort": "trending"})
+
+    assert total == 4
+    assert items[0].vod_id == "tmdb:tv:76479"
+    assert items[0].vod_name == "黑袍纠察队动画"
+    assert items[0].vod_pic == "https://image.tmdb.org/t/p/w500/poster.jpg"
+    assert items[0].vod_remarks == "8.3"
+    assert items[0].vod_year == "2026"
+    assert items[0].type_name == "动画 / 科幻奇幻"
+    assert items[0].vod_content == "2026-04-01\n简介"
+    assert requests
+
+
+def test_global_catalog_movie_general_top_rated_uses_tmdb_movie_endpoint() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        assert request.url.params["page"] == "1"
+        return httpx.Response(
+            200,
+            json={"total_pages": 1, "results": [{"id": 1, "title": "电影", "release_date": "2025-01-02"}]},
+        )
+
+    service = GlobalCatalogService(tmdb_api_key="tmdb-key", transport=httpx.MockTransport(handler))
+
+    items, total = service.load_items("movies", 1, {"movie_source": "general", "general_sort": "top_rated"})
+
+    assert seen_paths == ["/3/movie/top_rated"]
+    assert total == 1
+    assert items[0].vod_id == "tmdb:movie:1"
+    assert items[0].vod_name == "电影"
