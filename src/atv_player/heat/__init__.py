@@ -4,6 +4,7 @@ from atv_player.heat.identity import (
     heat_identity_from_vod,
     normalize_heat_title,
 )
+from atv_player.heat.controller import HeatController
 from atv_player.heat.models import (
     HeatClientContext,
     HeatEvent,
@@ -15,6 +16,7 @@ from atv_player.heat.service import HEAT_API_BASE_URL, HeatService
 
 __all__ = [
     "HEAT_API_BASE_URL",
+    "HeatController",
     "HeatClientContext",
     "HeatEvent",
     "HeatMediaIdentity",
