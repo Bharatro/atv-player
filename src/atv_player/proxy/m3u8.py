@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 from atv_player.proxy.adblock import is_ad_segment
 from atv_player.proxy.session import PlaylistSegment, ProxySessionRegistry
@@ -35,7 +35,7 @@ def rewrite_playlist(
             if line.startswith("#"):
                 output.append(line)
                 continue
-            child_url = urljoin(playlist_url, line)
+            child_url = _resolve_playlist_uri(playlist_url, line)
             child_token = session_registry.create_session(child_url, session.headers)
             output.append(f"{proxy_base_url}/m3u?v={quote(child_token)}")
         return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=True)
@@ -51,7 +51,7 @@ def rewrite_playlist(
         if line.startswith("#"):
             output.append(_rewrite_tag_uris(line, token, playlist_url, proxy_base_url))
             continue
-        absolute_url = urljoin(playlist_url, line)
+        absolute_url = _resolve_playlist_uri(playlist_url, line)
         if is_ad_segment(pending_duration, absolute_url):
             if output and output[-1].startswith("#EXTINF:"):
                 output.pop()
@@ -69,7 +69,23 @@ def rewrite_playlist(
 
 def _rewrite_tag_uris(line: str, token: str, playlist_url: str, proxy_base_url: str) -> str:
     def repl(match: re.Match[str]) -> str:
-        absolute_url = urljoin(playlist_url, match.group(1))
+        absolute_url = _resolve_playlist_uri(playlist_url, match.group(1))
         return f'URI="{proxy_base_url}/asset?v={quote(token)}&url={quote(absolute_url, safe="")}"'
 
     return _URI_ATTR_RE.sub(repl, line)
+
+
+def _resolve_playlist_uri(playlist_url: str, uri: str) -> str:
+    absolute_url = urljoin(playlist_url, uri)
+    parent = urlparse(playlist_url)
+    parsed_uri = urlparse(uri)
+    resolved = urlparse(absolute_url)
+    if (
+        parent.query
+        and not parsed_uri.scheme
+        and not parsed_uri.netloc
+        and not resolved.query
+    ):
+        resolved = resolved._replace(query=parent.query)
+        return urlunparse(resolved)
+    return absolute_url
