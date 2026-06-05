@@ -3602,7 +3602,6 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         definition = next((item for item in candidates if item.key == plugin_key), None)
         if definition is None:
             return
-        self._close_plugin_overflow_drawer()
         self.nav_tabs.setCurrentWidget(definition.page)
 
     def _open_builtin_page_from_header(self, tab_key: str) -> None:

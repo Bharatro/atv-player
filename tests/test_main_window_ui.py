@@ -3053,6 +3053,7 @@ def test_main_window_selecting_hidden_plugin_from_drawer_switches_content_withou
 
     assert window._active_widget is original_pages[2]
     assert window.nav_tabs.currentWidget() is original_pages[2]
+    assert window._plugin_overflow_drawer.isVisible() is True
     assert window.plugin_overflow_button.isChecked() is True
     assert window.nav_tabs.tab_bar.property("hiddenPluginActive") is True
     assert window._plugin_pages[2][0] is original_pages[2]
