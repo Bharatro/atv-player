@@ -1,3 +1,9 @@
+from atv_player.heat.identity import (
+    heat_identity_from_favorite,
+    heat_identity_from_following,
+    heat_identity_from_vod,
+    normalize_heat_title,
+)
 from atv_player.heat.models import (
     HeatClientContext,
     HeatEvent,
@@ -15,4 +21,8 @@ __all__ = [
     "HeatMediaSummary",
     "HeatRecommendation",
     "HeatService",
+    "heat_identity_from_favorite",
+    "heat_identity_from_following",
+    "heat_identity_from_vod",
+    "normalize_heat_title",
 ]
