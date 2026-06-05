@@ -13,6 +13,11 @@ import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.following_controller import FollowingDetailView
+from atv_player.controllers.media_detail_controller import MediaDetailEpisode
+from atv_player.controllers.media_detail_controller import MediaDetailIdentity
+from atv_player.controllers.media_detail_controller import MediaDetailPerson
+from atv_player.controllers.media_detail_controller import MediaDetailRecommendation
+from atv_player.controllers.media_detail_controller import MediaDetailView
 from atv_player.controllers.pagination import PageInfo
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import (
@@ -328,6 +333,7 @@ class FakeFollowingController:
         self.cleared: list[int] = []
         self.snoozed: list[int] = []
         self.dismissed_until_next: list[int] = []
+        self.added_candidates: list[object] = []
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         self.load_calls.append((page, size, keyword, only_updates))
@@ -367,6 +373,11 @@ class FakeFollowingController:
 
     def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
         self.dismissed_until_next.append(following_id)
+
+    def add_candidate(self, candidate, **kwargs):
+        del kwargs
+        self.added_candidates.append(candidate)
+        return FollowingRecord(id=99, title=getattr(candidate, "title", ""), provider="tmdb", provider_id="tv:1399")
 
 
 class FakeHeatController:
@@ -1821,6 +1832,153 @@ def test_main_window_places_global_catalog_after_douban(qtbot) -> None:
 
     assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "环球片单", "电报影视"]
     assert window._builtin_tab_definitions[1].key == "global_catalog"
+
+
+class FakeMediaDetailController:
+    def __init__(self) -> None:
+        self.vod_calls: list[VodItem] = []
+        self.heat_calls: list[object] = []
+        self.identity_calls: list[MediaDetailIdentity] = []
+        self.refresh_calls: list[MediaDetailView] = []
+        self.following_candidates: list[MediaDetailView] = []
+
+    def load_from_vod(self, vod: VodItem) -> MediaDetailView:
+        self.vod_calls.append(vod)
+        return _media_detail_view(
+            MediaDetailIdentity(media_type="tv", tmdb_id="1399", title=vod.vod_name or "权力的游戏")
+        )
+
+    def load_from_heat(self, item: object) -> MediaDetailView:
+        self.heat_calls.append(item)
+        return _media_detail_view(MediaDetailIdentity(media_type="tv", tmdb_id="1399", title="权力的游戏"))
+
+    def load_from_identity(self, identity: MediaDetailIdentity) -> MediaDetailView:
+        self.identity_calls.append(identity)
+        return _media_detail_view(identity)
+
+    def refresh(self, view: MediaDetailView) -> MediaDetailView:
+        self.refresh_calls.append(view)
+        return _media_detail_view(view.identity, overview="刷新后的简介")
+
+    def candidate_for_following(self, view: MediaDetailView):
+        self.following_candidates.append(view)
+        return SimpleNamespace(provider="tmdb", provider_id=f"{view.media_type}:{view.identity.tmdb_id}", title=view.title)
+
+    def search_title(self, view: MediaDetailView) -> str:
+        return view.title
+
+
+def _media_detail_view(identity: MediaDetailIdentity, *, overview: str = "九大家族争夺铁王座。") -> MediaDetailView:
+    return MediaDetailView(
+        identity=identity,
+        title=identity.title or "权力的游戏",
+        media_type=identity.media_type,
+        year="2011",
+        release_date="2011-04-17",
+        overview=overview,
+        rating="8.4",
+        genres=["剧情"],
+        episodes=[MediaDetailEpisode(season_number=1, episode_number=1, title="凛冬将至")],
+        people=[MediaDetailPerson(name="Emilia Clarke", role="Daenerys Targaryen")],
+        related=[
+            MediaDetailRecommendation(
+                identity=MediaDetailIdentity(media_type="tv", tmdb_id="1412", title="绿箭侠"),
+                year="2012",
+            )
+        ],
+    )
+
+
+def test_global_catalog_card_click_opens_universal_media_detail(qtbot) -> None:
+    detail_controller = FakeMediaDetailController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        media_detail_controller=detail_controller,
+    )
+    qtbot.addWidget(window)
+
+    item = VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏")
+    window.global_catalog_page.item_open_requested.emit(item)
+
+    assert detail_controller.vod_calls == [item]
+    assert window.nav_tabs.currentWidget() is window.media_detail_page
+    assert window.media_detail_page.title_label.text() == "权力的游戏"
+    assert window.media_detail_page.episode_buttons[0].text().startswith("S1E1")
+
+
+def test_heat_recommendation_click_opens_universal_media_detail(qtbot) -> None:
+    detail_controller = FakeMediaDetailController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        media_detail_controller=detail_controller,
+    )
+    qtbot.addWidget(window)
+
+    heat_item = SimpleNamespace(media_key="tmdb:tv:1399", title="权力的游戏", media_type="tv")
+    window._handle_global_search_popup_heat_item_clicked(heat_item)
+
+    assert detail_controller.heat_calls == [heat_item]
+    assert window.nav_tabs.currentWidget() is window.media_detail_page
+    assert window.media_detail_page.person_labels[0].text() == "Emilia Clarke\nDaenerys Targaryen"
+
+
+def test_media_detail_actions_search_follow_refresh_and_related(qtbot, monkeypatch) -> None:
+    detail_controller = FakeMediaDetailController()
+    following = FakeFollowingController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        following_controller=following,
+        config=AppConfig(),
+        media_detail_controller=detail_controller,
+    )
+    qtbot.addWidget(window)
+    searches: list[bool] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda **kwargs: searches.append(bool(kwargs)))
+
+    view = _media_detail_view(MediaDetailIdentity(media_type="tv", tmdb_id="1399", title="权力的游戏"))
+    window.media_detail_page.load_view(view)
+
+    window.media_detail_page.search_play_requested.emit(view)
+    assert window.global_search_edit.text() == "权力的游戏"
+    assert searches == [True]
+
+    window.media_detail_page.add_following_requested.emit(view)
+    assert following.added_candidates[0].title == "权力的游戏"
+
+    window.media_detail_page.refresh_metadata_requested.emit(view)
+    assert detail_controller.refresh_calls == [view]
+    assert "刷新后的简介" in window.media_detail_page.overview_label.text()
+
+    related_identity = MediaDetailIdentity(media_type="tv", tmdb_id="1412", title="绿箭侠")
+    window.media_detail_page.related_open_requested.emit(related_identity)
+    assert detail_controller.identity_calls == [related_identity]
+    assert window.media_detail_page.title_label.text() == "绿箭侠"
 
 
 def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qtbot) -> None:

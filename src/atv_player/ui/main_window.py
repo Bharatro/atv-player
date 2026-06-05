@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
 from atv_player.controllers.browse_controller import _map_vod_item
+from atv_player.controllers.media_detail_controller import MediaDetailIdentity
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
@@ -93,6 +94,7 @@ from atv_player.ui.heat_recommendations_dialog import HeatRecommendationsDialog
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.icon_cache import load_tinted_icon
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
+from atv_player.ui.media_detail_page import MediaDetailPage
 from atv_player.ui.media_home_page import (
     MediaHomeCard,
     MediaHomePage,
@@ -1464,6 +1466,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             yt_dlp_service=None,
             smart_search_controller=None,
             heat_controller=None,
+            media_detail_controller=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
             danmaku_controller_factory=None,
@@ -1481,6 +1484,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._yt_dlp_service = yt_dlp_service
         self._smart_search_controller = smart_search_controller
         self._heat_controller = heat_controller
+        self._media_detail_controller = media_detail_controller
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
         self._danmaku_controller_factory = danmaku_controller_factory
@@ -1564,6 +1568,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         self.global_catalog_page = PosterGridPage(
             global_catalog_controller or _EmptyDoubanController(),
+            click_action="open",
             initial_category_id=self._initial_category_id_for_tab("global_catalog"),
         )
         self.telegram_page = PosterGridPage(
@@ -1635,6 +1640,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             config=self.config,
             save_config=self._save_config,
         )
+        self.media_detail_page = MediaDetailPage()
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
@@ -1924,6 +1930,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._restore_saved_geometry(apply_maximized=True)
 
         self._defer_navigation_refresh = False
+        self.nav_tabs.ensure_widget(self.media_detail_page)
         self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.favorites_page.open_detail_requested.connect(self.open_favorite_detail)
@@ -1936,6 +1943,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
         self.following_detail_page.unfollow_requested.connect(self._unfollow_from_detail)
         self.following_detail_page.related_global_search_requested.connect(self._handle_favorite_global_search)
+        self.media_detail_page.back_requested.connect(self._return_from_media_detail)
+        self.media_detail_page.search_play_requested.connect(self.search_play_for_media_detail)
+        self.media_detail_page.add_following_requested.connect(self.add_following_from_media_detail)
+        self.media_detail_page.refresh_metadata_requested.connect(self.refresh_media_detail_metadata)
+        self.media_detail_page.related_open_requested.connect(self.open_media_detail_from_identity)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.history_page.global_search_requested.connect(self._handle_favorite_global_search)
@@ -1957,6 +1969,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self._connect_video_item_context_menu(self.douban_page)
         self.global_catalog_page.search_requested.connect(self._handle_douban_search_requested)
+        self.global_catalog_page.item_open_requested.connect(self.open_media_detail_from_vod)
         self._connect_video_item_context_menu(self.global_catalog_page)
         self._connect_video_item_context_menu(self.telegram_page)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
@@ -3417,13 +3430,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_global_search()
 
     def _handle_global_search_popup_heat_item_clicked(self, item: object) -> None:
+        self._hide_global_search_popup()
+        if self._heat_recommendations_dialog is not None:
+            self._heat_recommendations_dialog.hide()
+        if self._media_detail_controller is not None:
+            self.open_media_detail_from_heat(item)
+            return
         title = str(getattr(item, "title", "") or "").strip()
         if not title:
             return
         self.global_search_edit.setText(title)
-        self._hide_global_search_popup()
-        if self._heat_recommendations_dialog is not None:
-            self._heat_recommendations_dialog.hide()
         self._start_global_search(heat_source_kind="heat_recommendation")
 
     def _record_heat_media_event(
@@ -3445,7 +3461,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self._heat_recommendations_dialog is None:
             self._heat_recommendations_dialog = HeatRecommendationsDialog(self)
             self._heat_recommendations_dialog.item_clicked.connect(
-                self._handle_global_search_popup_heat_item_clicked
+                self.open_media_detail_from_heat
             )
         return self._heat_recommendations_dialog
 
@@ -5716,6 +5732,105 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self.player_window is None or self.player_window.session is None:
             return 0
         return max(0, int(getattr(self.player_window, "current_index", 0) or 0) + 1)
+
+    def open_media_detail_from_vod(self, vod: VodItem) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "load_from_vod"):
+            self.show_error("未配置媒体详情数据源")
+            return
+        try:
+            view = controller.load_from_vod(vod)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self._show_media_detail_view(view)
+
+    def open_media_detail_from_heat(self, item: object) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "load_from_heat"):
+            title = str(getattr(item, "title", "") or "").strip()
+            if title:
+                self.global_search_edit.setText(title)
+                self._start_global_search(heat_source_kind="heat_recommendation")
+            return
+        try:
+            view = controller.load_from_heat(item)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self._show_media_detail_view(view)
+
+    def open_media_detail_from_identity(self, identity: MediaDetailIdentity) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "load_from_identity"):
+            title = str(getattr(identity, "title", "") or "").strip()
+            if title:
+                self._handle_favorite_global_search(title)
+            return
+        try:
+            view = controller.load_from_identity(identity)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self._show_media_detail_view(view)
+
+    def _show_media_detail_view(self, view) -> None:
+        self.nav_tabs.ensure_widget(self.media_detail_page)
+        self.nav_tabs.setNavigationVisible(True)
+        self.nav_tabs.setVisible(True)
+        self._home_stack.setCurrentWidget(self.nav_tabs)
+        self.media_detail_page.load_view(view)
+        self.nav_tabs.setCurrentWidget(self.media_detail_page)
+        self._hide_global_search_popup()
+        if self._heat_recommendations_dialog is not None:
+            self._heat_recommendations_dialog.hide()
+
+    def _return_from_media_detail(self) -> None:
+        if self.global_catalog_page is not None and self.nav_tabs.indexOf(self.global_catalog_page) >= 0:
+            self.nav_tabs.setCurrentWidget(self.global_catalog_page)
+            return
+        self._select_first_visible_tab()
+
+    def search_play_for_media_detail(self, view) -> None:
+        controller = self._media_detail_controller
+        if controller is not None and hasattr(controller, "search_title"):
+            keyword = str(controller.search_title(view) or "").strip()
+        else:
+            keyword = str(getattr(view, "title", "") or "").strip()
+        if not keyword:
+            return
+        self.global_search_edit.setText(keyword)
+        self.nav_tabs.setCurrentWidget(self.douban_page)
+        self._start_global_search(include_smart_search=False)
+
+    def add_following_from_media_detail(self, view) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "candidate_for_following"):
+            self.search_play_for_media_detail(view)
+            return
+        try:
+            candidate = controller.candidate_for_following(view)
+            add_candidate = getattr(self._following_controller, "add_candidate", None)
+            if not callable(add_candidate):
+                raise RuntimeError("追更控制器不可用")
+            add_candidate(candidate)
+            self.following_page.load_page()
+            self.media_detail_page.set_status("已加入追更")
+        except Exception:
+            self.media_detail_page.set_status("无法直接加入追更，已切换为搜索播放")
+            self.search_play_for_media_detail(view)
+
+    def refresh_media_detail_metadata(self, view) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "refresh"):
+            self.media_detail_page.set_status("未配置媒体详情数据源")
+            return
+        try:
+            refreshed = controller.refresh(view)
+        except Exception as exc:
+            self.media_detail_page.set_status(str(exc))
+            return
+        self.media_detail_page.load_view(refreshed)
 
     def open_following_detail(self, following_id: int) -> None:
         following_id = int(following_id)
