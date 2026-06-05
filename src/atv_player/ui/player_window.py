@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.heat import heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
@@ -503,6 +504,10 @@ class _DetailActionSignals(QObject):
     failed = Signal(int, str)
 
 
+class _HeatSummarySignals(QObject):
+    loaded = Signal(int, object)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -664,6 +669,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         following_is_active=None,
         following_toggle=None,
         following_progress_reporter=None,
+        heat_controller=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -688,6 +694,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._following_progress_reporter = following_progress_reporter or (
             lambda *_args, **_kwargs: None
         )
+        self._heat_controller = heat_controller
+        self._heat_summary_request_id = 0
+        self._heat_summary_text = ""
         self._default_video_cover_source: str | None = None
         self.session = None
         self.current_index = 0
@@ -836,6 +845,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._detail_action_signals = _DetailActionSignals()
         self._connect_async_signal(self._detail_action_signals.succeeded, self._handle_detail_action_succeeded)
         self._connect_async_signal(self._detail_action_signals.failed, self._handle_detail_action_failed)
+        self._heat_summary_signals = _HeatSummarySignals()
+        self._connect_async_signal(self._heat_summary_signals.loaded, self._handle_heat_summary_loaded)
         self._playback_prepare_signals = _PlaybackPrepareSignals()
         self._connect_async_signal(self._playback_prepare_signals.succeeded, self._handle_playback_prepare_succeeded)
         self._connect_async_signal(self._playback_prepare_signals.failed, self._handle_playback_prepare_failed)
@@ -2318,7 +2329,76 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _render_detail_fields(self) -> None:
         self._clear_detail_field_rows()
-        self.detail_fields_widget.setHidden(True)
+        if not self._heat_summary_text:
+            self.detail_fields_widget.setHidden(True)
+            return
+        row = QWidget(self.detail_fields_widget)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        label = QLabel("热度", row)
+        value = QLabel(self._heat_summary_text, row)
+        value.setWordWrap(True)
+        row_layout.addWidget(label)
+        row_layout.addWidget(value, 1)
+        self.detail_fields_layout.addWidget(row)
+        self.detail_fields_widget.setHidden(False)
+
+    def _current_heat_identity(self):
+        if self.session is None:
+            return None
+        return heat_identity_from_vod(self.session.vod, self._current_play_item())
+
+    def _refresh_heat_summary_for_current_item(self) -> None:
+        self._heat_summary_text = ""
+        self._render_detail_fields()
+        heat_controller = self._heat_controller
+        media = self._current_heat_identity()
+        if heat_controller is None or media is None or not hasattr(heat_controller, "load_media_heat"):
+            return
+        self._heat_summary_request_id += 1
+        request_id = self._heat_summary_request_id
+        media_key = media.media_key
+
+        def run() -> None:
+            try:
+                summary = heat_controller.load_media_heat(media_key)
+                text = summary.best_display_text() if summary is not None else ""
+            except Exception:
+                text = ""
+            if self._is_window_alive():
+                self._heat_summary_signals.loaded.emit(request_id, text)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_heat_summary_loaded(self, request_id: int, text: object) -> None:
+        if request_id != self._heat_summary_request_id:
+            return
+        self._heat_summary_text = str(text or "").strip()
+        self._render_detail_fields()
+
+    def _record_heat_effective_watch_if_needed(
+        self,
+        item: PlayItem | None,
+        *,
+        position_seconds: int,
+        duration_seconds: int,
+    ) -> None:
+        heat_controller = self._heat_controller
+        if item is None or heat_controller is None or not hasattr(heat_controller, "maybe_record_effective_watch"):
+            return
+        media = self._current_heat_identity()
+        if media is None:
+            return
+        try:
+            heat_controller.maybe_record_effective_watch(
+                media,
+                position_seconds=int(position_seconds or 0),
+                duration_seconds=int(duration_seconds or 0),
+                episode_index=int(self.current_index or 0),
+            )
+        except Exception:
+            pass
 
     def _render_detail_actions(self) -> None:
         self._clear_detail_action_buttons()
@@ -2919,6 +2999,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
+        self._refresh_heat_summary_for_current_item()
         self._refresh_metadata_original_toggle()
         self._reset_log()
         self._start_metadata_hydration()
@@ -3646,6 +3727,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._refresh_danmaku_source_entry_points()
             self._render_metadata()
             self._render_detail_fields()
+            if previous_index != index:
+                self._refresh_heat_summary_for_current_item()
             self._render_detail_actions()
             if (
                 previous_detail_poster_source != self._preferred_detail_poster_source()
@@ -5001,6 +5084,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._enqueue_controller_task("进度上报失败", report)
             if item is not None:
                 self._following_progress_reporter(
+                    item,
+                    position_seconds=int(position_seconds),
+                    duration_seconds=int(duration_seconds),
+                )
+                self._record_heat_effective_watch_if_needed(
                     item,
                     position_seconds=int(position_seconds),
                     duration_seconds=int(duration_seconds),

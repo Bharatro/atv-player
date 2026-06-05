@@ -143,6 +143,28 @@ class PrefetchResetRecordingPlayerController(RecordingPlayerController):
         self.reset_calls.append(session)
 
 
+class FakeHeatController:
+    def __init__(self, summary_text: str = "23 人正在播放") -> None:
+        self.summary_text = summary_text
+        self.media_heat_calls: list[str] = []
+        self.effective_watch_calls: list[dict[str, object]] = []
+
+    def load_media_heat(self, media_key: str):
+        self.media_heat_calls.append(media_key)
+        return type(
+            "HeatSummary",
+            (),
+            {
+                "media_key": media_key,
+                "best_display_text": lambda _self: self.summary_text,
+            },
+        )()
+
+    def maybe_record_effective_watch(self, media, **kwargs) -> bool:
+        self.effective_watch_calls.append({"media": media, **kwargs})
+        return True
+
+
 class RecordingVideo:
     def __init__(self) -> None:
         self.load_calls: list[tuple[str, int]] = []
@@ -248,6 +270,49 @@ def make_bilibili_grouped_session() -> PlayerSession:
         speed=1.0,
         source_kind="bilibili",
     )
+
+
+def test_player_window_renders_heat_summary_in_detail_fields(qtbot) -> None:
+    heat = FakeHeatController("23 人正在播放")
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    window = PlayerWindow(FakePlayerController(), heat_controller=heat)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    qtbot.waitUntil(
+        lambda: "23 人正在播放"
+        in "\n".join(label.text() for label in window.detail_fields_widget.findChildren(QLabel))
+    )
+    assert heat.media_heat_calls == ["title:movie"]
+
+
+def test_player_window_reports_effective_watch_to_heat_controller(qtbot) -> None:
+    heat = FakeHeatController()
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller, heat_controller=heat)
+    qtbot.addWidget(window)
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    window.open_session(session)
+    window.video = type(
+        "Video",
+        (),
+        {
+            "position_seconds": lambda _self: 60,
+            "duration_seconds": lambda _self: 120,
+        },
+    )()
+
+    window.report_progress()
+
+    assert len(heat.effective_watch_calls) == 1
+    call = heat.effective_watch_calls[0]
+    assert call["media"].title == "Movie"
+    assert call["position_seconds"] == 60
+    assert call["duration_seconds"] == 120
+    assert call["episode_index"] == 0
 
 
 def test_player_window_details_panel_uses_global_light_theme_tokens(qtbot) -> None:

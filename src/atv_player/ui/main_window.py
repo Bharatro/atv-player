@@ -6194,6 +6194,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "following_is_active": self._player_item_is_followed,
             "following_toggle": self._toggle_player_item_following,
             "following_progress_reporter": self._report_player_item_following_progress,
+            "heat_controller": self._heat_controller,
         }
         try:
             parameters = inspect.signature(PlayerWindow).parameters

@@ -8094,6 +8094,54 @@ def test_main_window_passes_default_video_cover_loader_to_player_window(qtbot, m
     assert captured["loader"] is load_video_cover
 
 
+def test_main_window_passes_heat_controller_to_player_window(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    captured: dict[str, object] = {}
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            captured["heat_controller"] = kwargs.get("heat_controller")
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    heat = FakeHeatController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=heat,
+    )
+    qtbot.addWidget(window)
+
+    window.open_player(
+        OpenPlayerRequest(
+            vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+            playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+            clicked_index=0,
+        )
+    )
+
+    qtbot.waitUntil(lambda: "heat_controller" in captured)
+    assert captured["heat_controller"] is heat
+
+
 def test_main_window_passes_detail_action_runner_to_player_controller(qtbot) -> None:
     def detail_action_runner(item, action_id):
         return [item, action_id]
