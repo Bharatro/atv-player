@@ -6,7 +6,13 @@ from atv_player.heat.identity import (
     heat_identity_from_following,
     heat_identity_from_vod,
 )
-from atv_player.models import PlaybackDetailField, PlayItem, VodItem
+from atv_player.models import (
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
+    PlayItem,
+    VodItem,
+)
 
 
 def test_heat_identity_prefers_tmdb_detail_field() -> None:
@@ -47,6 +53,35 @@ def test_heat_identity_includes_all_scraped_external_ids() -> None:
         "douban": "30318230",
         "bangumi": "526975",
     }
+
+
+def test_heat_identity_uses_tmdb_action_target_for_stable_media_key() -> None:
+    identity = heat_identity_from_vod(
+        VodItem(
+            vod_id="plugin-id",
+            vod_name="不带类型的条目",
+            detail_fields=[
+                PlaybackDetailField(
+                    "TMDB ID",
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label="289271",
+                            action=PlaybackDetailFieldAction(
+                                type="link",
+                                value="289271",
+                                target="tv",
+                            ),
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+
+    assert identity is not None
+    assert identity.media_key == "tmdb:tv:289271"
+    assert identity.media_type == "tv"
+    assert identity.external_ids["tmdb"] == "tv:289271"
 
 
 def test_heat_identity_uses_vod_dbid_as_douban_external_id() -> None:
@@ -120,3 +155,19 @@ def test_heat_identity_from_following_uses_provider_identity() -> None:
 
     assert identity is not None
     assert identity.media_key == "tmdb:tv:1399"
+    assert identity.external_ids["tmdb"] == "tv:1399"
+
+
+def test_heat_identity_from_following_normalizes_tmdb_external_id() -> None:
+    record = FollowingRecord(
+        id=1,
+        title="旧追更剧",
+        media_kind="anime",
+        external_ids={"tmdb": "289271"},
+    )
+
+    identity = heat_identity_from_following(record)
+
+    assert identity is not None
+    assert identity.media_key == "tmdb:tv:289271"
+    assert identity.external_ids["tmdb"] == "tv:289271"

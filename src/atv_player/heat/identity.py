@@ -29,6 +29,19 @@ def _field_value(fields: list[PlaybackDetailField], labels: set[str]) -> str:
     return ""
 
 
+def _field_action_target(fields: list[PlaybackDetailField], labels: set[str]) -> str:
+    normalized_labels = {label.casefold() for label in labels}
+    for field in fields:
+        if str(field.label or "").strip().casefold() not in normalized_labels:
+            continue
+        for part in list(getattr(field, "value_parts", []) or []):
+            action = getattr(part, "action", None)
+            target = str(getattr(action, "target", "") or "").strip()
+            if target:
+                return target
+    return ""
+
+
 def _tmdb_media_type(vod: VodItem, explicit: str = "") -> str:
     if explicit in {"movie", "tv"}:
         return explicit
@@ -47,7 +60,25 @@ def _tmdb_external_id(value: str, media_type: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
         return ""
-    return normalized if ":" in normalized else f"{media_type}:{normalized}"
+    if ":" in normalized:
+        prefix, raw_id = normalized.split(":", 1)
+        if prefix in {"movie", "tv"} and raw_id.strip():
+            return f"{prefix}:{raw_id.strip()}"
+    return f"{media_type}:{normalized}"
+
+
+def _tmdb_identity_from_field(fields: list[PlaybackDetailField], fallback_media_type: str) -> tuple[str, str]:
+    tmdb_id = _field_value(fields, {"TMDB ID", "tmdb id"})
+    if not tmdb_id:
+        return "", fallback_media_type
+    normalized = str(tmdb_id or "").strip()
+    if ":" in normalized:
+        prefix, raw_id = normalized.split(":", 1)
+        if prefix in {"movie", "tv"} and raw_id.strip():
+            return f"{prefix}:{raw_id.strip()}", prefix
+    target = _field_action_target(fields, {"TMDB ID", "tmdb id"})
+    media_type = target if target in {"movie", "tv"} else fallback_media_type
+    return _tmdb_external_id(normalized, media_type), media_type
 
 
 def _positive_int_text(value: object) -> str:
@@ -76,8 +107,7 @@ def heat_identity_from_vod(
 
     media_type = _tmdb_media_type(vod)
     external_ids: dict[str, str] = {}
-    tmdb_id = _field_value(fields, {"TMDB ID", "tmdb id"})
-    tmdb_value = _tmdb_external_id(tmdb_id, media_type)
+    tmdb_value, media_type = _tmdb_identity_from_field(fields, media_type)
     douban_id = (
         _field_value(fields, {"豆瓣ID", "豆瓣id", "豆瓣 ID", "豆瓣 id", "dbid", "douban id"})
         or _positive_int_text(getattr(vod, "dbid", 0))
@@ -140,7 +170,8 @@ def heat_identity_from_following(record: FollowingRecord) -> HeatMediaIdentity |
         external_ids["bangumi"] = provider_id
         media_key = f"bangumi:{provider_id}"
     elif external_ids.get("tmdb"):
-        tmdb_value = external_ids["tmdb"]
+        tmdb_value = _tmdb_external_id(external_ids["tmdb"], media_type)
+        external_ids["tmdb"] = tmdb_value
         media_key = f"tmdb:{tmdb_value}"
     elif external_ids.get("douban"):
         media_key = f"douban:{external_ids['douban']}"
