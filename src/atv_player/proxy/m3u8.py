@@ -37,7 +37,7 @@ def rewrite_playlist(
                 continue
             child_url = _resolve_playlist_uri(playlist_url, line)
             child_token = session_registry.create_session(child_url, session.headers)
-            output.append(f"{proxy_base_url}/m3u?v={quote(child_token)}")
+            output.append(f"{proxy_base_url}/m3u/{quote(child_token, safe='')}")
         return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=True)
 
     output: list[str] = []

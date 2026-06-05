@@ -10,7 +10,7 @@ import socket
 import re
 import threading
 from typing import Any
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
@@ -363,7 +363,7 @@ class LocalHlsProxyServer:
 
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
-        return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
+        return f"http://{self.host}:{self.port}/m3u/{quote(token, safe='')}"
 
     def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
@@ -437,7 +437,7 @@ class LocalHlsProxyServer:
         session = self._registry.get(token)
         if session is not None:
             session.cached_playlist_text = playlist_text
-        return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
+        return f"http://{self.host}:{self.port}/m3u/{quote(token, safe='')}"
 
     def create_dash_url(
         self,
@@ -483,6 +483,18 @@ class LocalHlsProxyServer:
         if not values:
             raise KeyError("token")
         return values[0]
+
+    @staticmethod
+    def _m3u_token(path: str, query: dict[str, list[str]]) -> str:
+        if path == "/m3u":
+            return LocalHlsProxyServer._query_token(query)
+        prefix = "/m3u/"
+        if not path.startswith(prefix):
+            raise KeyError("token")
+        token = unquote(path.removeprefix(prefix))
+        if not token:
+            raise KeyError("token")
+        return token
 
     @staticmethod
     def _path_token(path: str) -> str:
@@ -860,8 +872,8 @@ class LocalHlsProxyServer:
         try:
             if method != "GET":
                 return 405, [], b"method not allowed"
-            if parsed.path == "/m3u":
-                token = self._query_token(query)
+            if parsed.path == "/m3u" or parsed.path.startswith("/m3u/"):
+                token = self._m3u_token(parsed.path, query)
                 session = self._registry.get(token)
                 if session is None:
                     return 404, [], b"missing proxy session"

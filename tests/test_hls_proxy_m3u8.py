@@ -81,7 +81,8 @@ video/720.m3u8
         proxy_base_url="http://127.0.0.1:2323",
     )
 
-    assert "http://127.0.0.1:2323/m3u?v=" in rewritten.text
+    assert "http://127.0.0.1:2323/m3u/" in rewritten.text
+    assert "http://127.0.0.1:2323/m3u?v=" not in rewritten.text
     assert rewritten.is_master is True
 
 
