@@ -1779,7 +1779,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._configure_header_icon_button(self.favorites_button, "我的收藏")
         self._configure_header_icon_button(self.following_button, "我的追更")
         self._configure_header_icon_button(self.history_button, "播放记录")
-        self._configure_header_icon_button(self.plugin_manager_button, "插件管理")
+        self._configure_header_icon_button(self.plugin_manager_button, "源管理")
         self._configure_header_icon_button(self.live_source_manager_button, "直播源管理")
         self._configure_header_icon_button(self.advanced_settings_button, "高级设置")
         self._configure_header_icon_button(self.logout_button, "退出登录")
