@@ -13,6 +13,7 @@ from atv_player.following_models import (
     FollowingCompletionState,
     FollowingRecord,
     FollowingUpdateResult,
+    progress_after_dismissed_prompt,
     progress_at_or_beyond,
     resolve_following_completion_state,
     resolve_new_episode_count,
@@ -163,7 +164,19 @@ class FollowingUpdateService(QObject):
                 current_fallback_season=record.season_number,
                 latest_fallback_season=record.season_number,
             )
-            homepage_prompt = bool(has_update and caught_up and record.prompt_snoozed_until <= now)
+            homepage_prompt = bool(
+                has_update
+                and caught_up
+                and record.prompt_snoozed_until <= now
+                and progress_after_dismissed_prompt(
+                    latest_season_number,
+                    latest,
+                    record.prompt_dismissed_latest_season,
+                    record.prompt_dismissed_latest_episode,
+                    dismissed_fallback_season=record.season_number,
+                    latest_fallback_season=latest_season_number,
+                )
+            )
             if not is_tmdb_fallback and self._has_metadata_update(refreshed_record):
                 self._repository.update_metadata(record.id, refreshed_record)
             self._repository.update_check_state(

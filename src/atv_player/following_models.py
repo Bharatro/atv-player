@@ -89,6 +89,13 @@ class FollowingMetadataBundle:
 
 
 @dataclass(slots=True)
+class FollowingAISummary:
+    summary: str = ""
+    highlights: list[str] = field(default_factory=list)
+    next_hint: str = ""
+
+
+@dataclass(slots=True)
 class FollowingDetailSnapshot:
     following_id: int = 0
     overview: str = ""
@@ -101,6 +108,7 @@ class FollowingDetailSnapshot:
     posters: list[str] = field(default_factory=list)
     backdrops: list[str] = field(default_factory=list)
     metadata_bundle: FollowingMetadataBundle | None = None
+    ai_summary: FollowingAISummary | None = None
     refreshed_at: int = 0
 
 
@@ -130,6 +138,8 @@ class FollowingRecord:
     new_episode_count: int = 0
     homepage_prompt_pending: bool = False
     prompt_snoozed_until: int = 0
+    prompt_dismissed_latest_episode: int = 0
+    prompt_dismissed_latest_season: int = 0
     created_at: int = 0
     updated_at: int = 0
     last_played_at: int = 0
@@ -227,6 +237,34 @@ def progress_at_or_beyond(
         current_fallback_season=current_fallback_season,
         target_fallback_season=latest_fallback_season,
     ) >= 0
+
+
+def progress_after_dismissed_prompt(
+    latest_season_number: int,
+    latest_episode: int,
+    dismissed_latest_season: int,
+    dismissed_latest_episode: int,
+    *,
+    dismissed_fallback_season: int = 0,
+    latest_fallback_season: int = 0,
+) -> bool:
+    normalized_latest_episode = max(0, int(latest_episode or 0))
+    if normalized_latest_episode <= 0:
+        return False
+    normalized_dismissed_episode = max(0, int(dismissed_latest_episode or 0))
+    if normalized_dismissed_episode <= 0:
+        return True
+    return (
+        compare_progress(
+            dismissed_latest_season,
+            normalized_dismissed_episode,
+            latest_season_number,
+            normalized_latest_episode,
+            current_fallback_season=dismissed_fallback_season,
+            target_fallback_season=latest_fallback_season,
+        )
+        < 0
+    )
 
 
 def resolve_absolute_episode_count(

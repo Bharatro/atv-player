@@ -120,7 +120,7 @@ def test_search_items_formats_year_and_rating_for_cards() -> None:
     items, total = controller.search_items("人生切割术", page=1)
 
     assert api.search_calls == [("人生切割术", 1)]
-    assert total == 31
+    assert total == 2
     assert items[0].vod_remarks == "2022 - 9.1"
 
 
@@ -164,7 +164,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
 
     assert api.item_calls == [("folder-1", 1, None)]
     assert api.detail_calls == []
-    assert total == 2
+    assert total == 1
     assert [item.vod_remarks for item in items] == ["2022", "2022 - 8.8"]
 
 

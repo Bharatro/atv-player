@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 
 
@@ -77,6 +78,7 @@ def _map_item(payload: dict) -> VodItem:
 
 class DoubanController:
     _PAGE_SIZE = 30
+    uses_page_count_for_pagination = True
 
     def __init__(self, api_client) -> None:
         self._api_client = api_client
@@ -93,10 +95,5 @@ class DoubanController:
     ) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_douban_items(category_id, page=page, size=self._PAGE_SIZE, filters=filters)
         items = [_map_item(item) for item in payload.get("list", [])]
-        total_raw = payload.get("total")
-        if total_raw is not None:
-            total = int(total_raw)
-        else:
-            pagecount = int(payload.get("pagecount") or 0)
-            total = pagecount * self._PAGE_SIZE
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count

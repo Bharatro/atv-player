@@ -5,14 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 import shiboken6
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, QEvent, Qt
+from PySide6.QtWidgets import QApplication, QWidget
 
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_danmaku_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.following_controller import FollowingDetailView
+from atv_player.controllers.pagination import PageInfo
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import (
     DanmakuSourceGroup,
@@ -59,12 +60,17 @@ class FakeSpiderController:
     def __init__(self, name: str) -> None:
         self.name = name
         self.open_calls: list[str] = []
+        self.folder_calls: list[str] = []
 
     def load_categories(self):
         return []
 
     def load_items(self, category_id: str, page: int):
         return [], 0
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="child-1", vod_name="子目录", vod_tag="folder")], 1
 
     def build_request(self, vod_id: str):
         self.open_calls.append(vod_id)
@@ -75,6 +81,83 @@ class FakeSpiderController:
             source_mode="detail",
             source_vod_id=vod_id,
         )
+
+
+def test_main_window_plugin_folder_click_loads_folder_in_plugin_page(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("目录插件")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "目录插件", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    shown = []
+    monkeypatch.setattr(window._plugin_pages[0][0], "show_items", lambda items, total, **kwargs: shown.append((items, total, kwargs)))
+
+    window._open_spider_item(
+        controller,
+        "plugin-1",
+        VodItem(vod_id="folder-1", vod_name="分区", vod_tag="folder"),
+    )
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
+    assert controller.open_calls == []
+    assert shown[0][1] == 1
+    assert shown[0][2]["empty_message"] == "当前文件夹暂无内容"
+    assert window._plugin_pages[0][0]._folder_breadcrumbs[-1] == {
+        "id": "folder-1",
+        "label": "分区",
+        "kind": "folder",
+    }
+
+
+def test_main_window_classic_plugin_folder_click_loads_folder_in_classic_grid(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("目录插件")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(home_mode="classic", last_selected_tab="plugin:plugin-1"),
+        spider_plugins=[{"id": "plugin-1", "title": "目录插件", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    classic_shown = []
+    hidden_plugin_shown = []
+    monkeypatch.setattr(
+        window._classic_home_page.grid_page,
+        "show_items",
+        lambda items, total, **kwargs: classic_shown.append((items, total, kwargs)),
+    )
+    monkeypatch.setattr(
+        window._plugin_pages[0][0],
+        "show_items",
+        lambda items, total, **kwargs: hidden_plugin_shown.append((items, total, kwargs)),
+    )
+
+    window._handle_classic_item_open(VodItem(vod_id="folder-1", vod_name="分区", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(classic_shown) == 1, timeout=1000)
+    assert hidden_plugin_shown == []
+    assert classic_shown[0][1] == 1
+    assert window._classic_home_page.grid_page._folder_breadcrumbs[-1] == {
+        "id": "folder-1",
+        "label": "分区",
+        "kind": "folder",
+    }
 
 
 class FakePluginManager:
@@ -244,6 +327,7 @@ class FakeFollowingController:
         self.load_calls: list[tuple[int, int, str, bool]] = []
         self.cleared: list[int] = []
         self.snoozed: list[int] = []
+        self.dismissed_until_next: list[int] = []
 
     def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
         self.load_calls.append((page, size, keyword, only_updates))
@@ -280,6 +364,9 @@ class FakeFollowingController:
 
     def snooze_prompt(self, following_id: int) -> None:
         self.snoozed.append(following_id)
+
+    def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
+        self.dismissed_until_next.append(following_id)
 
 
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
@@ -745,6 +832,25 @@ def test_main_window_homepage_prompt_actions(qtbot) -> None:
     assert window._following_prompt_dialog is not None
     window._following_prompt_detail_button.click()
     assert following.cleared == [1]
+
+
+def test_main_window_homepage_prompt_dismiss_until_next_episode(qtbot) -> None:
+    following = FakeFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    window.show_following_homepage_prompts()
+
+    assert window._following_prompt_dialog is not None
+    window._following_prompt_dismiss_until_next_button.click()
+    assert following.dismissed_until_next == [1]
+    assert window._following_prompt_dialog is None
 
 
 def test_main_window_does_not_show_homepage_prompt_while_player_is_playing(qtbot) -> None:
@@ -1407,6 +1513,17 @@ class PagedSearchableController(FakeStaticController):
         return self.results_by_page.get(page, ([], 0))
 
 
+class PageInfoSearchableController(FakeStaticController):
+    uses_page_count_for_pagination = True
+
+    def __init__(self) -> None:
+        self.search_calls: list[tuple[str, int]] = []
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return [_vod(f"Telegram Page {page}")], PageInfo(2, 61)
+
+
 class VariablePageSizeSearchableController(FakeStaticController):
     uses_result_length_for_pagination = True
 
@@ -1910,6 +2027,118 @@ def test_main_window_shows_startup_plugin_loading_placeholder_tab(qtbot) -> None
     assert "插件加载中" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
 
     release_load.set()
+
+
+def test_main_window_does_not_precreate_global_search_popup_during_startup_plugin_load(qtbot) -> None:
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    def plugin_loader_task():
+        load_started.set()
+        assert release_load.wait(timeout=5), "plugin load was never released"
+        return []
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_loader_task=plugin_loader_task,
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    assert load_started.wait(timeout=1)
+    QApplication.processEvents()
+
+    top_level_popups = [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, main_window_module.GlobalSearchPopup)
+    ]
+    assert top_level_popups == []
+
+    release_load.set()
+
+
+def test_main_window_creates_startup_plugin_pages_under_navigation_stack(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    page, _controller, _plugin_id, _tab_definition = window._create_plugin_page_entry(
+        {"id": "plugin-1", "title": "红果短剧", "controller": FakeSpiderController("红果短剧"), "search_enabled": True}
+    )
+
+    assert page.parent() is window.nav_tabs.content_stack
+    assert page.window() is window
+
+
+def test_startup_plugin_page_construction_does_not_show_unparented_child_widgets(qtbot) -> None:
+    unparented_shows: list[str] = []
+
+    class TopLevelShowRecorder(QObject):
+        def eventFilter(self, watched, event) -> bool:
+            if (
+                event.type() == QEvent.Type.Show
+                and isinstance(watched, QWidget)
+                and watched.parent() is None
+                and watched.isWindow()
+            ):
+                class_name = type(watched).__name__
+                if class_name != "MainWindow":
+                    unparented_shows.append(class_name)
+            return False
+
+    app = QApplication.instance()
+    recorder = TopLevelShowRecorder()
+    app.installEventFilter(recorder)
+    try:
+        window = MainWindow(
+            douban_controller=FakeStaticController(),
+            telegram_controller=FakeStaticController(),
+            live_controller=FakeStaticController(),
+            emby_controller=FakeStaticController(),
+            jellyfin_controller=FakeStaticController(),
+            browse_controller=FakeStaticController(),
+            history_controller=FakeStaticController(),
+            player_controller=FakePlayerController(),
+            config=AppConfig(),
+            spider_plugins=[],
+            plugin_manager=WidthAwarePluginManager(),
+        )
+        qtbot.addWidget(window)
+        window._create_plugin_page_entry(
+            {
+                "id": "plugin-1",
+                "title": "红果短剧",
+                "controller": FakeSpiderController("红果短剧"),
+                "search_enabled": True,
+            }
+        )
+        QApplication.processEvents()
+    finally:
+        app.removeEventFilter(recorder)
+
+    assert unparented_shows == []
 
 
 def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot) -> None:
@@ -2940,6 +3169,43 @@ def test_main_window_hidden_plugin_context_menu_rename_updates_drawer_items(qtbo
     assert [item.text() for item in window._plugin_overflow_drawer.visible_items()] == ["重命名插件", "插件3"]
 
 
+def test_main_window_hidden_plugin_reload_keeps_active_hidden_plugin(qtbot, monkeypatch) -> None:
+    manager = WidthAwarePluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 100)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+
+    window.show()
+    window._refresh_navigation_tabs()
+    window._open_plugin_overflow_drawer()
+    window._plugin_overflow_drawer.select_plugin_by_title("插件3")
+    active_before_reload = window.nav_tabs.currentWidget()
+
+    result = window._run_plugin_context_action("refresh", "3")
+
+    assert result is True
+    assert manager.refresh_calls == [3]
+    assert manager.load_plugins_calls[-1] == ["3"]
+    assert window.nav_tabs.currentWidget() is not active_before_reload
+    assert window.nav_tabs.currentWidget() is window._plugin_pages[2][0]
+    assert window.plugin_overflow_button.isChecked() is True
+    assert window.nav_tabs.tab_bar.property("hiddenPluginActive") is True
+
+
 def test_main_window_manage_categories_context_action_reloads_only_target_plugin(qtbot, monkeypatch) -> None:
     manager = WidthAwarePluginManager()
     window = MainWindow(
@@ -3764,6 +4030,40 @@ def test_main_window_global_search_results_can_paginate_current_source_only(qtbo
     assert window.telegram_page.page_label.text() == "第 2 / 3 页"
 
 
+def test_main_window_global_search_uses_total_count_for_tab_and_pagecount_for_pagination(qtbot) -> None:
+    telegram = PageInfoSearchableController()
+
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.global_search_edit.setText("庆余年")
+    window.global_search_button.click()
+
+    qtbot.waitUntil(lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(61)"])
+    assert window.telegram_page.page_label.text() == "第 1 / 2 页"
+
+    window.telegram_page.next_page()
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.telegram_page.card_buttons] == ["Telegram Page 2"])
+    assert telegram.search_calls == [("庆余年", 1), ("庆余年", 2)]
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == ["电报影视(61)"]
+    assert window.telegram_page.page_label.text() == "第 2 / 2 页"
+
+
 def test_main_window_global_search_prefers_inferred_page_size(qtbot) -> None:
     telegram = VariablePageSizeSearchableController(
         {
@@ -3858,6 +4158,34 @@ def test_global_search_includes_smart_match_tab_when_controller_present(qtbot) -
     )
 
 
+def test_following_search_play_skips_smart_match_controller(qtbot) -> None:
+    telegram = SearchableController([_vod("Telegram Result")], total=1)
+    smart_controller = SmartSearchGlobalController()
+    following = FakeFollowingController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=DummyHistoryController(),
+        player_controller=FakePlayerController(),
+        telegram_controller=telegram,
+        following_controller=following,
+        smart_search_controller=smart_controller,
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.search_play_for_following(1)
+
+    qtbot.waitUntil(lambda: telegram.search_calls == [("凡人修仙传", 1)], timeout=1000)
+    qtbot.wait(50)
+    assert smart_controller.calls == []
+    assert all(
+        window.nav_tabs.tabText(index) != "智能匹配(1)"
+        for index in range(window.nav_tabs.count())
+    )
+
+
 def test_main_window_global_search_history_result_opens_existing_history_route(qtbot, monkeypatch) -> None:
     history = GlobalSearchHistoryController([_history_record("庆余年", key="telegram-detail-1")])
     telegram = FakeSpiderController("电报影视")
@@ -3912,7 +4240,7 @@ def test_main_window_global_search_popup_does_not_open_on_focus(qtbot) -> None:
     window.global_search_edit.setFocus()
     qtbot.wait(50)
 
-    assert window._global_search_popup.isVisible() is False
+    assert window._global_search_popup is None or window._global_search_popup.isVisible() is False
 
 
 def test_main_window_global_search_popup_button_opens_history_and_default_hot_tab(qtbot) -> None:
@@ -3944,6 +4272,7 @@ def test_main_window_global_search_popup_button_opens_history_and_default_hot_ta
     qtbot.waitUntil(lambda: _popup_hot_texts(window) == ["热搜一", "综合-dsp"])
     assert _popup_history_texts(window) == ["庆余年", "琅琊榜"]
     assert _popup_hot_tab_titles(window) == ["综合", "电视剧", "电影", "综艺", "动漫"]
+    assert window._global_search_popup.windowTitle() == "全局搜索"
     assert window._global_search_popup.current_hot_tab_type() == "dsp"
     assert window._global_search_popup.hot_tab_bar.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert window._global_search_popup.width() >= 720
@@ -6346,6 +6675,24 @@ def test_advanced_settings_dialog_exposes_migu_source_options(qtbot) -> None:
     assert "migu" in config.disabled_metadata_provider_ids
 
 
+def test_advanced_settings_dialog_exposes_renren_danmaku_source(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    assert dialog.danmaku_source_checkboxes["renren"].text() == "人人"
+    assert "renren" not in dialog.metadata_source_checkboxes
+
+    dialog.danmaku_source_checkboxes["renren"].setChecked(False)
+    dialog._save()
+
+    assert "renren" in config.disabled_danmaku_provider_ids
+    assert "renren" not in config.disabled_metadata_provider_ids
+
+
 def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
@@ -6405,10 +6752,27 @@ def test_advanced_settings_dialog_applies_branded_combobox_styles(qtbot) -> None
     qtbot.addWidget(dialog)
 
     assert "QComboBox::drop-down" in dialog.theme_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.styleSheet() == dialog.home_mode_combo.styleSheet()
     assert dialog.theme_mode_combo.styleSheet() == dialog.network_proxy_mode_combo.styleSheet()
+    assert dialog.theme_mode_combo.property("flat_combo_border_color") == dialog.home_mode_combo.property(
+        "flat_combo_border_color"
+    )
     assert dialog.theme_mode_combo.property("flat_combo_border_color") == dialog.network_proxy_mode_combo.property(
         "flat_combo_border_color"
     )
+
+
+def test_advanced_settings_dialog_keeps_home_mode_in_separate_appearance_area(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.appearance_group.title() == "外观"
+    assert dialog.homepage_group.title() == "首页模式"
+    assert dialog.appearance_group.layout().labelForField(dialog.theme_mode_combo).text() == "界面主题"
+    assert dialog.appearance_group.layout().labelForField(dialog.home_mode_combo) is None
+    assert dialog.homepage_group.layout().labelForField(dialog.home_mode_combo).text() == "模式"
 
 
 def test_advanced_settings_dialog_applies_branded_line_edit_styles(qtbot) -> None:

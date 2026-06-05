@@ -267,7 +267,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_without_fetching_origin() -> N
 
         def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "http://127.0.0.1:2323/m3u?v=test-token"
+            return "http://127.0.0.1:2323/m3u/test-token"
 
         def close(self) -> None:
             return None
@@ -280,7 +280,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_without_fetching_origin() -> N
         {"Referer": "https://site.example"},
     )
 
-    assert prepared == "http://127.0.0.1:2323/m3u?v=test-token"
+    assert prepared == "http://127.0.0.1:2323/m3u/test-token"
     assert server.started is True
     assert server.calls == [
         (
@@ -300,7 +300,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_in
 
         def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "http://127.0.0.1:2323/m3u?v=master-token"
+            return "http://127.0.0.1:2323/m3u/master-token"
 
         def close(self) -> None:
             return None
@@ -310,7 +310,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_in
 
     prepared = ad_filter.prepare("https://media.example/master.m3u8")
 
-    assert prepared == "http://127.0.0.1:2323/m3u?v=master-token"
+    assert prepared == "http://127.0.0.1:2323/m3u/master-token"
     assert server.calls == [("https://media.example/master.m3u8", {})]
 
 
@@ -382,7 +382,7 @@ def test_m3u8_ad_filter_uses_playlist_proxy_for_multi_clip_iso() -> None:
             segments: list[IsoPlaybackSegment] | tuple[IsoPlaybackSegment, ...],
         ) -> str:
             self.calls.append((url, dict(headers or {}), tuple(segments)))
-            return "http://127.0.0.1:2323/m3u?v=iso-playlist-token"
+            return "http://127.0.0.1:2323/m3u/iso-playlist-token"
 
         def create_iso_media_url(self, *args, **kwargs) -> str:
             raise AssertionError("single-stream iso proxy should not be used")
@@ -420,7 +420,7 @@ def test_m3u8_ad_filter_uses_playlist_proxy_for_multi_clip_iso() -> None:
 
     prepared = ad_filter.prepare("http://media.example/disc.iso", {"Referer": "https://site.example"})
 
-    assert prepared == "http://127.0.0.1:2323/m3u?v=iso-playlist-token"
+    assert prepared == "http://127.0.0.1:2323/m3u/iso-playlist-token"
     assert server.calls == [
         (
             "http://media.example/disc.iso",

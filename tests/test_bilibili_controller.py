@@ -147,7 +147,7 @@ def test_search_items_maps_bilibili_search_payload() -> None:
     items, total = controller.search_items("孤独摇滚", page=1)
 
     assert api.search_calls == [("孤独摇滚", 1)]
-    assert total == 8
+    assert total == 1
     assert items[0].vod_id == "BV1xx411c7mD"
     assert items[0].vod_remarks == "2022 - 9.2"
 
@@ -188,7 +188,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
 
     assert api.item_calls == [("folder-1", 1, None)]
     assert api.detail_calls == []
-    assert total == 2
+    assert total == 1
     assert [(item.vod_id, item.vod_tag) for item in items] == [("folder-1", "folder"), ("BVchild1", "file")]
     assert [item.vod_remarks for item in items] == ["2024", "2024 - 9.9"]
 

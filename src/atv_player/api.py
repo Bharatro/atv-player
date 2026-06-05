@@ -34,7 +34,7 @@ class ApiClient:
         headers = {"Authorization": token} if token else {}
         self._vod_token = vod_token
         client_kwargs: dict[str, Any] = dict(
-            base_url=base_url.rstrip("/"),
+            base_url=base_url,
             headers=headers,
             transport=transport,
             timeout=30.0,

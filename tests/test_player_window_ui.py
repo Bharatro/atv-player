@@ -1156,6 +1156,7 @@ class FakeMetadataScrapeService:
         self.search_queries: list[tuple[str, str]] = []
         self.apply_calls: list[tuple[str, str]] = []
         self.build_episode_title_playlist_calls: list[tuple[str, str]] = []
+        self.build_episode_title_playlist_allow_ai_fallback_values: list[bool] = []
         self.reset_calls: list[tuple[str, str, str, str, list[tuple[str, str]]]] = []
         self.reset_query_contexts: list[tuple[str, str]] = []
         self.cached_groups: list[MetadataScrapeGroup] = []
@@ -1209,8 +1210,16 @@ class FakeMetadataScrapeService:
             metadata_field_sources={"poster": "tmdb", "overview": "tmdb", "detail_fields": "tmdb"},
         )
 
-    def build_episode_title_playlist(self, vod: VodItem, playlist: list[PlayItem], *, preferred_candidate=None):
+    def build_episode_title_playlist(
+        self,
+        vod: VodItem,
+        playlist: list[PlayItem],
+        *,
+        preferred_candidate=None,
+        allow_ai_fallback: bool = True,
+    ):
         self.build_episode_title_playlist_calls.append((vod.vod_name, getattr(preferred_candidate, "provider", "")))
+        self.build_episode_title_playlist_allow_ai_fallback_values.append(allow_ai_fallback)
         return [
             PlayItem(
                 title=item.title,
@@ -2262,6 +2271,7 @@ def test_player_window_metadata_scrape_apply_refreshes_playlist_titles_from_sele
     qtbot.waitUntil(lambda: window.session.playlist[0].episode_display_title == "第1集 第01话 金银米小圈1", timeout=1000)
     assert window.playlist_title_mode == "episode"
     assert service.build_episode_title_playlist_calls == [("米小圈上学记4", "tencent")]
+    assert service.build_episode_title_playlist_allow_ai_fallback_values == [False]
 
 
 def test_player_window_metadata_scrape_apply_rebuilds_playlist_titles_off_ui_thread(qtbot) -> None:
@@ -3553,7 +3563,7 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     assert item.danmaku_search_provider == "youku"
 
 
-def test_player_window_danmaku_search_provider_combo_includes_sohu(qtbot) -> None:
+def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qtbot) -> None:
     item = PlayItem(
         title="第1集",
         url="https://stream.example/1.m3u8",
@@ -3592,6 +3602,8 @@ def test_player_window_danmaku_search_provider_combo_includes_sohu(qtbot) -> Non
         ("iqiyi", "爱奇艺"),
         ("mgtv", "芒果"),
         ("sohu", "搜狐"),
+        ("migu", "咪咕"),
+        ("renren", "人人"),
     ]
 
 
@@ -9380,6 +9392,162 @@ def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
     window._seek_from_slider()
 
     assert window.video.seek_calls == [75]
+
+
+def test_player_window_ignores_playback_finished_immediately_after_progress_seek(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    video.load_calls.clear()
+    window.progress.setValue(75)
+
+    window._seek_from_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+    assert video.load_calls == []
+    assert video.seek_calls == [75]
+
+
+def test_player_window_reloads_current_item_when_seek_finished_unloads_media(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._duration = 0
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    resume_seek_calls: list[tuple[int, int]] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        window,
+        "_attempt_resume_seek",
+        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
+    )
+    window.open_session(make_player_session(start_index=0))
+
+    try:
+        video.load_calls.clear()
+        window.progress.setMaximum(120)
+        window.progress.setValue(75)
+
+        window._seek_from_slider()
+        window.video_widget.playback_finished.emit()
+
+        assert window.current_index == 0
+        assert window.playlist.currentRow() == 0
+        assert video.seek_calls == [75]
+        assert video.load_calls == [("http://m/1.m3u8", 0)]
+        assert resume_seek_calls == [(75, 5)]
+    finally:
+        monkeypatch.undo()
+
+
+def test_player_window_reloads_current_item_when_progress_seek_fails_after_unloading_media(qtbot) -> None:
+    class SeekFailingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._duration = 120
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._duration = 0
+            raise RuntimeError("('Error running mpv command', -12)")
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+    controller = RecordingPlayerController()
+    video = SeekFailingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    resume_seek_calls: list[tuple[int, int]] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        window,
+        "_attempt_resume_seek",
+        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
+    )
+    window.open_session(make_player_session(start_index=0))
+
+    try:
+        video.load_calls.clear()
+        window.progress.setMaximum(120)
+        window.progress.setValue(75)
+
+        window._seek_from_slider()
+
+        assert window.current_index == 0
+        assert window.playlist.currentRow() == 0
+        assert video.seek_calls == [75]
+        assert video.load_calls == [("http://m/1.m3u8", 0)]
+        assert resume_seek_calls == [(75, 5)]
+    finally:
+        monkeypatch.undo()
+
+
+def test_player_window_advances_after_progress_seek_near_end(qtbot) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+            self._position = 30
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+            self._position = seconds
+
+        def position_seconds(self) -> int:
+            return self._position
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    video.load_calls.clear()
+    window.progress.setMaximum(120)
+    window.progress.setValue(119)
+
+    window._seek_from_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+    assert video.seek_calls == [119]
 
 
 def test_player_window_clicking_progress_track_seeks_immediately(qtbot) -> None:
@@ -19224,7 +19392,7 @@ def test_player_window_async_metadata_hydration_updates_danmaku_source_dialog_ti
     assert window._danmaku_source_title_edit.text() == corrected_title
 
 
-def test_player_window_async_metadata_hydration_restarts_episode_title_enhancement_with_corrected_title(qtbot) -> None:
+def test_player_window_async_metadata_hydration_does_not_restart_episode_title_enhancement_with_corrected_title(qtbot) -> None:
     hydration_ready = threading.Event()
     enhancement_calls: list[str] = []
 
@@ -19292,8 +19460,9 @@ def test_player_window_async_metadata_hydration_restarts_episode_title_enhanceme
     qtbot.waitUntil(lambda: enhancement_calls == ["原始标题"], timeout=1000)
     hydration_ready.set()
     qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == corrected_title, timeout=1000)
-    qtbot.waitUntil(lambda: enhancement_calls == ["原始标题", corrected_title], timeout=1000)
-    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "第1集 星门初启", timeout=1000)
+    qtbot.wait(50)
+    assert enhancement_calls == ["原始标题"]
+    assert window.playlist.item(0).text() == "S01E01.mkv"
 
 
 def test_player_window_async_metadata_hydration_preserves_manual_danmaku_source_title(qtbot) -> None:

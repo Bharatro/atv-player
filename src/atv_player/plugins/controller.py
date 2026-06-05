@@ -36,6 +36,7 @@ from atv_player.danmaku.utils import (
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.douban_controller import _coerce_category_id
+from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.episode_titles import seed_original_titles
 from atv_player.episode_titles import extract_season_number
@@ -74,6 +75,13 @@ class _InflightDanmakuSourceSearch:
     event: threading.Event
     result: object | None = None
     error: Exception | None = None
+
+
+def _map_spider_page_count(
+    payload: Mapping[str, object],
+    items: list[VodItem],
+) -> int:
+    return page_count_from_payload(payload, fallback_total=len(items))
 
 
 def _format_spider_method_call_message(plugin_name: str, method_name: str, **params: object) -> str:
@@ -748,7 +756,8 @@ class SpiderPluginController:
         plugin_log_writer: Callable[[str], None] | None = None,
         spider_initializer: Callable[[], None] | None = None,
     ) -> None:
-        self.uses_result_length_for_pagination = True
+        self.uses_result_length_for_pagination = False
+        self.uses_page_count_for_pagination = True
         self._spider = spider
         self._plugin_name = plugin_name
         self.supports_search = bool(search_enabled and callable(getattr(self._spider, "searchContent", None)))
@@ -959,7 +968,19 @@ class SpiderPluginController:
     ) -> tuple[list[VodItem], int]:
         self._ensure_home_loaded()
         if category_id == "home":
-            return list(self._home_items), len(self._home_items)
+            return list(self._home_items), 1
+        return self._load_category_items(category_id, page, filters=filters)
+
+    def load_folder_items(self, vod_id: str, page: int = 1) -> tuple[list[VodItem], int]:
+        self._ensure_home_loaded()
+        return self._load_category_items(str(vod_id or ""), page, filters={})
+
+    def _load_category_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
         try:
             self._log_spider_method_call(
                 "categoryContent",
@@ -978,9 +999,12 @@ class SpiderPluginController:
             )
             raise ApiError(str(exc)) from exc
         items = self._annotate_items_with_category(self._map_items(payload), category_id=category_id)
-        total = int(payload.get("total") or 0)
-        if total <= 0:
-            total = len(items)
+        total = _map_spider_page_count(payload, items)
+        self._log_spider_method_call(
+            "categoryContent",
+            items=len(items),
+            pagecount=total,
+        )
         return items, total
 
     def search_items(
@@ -1022,7 +1046,7 @@ class SpiderPluginController:
             )
             raise ApiError(str(exc)) from exc
         items = self._annotate_items_with_category(self._map_items(payload), category_id=category_id)
-        total = int(payload.get("total") or len(items))
+        total = _map_spider_page_count(payload, items)
         return items, total
 
     def _route_name(self, routes: list[str], group_index: int) -> str:

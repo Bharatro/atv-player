@@ -99,7 +99,7 @@ def test_load_categories_maps_filter_groups() -> None:
     ]
 
 
-def test_load_items_maps_vod_fields_and_total() -> None:
+def test_load_items_maps_vod_fields_and_page_count() -> None:
     api = FakeApiClient()
     api.items_payload = {
         "list": [
@@ -117,7 +117,7 @@ def test_load_items_maps_vod_fields_and_total() -> None:
 
     items, total = controller.load_items("movie", page=2)
 
-    assert total == 70
+    assert total == 3
     assert items[0].vod_id == "d1"
     assert items[0].vod_name == "霸王别姬"
     assert items[0].vod_pic.endswith("p1.jpg")
@@ -143,7 +143,7 @@ def test_douban_controller_passes_optional_filters_argument() -> None:
     assert api.item_calls[-1] == ("movie", 1, 30, {"sc": "6"})
 
 
-def test_load_items_keeps_explicit_zero_total_without_pagecount_fallback() -> None:
+def test_load_items_uses_pagecount_before_total() -> None:
     api = FakeApiClient()
     api.items_payload = {
         "list": [],
@@ -154,4 +154,4 @@ def test_load_items_keeps_explicit_zero_total_without_pagecount_fallback() -> No
 
     _items, total = controller.load_items("movie", page=1)
 
-    assert total == 0
+    assert total == 9

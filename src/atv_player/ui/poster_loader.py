@@ -78,6 +78,12 @@ def build_poster_request_headers(image_url: str) -> dict[str, str]:
         referer = "https://www.iqiyi.com/"
     elif "netease.com" in image_url or "163.com" in image_url:
         referer = "https://cc.163.com/"
+    elif "javbus.com" in image_url:
+        return {
+            "Referer": "https://www.javbus.com/",
+            "Cookie": "existmag=mag; dv=1; age=verified",
+            "User-Agent": POSTER_USER_AGENT,
+        }
     return {
         "Referer": referer,
         "User-Agent": POSTER_USER_AGENT,

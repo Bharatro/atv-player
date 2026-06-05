@@ -78,7 +78,7 @@ def test_load_folder_items_reuses_live_listing_api() -> None:
     items, total = controller.load_folder_items("bili-9")
 
     assert api.item_calls == [("bili-9", 1)]
-    assert total == 2
+    assert total == 1
     assert [(item.vod_id, item.vod_tag) for item in items] == [
         ("bili-9-744", "folder"),
         ("bili$1785607569", "file"),

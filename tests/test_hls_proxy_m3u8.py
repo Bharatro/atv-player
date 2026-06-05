@@ -37,6 +37,31 @@ main-0003.ts
     ]
 
 
+def test_rewrite_playlist_adds_parent_query_to_relative_media_segment_urls() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session(
+        playlist_url="https://media.example/path/index.m3u8?pid=abc&sign=def",
+        headers={},
+    )
+    content = """#EXTM3U
+#EXTINF:5.0,
+/m3u8/video/main-0001.ts
+"""
+
+    rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/path/index.m3u8?pid=abc&sign=def",
+        content=content,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+
+    session = registry.get(token)
+    assert [segment.url for segment in session.segments] == [
+        "https://media.example/m3u8/video/main-0001.ts?pid=abc&sign=def",
+    ]
+
+
 def test_rewrite_playlist_rewrites_master_playlist_to_child_tokens() -> None:
     registry = ProxySessionRegistry()
     token = registry.create_session(
@@ -56,7 +81,8 @@ video/720.m3u8
         proxy_base_url="http://127.0.0.1:2323",
     )
 
-    assert "http://127.0.0.1:2323/m3u?v=" in rewritten.text
+    assert "http://127.0.0.1:2323/m3u/" in rewritten.text
+    assert "http://127.0.0.1:2323/m3u?v=" not in rewritten.text
     assert rewritten.is_master is True
 
 

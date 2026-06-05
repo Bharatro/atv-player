@@ -100,7 +100,7 @@ def test_search_items_maps_search_payload() -> None:
     items, total = controller.search_items("黑袍纠察队", page=1)
 
     assert api.search_calls == [("黑袍纠察队", 1)]
-    assert total == 30
+    assert total == 2
     assert items[0].vod_id == "https://pan.quark.cn/s/demo"
     assert items[0].vod_name == "黑袍纠察队"
     assert items[0].vod_pic == "poster.jpg"
@@ -114,7 +114,23 @@ def test_search_items_uses_pagecount_when_total_is_missing() -> None:
 
     _items, total = controller.search_items("黑袍纠察队", page=2)
 
-    assert total == 30
+    assert total == 3
+
+
+def test_search_items_returns_pagecount_and_total_when_both_are_available() -> None:
+    api = FakeApiClient()
+    api.search_payload = {
+        "list": [{"vod_id": "1", "vod_name": "黑袍纠察队"}],
+        "pagecount": 2,
+        "total": 31,
+    }
+    controller = TelegramSearchController(api)
+
+    _items, total = controller.search_items("黑袍纠察队", page=1)
+
+    assert total == 2
+    assert total.pagecount == 2
+    assert total.total == 31
 
 
 def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> None:

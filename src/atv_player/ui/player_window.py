@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import html
+import inspect
 import json
 import logging
 import queue
@@ -142,6 +143,8 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
     ("sohu", "搜狐"),
+    ("migu", "咪咕"),
+    ("renren", "人人"),
 ]
 
 _METADATA_PROVIDER_LABELS: dict[str, str] = {
@@ -777,6 +780,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._video_surface_ready = False
         self._video_picture_state = "idle"
         self._auto_advance_locked = False
+        self._ignore_playback_finished_until = 0.0
+        self._recent_user_seek_target_seconds: int | None = None
         self._auto_switched_failure_sources: set[tuple[int, int]] = set()
         self._danmaku_track_id: int | None = None
         self._danmaku_temp_path: Path | None = None
@@ -3455,6 +3460,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        self._ignore_playback_finished_until = 0.0
+        self._recent_user_seek_target_seconds = None
         self._set_startup_state(self._startup_coordinator.preparing())
         self._invalidate_play_item_resolution()
         self._clear_manual_subtitle_switch_refresh()
@@ -4653,7 +4660,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_window_title()
         if metadata_log:
             self._append_log(metadata_log)
-        if force_restart_episode_titles or self._should_restart_episode_title_enhancement(previous_vod, updated_vod):
+        if force_restart_episode_titles:
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
 
@@ -5133,6 +5140,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _seek_relative(self, seconds: int) -> None:
         try:
             self.video.seek_relative(seconds)
+            self._mark_recent_user_seek(None)
         except Exception as exc:
             self._append_log(f"跳转失败: {exc}")
 
@@ -8045,7 +8053,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         str(getattr(candidate, "provider_id", "") or "").strip(),
                         extra={"log_category": "metadata", "log_source": "app"},
                     )
-                    updated_playlist = build_playlist(updated_vod, playlist_snapshot, preferred_candidate=candidate)
+                    parameters = inspect.signature(build_playlist).parameters
+                    if "allow_ai_fallback" in parameters:
+                        updated_playlist = build_playlist(
+                            updated_vod,
+                            playlist_snapshot,
+                            preferred_candidate=candidate,
+                            allow_ai_fallback=False,
+                        )
+                    else:
+                        updated_playlist = build_playlist(
+                            updated_vod,
+                            playlist_snapshot,
+                            preferred_candidate=candidate,
+                        )
                 except Exception as exc:
                     episode_title_error = str(exc)
             binding_error = ""
@@ -9057,8 +9078,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _seek_to_position(self, seconds: int) -> None:
         try:
             self.video.seek(seconds)
+            self._mark_recent_user_seek(seconds)
         except Exception as exc:
+            self._recent_user_seek_target_seconds = seconds
+            if self._current_media_duration_seconds() <= 0:
+                self._reload_current_item_after_seek_finished()
+                return
             self._append_log(f"跳转失败: {exc}")
+
+    def _mark_recent_user_seek(self, target_seconds: int | None) -> None:
+        self._ignore_playback_finished_until = time.monotonic() + 2.0
+        self._recent_user_seek_target_seconds = target_seconds
 
     def _sync_progress_slider(self) -> None:
         if self._slider_dragging:
@@ -9471,11 +9501,52 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _handle_playback_finished(self) -> None:
         if self.session is None:
             return
+        recent_seek_action = self._recent_seek_playback_finished_action()
+        if recent_seek_action == "reload":
+            self._reload_current_item_after_seek_finished()
+            return
+        if recent_seek_action == "ignore":
+            return
         if self.current_index + 1 >= len(self.session.playlist):
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             return
         self.play_next()
+
+    def _recent_seek_playback_finished_action(self) -> str:
+        if time.monotonic() >= self._ignore_playback_finished_until:
+            return "handle"
+        if not hasattr(self.video, "duration_seconds") or not hasattr(self.video, "position_seconds"):
+            return "ignore"
+        try:
+            duration = int(self.video.duration_seconds() or 0)
+            if self._recent_user_seek_target_seconds is not None:
+                position = int(self._recent_user_seek_target_seconds)
+            else:
+                position = int(self.video.position_seconds() or 0)
+        except Exception:
+            return "ignore"
+        if duration <= 0:
+            return "reload" if self._recent_user_seek_target_seconds is not None else "ignore"
+        ending_seconds = self.ending_spin.value() if hasattr(self, "ending_spin") else 0
+        end_margin = max(2, int(ending_seconds or 0))
+        return "ignore" if position + end_margin < duration else "handle"
+
+    def _reload_current_item_after_seek_finished(self) -> None:
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            return
+        start_position_seconds = max(0, int(self._recent_user_seek_target_seconds or 0))
+        self._ignore_playback_finished_until = 0.0
+        self._recent_user_seek_target_seconds = None
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=0,
+                pause=not self.is_playing,
+            )
+            if start_position_seconds > 0:
+                self._attempt_resume_seek(start_position_seconds, retries_remaining=5)
+        except Exception as exc:
+            self._append_log(f"播放恢复失败: {exc}")
 
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)

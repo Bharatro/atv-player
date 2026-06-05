@@ -16,6 +16,7 @@ from atv_player.following_models import (
     FollowingRecord,
     FollowingSeason,
     FollowingSourceBinding,
+    progress_after_dismissed_prompt,
     progress_at_or_beyond,
     resolve_progress_season,
 )
@@ -318,6 +319,8 @@ class FollowingRepository:
                     new_episode_count INTEGER NOT NULL DEFAULT 0,
                     homepage_prompt_pending INTEGER NOT NULL DEFAULT 0,
                     prompt_snoozed_until INTEGER NOT NULL DEFAULT 0,
+                    prompt_dismissed_latest_episode INTEGER NOT NULL DEFAULT 0,
+                    prompt_dismissed_latest_season INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL DEFAULT 0,
                     last_played_at INTEGER NOT NULL DEFAULT 0,
@@ -361,6 +364,25 @@ class FollowingRepository:
                 conn.execute("ALTER TABLE following_detail_snapshots ADD COLUMN metadata_bundle_json TEXT NOT NULL DEFAULT ''")
             except Exception:
                 pass
+            try:
+                conn.execute("ALTER TABLE following ADD COLUMN prompt_dismissed_latest_episode INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE following ADD COLUMN prompt_dismissed_latest_season INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            conn.execute(
+                """
+                UPDATE following
+                SET prompt_dismissed_latest_season = CASE
+                    WHEN season_number > 0 THEN season_number
+                    ELSE 1
+                END
+                WHERE prompt_dismissed_latest_episode > 0
+                  AND prompt_dismissed_latest_season = 0
+                """
+            )
             conn.execute(
                 """
                 UPDATE following
@@ -384,10 +406,11 @@ class FollowingRepository:
                     provider, provider_id, provider_priority_json, external_ids_json, source_bindings_json,
                     current_season_number, current_episode, position_seconds, watched_latest_episode, latest_episode,
                     previous_latest_episode, total_episodes, has_update, new_episode_count,
-                    homepage_prompt_pending, prompt_snoozed_until, created_at, updated_at,
+                    homepage_prompt_pending, prompt_snoozed_until, prompt_dismissed_latest_episode,
+                    prompt_dismissed_latest_season, created_at, updated_at,
                     last_played_at, last_checked_at, next_check_after, last_error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider, provider_id) DO UPDATE SET
                     title = excluded.title,
                     original_title = excluded.original_title,
@@ -410,6 +433,8 @@ class FollowingRepository:
                     new_episode_count = excluded.new_episode_count,
                     homepage_prompt_pending = excluded.homepage_prompt_pending,
                     prompt_snoozed_until = excluded.prompt_snoozed_until,
+                    prompt_dismissed_latest_episode = excluded.prompt_dismissed_latest_episode,
+                    prompt_dismissed_latest_season = excluded.prompt_dismissed_latest_season,
                     updated_at = excluded.updated_at,
                     last_played_at = excluded.last_played_at,
                     last_checked_at = excluded.last_checked_at,
@@ -649,7 +674,7 @@ class FollowingRepository:
     ) -> None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT season_number, latest_episode, current_season_number, current_episode FROM following WHERE id = ?",
+                "SELECT season_number, latest_episode, current_season_number, current_episode, prompt_dismissed_latest_episode, prompt_dismissed_latest_season FROM following WHERE id = ?",
                 (following_id,),
             ).fetchone()
             if row is None:
@@ -658,6 +683,8 @@ class FollowingRepository:
             previous = int(row[1] or 0)
             current_season_number = int(row[2] or 0)
             current_episode = int(row[3] or 0)
+            dismissed_latest_episode = int(row[4] or 0)
+            dismissed_latest_season = int(row[5] or 0)
             resolved_latest_season = int(latest_season_number or 0) or previous_season_number
             watched_latest = progress_at_or_beyond(
                 current_season_number,
@@ -666,6 +693,17 @@ class FollowingRepository:
                 latest_episode,
                 current_fallback_season=previous_season_number,
                 latest_fallback_season=resolved_latest_season,
+            )
+            effective_homepage_prompt_pending = bool(
+                homepage_prompt_pending
+                and progress_after_dismissed_prompt(
+                    resolved_latest_season,
+                    latest_episode,
+                    dismissed_latest_season,
+                    dismissed_latest_episode,
+                    dismissed_fallback_season=previous_season_number,
+                    latest_fallback_season=resolved_latest_season,
+                )
             )
             conn.execute(
                 """
@@ -683,7 +721,7 @@ class FollowingRepository:
                     next_check_after,
                     1 if has_update else 0,
                     new_episode_count,
-                    1 if homepage_prompt_pending else 0,
+                    1 if effective_homepage_prompt_pending else 0,
                     1 if watched_latest else 0,
                     last_error,
                     following_id,
@@ -738,6 +776,7 @@ class FollowingRepository:
             primary = records[0]
             duplicates = records[1:]
             merged = _normalize_record_identity(primary)
+            dismissed_record = max(records, key=self._prompt_dismissed_progress_key)
             merged = replace(
                 merged,
                 external_ids=self._merge_string_maps(record.external_ids for record in records),
@@ -749,6 +788,8 @@ class FollowingRepository:
                 has_update=any(record.has_update for record in records),
                 new_episode_count=max(record.new_episode_count for record in records),
                 homepage_prompt_pending=any(record.homepage_prompt_pending for record in records),
+                prompt_dismissed_latest_episode=dismissed_record.prompt_dismissed_latest_episode,
+                prompt_dismissed_latest_season=dismissed_record.prompt_dismissed_latest_season,
                 season_number=max(record.season_number or _tmdb_season_number_from_provider_id(record.provider_id) for record in records),
             )
             if not merged.last_error:
@@ -790,12 +831,25 @@ class FollowingRepository:
                     provider_priority_json = ?, external_ids_json = ?, source_bindings_json = ?,
                     current_season_number = ?, current_episode = ?, position_seconds = ?, watched_latest_episode = ?, latest_episode = ?,
                     previous_latest_episode = ?, total_episodes = ?, has_update = ?, new_episode_count = ?,
-                    homepage_prompt_pending = ?, prompt_snoozed_until = ?, created_at = ?, updated_at = ?,
+                    homepage_prompt_pending = ?, prompt_snoozed_until = ?, prompt_dismissed_latest_episode = ?,
+                    prompt_dismissed_latest_season = ?, created_at = ?, updated_at = ?,
                     last_played_at = ?, last_checked_at = ?, next_check_after = ?, last_error = ?
                 WHERE id = ?
                 """,
                 (*self._record_params(merged), primary.id),
             )
+
+    @staticmethod
+    def _prompt_dismissed_progress_key(record: FollowingRecord) -> tuple[int, int]:
+        episode = max(0, int(record.prompt_dismissed_latest_episode or 0))
+        if episode <= 0:
+            return (0, 0)
+        season = resolve_progress_season(
+            record.prompt_dismissed_latest_season,
+            episode,
+            fallback_season=record.season_number,
+        )
+        return (season, episode)
 
     @staticmethod
     def _merge_string_maps(maps) -> dict[str, str]:
@@ -885,6 +939,59 @@ class FollowingRepository:
                 (until, following_id),
             )
 
+    def dismiss_prompt_until_next_episode(self, following_id: int) -> None:
+        with self._connect() as conn:
+            row = conn.execute(f"{self._select_sql()} WHERE id = ?", (following_id,)).fetchone()
+            if row is None:
+                return
+            record = self._record_from_row(row)
+            latest_episode = max(0, int(record.latest_episode or 0))
+            if latest_episode <= 0:
+                conn.execute("UPDATE following SET homepage_prompt_pending = 0 WHERE id = ?", (following_id,))
+                return
+            latest_season = self._prompt_latest_season_number(conn, record)
+            conn.execute(
+                """
+                UPDATE following
+                SET homepage_prompt_pending = 0,
+                    prompt_dismissed_latest_episode = ?,
+                    prompt_dismissed_latest_season = ?
+                WHERE id = ?
+                """,
+                (latest_episode, latest_season, following_id),
+            )
+
+    def _prompt_latest_season_number(self, conn, record: FollowingRecord) -> int:
+        latest_episode = max(0, int(record.latest_episode or 0))
+        latest_season = resolve_progress_season(
+            record.season_number,
+            latest_episode,
+            fallback_season=record.season_number,
+        )
+        row = conn.execute(
+            """
+            SELECT seasons_json, episodes_json
+            FROM following_detail_snapshots
+            WHERE following_id = ?
+            """,
+            (record.id,),
+        ).fetchone()
+        if row is None:
+            return latest_season
+        snapshot_seasons = [
+            season.season_number
+            for season in (_season_from_dict(item) for item in _json_loads(row[0], []))
+            if season.season_number > 0
+        ]
+        snapshot_seasons.extend(
+            episode.season_number
+            for episode in (_episode_from_dict(item) for item in _json_loads(row[1], []))
+            if episode.season_number > 0 and not episode.is_special
+        )
+        if snapshot_seasons:
+            return max(latest_season, max(snapshot_seasons))
+        return latest_season
+
     def _record_params(self, record: FollowingRecord) -> tuple[object, ...]:
         return (
             record.title,
@@ -910,6 +1017,8 @@ class FollowingRepository:
             record.new_episode_count,
             1 if record.homepage_prompt_pending else 0,
             record.prompt_snoozed_until,
+            record.prompt_dismissed_latest_episode,
+            self._resolved_prompt_dismissed_latest_season(record),
             record.created_at,
             record.updated_at,
             record.last_played_at,
@@ -919,6 +1028,8 @@ class FollowingRepository:
         )
 
     def _record_from_row(self, row) -> FollowingRecord:
+        dismissed_latest_episode = int(row[24])
+        dismissed_latest_season = int(row[25])
         return FollowingRecord(
             id=int(row[0]),
             title=str(row[1]),
@@ -944,13 +1055,30 @@ class FollowingRepository:
             new_episode_count=int(row[21]),
             homepage_prompt_pending=bool(row[22]),
             prompt_snoozed_until=int(row[23]),
-            created_at=int(row[24]),
-            updated_at=int(row[25]),
-            last_played_at=int(row[26]),
-            last_checked_at=int(row[27]),
-            next_check_after=int(row[28]),
-            last_error=str(row[29]),
+            prompt_dismissed_latest_episode=dismissed_latest_episode,
+            prompt_dismissed_latest_season=dismissed_latest_season
+            or (
+                resolve_progress_season(0, dismissed_latest_episode, fallback_season=int(row[4]))
+                if dismissed_latest_episode > 0
+                else 0
+            ),
+            created_at=int(row[26]),
+            updated_at=int(row[27]),
+            last_played_at=int(row[28]),
+            last_checked_at=int(row[29]),
+            next_check_after=int(row[30]),
+            last_error=str(row[31]),
         )
+
+    @staticmethod
+    def _resolved_prompt_dismissed_latest_season(record: FollowingRecord) -> int:
+        dismissed_episode = max(0, int(record.prompt_dismissed_latest_episode or 0))
+        if dismissed_episode <= 0:
+            return max(0, int(record.prompt_dismissed_latest_season or 0))
+        dismissed_season = max(0, int(record.prompt_dismissed_latest_season or 0))
+        if dismissed_season > 0:
+            return dismissed_season
+        return resolve_progress_season(0, dismissed_episode, fallback_season=record.season_number)
 
     def _select_sql(self) -> str:
         return """
@@ -959,6 +1087,8 @@ class FollowingRepository:
                    source_bindings_json, current_season_number, current_episode, position_seconds,
                    watched_latest_episode, latest_episode, previous_latest_episode, total_episodes,
                    has_update, new_episode_count, homepage_prompt_pending, prompt_snoozed_until,
-                   created_at, updated_at, last_played_at, last_checked_at, next_check_after, last_error
+                   prompt_dismissed_latest_episode, prompt_dismissed_latest_season,
+                   created_at, updated_at, last_played_at, last_checked_at,
+                   next_check_after, last_error
             FROM following
         """

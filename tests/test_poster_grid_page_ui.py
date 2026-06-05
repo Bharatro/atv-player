@@ -137,6 +137,31 @@ class VariablePageSizePosterController(FakeDoubanController):
         return items, 41
 
 
+class ExplicitPageCountPosterController(FakeDoubanController):
+    uses_page_count_for_pagination = True
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        items = [
+            VodItem(
+                vod_id=f"{category_id}-{page}-{index}",
+                vod_name=f"{category_id}-{page}-{index}",
+                vod_pic="poster-cat",
+            )
+            for index in range(30)
+        ]
+        return items, 4
+
+
+class FolderPagingPosterController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.folder_page_calls: list[tuple[str, int]] = []
+
+    def load_folder_page(self, folder_id: str, page: int):
+        self.folder_page_calls.append((folder_id, page))
+        return [VodItem(vod_id=f"{folder_id}-{page}", vod_name=f"文件夹第 {page} 页")], 60
+
+
 class FilterablePosterController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -345,12 +370,51 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.category_list.isHidden() is True
 
 
+def test_poster_grid_page_reflows_external_results_after_layout_width_settles(qtbot, monkeypatch) -> None:
+    controller = ExternalResultController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2 and len(page.card_buttons) == 1)
+    page.resize(1500, 900)
+    qtbot.waitUntil(lambda: page.cards_scroll.viewport().width() > PosterGridPage._CARD_WIDTH * 2)
+
+    original_column_count = page._column_count_for_width
+    calls = {"count": 0}
+
+    def column_count_with_stale_first_width(available_width: int) -> int:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return 1
+        return original_column_count(available_width)
+
+    monkeypatch.setattr(page, "_column_count_for_width", column_count_with_stale_first_width)
+    page.show_external_results(
+        items=[VodItem(vod_id=f"s{index}", vod_name=f"全局搜索结果-{index}") for index in range(6)],
+        total=6,
+        page=1,
+        empty_message="无搜索结果",
+    )
+
+    qtbot.waitUntil(lambda: page.cards_layout.count() == 6 and calls["count"] >= 2)
+
+    assert page._current_card_columns > 1
+    assert page.cards_layout.getItemPosition(1)[:2] == (0, 1)
+
+
 def test_poster_grid_page_prefers_inferred_page_size_over_default_page_size(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(VariablePageSizePosterController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 20)
 
     assert page.page_label.text() == "第 1 / 3 页"
+    assert page.next_page_button.isEnabled() is True
+
+
+def test_poster_grid_page_uses_controller_pagecount_return_value(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(ExplicitPageCountPosterController()))
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 30)
+
+    assert page.page_label.text() == "第 1 / 4 页"
     assert page.next_page_button.isEnabled() is True
 
 
@@ -377,6 +441,29 @@ def test_poster_grid_page_external_results_can_request_next_page(qtbot) -> None:
     page.next_page()
 
     assert requested_pages == [2]
+
+
+def test_poster_grid_page_folder_view_requests_next_folder_page(qtbot) -> None:
+    controller = FolderPagingPosterController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, folder_navigation_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    initial_category_calls = list(controller.item_calls)
+    page.show_folder_items(
+        [VodItem(vod_id="folder-1-1", vod_name="文件夹第 1 页")],
+        60,
+        folder_id="folder-1",
+        page_loader=controller.load_folder_page,
+        page=1,
+    )
+
+    page.next_page()
+
+    qtbot.waitUntil(lambda: controller.folder_page_calls == [("folder-1", 2)])
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "文件夹第 2 页")
+    assert controller.item_calls == initial_category_calls
+    assert page.page_label.text() == "第 2 / 2 页"
 
 
 def test_poster_grid_page_hides_search_controls_in_external_results_mode(qtbot) -> None:

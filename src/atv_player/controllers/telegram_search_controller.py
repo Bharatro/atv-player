@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
+from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
 
@@ -55,6 +56,7 @@ def build_detail_playlist(detail: VodItem) -> list[PlayItem]:
 
 class TelegramSearchController:
     _PAGE_SIZE = 30
+    uses_page_count_for_pagination = True
 
     def __init__(
         self,
@@ -80,14 +82,14 @@ class TelegramSearchController:
     ) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_telegram_search_items(category_id, page=page)
         items = [_map_item(item) for item in payload.get("list", [])]
-        total = 30
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_telegram_items(keyword, page=page)
         items = [_map_item(item) for item in payload.get("list", [])]
-        total = 30
-        return items, total
+        page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
+        return items, page_count
 
     def resolve_playlist_item(self, item: PlayItem) -> VodItem | None:
         if not item.vod_id:
