@@ -4683,6 +4683,90 @@ def test_main_window_heat_recommendations_button_opens_poster_dialog(qtbot, monk
     assert heat.searches == [("权力的游戏", "heat_recommendation", None)]
 
 
+def test_main_window_heat_recommendations_dialog_fills_short_list_from_douban_tv(qtbot) -> None:
+    class FakeHeatController:
+        def __init__(self) -> None:
+            self.recommendation_limits = []
+
+        def load_recommendations(self, *, limit=24):
+            self.recommendation_limits.append(limit)
+            return [
+                SimpleNamespace(
+                    media_key="tmdb:tv:1",
+                    title="热剧 1",
+                    poster="",
+                    heat_score=99,
+                ),
+                SimpleNamespace(
+                    media_key="tmdb:tv:2",
+                    title="热剧 2",
+                    poster="",
+                    heat_score=98,
+                ),
+            ]
+
+    class FakeDoubanController:
+        def __init__(self) -> None:
+            self.item_calls = []
+
+        def load_categories(self):
+            return [
+                SimpleNamespace(type_id="movie", type_name="电影"),
+                SimpleNamespace(type_id="tv", type_name="热门电视剧"),
+            ]
+
+        def load_items(self, category_id: str, page: int, filters=None):
+            self.item_calls.append((category_id, page, filters))
+            items = [
+                VodItem(
+                    vod_id="duplicate",
+                    vod_name="热剧 2",
+                    vod_pic="duplicate.jpg",
+                )
+            ]
+            items.extend(
+                VodItem(
+                    vod_id=f"douban-tv-{index}",
+                    vod_name=f"豆瓣剧 {index:02d}",
+                    vod_pic=f"https://img.example/{index}.jpg",
+                    vod_year="2026",
+                    dbid=1000 + index,
+                )
+                for index in range(35)
+            )
+            return items, 2
+
+    heat = FakeHeatController()
+    douban = FakeDoubanController()
+    window = MainWindow(
+        douban_controller=douban,
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        heat_controller=heat,
+        global_search_hotkey_loader=lambda hot_type: [],
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.heat_recommendations_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window._heat_recommendations_dialog is not None)
+    dialog = window._heat_recommendations_dialog
+    qtbot.waitUntil(lambda: len(dialog.item_titles()) == 30)
+    assert heat.recommendation_limits == [30]
+    assert ("tv", 1, None) in douban.item_calls
+    assert dialog.item_titles()[:3] == ["热剧 1", "热剧 2", "豆瓣剧 00"]
+    assert dialog.item_titles()[-1] == "豆瓣剧 27"
+
+
 def test_load_tencent_hot_searches_reads_rank_item_list(monkeypatch) -> None:
     class _FakeResponse:
         def raise_for_status(self) -> None:

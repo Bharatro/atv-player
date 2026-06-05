@@ -59,7 +59,11 @@ from atv_player.controllers.telegram_search_controller import build_detail_playl
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
 from atv_player.following_progress import resolve_following_playback_progress
-from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
+from atv_player.heat import (
+    HeatRecommendation,
+    has_required_heat_external_id,
+    heat_identity_from_vod,
+)
 from atv_player.log_store import AppLogFilter
 from atv_player.models import (
     AppConfig,
@@ -242,6 +246,7 @@ _HOTKEY_IQIYI_API = "https://mesh.if.iqiyi.com/portal/lw/search/keywords/hotList
 _SUGGESTION_360_API = "https://sug.so.360.cn/suggest"
 _GLOBAL_SEARCH_HISTORY_LIMIT = 50
 _GLOBAL_SEARCH_HISTORY_DISPLAY_LIMIT = 10
+_HEAT_RECOMMENDATION_DISPLAY_LIMIT = 30
 _DEFAULT_GLOBAL_SEARCH_HOT_SOURCE = "360"
 _DEFAULT_GLOBAL_SEARCH_HOT_TYPE = "dsp"
 _GLOBAL_SEARCH_360_HOT_TABS: list[tuple[str, str]] = [
@@ -3517,13 +3522,90 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                items = list(self._heat_controller.load_recommendations(limit=30))
+                items = list(
+                    self._heat_controller.load_recommendations(
+                        limit=_HEAT_RECOMMENDATION_DISPLAY_LIMIT
+                    )
+                )
             except Exception:
                 items = []
+            items = self._fill_heat_recommendations_from_douban_tv(items)
             if self._is_window_alive():
-                self._global_search_popup_signals.heat_recommendations_loaded.emit(request_id, items)
+                self._global_search_popup_signals.heat_recommendations_loaded.emit(
+                    request_id,
+                    items,
+                )
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _fill_heat_recommendations_from_douban_tv(self, items: list[Any]) -> list[Any]:
+        merged = list(items)[:_HEAT_RECOMMENDATION_DISPLAY_LIMIT]
+        if len(merged) >= _HEAT_RECOMMENDATION_DISPLAY_LIMIT:
+            return merged
+        controller = getattr(self.douban_page, "controller", None)
+        if controller is None:
+            return merged
+        category_id = self._douban_tv_recommendation_category_id(controller)
+        if not category_id:
+            return merged
+        try:
+            douban_items, _total = self._load_controller_items(controller, category_id, 1)
+        except Exception:
+            return merged
+
+        seen_titles = {
+            str(
+                getattr(item, "title", "") or getattr(item, "vod_name", "") or ""
+            ).strip()
+            for item in merged
+        }
+        for vod in douban_items:
+            if len(merged) >= _HEAT_RECOMMENDATION_DISPLAY_LIMIT:
+                break
+            title = str(getattr(vod, "vod_name", "") or "").strip()
+            if not title or title in seen_titles:
+                continue
+            recommendation = self._heat_recommendation_from_douban_vod(vod)
+            if recommendation is None:
+                continue
+            merged.append(recommendation)
+            seen_titles.add(title)
+        return merged
+
+    def _douban_tv_recommendation_category_id(self, controller: Any) -> str:
+        load_categories = getattr(controller, "load_categories", None)
+        if not callable(load_categories):
+            return ""
+        try:
+            categories = list(load_categories())
+        except Exception:
+            return ""
+        if not categories:
+            return ""
+        preferred_terms = ("热门电视剧", "电视剧", "剧集", "剧场", "tv")
+        for term in preferred_terms:
+            for category in categories:
+                category_id = str(getattr(category, "type_id", "") or "").strip()
+                category_title = str(getattr(category, "type_name", "") or "").strip()
+                haystack = f"{category_id} {category_title}".casefold()
+                if category_id and term.casefold() in haystack:
+                    return category_id
+        return ""
+
+    @staticmethod
+    def _heat_recommendation_from_douban_vod(vod: Any) -> HeatRecommendation | None:
+        identity = heat_identity_from_vod(vod)
+        if identity is None:
+            return None
+        return HeatRecommendation(
+            media_key=identity.media_key,
+            title=identity.title,
+            poster=identity.poster,
+            year=identity.year,
+            media_type="tv",
+            external_ids=dict(identity.external_ids),
+            reason="豆瓣热门电视剧",
+        )
 
     def _handle_heat_recommendations_loaded(self, request_id: int, items: object) -> None:
         if request_id != self._heat_recommendation_request_id:

@@ -109,7 +109,7 @@ class HeatController:
         )
         return True
 
-    def load_recommendations(self, *, limit: int = 24):
+    def load_recommendations(self, *, limit: int = 30):
         return self._service.load_recommendations(limit=limit)
 
     def load_media_heat(self, media_key: str):
