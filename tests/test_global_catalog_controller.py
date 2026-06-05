@@ -104,3 +104,53 @@ def test_global_catalog_movie_general_top_rated_uses_tmdb_movie_endpoint() -> No
     assert total == 1
     assert items[0].vod_id == "tmdb:movie:1"
     assert items[0].vod_name == "电影"
+
+
+def test_global_catalog_external_title_source_resolves_title_through_tmdb() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/3/search/tv":
+            assert request.url.params["query"] == "外部剧集"
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": 42,
+                            "name": "外部剧集",
+                            "first_air_date": "2026-06-01",
+                            "poster_path": "/tv.jpg",
+                            "genre_ids": [18],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    service = GlobalCatalogService(
+        tmdb_api_key="tmdb-key",
+        transport=httpx.MockTransport(handler),
+        external_title_loader=lambda source, page, filters: [("外部剧集", "tv", "No. 1")],
+    )
+
+    items, total = service.load_items("trends", 1, {"hub_source": "rt"})
+
+    assert total == 1
+    assert items[0].vod_id == "tmdb:tv:42"
+    assert items[0].vod_name == "外部剧集"
+    assert items[0].vod_remarks == "No. 1"
+
+
+def test_global_catalog_external_title_source_returns_empty_item_when_no_titles_resolve() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": []})
+
+    service = GlobalCatalogService(
+        tmdb_api_key="tmdb-key",
+        transport=httpx.MockTransport(handler),
+        external_title_loader=lambda source, page, filters: [("无法匹配", "movie", "TOP 1")],
+    )
+
+    items, total = service.load_items("trends", 1, {"hub_source": "rt"})
+
+    assert total == 1
+    assert items == [VodItem(vod_id="global_catalog:empty", vod_name="暂无数据", vod_content="当前外部榜单暂未返回内容")]

@@ -316,9 +316,11 @@ class GlobalCatalogService:
         *,
         transport: httpx.BaseTransport | None = None,
         client_factory=httpx.Client,
+        external_title_loader=None,
     ) -> None:
         self._tmdb_api_key = str(tmdb_api_key or "").strip()
         self._client = client_factory(base_url=self._TMDB_BASE_URL, timeout=20.0, transport=transport)
+        self._external_title_loader = external_title_loader or self._default_external_title_loader
 
     def load_items(
         self,
@@ -374,7 +376,7 @@ class GlobalCatalogService:
 
     def _load_anime(self, page: int, filters: dict[str, str]) -> tuple[list[VodItem], int]:
         if filters.get("anime_source", "tmdb") != "tmdb":
-            return self._load_external_title_source(page, filters.get("anime_source", "tmdb"))
+            return self._load_external_title_source(page, filters.get("anime_source", "tmdb"), filters)
         sort = filters.get("tmdb_sort", "trending")
         sort_by = "popularity.desc"
         if sort == "new":
@@ -509,7 +511,7 @@ class GlobalCatalogService:
     def _load_trends(self, page: int, filters: dict[str, str]) -> tuple[list[VodItem], int]:
         source = filters.get("hub_source", "imdb")
         if source != "imdb":
-            return self._load_external_title_source(page, source)
+            return self._load_external_title_source(page, source, filters)
         category = filters.get("imdb_sort", "trending_week")
         media_type = filters.get("mediaType", "all")
         if category == "china_tv":
@@ -574,15 +576,48 @@ class GlobalCatalogService:
             item.vod_remarks = f"TOP {index}"
         return items[:10], 1
 
-    def _load_external_title_source(self, page: int, source: str) -> tuple[list[VodItem], int]:
-        del page, source
-        return [
-            VodItem(
-                vod_id="global_catalog:empty",
-                vod_name="暂无数据",
-                vod_content="当前外部榜单暂未返回内容",
-            )
-        ], 1
+    def _default_external_title_loader(
+        self,
+        source: str,
+        page: int,
+        filters: dict[str, str],
+    ) -> list[tuple[str, str, str]]:
+        del source, page, filters
+        return []
+
+    def _load_external_title_source(
+        self,
+        page: int,
+        source: str,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
+        title_rows = self._external_title_loader(source, page, dict(filters or {}))
+        items: list[VodItem] = []
+        for title, media_type, remarks in title_rows:
+            mapped = self._search_tmdb_title(title, media_type)
+            if mapped is None:
+                continue
+            if remarks:
+                mapped.vod_remarks = remarks
+            items.append(mapped)
+        if not items:
+            return [
+                VodItem(
+                    vod_id="global_catalog:empty",
+                    vod_name="暂无数据",
+                    vod_content="当前外部榜单暂未返回内容",
+                )
+            ], 1
+        return items, 1
+
+    def _search_tmdb_title(self, title: str, media_type: str) -> VodItem | None:
+        normalized_media_type = "movie" if media_type == "movie" else "tv"
+        payload = self._tmdb_get(f"/search/{normalized_media_type}", {"query": str(title or "").strip(), "page": 1})
+        for result in payload.get("results") or []:
+            mapped = self._map_tmdb_item(result, media_type=normalized_media_type)
+            if mapped is not None:
+                return mapped
+        return None
 
     def _map_tmdb_item(self, item: dict[str, Any], *, media_type: str) -> VodItem | None:
         tmdb_id = str(item.get("id") or "").strip()
