@@ -349,7 +349,7 @@ class GlobalCatalogService:
             return [
                 VodItem(
                     vod_id="global_catalog:error",
-                    vod_name="环球片单加载失败",
+                    vod_name="全球片单加载失败",
                     vod_content="当前榜单暂时无法获取",
                 )
             ], 1

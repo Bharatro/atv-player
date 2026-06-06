@@ -1829,7 +1829,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
         self._static_tab_definitions = [
             _TabDefinition("douban", "豆瓣电影", self.douban_page),
-            _TabDefinition("global_catalog", "环球片单", self.global_catalog_page),
+            _TabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
         if self.bilibili_page is not None:
@@ -2934,7 +2934,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _builtin_tab_default_definitions(self) -> list[_BuiltinTabDefinition]:
         definitions: list[_BuiltinTabDefinition] = [
             _BuiltinTabDefinition("douban", "豆瓣电影", self.douban_page),
-            _BuiltinTabDefinition("global_catalog", "环球片单", self.global_catalog_page),
+            _BuiltinTabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _BuiltinTabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
         if self.bilibili_page is not None:
