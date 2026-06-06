@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.models import DoubanCategory
-from atv_player.ui.poster_grid_page import PosterGridPage
+from atv_player.ui.poster_grid_page import FilterPanelExpansionState, PosterGridPage
 from atv_player.ui.theme import build_navigation_tabbar_qss, build_pill_button_qss, current_tokens
 
 
@@ -232,6 +232,7 @@ class ClassicHomePage(QWidget):
         source_entries: list[SourceEntry],
         initial_source_key: str = "",
         initial_category_id: str = "",
+        filter_panel_state: FilterPanelExpansionState | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -240,6 +241,7 @@ class ClassicHomePage(QWidget):
             source_entries[0].key if source_entries else ""
         )
         self._initial_category_id = initial_category_id
+        self._filter_panel_state = filter_panel_state or FilterPanelExpansionState()
         self._categories: list[DoubanCategory] = []
         self._selected_category_index = -1
         self._visible_category_indices: list[int] = []
@@ -292,6 +294,7 @@ class ClassicHomePage(QWidget):
             initial_category_id=self._initial_category_id,
             category_layout="tabs",
             folder_navigation_enabled=self._entry_folder_navigation_enabled(initial_entry),
+            filter_panel_state=self._filter_panel_state,
         )
         self.grid_page.item_open_requested.connect(self.item_open_requested.emit)
         self.grid_page.folder_breadcrumb_requested.connect(self.folder_breadcrumb_requested.emit)
@@ -463,6 +466,7 @@ class ClassicHomePage(QWidget):
             initial_category_id=self._initial_category_id,
             category_layout="tabs",
             folder_navigation_enabled=self._entry_folder_navigation_enabled(entry),
+            filter_panel_state=self._filter_panel_state,
         )
         new_page.item_open_requested.connect(self.item_open_requested.emit)
         new_page.folder_breadcrumb_requested.connect(self.folder_breadcrumb_requested.emit)

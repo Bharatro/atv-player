@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 import atv_player.ui.poster_grid_page as poster_grid_page_module
-from atv_player.ui.poster_grid_page import PosterGridPage
+from atv_player.ui.poster_grid_page import FilterPanelExpansionState, PosterGridPage
 
 
 class FakeDoubanController:
@@ -596,6 +596,42 @@ def test_poster_grid_page_shows_filter_button_for_filtered_category_and_stays_co
     assert [button.text() for button in buttons] == ["默认", "不限", "动作"]
     assert buttons[0].isCheckable() is True
     assert _checked_filter_value(page, "sc") == ""
+
+
+def test_poster_grid_page_remembers_filter_expansion_in_shared_state(qtbot) -> None:
+    state = FilterPanelExpansionState()
+    first_page = show_loaded_page(
+        qtbot,
+        PosterGridPage(FilterablePosterController(), click_action="open", filter_panel_state=state),
+    )
+
+    qtbot.waitUntil(lambda: first_page.selected_category_id == "movie")
+    first_page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: first_page.filter_panel.isHidden() is False)
+
+    assert state.expanded is True
+
+    second_page = show_loaded_page(
+        qtbot,
+        PosterGridPage(FilterablePosterController(), click_action="open", filter_panel_state=state),
+    )
+
+    qtbot.waitUntil(lambda: second_page.selected_category_id == "movie")
+    qtbot.waitUntil(lambda: second_page.filter_panel.isHidden() is False)
+
+    second_page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: second_page.filter_panel.isHidden() is True)
+
+    assert state.expanded is False
+
+    third_page = show_loaded_page(
+        qtbot,
+        PosterGridPage(FilterablePosterController(), click_action="open", filter_panel_state=state),
+    )
+
+    qtbot.waitUntil(lambda: third_page.selected_category_id == "movie")
+
+    assert third_page.filter_panel.isHidden() is True
 
 
 def test_poster_grid_page_renders_filter_options_as_checkable_buttons(qtbot) -> None:

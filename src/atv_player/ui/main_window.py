@@ -105,7 +105,7 @@ from atv_player.ui.plugin_actions import PluginActions
 from atv_player.ui.plugin_category_manager_dialog import PluginCategoryManagerDialog
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.plugin_tab_drawer import PluginTabDrawer
-from atv_player.ui.poster_grid_page import PosterGridPage
+from atv_player.ui.poster_grid_page import FilterPanelExpansionState, PosterGridPage
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.simplified_home_page import SimplifiedHomePage
 from atv_player.ui.theme import (
@@ -1539,6 +1539,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         )
         self._startup_plugin_pending_player_restore = False
         self._active_widget: QWidget | None = None
+        self._filter_panel_state = FilterPanelExpansionState()
         self._plugin_actions = PluginActions(plugin_manager) if plugin_manager is not None else None
         self.nav_tabs = _NavigationTabs()
         self.nav_tabs.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1575,17 +1576,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.douban_page = PosterGridPage(
             douban_controller or _EmptyDoubanController(),
             initial_category_id=self._initial_category_id_for_tab("douban"),
+            filter_panel_state=self._filter_panel_state,
         )
         self.global_catalog_page = PosterGridPage(
             global_catalog_controller or _EmptyDoubanController(),
             click_action="open",
             initial_category_id=self._initial_category_id_for_tab("global_catalog"),
+            filter_panel_state=self._filter_panel_state,
         )
         self.telegram_page = PosterGridPage(
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
             initial_category_id=self._initial_category_id_for_tab("telegram"),
+            filter_panel_state=self._filter_panel_state,
         )
         self.bilibili_page = None
         if show_bilibili_tab:
@@ -1595,6 +1599,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 search_enabled=True,
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("bilibili"),
+                filter_panel_state=self._filter_panel_state,
             )
         self.youtube_page = None
         if show_youtube_tab:
@@ -1603,12 +1608,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("youtube"),
+                filter_panel_state=self._filter_panel_state,
             )
         self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
             folder_navigation_enabled=True,
             initial_category_id=self._initial_category_id_for_tab("live"),
+            filter_panel_state=self._filter_panel_state,
         )
         self.emby_page = None
         if show_emby_tab:
@@ -1618,6 +1625,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 search_enabled=True,
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("emby"),
+                filter_panel_state=self._filter_panel_state,
             )
         self.jellyfin_page = None
         if show_jellyfin_tab:
@@ -1627,6 +1635,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 search_enabled=True,
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("jellyfin"),
+                filter_panel_state=self._filter_panel_state,
             )
         self.feiniu_page = None
         if show_feiniu_tab:
@@ -1636,6 +1645,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 search_enabled=True,
                 folder_navigation_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("feiniu"),
+                filter_panel_state=self._filter_panel_state,
             )
         self._favorites_controller = favorites_controller or _EmptyFavoritesController()
         self._following_controller = following_controller or _EmptyFollowingController()
@@ -1667,6 +1677,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 pansou_controller,
                 click_action="open",
                 initial_category_id=self._initial_category_id_for_tab("pansou"),
+                filter_panel_state=self._filter_panel_state,
             )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
@@ -1870,6 +1881,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                         self._smart_search_controller,
                         click_action="open",
                         search_enabled=False,
+                        filter_panel_state=self._filter_panel_state,
                     ),
                     self._smart_search_controller,
                     global_search_only=True,
@@ -2698,6 +2710,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 entries,
                 initial_source_key=initial_key,
                 initial_category_id=self._initial_category_id_for_tab(initial_key),
+                filter_panel_state=self._filter_panel_state,
             )
             self._classic_home_page.item_open_requested.connect(self._handle_classic_item_open)
             self._classic_home_page.source_changed.connect(self._handle_classic_source_changed)
@@ -4960,6 +4973,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             search_enabled=bool(_plugin_value(definition, "search_enabled")),
             initial_category_id=self._initial_category_id_for_tab(f"plugin:{plugin_id}"),
             folder_navigation_enabled=True,
+            filter_panel_state=self._filter_panel_state,
             parent=self.nav_tabs.content_stack,
         )
         page.item_open_requested.connect(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from threading import BoundedSemaphore
 from typing import cast
 
@@ -39,6 +40,11 @@ class _PosterGridSignals(QObject):
     failed = Signal(str, int, str)
     unauthorized = Signal(int, str)
     poster_loaded = Signal(object, object)
+
+
+@dataclass(slots=True)
+class FilterPanelExpansionState:
+    expanded: bool = False
 
 
 class _FlowLayout(QLayout):
@@ -137,6 +143,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         folder_navigation_enabled: bool = False,
         initial_category_id: str = "",
         category_layout: str = "list",
+        filter_panel_state: FilterPanelExpansionState | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -147,6 +154,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._folder_navigation_enabled = folder_navigation_enabled
         self._initial_category_id = initial_category_id
         self._category_layout = category_layout
+        self._filter_panel_state = filter_panel_state or FilterPanelExpansionState()
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
@@ -234,6 +242,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.filter_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.filter_scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.filter_scroll_area.setWidget(self.filter_panel)
+        self.filter_scroll_area.viewport().installEventFilter(self)
         self.filter_scroll_area.setMaximumHeight(self._FILTER_PANEL_MAX_HEIGHT)
         self.filter_scroll_area.hide()
         self.filter_toggle_button.hide()
@@ -430,10 +439,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.filter_scroll_area.hide()
             self.filter_panel.hide()
             return
-        self._sync_filter_scroll_area_height()
         self.filter_toggle_button.show()
-        self.filter_scroll_area.hide()
-        self.filter_panel.hide()
+        self._set_filter_panel_expanded(self._filter_panel_state.expanded, remember=False)
 
     def _build_filter_buttons(self, key: str, options, selected_value: str) -> QWidget:
         container = QWidget(self.filter_panel)
@@ -472,18 +479,38 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _toggle_filters(self) -> None:
         if not self.filter_buttons or self._search_mode:
             return
-        is_hidden = self.filter_scroll_area.isHidden()
-        self.filter_scroll_area.setVisible(is_hidden)
-        self.filter_panel.setVisible(is_hidden)
-        if is_hidden:
+        self._set_filter_panel_expanded(self.filter_scroll_area.isHidden(), remember=True)
+
+    def _set_filter_panel_expanded(self, expanded: bool, *, remember: bool) -> None:
+        if remember:
+            self._filter_panel_state.expanded = expanded
+        if not self.filter_buttons or self._search_mode:
+            self.filter_scroll_area.hide()
+            self.filter_panel.hide()
+            return
+        self.filter_scroll_area.setVisible(expanded)
+        self.filter_panel.setVisible(expanded)
+        if expanded:
             self._sync_filter_scroll_area_height()
+            self._schedule_filter_scroll_area_height_sync()
+
+    def _schedule_filter_scroll_area_height_sync(self) -> None:
+        if not self.filter_buttons or self.filter_scroll_area.isHidden():
+            return
+        QTimer.singleShot(0, self._sync_filter_scroll_area_height)
+        QTimer.singleShot(50, self._sync_filter_scroll_area_height)
 
     def _sync_filter_scroll_area_height(self) -> None:
-        if not self.filter_buttons:
+        if not self.filter_buttons or self.filter_scroll_area.isHidden() or not self.isVisible():
             return
         self.filter_panel_layout.invalidate()
         self.filter_panel_layout.activate()
-        width = max(1, self.filter_scroll_area.viewport().width(), self.filter_panel.width())
+        width = max(
+            1,
+            self.filter_scroll_area.viewport().width(),
+            self.filter_scroll_area.width(),
+            self.filter_panel.width(),
+        )
         if self.filter_panel_layout.hasHeightForWidth():
             content_height = self.filter_panel_layout.heightForWidth(width)
         else:
@@ -1009,11 +1036,23 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.cards_scroll.viewport() and event.type() == QEvent.Type.Resize and self.card_buttons:
             self._relayout_cards()
+        if (
+            watched is self.filter_scroll_area.viewport()
+            and event.type() == QEvent.Type.Resize
+            and self.filter_buttons
+            and not self.filter_scroll_area.isHidden()
+        ):
+            self._schedule_filter_scroll_area_height_sync()
         return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.filter_buttons and not self.filter_scroll_area.isHidden():
+            self._schedule_filter_scroll_area_height_sync()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self.filter_buttons:
-            self._sync_filter_scroll_area_height()
+        if self.filter_buttons and not self.filter_scroll_area.isHidden():
+            self._schedule_filter_scroll_area_height_sync()
         if self.card_buttons:
             self._relayout_cards()
