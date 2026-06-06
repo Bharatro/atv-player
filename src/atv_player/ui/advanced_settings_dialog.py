@@ -124,6 +124,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
         self.tmdb_api_key_edit.setPlaceholderText("填写 TMDB API Key")
+        self.tmdb_proxy_base_url_edit = QLineEdit()
+        self.tmdb_proxy_base_url_edit.setPlaceholderText("可选，例如 https://tmdb.example.com")
         self.bangumi_access_token_edit = QLineEdit()
         self.bangumi_access_token_edit.setPlaceholderText("可选；留空时使用匿名访问")
         self.ai_group = QGroupBox("AI 智能功能")
@@ -311,6 +313,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
+        self.tmdb_proxy_base_url_edit.setText(config.metadata_tmdb_proxy_base_url)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
         self.ai_enabled_checkbox.setChecked(config.ai_enabled)
         self.ai_metadata_enrichment_checkbox.setChecked(config.ai_metadata_enrichment_enabled)
@@ -391,6 +394,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         metadata_layout.addRow(self.metadata_enabled_checkbox)
         metadata_layout.addRow(self.episode_title_enhancement_checkbox)
         metadata_layout.addRow("TMDB API Key", self.tmdb_api_key_edit)
+        metadata_layout.addRow("TMDB 代理地址", self.tmdb_proxy_base_url_edit)
         metadata_layout.addRow("Bangumi Access Token", self.bangumi_access_token_edit)
         metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
         self.metadata_group.setLayout(metadata_layout)
@@ -604,6 +608,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             configure_form_flat_combobox(combo, tokens)
         for edit in (
             self.tmdb_api_key_edit,
+            self.tmdb_proxy_base_url_edit,
             self.bangumi_access_token_edit,
             self.ai_base_url_edit,
             self.ai_api_key_edit,
@@ -767,6 +772,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.episode_title_enhancement_checkbox.setEnabled(enabled)
         self.douban_cookie_edit.setEnabled(enabled)
         self.tmdb_api_key_edit.setEnabled(enabled)
+        self.tmdb_proxy_base_url_edit.setEnabled(enabled)
         self.bangumi_access_token_edit.setEnabled(enabled)
         self.metadata_source_group.setEnabled(enabled)
 
@@ -1143,6 +1149,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         ]
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
+        self._config.metadata_tmdb_proxy_base_url = self.tmdb_proxy_base_url_edit.text().strip().rstrip("/")
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
         (
             self._config.ai_enabled,

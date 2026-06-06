@@ -48,6 +48,48 @@ def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:
     }
 
 
+def test_tmdb_client_uses_proxy_base_url_for_api_and_images() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.path == "/3/configuration":
+            return httpx.Response(
+                200,
+                json={
+                    "images": {
+                        "secure_base_url": "https://image.tmdb.org/t/p/",
+                        "poster_sizes": ["w500", "original"],
+                        "backdrop_sizes": ["w300", "w1280"],
+                    }
+                },
+            )
+        if request.url.path == "/3/movie/550":
+            return httpx.Response(
+                200,
+                json={
+                    "id": 550,
+                    "title": "Fight Club",
+                    "poster_path": "/abc.jpg",
+                    "backdrop_path": "/bd.jpg",
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    client = TMDBClient(
+        api_key="tmdb-key",
+        proxy_base_url="https://tmdb.example.com/",
+        transport=httpx.MockTransport(handler),
+    )
+
+    detail = client.get_movie_detail("550")
+
+    assert seen[0].startswith("https://tmdb.example.com/3/configuration?")
+    assert seen[1].startswith("https://tmdb.example.com/3/movie/550?")
+    assert detail["poster_url"] == "https://tmdb.example.com/t/p/original/abc.jpg"
+    assert detail["backdrop_url"] == "https://tmdb.example.com/t/p/w1280/bd.jpg"
+
+
 def test_tmdb_client_get_movie_detail_prefers_original_poster_and_builds_image_urls() -> None:
     calls: list[str] = []
 

@@ -2,10 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
+
+
+def _normalize_tmdb_proxy_base_url(value: str) -> str:
+    text = str(value or "").strip().rstrip("/")
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    path = parsed.path.rstrip("/")
+    if path == "/3":
+        path = ""
+    elif path.endswith("/3"):
+        path = path[:-2].rstrip("/")
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 class TMDBClient:
@@ -14,17 +30,20 @@ class TMDBClient:
     def __init__(
         self,
         api_key: str,
+        proxy_base_url: str = "",
         transport: httpx.BaseTransport | None = None,
         proxy_decider: ProxyDecider | None = None,
         client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         self._api_key = str(api_key or "").strip()
+        self._proxy_base_url = _normalize_tmdb_proxy_base_url(proxy_base_url)
+        self._api_base_url = f"{self._proxy_base_url}/3" if self._proxy_base_url else self._BASE_URL
         client_kwargs: dict[str, Any] = dict(
-            base_url=self._BASE_URL,
+            base_url=self._api_base_url,
             transport=transport,
             timeout=20.0,
         )
-        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._BASE_URL))
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._api_base_url))
         self._client = client_factory(**client_kwargs)
         self._image_config: dict[str, Any] | None = None
 
@@ -40,7 +59,11 @@ class TMDBClient:
             self._image_config = self._request("/configuration").get("images") or {}
         sizes = list(self._image_config.get(f"{kind}_sizes") or [])
         size = "original" if kind == "poster" else (sizes[-1] if sizes else "original")
-        base = str(self._image_config.get("secure_base_url") or "https://image.tmdb.org/t/p/")
+        base = (
+            f"{self._proxy_base_url}/t/p/"
+            if self._proxy_base_url
+            else str(self._image_config.get("secure_base_url") or "https://image.tmdb.org/t/p/")
+        )
         return f"{base}{size}"
 
     def _image_base(self, kind: str) -> str:

@@ -766,6 +766,7 @@ def test_settings_repository_round_trip_persists_metadata_credentials(tmp_path: 
         vod_token="vod-123",
         metadata_douban_cookie="bid=demo; ll=118282",
         metadata_tmdb_api_key="tmdb-demo-key",
+        metadata_tmdb_proxy_base_url="https://tmdb.example.com",
         metadata_bangumi_access_token="bgm-demo-token",
     )
 
@@ -774,6 +775,7 @@ def test_settings_repository_round_trip_persists_metadata_credentials(tmp_path: 
 
     assert saved.metadata_douban_cookie == "bid=demo; ll=118282"
     assert saved.metadata_tmdb_api_key == "tmdb-demo-key"
+    assert saved.metadata_tmdb_proxy_base_url == "https://tmdb.example.com"
     assert saved.metadata_bangumi_access_token == "bgm-demo-token"
     assert saved == config
 

@@ -8568,7 +8568,11 @@ def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_r
 def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypatch, tmp_path) -> None:
     class FakeRepo:
         def __init__(self) -> None:
-            self.config = AppConfig(metadata_douban_cookie="bid=first;", metadata_tmdb_api_key="tmdb-key")
+            self.config = AppConfig(
+                metadata_douban_cookie="bid=first;",
+                metadata_tmdb_api_key="tmdb-key",
+                metadata_tmdb_proxy_base_url="https://tmdb.example.com",
+            )
 
         def load_config(self) -> AppConfig:
             return self.config
@@ -8609,9 +8613,10 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
             raise AssertionError("not used")
 
     class RecordingTMDBClient:
-        def __init__(self, api_key: str, transport=None, proxy_decider=None) -> None:
+        def __init__(self, api_key: str, proxy_base_url: str = "", transport=None, proxy_decider=None) -> None:
             del transport, proxy_decider
             captured["tmdb_api_key"] = api_key
+            captured["tmdb_proxy_base_url"] = proxy_base_url
 
     class RecordingTMDBProvider:
         name = "tmdb"
@@ -8652,6 +8657,7 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
     assert seen_cookies == ["bid=first;", "bid=second;"]
     assert captured["api_client"] is api_client
     assert captured["tmdb_api_key"] == "tmdb-key"
+    assert captured["tmdb_proxy_base_url"] == "https://tmdb.example.com"
     assert "tmdb_client" in captured
 
 

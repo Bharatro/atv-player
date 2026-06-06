@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -309,18 +310,40 @@ def _categories() -> list[DoubanCategory]:
 
 class GlobalCatalogService:
     _TMDB_BASE_URL = "https://api.themoviedb.org/3"
+    _TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
     def __init__(
         self,
         tmdb_api_key: str = "",
         *,
+        tmdb_proxy_base_url: str = "",
         transport: httpx.BaseTransport | None = None,
         client_factory=httpx.Client,
         external_title_loader=None,
     ) -> None:
         self._tmdb_api_key = str(tmdb_api_key or "").strip()
-        self._client = client_factory(base_url=self._TMDB_BASE_URL, timeout=20.0, transport=transport)
+        self._tmdb_proxy_base_url = self._normalize_tmdb_proxy_base_url(tmdb_proxy_base_url)
+        api_base_url = f"{self._tmdb_proxy_base_url}/3" if self._tmdb_proxy_base_url else self._TMDB_BASE_URL
+        self._image_base_url = (
+            f"{self._tmdb_proxy_base_url}/t/p/w500" if self._tmdb_proxy_base_url else self._TMDB_IMAGE_BASE_URL
+        )
+        self._client = client_factory(base_url=api_base_url, timeout=20.0, transport=transport)
         self._external_title_loader = external_title_loader or self._default_external_title_loader
+
+    @staticmethod
+    def _normalize_tmdb_proxy_base_url(value: str) -> str:
+        text = str(value or "").strip().rstrip("/")
+        if not text:
+            return ""
+        parsed = urlparse(text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return ""
+        path = parsed.path.rstrip("/")
+        if path == "/3":
+            path = ""
+        elif path.endswith("/3"):
+            path = path[:-2].rstrip("/")
+        return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
     def load_items(
         self,
@@ -635,8 +658,8 @@ class GlobalCatalogService:
         return VodItem(
             vod_id=f"tmdb:{media_type}:{tmdb_id}",
             vod_name=title,
-            vod_pic=f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
-            poster_candidates=[f"https://image.tmdb.org/t/p/w500{poster_path}"] if poster_path else [],
+            vod_pic=f"{self._image_base_url}{poster_path}" if poster_path else "",
+            poster_candidates=[f"{self._image_base_url}{poster_path}"] if poster_path else [],
             vod_remarks=remarks,
             vod_year=date[:4],
             vod_content=f"{date}\n{item.get('overview') or '暂无简介'}" if date else str(item.get("overview") or "暂无简介"),
@@ -651,8 +674,18 @@ class GlobalCatalogController:
     uses_page_count_for_pagination: bool = True
 
     @classmethod
-    def from_config_tmdb_key(cls, tmdb_api_key: str) -> "GlobalCatalogController":
-        return cls(GlobalCatalogService(tmdb_api_key=tmdb_api_key))
+    def from_config_tmdb_key(
+        cls,
+        tmdb_api_key: str,
+        *,
+        tmdb_proxy_base_url: str = "",
+    ) -> "GlobalCatalogController":
+        return cls(
+            GlobalCatalogService(
+                tmdb_api_key=tmdb_api_key,
+                tmdb_proxy_base_url=tmdb_proxy_base_url,
+            )
+        )
 
     def load_categories(self) -> list[DoubanCategory]:
         return _categories()

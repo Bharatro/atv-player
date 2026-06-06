@@ -31,6 +31,7 @@ class AppConfig:
     metadata_enhancement_enabled: bool = True
     metadata_douban_cookie: str = ""
     metadata_tmdb_api_key: str = ""
+    metadata_tmdb_proxy_base_url: str = ""
     metadata_bangumi_access_token: str = ""
     network_proxy_mode: str = "direct"
     network_proxy_url: str = ""

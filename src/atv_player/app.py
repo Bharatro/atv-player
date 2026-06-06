@@ -130,6 +130,17 @@ _QUALITY_VARIANT_EPISODE_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 
+def _build_tmdb_client(*, api_key: str, proxy_base_url: str = "", proxy_decider=None):
+    kwargs = {
+        "api_key": api_key,
+        "proxy_decider": proxy_decider,
+    }
+    normalized_proxy_base_url = str(proxy_base_url or "").strip()
+    if normalized_proxy_base_url:
+        kwargs["proxy_base_url"] = normalized_proxy_base_url
+    return TMDBClient(**kwargs)
+
+
 class _NullPluginManager:
     def load_enabled_plugins(self, drive_detail_loader=None) -> list:
         del drive_detail_loader
@@ -784,8 +795,9 @@ class AppCoordinator(QObject):
         if enabled("tmdb") and str(config.metadata_tmdb_api_key or "").strip():
             providers.append(
                 TMDBProvider(
-                    TMDBClient(
+                    _build_tmdb_client(
                         api_key=config.metadata_tmdb_api_key,
+                        proxy_base_url=config.metadata_tmdb_proxy_base_url,
                         proxy_decider=proxy_decider,
                     )
                 )
@@ -903,8 +915,9 @@ class AppCoordinator(QObject):
                 proxy_decider=proxy_decider,
             )
         return TMDBDiscoveryService(
-            client=TMDBClient(
+            client=_build_tmdb_client(
                 api_key=api_key,
+                proxy_base_url=config.metadata_tmdb_proxy_base_url,
                 proxy_decider=proxy_decider,
             ),
             cache=MetadataCache(app_cache_dir() / "metadata"),
@@ -1377,8 +1390,9 @@ class AppCoordinator(QObject):
             if infer_tmdb_media_type(query) == "movie":
                 return None
             proxy_decider = self._build_proxy_decider()
-            tmdb_client = TMDBClient(
+            tmdb_client = _build_tmdb_client(
                 api_key=config.metadata_tmdb_api_key,
+                proxy_base_url=config.metadata_tmdb_proxy_base_url,
                 proxy_decider=proxy_decider,
             )
             bangumi_provider = BangumiMetadataProvider(
@@ -1899,12 +1913,16 @@ class AppCoordinator(QObject):
             epg_service=live_epg_service,
         )
         douban_controller = DoubanController(self._api_client)
-        global_catalog_controller = GlobalCatalogController.from_config_tmdb_key(config.metadata_tmdb_api_key)
+        global_catalog_controller = GlobalCatalogController.from_config_tmdb_key(
+            config.metadata_tmdb_api_key,
+            tmdb_proxy_base_url=config.metadata_tmdb_proxy_base_url,
+        )
         media_detail_controller = None
         if str(config.metadata_tmdb_api_key or "").strip():
             media_detail_controller = MediaDetailController(
-                client=TMDBClient(
+                client=_build_tmdb_client(
                     api_key=config.metadata_tmdb_api_key,
+                    proxy_base_url=config.metadata_tmdb_proxy_base_url,
                     proxy_decider=self._build_proxy_decider(),
                 ),
                 metadata_search_service=self._build_following_metadata_search_service(self._api_client)

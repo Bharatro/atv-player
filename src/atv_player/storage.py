@@ -186,6 +186,10 @@ def _normalize_network_proxy_url(value: object) -> str:
     return str(value or "").strip()
 
 
+def _normalize_tmdb_proxy_base_url(value: object) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
 def _normalize_network_proxy_bypass_rules(value: object) -> list[str]:
     if isinstance(value, str):
         try:
@@ -431,6 +435,7 @@ class SettingsRepository:
                     disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
+                    metadata_tmdb_proxy_base_url TEXT NOT NULL DEFAULT '',
                     metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
                     network_proxy_mode TEXT NOT NULL DEFAULT 'direct',
                     network_proxy_url TEXT NOT NULL DEFAULT '',
@@ -544,6 +549,10 @@ class SettingsRepository:
             if "metadata_tmdb_api_key" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN metadata_tmdb_api_key TEXT NOT NULL DEFAULT ''"
+                )
+            if "metadata_tmdb_proxy_base_url" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN metadata_tmdb_proxy_base_url TEXT NOT NULL DEFAULT ''"
                 )
             if "metadata_bangumi_access_token" not in columns:
                 conn.execute(
@@ -856,6 +865,7 @@ class SettingsRepository:
                     disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
+                    metadata_tmdb_proxy_base_url,
                     metadata_bangumi_access_token,
                     network_proxy_mode,
                     network_proxy_url,
@@ -929,7 +939,7 @@ class SettingsRepository:
                     home_mode
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
                 )
@@ -1001,6 +1011,7 @@ class SettingsRepository:
                     disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
+                    metadata_tmdb_proxy_base_url,
                     metadata_bangumi_access_token,
                     network_proxy_mode,
                     network_proxy_url,
@@ -1091,6 +1102,7 @@ class SettingsRepository:
             disabled_metadata_provider_ids,
             metadata_douban_cookie,
             metadata_tmdb_api_key,
+            metadata_tmdb_proxy_base_url,
             metadata_bangumi_access_token,
             network_proxy_mode,
             network_proxy_url,
@@ -1183,6 +1195,7 @@ class SettingsRepository:
             ),
             metadata_douban_cookie=str(metadata_douban_cookie or "").strip(),
             metadata_tmdb_api_key=str(metadata_tmdb_api_key or "").strip(),
+            metadata_tmdb_proxy_base_url=_normalize_tmdb_proxy_base_url(metadata_tmdb_proxy_base_url),
             metadata_bangumi_access_token=str(metadata_bangumi_access_token or "").strip(),
             network_proxy_mode=_normalize_network_proxy_mode(network_proxy_mode),
             network_proxy_url=_normalize_network_proxy_url(network_proxy_url),
@@ -1294,6 +1307,7 @@ class SettingsRepository:
                     disabled_metadata_provider_ids = ?,
                     metadata_douban_cookie = ?,
                     metadata_tmdb_api_key = ?,
+                    metadata_tmdb_proxy_base_url = ?,
                     metadata_bangumi_access_token = ?,
                     network_proxy_mode = ?,
                     network_proxy_url = ?,
@@ -1393,6 +1407,7 @@ class SettingsRepository:
                     ),
                     str(config.metadata_douban_cookie or "").strip(),
                     str(config.metadata_tmdb_api_key or "").strip(),
+                    _normalize_tmdb_proxy_base_url(config.metadata_tmdb_proxy_base_url),
                     str(config.metadata_bangumi_access_token or "").strip(),
                     _normalize_network_proxy_mode(config.network_proxy_mode),
                     _normalize_network_proxy_url(config.network_proxy_url),

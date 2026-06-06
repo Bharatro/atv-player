@@ -85,6 +85,41 @@ def test_global_catalog_tmdb_anime_maps_discover_results_to_vod_items() -> None:
     assert requests
 
 
+def test_global_catalog_service_uses_tmdb_proxy_base_for_api_and_images() -> None:
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        assert request.url.path == "/3/movie/popular"
+        return httpx.Response(
+            200,
+            json={
+                "total_pages": 1,
+                "results": [
+                    {
+                        "id": 550,
+                        "title": "搏击俱乐部",
+                        "release_date": "1999-10-15",
+                        "poster_path": "/abc.jpg",
+                    }
+                ],
+            },
+        )
+
+    service = GlobalCatalogService(
+        tmdb_api_key="tmdb-key",
+        tmdb_proxy_base_url="https://tmdb.example.com/3",
+        transport=httpx.MockTransport(handler),
+    )
+
+    items, total = service.load_items("movies", 1, {"movie_source": "general", "general_sort": "popular"})
+
+    assert total == 1
+    assert seen_urls[0].startswith("https://tmdb.example.com/3/movie/popular?")
+    assert items[0].vod_pic == "https://tmdb.example.com/t/p/w500/abc.jpg"
+    assert items[0].poster_candidates == ["https://tmdb.example.com/t/p/w500/abc.jpg"]
+
+
 def test_global_catalog_movie_general_top_rated_uses_tmdb_movie_endpoint() -> None:
     seen_paths: list[str] = []
 

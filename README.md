@@ -206,7 +206,7 @@ uv run atv-player
 - 直播源、手动频道、EPG 配置
 - 插件配置、缓存路径和加载日志
 - 弹幕偏好（启用、行数、显示模式、颜色、位置、速率、字号）
-- 元数据增强配置（启用状态、TMDB API Key、Bangumi Token、豆瓣 Cookie、剧集标题增强）
+- 元数据增强配置（启用状态、TMDB API Key、TMDB 代理地址、Bangumi Token、豆瓣 Cookie、剧集标题增强）
 - 元数据手动绑定记录
 - YouTube 偏好（Cookie 浏览器、默认画质、默认字幕、默认音轨、元数据语言、地区、分类配置源和分类缓存）
 
