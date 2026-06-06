@@ -15,6 +15,7 @@ import atv_player.ui.main_window as main_window_module
 from atv_player.controllers.following_controller import FollowingDetailView
 from atv_player.controllers.media_detail_controller import MediaDetailEpisode
 from atv_player.controllers.media_detail_controller import MediaDetailIdentity
+from atv_player.controllers.media_detail_controller import MediaDetailLookup
 from atv_player.controllers.media_detail_controller import MediaDetailPerson
 from atv_player.controllers.media_detail_controller import MediaDetailRecommendation
 from atv_player.controllers.media_detail_controller import MediaDetailView
@@ -1840,9 +1841,47 @@ class FakeMediaDetailController:
         self.vod_calls: list[VodItem] = []
         self.heat_calls: list[object] = []
         self.identity_calls: list[MediaDetailIdentity] = []
+        self.lookup_calls: list[MediaDetailLookup] = []
         self.refresh_calls: list[MediaDetailView] = []
         self.season_calls: list[tuple[MediaDetailView, int]] = []
         self.following_candidates: list[MediaDetailView] = []
+
+    def placeholder_from_vod(self, vod: VodItem) -> MediaDetailView:
+        return MediaDetailView(
+            identity=MediaDetailIdentity(media_type="tv", tmdb_id="1399", title=vod.vod_name or "权力的游戏"),
+            title=vod.vod_name or "权力的游戏",
+            media_type="tv",
+            year="",
+            overview="正在加载元数据...",
+        )
+
+    def placeholder_from_heat(self, item: object) -> MediaDetailView:
+        return MediaDetailView(
+            identity=MediaDetailIdentity(media_type="tv", tmdb_id="1399", title=str(getattr(item, "title", "") or "权力的游戏")),
+            title=str(getattr(item, "title", "") or "权力的游戏"),
+            media_type="tv",
+            year=str(getattr(item, "year", "") or ""),
+            poster_url=str(getattr(item, "poster", "") or ""),
+            overview="正在加载元数据...",
+        )
+
+    def placeholder_from_identity(self, identity: MediaDetailIdentity) -> MediaDetailView:
+        return MediaDetailView(
+            identity=identity,
+            title=identity.title,
+            media_type=identity.media_type,
+            overview="正在加载元数据...",
+        )
+
+    def placeholder_from_lookup(self, lookup: MediaDetailLookup) -> MediaDetailView:
+        return MediaDetailView(
+            identity=MediaDetailIdentity(media_type=lookup.media_type or "tv", tmdb_id="", title=lookup.title),
+            title=lookup.title,
+            media_type=lookup.media_type or "tv",
+            year=lookup.year,
+            poster_url=lookup.poster_url,
+            overview="正在加载元数据...",
+        )
 
     def load_from_vod(self, vod: VodItem) -> MediaDetailView:
         self.vod_calls.append(vod)
@@ -1857,6 +1896,10 @@ class FakeMediaDetailController:
     def load_from_identity(self, identity: MediaDetailIdentity) -> MediaDetailView:
         self.identity_calls.append(identity)
         return _media_detail_view(identity)
+
+    def load_from_lookup(self, lookup: MediaDetailLookup) -> MediaDetailView:
+        self.lookup_calls.append(lookup)
+        return _media_detail_view(MediaDetailIdentity(media_type=lookup.media_type or "tv", tmdb_id="100", title=lookup.title))
 
     def refresh(self, view: MediaDetailView) -> MediaDetailView:
         self.refresh_calls.append(view)
@@ -1933,10 +1976,12 @@ def test_global_catalog_card_click_opens_universal_media_detail(qtbot) -> None:
     item = VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏")
     window.global_catalog_page.item_open_requested.emit(item)
 
-    assert detail_controller.vod_calls == [item]
     assert window.nav_tabs.currentWidget() is window.media_detail_page
     assert window.media_detail_page.title_label.text() == "权力的游戏"
-    assert window.media_detail_page.episode_browser.episode_model.rowCount() == 1
+    assert window.media_detail_page.status_label.text() == "正在加载元数据..."
+    assert window.media_detail_page.episode_browser.episode_model.rowCount() == 0
+    qtbot.waitUntil(lambda: detail_controller.vod_calls == [item], timeout=1000)
+    qtbot.waitUntil(lambda: window.media_detail_page.episode_browser.episode_model.rowCount() == 1, timeout=1000)
 
 
 def test_heat_recommendation_click_opens_universal_media_detail(qtbot) -> None:
@@ -1959,8 +2004,11 @@ def test_heat_recommendation_click_opens_universal_media_detail(qtbot) -> None:
     heat_item = SimpleNamespace(media_key="tmdb:tv:1399", title="权力的游戏", media_type="tv")
     window._handle_global_search_popup_heat_item_clicked(heat_item)
 
-    assert detail_controller.heat_calls == [heat_item]
     assert window.nav_tabs.currentWidget() is window.media_detail_page
+    assert window.media_detail_page.title_label.text() == "权力的游戏"
+    assert window.media_detail_page.status_label.text() == "正在加载元数据..."
+    qtbot.waitUntil(lambda: detail_controller.heat_calls == [heat_item], timeout=1000)
+    qtbot.waitUntil(lambda: len(window.media_detail_page.person_cards) > 0, timeout=1000)
     assert window.media_detail_page.person_cards[0].name_label.text() == "Emilia Clarke"
     assert window.media_detail_page.person_cards[0].role_label.text() == "Daenerys Targaryen"
 
@@ -3870,6 +3918,63 @@ def test_main_window_following_detail_related_global_search_signal_starts_global
 
     assert window.global_search_edit.text() == "Gen V"
     assert started_keywords == ["Gen V"]
+
+
+def test_main_window_following_detail_related_media_signal_opens_universal_detail(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    opened = []
+    window.following_detail_page.related_media_detail_requested.disconnect()
+    window.following_detail_page.related_media_detail_requested.connect(opened.append)
+
+    identity = MediaDetailIdentity(media_type="tv", tmdb_id="100", title="Gen V")
+    window.following_detail_page.related_media_detail_requested.emit(identity)
+
+    assert opened == [identity]
+
+
+def test_main_window_following_detail_related_lookup_opens_universal_detail(qtbot) -> None:
+    detail_controller = FakeMediaDetailController()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        media_detail_controller=detail_controller,
+    )
+    qtbot.addWidget(window)
+
+    lookup = MediaDetailLookup(
+        title="Gen V",
+        year="2023",
+        provider="official_douban",
+        provider_id="36454318",
+        poster_url="https://img.example/poster.jpg",
+    )
+    window.following_detail_page.related_media_detail_requested.emit(lookup)
+
+    assert window.nav_tabs.currentWidget() is window.media_detail_page
+    assert window.media_detail_page.title_label.text() == "Gen V"
+    assert window.media_detail_page.status_label.text() == "正在加载元数据..."
+    qtbot.waitUntil(lambda: detail_controller.lookup_calls == [lookup], timeout=1000)
+
+
+def test_main_window_media_detail_page_uses_following_episode_grid_config(qtbot) -> None:
+    config = AppConfig(following_episode_grid_columns=3)
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+    )
+    qtbot.addWidget(window)
+
+    assert window.media_detail_page.episode_browser.grid_columns() == 3
 
 
 def test_main_window_video_context_menu_favorite_adds_item_to_favorites(qtbot) -> None:

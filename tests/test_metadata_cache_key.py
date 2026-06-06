@@ -22,3 +22,14 @@ def test_provider_search_cache_key_uses_provider_override_when_present() -> None
     query = MetadataQuery(title="深空彼岸", year="2026")
 
     assert provider_search_cache_key(_ProviderWithOverride(), query) == ("normalized title", "")
+
+
+def test_provider_search_cache_key_prefers_tmdb_external_id_anchor() -> None:
+    query = MetadataQuery(
+        title="权力的游戏",
+        year="2011",
+        source_kind="tmdb",
+        vod_id="tv:1399",
+    )
+
+    assert provider_search_cache_key(_ProviderWithoutOverride(), query) == ("tmdb:tv:1399", "")

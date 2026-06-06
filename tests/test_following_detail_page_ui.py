@@ -29,6 +29,7 @@ from atv_player.ui.following_detail_page import (
     QDesktopServices,
     _person_avatar,
 )
+from atv_player.controllers.media_detail_controller import MediaDetailLookup
 
 
 class FakeController:
@@ -576,7 +577,7 @@ def test_following_detail_page_loads_related_recommendations_asynchronously(qtbo
     assert page.related_recommendation_cards[0].title_label.text() == "Gen V"
 
 
-def test_following_detail_page_related_recommendation_left_click_starts_global_search(qtbot) -> None:
+def test_following_detail_page_related_recommendation_left_click_opens_media_detail(qtbot) -> None:
     class RelatedController(FakeController):
         def load_related_recommendations(self, following_id: int):
             del following_id
@@ -584,14 +585,124 @@ def test_following_detail_page_related_recommendation_left_click_starts_global_s
 
     page = FollowingDetailPage(RelatedController())
     qtbot.addWidget(page)
+    opened = []
+    page.related_media_detail_requested.connect(opened.append)
+
+    page.load_record(1)
+    qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+    qtbot.mouseClick(page.related_recommendation_cards[0], Qt.MouseButton.LeftButton)
+
+    assert opened
+    assert opened[0].media_type == "tv"
+    assert opened[0].tmdb_id == "100"
+    assert opened[0].title == "Gen V"
+
+
+def test_following_detail_page_related_recommendation_parses_tmdb_provider_id(qtbot) -> None:
+    items = [
+        DiscoveryItem(provider="tmdb", provider_id="tmdb:tv:100", tmdb_id="", media_type="", title="Gen V"),
+        DiscoveryItem(provider="tmdb", provider_id="tmdb:100", tmdb_id="", media_type="tv", title="Gen V"),
+        DiscoveryItem(provider="tmdb", provider_id="100", tmdb_id="", media_type="tv", title="Gen V"),
+        DiscoveryItem(provider="tmdb", provider_id="tv:100:season:1", tmdb_id="", media_type="", title="Gen V"),
+    ]
+
+    for item in items:
+        class RelatedController(FakeController):
+            def load_related_recommendations(self, following_id: int):
+                del following_id
+                return DiscoveryResult(items=[item], total=1, source_label="关联推荐")
+
+        page = FollowingDetailPage(RelatedController())
+        qtbot.addWidget(page)
+        opened = []
+        searched = []
+        page.related_media_detail_requested.connect(opened.append)
+        page.related_global_search_requested.connect(searched.append)
+
+        page.load_record(1)
+        qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+        qtbot.mouseClick(page.related_recommendation_cards[0], Qt.MouseButton.LeftButton)
+
+        assert searched == []
+        assert opened
+        assert opened[0].media_type == "tv"
+        assert opened[0].tmdb_id == "100"
+
+
+def test_following_detail_page_related_recommendation_without_tmdb_opens_lookup_detail(qtbot) -> None:
+    class RelatedController(FakeController):
+        def load_related_recommendations(self, following_id: int):
+            del following_id
+            return DiscoveryResult(
+                items=[
+                    DiscoveryItem(
+                        provider="douban",
+                        provider_id="subject:1",
+                        tmdb_id="",
+                        media_type="",
+                        title="Gen V",
+                    )
+                ],
+                total=1,
+                source_label="关联推荐",
+            )
+
+    page = FollowingDetailPage(RelatedController())
+    qtbot.addWidget(page)
+    opened: list[object] = []
     searched: list[str] = []
+    page.related_media_detail_requested.connect(opened.append)
     page.related_global_search_requested.connect(searched.append)
 
     page.load_record(1)
     qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
     qtbot.mouseClick(page.related_recommendation_cards[0], Qt.MouseButton.LeftButton)
 
-    assert searched == ["Gen V"]
+    assert searched == []
+    assert opened == [MediaDetailLookup(title="Gen V", provider="douban", provider_id="subject:1")]
+
+
+def test_following_detail_page_douban_related_recommendation_opens_lookup_detail(qtbot) -> None:
+    class RelatedController(FakeController):
+        def load_related_recommendations(self, following_id: int):
+            del following_id
+            return DiscoveryResult(
+                items=[
+                    DiscoveryItem(
+                        provider="official_douban",
+                        provider_id="36454318",
+                        tmdb_id="",
+                        media_type="",
+                        title="Gen V",
+                        year="2023",
+                        poster="https://img.example/poster.jpg",
+                    )
+                ],
+                total=1,
+                source_label="豆瓣官方关联推荐",
+            )
+
+    page = FollowingDetailPage(RelatedController())
+    qtbot.addWidget(page)
+    opened: list[object] = []
+    searched: list[str] = []
+    page.related_media_detail_requested.connect(opened.append)
+    page.related_global_search_requested.connect(searched.append)
+
+    page.load_record(1)
+    qtbot.waitUntil(lambda: len(page.related_recommendation_cards) == 1, timeout=1000)
+    qtbot.mouseClick(page.related_recommendation_cards[0], Qt.MouseButton.LeftButton)
+
+    assert searched == []
+    assert opened == [
+        MediaDetailLookup(
+            title="Gen V",
+            year="2023",
+            provider="official_douban",
+            provider_id="36454318",
+            poster_url="https://img.example/poster.jpg",
+        )
+    ]
 
 
 def test_following_detail_page_related_recommendation_context_menu_adds_following(qtbot, monkeypatch) -> None:

@@ -4,6 +4,9 @@ from atv_player.metadata.models import MetadataQuery
 
 
 def provider_search_cache_key(provider: object, query: MetadataQuery) -> tuple[str, str]:
+    external_anchor = _external_search_anchor(query)
+    if external_anchor:
+        return external_anchor, ""
     cache_title = query.title
     cache_year = query.year
     search_cache_key = getattr(provider, "search_cache_key", None)
@@ -12,3 +15,11 @@ def provider_search_cache_key(provider: object, query: MetadataQuery) -> tuple[s
         if provider_cache_key is not None:
             cache_title, cache_year = provider_cache_key
     return cache_title, cache_year
+
+
+def _external_search_anchor(query: MetadataQuery) -> str:
+    source_kind = str(query.source_kind or "").strip()
+    vod_id = str(query.vod_id or "").strip()
+    if source_kind == "tmdb" and vod_id:
+        return f"tmdb:{vod_id}"
+    return ""

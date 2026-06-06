@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.following_metadata import _resolve_effective_media_kind
+from atv_player.controllers.media_detail_controller import MediaDetailIdentity, MediaDetailLookup
 from atv_player.following_models import (
     FollowingCompletionState,
     FollowingDetailSnapshot,
@@ -543,6 +544,7 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
     search_play_requested = Signal(int)
     unfollow_requested = Signal(int)
     related_global_search_requested = Signal(str)
+    related_media_detail_requested = Signal(object)
     image_loaded = Signal(object, object)
     check_finished = Signal(int, object, str)
     metadata_refresh_finished = Signal(int, object, str)
@@ -1198,6 +1200,10 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
         _clear_layout(self._related_recommendation_layout)
 
     def _handle_related_recommendation_activated(self, item: DiscoveryItem) -> None:
+        detail_request = _media_detail_request_from_discovery_item(item)
+        if detail_request is not None:
+            self.related_media_detail_requested.emit(detail_request)
+            return
         keyword = str(item.title or "").strip()
         if keyword:
             self.related_global_search_requested.emit(keyword)
@@ -1385,6 +1391,68 @@ def _person_link(person: dict[str, object]) -> str:
         value = str(person.get(key) or "").strip()
         if value:
             return value
+    return ""
+
+
+def _media_detail_request_from_discovery_item(item: DiscoveryItem) -> MediaDetailIdentity | MediaDetailLookup | None:
+    identity = _media_detail_identity_from_discovery_item(item)
+    if identity is not None:
+        return identity
+    title = str(getattr(item, "title", "") or "").strip()
+    if not title:
+        return None
+    return MediaDetailLookup(
+        title=title,
+        year=str(getattr(item, "year", "") or "").strip(),
+        media_type=_normalize_media_detail_media_type(getattr(item, "media_type", "")),
+        provider=str(getattr(item, "provider", "") or "").strip(),
+        provider_id=str(getattr(item, "provider_id", "") or "").strip(),
+        poster_url=str(getattr(item, "poster", "") or "").strip(),
+    )
+
+
+def _media_detail_identity_from_discovery_item(item: DiscoveryItem) -> MediaDetailIdentity | None:
+    media_type = _normalize_media_detail_media_type(getattr(item, "media_type", ""))
+    title = str(getattr(item, "title", "") or "").strip()
+    for value in (
+        getattr(item, "tmdb_id", ""),
+        getattr(item, "provider_id", ""),
+    ):
+        identity = _media_detail_identity_from_text(value, media_type=media_type, title=title)
+        if identity is not None:
+            return identity
+    return None
+
+
+def _media_detail_identity_from_text(
+    value: object,
+    *,
+    media_type: str,
+    title: str,
+) -> MediaDetailIdentity | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.match(r"^tmdb:(movie|tv):(\d+)(?::season:\d+)?$", text)
+    if match is not None:
+        return MediaDetailIdentity(media_type=match.group(1), tmdb_id=match.group(2), title=title)
+    match = re.match(r"^(movie|tv):(\d+)(?::season:\d+)?$", text)
+    if match is not None:
+        return MediaDetailIdentity(media_type=match.group(1), tmdb_id=match.group(2), title=title)
+    match = re.match(r"^tmdb:(\d+)$", text)
+    if match is not None and media_type:
+        return MediaDetailIdentity(media_type=media_type, tmdb_id=match.group(1), title=title)
+    if text.isdigit() and media_type:
+        return MediaDetailIdentity(media_type=media_type, tmdb_id=text, title=title)
+    return None
+
+
+def _normalize_media_detail_media_type(value: object) -> str:
+    media_type = str(value or "").strip().lower()
+    if media_type in {"movie", "movies"}:
+        return "movie"
+    if media_type in {"tv", "show", "shows", "series", "drama"}:
+        return "tv"
     return ""
 
 

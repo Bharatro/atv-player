@@ -8,15 +8,20 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QVBoxLayout,
     QWidget,
 )
 
 from atv_player.controllers.media_detail_controller import (
+    MediaDetailIdentity,
+    MediaDetailRecommendation,
     MediaDetailView,
 )
 from atv_player.following_models import FollowingEpisode, FollowingSeason
 from atv_player.metadata.discovery import DiscoveryItem
+from atv_player.models import AppConfig
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.detail_scaffold import MediaDetailScaffold, detail_scaffold_qss
 from atv_player.ui.following_detail_page import (
@@ -25,8 +30,12 @@ from atv_player.ui.following_detail_page import (
     FollowingRelatedRecommendationCard,
     _clear_layout,
     _carousel_image_qss,
+    _format_merged_source_snapshot_text,
+    _format_source_snapshot_text,
     _image_placeholder_qss,
+    _playback_platforms_html,
     _person_inner_label_qss,
+    _rating_strip_text,
     _unique_sources,
 )
 from atv_player.ui.following_episode_browser import (
@@ -49,13 +58,24 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
     season_requested = Signal(object, int)
     image_loaded = Signal(QLabel, object)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: AppConfig | None = None,
+        save_config=None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._init_async_guard()
+        self._config = config or AppConfig()
+        self._save_config = save_config
         self.current_view: MediaDetailView | None = None
         self._selected_season_number = 0
         self.person_cards: list[FollowingPersonCard] = []
         self.related_cards: list[FollowingRelatedRecommendationCard] = []
+        self.metadata_source_buttons: list[QPushButton] = []
+        self.playback_platform_widgets: list[QLabel] = []
+        self._selected_metadata_source_key = "merged"
 
         self.back_button = QPushButton("返回", self)
         self.search_play_button = QPushButton("搜索播放", self)
@@ -68,8 +88,19 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         self.overview_label = QLabel("", self)
         self.poster_carousel_label = QLabel("海报轮播", self)
         self.related_recommendation_status_label = QLabel("", self)
+        self.metadata_source_bar = QWidget(self)
+        self.metadata_source_layout = QHBoxLayout(self.metadata_source_bar)
+        self.metadata_source_layout.setContentsMargins(0, 0, 0, 0)
+        self.metadata_source_layout.setSpacing(8)
+        self.playback_platform_section = QWidget(self)
+        self.playback_platform_layout = QVBoxLayout(self.playback_platform_section)
+        self.playback_platform_layout.setContentsMargins(0, 0, 0, 0)
+        self.playback_platform_layout.setSpacing(8)
 
-        self.episode_browser = FollowingEpisodeBrowser(initial_grid_columns=1, parent=self)
+        self.episode_browser = FollowingEpisodeBrowser(
+            initial_grid_columns=self._config.following_episode_grid_columns,
+            parent=self,
+        )
         self._cast_container = QWidget(self)
         self._cast_layout = QHBoxLayout(self._cast_container)
         self._cast_layout.setContentsMargins(0, 0, 0, 0)
@@ -85,6 +116,7 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
 
     def load_view(self, view: MediaDetailView) -> None:
         self.current_view = view
+        self._selected_metadata_source_key = "merged"
         self.status_label.setText("")
         self.title_label.setText(view.title)
         meta_parts = [
@@ -93,8 +125,7 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
             " / ".join(view.genres),
         ]
         self.meta_label.setText(" · ".join(part for part in meta_parts if part))
-        self.rating_strip.setText(f"TMDB {view.rating}" if view.rating else "")
-        self.overview_label.setText(view.overview or "暂无简介")
+        self._render_metadata_bundle(view)
         self._render_poster_carousel(view)
         self._render_episodes(view)
         self._render_people(view)
@@ -151,8 +182,8 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
             title_label=self.title_label,
             meta_label=self.meta_label,
             rating_label=self.rating_strip,
-            metadata_source_bar=None,
-            playback_platform_section=None,
+            metadata_source_bar=self.metadata_source_bar,
+            playback_platform_section=self.playback_platform_section,
             overview_label=self.overview_label,
             extra_metadata_widgets=[],
             poster_carousel_label=self.poster_carousel_label,
@@ -179,6 +210,7 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         self._connect_async_signal(self.image_loaded, self._handle_image_loaded)
         self.episode_browser.episode_activated.connect(self._open_episode_preview)
         self.episode_browser.season_changed.connect(self._handle_season_changed)
+        self.episode_browser.grid_columns_changed.connect(self._handle_episode_grid_columns_changed)
 
     def _emit_view(self, signal) -> None:
         if self.current_view is not None:
@@ -191,6 +223,69 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         self.poster_carousel_label.setText("海报轮播" if sources else "暂无海报")
         if sources:
             self._start_image_load(self.poster_carousel_label, sources[0])
+
+    def _render_metadata_bundle(self, view: MediaDetailView) -> None:
+        bundle = view.metadata_bundle
+        if bundle is None:
+            self.rating_strip.setText(f"TMDB {view.rating}" if view.rating else "")
+            self._render_source_buttons(["merged"], source_snapshots={})
+            self._render_playback_platforms([])
+            self.overview_label.setText(view.overview or "暂无简介")
+            return
+        source_snapshots = dict(bundle.source_snapshots)
+        current_key = (
+            self._selected_metadata_source_key
+            if self._selected_metadata_source_key in source_snapshots
+            else bundle.default_source_key
+        )
+        self._selected_metadata_source_key = current_key
+        current = bundle.merged_snapshot if current_key == "merged" else source_snapshots[current_key]
+        self.rating_strip.setText(_rating_strip_text(bundle.merged_snapshot.ratings))
+        self._render_source_buttons(bundle.available_source_keys, source_snapshots=source_snapshots)
+        platforms = bundle.merged_snapshot.playback_platforms if current_key == "merged" else current.playback_platforms
+        self._render_playback_platforms(platforms)
+        record = _media_detail_record_for_links(view)
+        if current_key == "merged":
+            self.overview_label.setText(_format_merged_source_snapshot_text(bundle.merged_snapshot, record=record))
+        else:
+            self.overview_label.setText(_format_source_snapshot_text(current, record=record))
+
+    def _render_source_buttons(self, source_keys: list[str], *, source_snapshots: dict[str, object]) -> None:
+        _clear_layout(self.metadata_source_layout)
+        self.metadata_source_buttons = []
+        for source_key in source_keys:
+            if source_key == "merged":
+                label = "媒体信息"
+            else:
+                snapshot = source_snapshots.get(source_key)
+                label = str(getattr(snapshot, "provider_label", "") or source_key)
+            button = QPushButton(label, self.metadata_source_bar)
+            button.setCheckable(True)
+            button.setChecked(source_key == self._selected_metadata_source_key)
+            button.clicked.connect(
+                lambda _checked=False, target=source_key: self._handle_metadata_source_selected(target)
+            )
+            self.metadata_source_layout.addWidget(button)
+            self.metadata_source_buttons.append(button)
+        self.metadata_source_layout.addStretch(1)
+
+    def _handle_metadata_source_selected(self, source_key: str) -> None:
+        self._selected_metadata_source_key = str(source_key or "merged")
+        if self.current_view is not None:
+            self._render_metadata_bundle(self.current_view)
+
+    def _render_playback_platforms(self, platforms: list[object]) -> None:
+        _clear_layout(self.playback_platform_layout)
+        self.playback_platform_widgets = []
+        if not platforms:
+            return
+        label = QLabel(_playback_platforms_html(platforms), self.playback_platform_section)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        label.setOpenExternalLinks(True)
+        self.playback_platform_widgets.append(label)
+        self.playback_platform_layout.addWidget(label)
 
     def _render_episodes(self, view: MediaDetailView, *, selected_season_number: int | None = None) -> None:
         episodes = [
@@ -262,6 +357,14 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         )
         dialog.exec()
 
+    def _handle_episode_grid_columns_changed(self, columns: int) -> None:
+        normalized = int(columns)
+        if self._config.following_episode_grid_columns == normalized:
+            return
+        self._config.following_episode_grid_columns = normalized
+        if callable(self._save_config):
+            self._save_config()
+
     def _current_view_matches_season(self, season_number: int) -> bool:
         if self.current_view is None:
             return False
@@ -279,6 +382,7 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
                     "name": person.name,
                     "role": person.role,
                     "avatar": person.profile_url,
+                    "url": person.url,
                 },
                 self._cast_container,
             )
@@ -311,10 +415,49 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
             card.activated.connect(
                 lambda _item, identity=item.identity: self.related_open_requested.emit(identity)
             )
+            card.context_menu_requested.connect(
+                lambda _item, global_pos, recommendation=item: self._open_related_recommendation_menu(
+                    recommendation,
+                    global_pos,
+                )
+            )
             self._related_recommendation_layout.addWidget(card)
             self.related_cards.append(card)
             self._start_image_load(card.poster_label, item.poster_url)
         self._related_recommendation_layout.addStretch(1)
+
+    def _open_related_recommendation_menu(self, item: MediaDetailRecommendation, global_pos) -> None:
+        menu = QMenu(self)
+        search_action = menu.addAction("搜索资源")
+        add_action = menu.addAction("加入追更")
+        chosen = menu.exec(global_pos)
+        if chosen == search_action:
+            self._handle_related_recommendation_menu_action(item, "search")
+        elif chosen == add_action:
+            self._handle_related_recommendation_menu_action(item, "follow")
+
+    def _handle_related_recommendation_menu_action(self, item: MediaDetailRecommendation, action: str) -> None:
+        view = self._view_from_recommendation(item)
+        if action == "search":
+            self.search_play_requested.emit(view)
+            return
+        if action == "follow":
+            self.add_following_requested.emit(view)
+
+    def _view_from_recommendation(self, item: MediaDetailRecommendation) -> MediaDetailView:
+        identity = MediaDetailIdentity(
+            media_type=item.identity.media_type,
+            tmdb_id=item.identity.tmdb_id,
+            title=item.identity.title,
+        )
+        return MediaDetailView(
+            identity=identity,
+            title=identity.title,
+            media_type=identity.media_type,
+            year=item.year,
+            poster_url=item.poster_url,
+            rating=item.rating,
+        )
 
     def _apply_style(self) -> None:
         self.setStyleSheet(detail_scaffold_qss())
@@ -350,3 +493,16 @@ def _int_value(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _media_detail_record_for_links(view: MediaDetailView):
+    from atv_player.following_models import FollowingRecord
+
+    return FollowingRecord(
+        id=0,
+        title=view.title,
+        original_title=view.original_title,
+        media_kind="movie" if view.media_type == "movie" else "live_action",
+        provider="tmdb",
+        provider_id=f"{view.media_type}:{view.identity.tmdb_id}",
+    )

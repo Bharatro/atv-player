@@ -1909,7 +1909,10 @@ class AppCoordinator(QObject):
                 client=TMDBClient(
                     api_key=config.metadata_tmdb_api_key,
                     proxy_decider=self._build_proxy_decider(),
-                )
+                ),
+                metadata_search_service=self._build_following_metadata_search_service(self._api_client)
+                if config.metadata_enhancement_enabled
+                else None,
             )
         telegram_controller = TelegramSearchController(
             self._api_client,

@@ -473,15 +473,53 @@ class MetadataScrapeService:
         query = replace(query, title=normalized_title, year=normalized_year)
         providers = [provider for provider in self._providers if not provider_filter or provider.name == provider_filter]
 
-        fetched_results = run_provider_searches(
-            providers,
-            query,
-            max_concurrency=max(1, len(providers)),
-            use_search_all=True,
-        )
+        cached_matches_by_provider: dict[int, list[MetadataMatch]] = {}
+        providers_needing_fetch: list[object] = []
+        cache_keys_by_provider: list[tuple[str, str]] = []
+        for provider in providers:
+            cache_title, cache_year = self._provider_search_cache_key(provider, query)
+            matches = self._cache.load_search(
+                provider.name,
+                cache_title,
+                cache_year,
+                ttl_seconds=_SEARCH_CACHE_TTL_SECONDS,
+                empty_ttl_seconds=_EMPTY_SEARCH_CACHE_TTL_SECONDS,
+            )
+            if matches is None:
+                providers_needing_fetch.append(provider)
+                cache_keys_by_provider.append((cache_title, cache_year))
+                continue
+            cached_matches_by_provider[id(provider)] = list(matches)
 
+        fetched_results = run_provider_searches(
+            providers_needing_fetch,
+            query,
+            max_concurrency=max(1, len(providers_needing_fetch)),
+            use_search_all=True,
+        ) if providers_needing_fetch else []
+        for provider, (cache_title, cache_year), result in zip(
+            providers_needing_fetch,
+            cache_keys_by_provider,
+            fetched_results,
+        ):
+            if result.error is None:
+                self._cache.save_search(provider.name, cache_title, cache_year, result.matches)
+
+        fetch_index = 0
         groups: list[MetadataScrapeGroup] = []
-        for provider, result in zip(providers, fetched_results):
+        for provider in providers:
+            cached_matches = cached_matches_by_provider.get(id(provider))
+            if cached_matches is not None:
+                groups.append(
+                    MetadataScrapeGroup(
+                        provider=provider.name,
+                        provider_label=self._provider_label(provider.name),
+                        items=[self._candidate_from_match(match) for match in cached_matches],
+                    )
+                )
+                continue
+            result = fetched_results[fetch_index]
+            fetch_index += 1
             if result.error is not None:
                 groups.append(
                     MetadataScrapeGroup(
@@ -662,6 +700,15 @@ class MetadataScrapeService:
         get_detail_fn = getattr(provider, "get_detail_full", None)
         if not callable(get_detail_fn):
             return self.detail_record(candidate)
+        detail_cache_key_fn = getattr(provider, "detail_cache_key", None)
+        detail_cache_key = (
+            str(detail_cache_key_fn(candidate.provider_id))
+            if callable(detail_cache_key_fn)
+            else candidate.provider_id
+        )
+        record = self._cache.load_detail(candidate.provider, detail_cache_key, ttl_seconds=7 * 24 * 3600)
+        if record is not None:
+            return record
         match = MetadataMatch(
             provider=candidate.provider,
             provider_id=candidate.provider_id,
@@ -672,4 +719,5 @@ class MetadataScrapeService:
         record = get_detail_fn(match)
         if record is None:
             raise RuntimeError(f"{candidate.provider_label or candidate.provider} 未返回刮削详情")
+        self._cache.save_detail(candidate.provider, detail_cache_key, record)
         return record

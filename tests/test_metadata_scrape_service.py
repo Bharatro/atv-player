@@ -141,6 +141,37 @@ def test_metadata_scrape_service_cache_only_reuses_cached_results_without_provid
     assert tmdb.search_calls == []
 
 
+def test_metadata_scrape_service_search_following_reuses_cached_results_without_provider_calls(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cached_match = MetadataMatch(provider="official_douban", provider_id="1463371", title="凡人修仙传", year="2026")
+    cache.save_search("official_douban", "凡人修仙传", "2026", [cached_match])
+    provider = FakeProvider(
+        "official_douban",
+        matches=[MetadataMatch(provider="official_douban", provider_id="999", title="不该触发实时搜索", year="2026")],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    groups = service.search_following(MetadataQuery(title="凡人修仙传", year="2026"), provider_filter="official_douban")
+
+    assert groups == [
+        MetadataScrapeGroup(
+            provider="official_douban",
+            provider_label="豆瓣官方",
+            items=[
+                MetadataScrapeCandidate(
+                    provider="official_douban",
+                    provider_label="豆瓣官方",
+                    provider_id="1463371",
+                    title="凡人修仙传",
+                    year="2026",
+                    subtitle="",
+                )
+            ],
+        )
+    ]
+    assert provider.search_calls == []
+
+
 def test_metadata_scrape_service_uses_ai_refined_query_before_original(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(
@@ -235,6 +266,41 @@ def test_metadata_scrape_service_uses_provider_detail_cache_key(tmp_path: Path) 
         )
         is not None
     )
+
+
+def test_metadata_scrape_service_detail_record_full_reuses_cached_detail_without_recrawling(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cache.save_detail(
+        "official_douban",
+        "1463371",
+        MetadataRecord(
+            provider="official_douban",
+            provider_id="1463371",
+            title="缓存详情",
+            rating="9.1",
+        ),
+    )
+    provider = FakeProvider(
+        "official_douban",
+        record=MetadataRecord(
+            provider="official_douban",
+            provider_id="1463371",
+            title="不应命中",
+        ),
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    record = service.detail_record_full(
+        MetadataScrapeCandidate(
+            provider="official_douban",
+            provider_label="豆瓣官方",
+            provider_id="1463371",
+            title="凡人修仙传",
+        )
+    )
+
+    assert record.title == "缓存详情"
+    assert provider.detail_calls == []
 
 
 def test_metadata_scrape_service_tencent_bypasses_stale_pre_area_box_empty_cache(tmp_path: Path) -> None:

@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
 from atv_player.controllers.browse_controller import _map_vod_item
-from atv_player.controllers.media_detail_controller import MediaDetailIdentity
+from atv_player.controllers.media_detail_controller import MediaDetailIdentity, MediaDetailLookup
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
 from atv_player.diagnostics import SystemInfoEntry, collect_system_info_entries
@@ -651,6 +651,11 @@ class _GlobalSearchPopupSignals(QObject):
 class _MediaDetailSeasonSignals(QObject):
     succeeded = Signal(int, object, int)
     failed = Signal(int, int, str)
+
+
+class _MediaDetailLoadSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
 
 
 class _HelpPayloadSignals(QObject):
@@ -1645,7 +1650,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             config=self.config,
             save_config=self._save_config,
         )
-        self.media_detail_page = MediaDetailPage()
+        self.media_detail_page = MediaDetailPage(
+            config=self.config,
+            save_config=self._save_config,
+        )
         self.history_page = HistoryPage(history_controller)
         self.global_history_page = HistoryPage(history_controller)
         self._global_history_search_adapter = (
@@ -1722,6 +1730,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._connect_async_signal(
             self._media_detail_season_signals.failed,
             self._handle_media_detail_season_failed,
+        )
+        self._media_detail_load_request_id = 0
+        self._media_detail_load_signals = _MediaDetailLoadSignals()
+        self._connect_async_signal(
+            self._media_detail_load_signals.succeeded,
+            self._handle_media_detail_load_succeeded,
+        )
+        self._connect_async_signal(
+            self._media_detail_load_signals.failed,
+            self._handle_media_detail_load_failed,
         )
         self._restore_signals = _RestoreSignals()
         self._connect_async_signal(self._restore_signals.succeeded, self._handle_restore_succeeded)
@@ -1958,6 +1976,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.following_detail_page.search_play_requested.connect(self.search_play_for_following)
         self.following_detail_page.unfollow_requested.connect(self._unfollow_from_detail)
         self.following_detail_page.related_global_search_requested.connect(self._handle_favorite_global_search)
+        self.following_detail_page.related_media_detail_requested.connect(self.open_media_detail_from_related_request)
         self.media_detail_page.back_requested.connect(self._return_from_media_detail)
         self.media_detail_page.search_play_requested.connect(self.search_play_for_media_detail)
         self.media_detail_page.add_following_requested.connect(self.add_following_from_media_detail)
@@ -5754,12 +5773,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if controller is None or not hasattr(controller, "load_from_vod"):
             self.show_error("未配置媒体详情数据源")
             return
-        try:
-            view = controller.load_from_vod(vod)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self._show_media_detail_view(view)
+        placeholder = self._media_detail_placeholder("placeholder_from_vod", vod)
+        self._open_media_detail_async(
+            placeholder,
+            lambda: controller.load_from_vod(vod),
+        )
 
     def open_media_detail_from_heat(self, item: object) -> None:
         controller = self._media_detail_controller
@@ -5769,12 +5787,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self.global_search_edit.setText(title)
                 self._start_global_search(heat_source_kind="heat_recommendation")
             return
-        try:
-            view = controller.load_from_heat(item)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self._show_media_detail_view(view)
+        placeholder = self._media_detail_placeholder("placeholder_from_heat", item)
+        self._open_media_detail_async(
+            placeholder,
+            lambda: controller.load_from_heat(item),
+        )
 
     def open_media_detail_from_identity(self, identity: MediaDetailIdentity) -> None:
         controller = self._media_detail_controller
@@ -5783,12 +5800,87 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if title:
                 self._handle_favorite_global_search(title)
             return
-        try:
-            view = controller.load_from_identity(identity)
-        except Exception as exc:
-            self.show_error(str(exc))
+        placeholder = self._media_detail_placeholder("placeholder_from_identity", identity)
+        self._open_media_detail_async(
+            placeholder,
+            lambda: controller.load_from_identity(identity),
+        )
+
+    def open_media_detail_from_related_request(self, payload) -> None:
+        if isinstance(payload, MediaDetailIdentity):
+            self.open_media_detail_from_identity(payload)
             return
-        self._show_media_detail_view(view)
+        if isinstance(payload, MediaDetailLookup):
+            self.open_media_detail_from_lookup(payload)
+            return
+        title = str(getattr(payload, "title", "") or "").strip()
+        if title:
+            self.open_media_detail_from_lookup(MediaDetailLookup(title=title))
+
+    def open_media_detail_from_lookup(self, lookup: MediaDetailLookup) -> None:
+        controller = self._media_detail_controller
+        if controller is None or not hasattr(controller, "load_from_lookup"):
+            title = str(getattr(lookup, "title", "") or "").strip()
+            if title:
+                self._handle_favorite_global_search(title)
+            return
+        placeholder = self._media_detail_placeholder("placeholder_from_lookup", lookup)
+        self._open_media_detail_async(
+            placeholder,
+            lambda: controller.load_from_lookup(lookup),
+        )
+
+    def _media_detail_placeholder(self, method_name: str, payload):
+        controller = self._media_detail_controller
+        method = getattr(controller, method_name, None)
+        if callable(method):
+            try:
+                return method(payload)
+            except Exception:
+                pass
+        title = str(getattr(payload, "vod_name", "") or getattr(payload, "title", "") or "").strip()
+        media_type = str(getattr(payload, "media_type", "") or getattr(payload, "vod_tag", "") or "tv").strip()
+        identity = payload if isinstance(payload, MediaDetailIdentity) else MediaDetailIdentity(
+            media_type=media_type or "tv",
+            tmdb_id="",
+            title=title,
+        )
+        from atv_player.controllers.media_detail_controller import MediaDetailView
+
+        return MediaDetailView(
+            identity=identity,
+            title=str(getattr(identity, "title", "") or title or "媒体详情"),
+            media_type=str(getattr(identity, "media_type", "") or media_type or "tv"),
+            overview="正在加载元数据...",
+        )
+
+    def _open_media_detail_async(self, placeholder, loader) -> None:
+        self._media_detail_load_request_id += 1
+        request_id = self._media_detail_load_request_id
+        self._show_media_detail_view(placeholder)
+        self.media_detail_page.set_status("正在加载元数据...")
+
+        def load() -> None:
+            try:
+                view = loader()
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._media_detail_load_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._media_detail_load_signals.succeeded.emit(request_id, view)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_media_detail_load_succeeded(self, request_id: int, view) -> None:
+        if request_id != self._media_detail_load_request_id:
+            return
+        self.media_detail_page.load_view(view)
+
+    def _handle_media_detail_load_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._media_detail_load_request_id:
+            return
+        self.media_detail_page.set_status(f"元数据加载失败: {message}")
 
     def _show_media_detail_view(self, view) -> None:
         self.nav_tabs.ensure_widget(self.media_detail_page)
