@@ -48,7 +48,9 @@ class TMDBClient:
         self._image_config: dict[str, Any] | None = None
 
     def _request(self, path: str, **params: object) -> dict[str, Any]:
-        query = {"api_key": self._api_key, "language": "zh-CN"}
+        query = {"language": "zh-CN"}
+        if self._api_key:
+            query["api_key"] = self._api_key
         query.update({key: value for key, value in params.items() if value not in ("", None)})
         response = self._client.get(path, params=query)
         response.raise_for_status()

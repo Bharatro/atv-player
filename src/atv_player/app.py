@@ -141,6 +141,13 @@ def _build_tmdb_client(*, api_key: str, proxy_base_url: str = "", proxy_decider=
     return TMDBClient(**kwargs)
 
 
+def _has_tmdb_access(config: AppConfig) -> bool:
+    return bool(
+        str(config.metadata_tmdb_api_key or "").strip()
+        or str(config.metadata_tmdb_proxy_base_url or "").strip()
+    )
+
+
 class _NullPluginManager:
     def load_enabled_plugins(self, drive_detail_loader=None) -> list:
         del drive_detail_loader
@@ -792,7 +799,7 @@ class AppCoordinator(QObject):
                 proxy_decider=proxy_decider,
             )
             providers.append(OfficialDoubanProvider(local_douban_client))
-        if enabled("tmdb") and str(config.metadata_tmdb_api_key or "").strip():
+        if enabled("tmdb") and _has_tmdb_access(config):
             providers.append(
                 TMDBProvider(
                     _build_tmdb_client(
@@ -905,7 +912,7 @@ class AppCoordinator(QObject):
         if "tmdb" in disabled_provider_ids:
             return None
         api_key = str(config.metadata_tmdb_api_key or "").strip()
-        if not api_key:
+        if not _has_tmdb_access(config):
             return None
         proxy_decider = self._build_proxy_decider()
         douban_client = None
@@ -1384,7 +1391,7 @@ class AppCoordinator(QObject):
             }
             if "tmdb" in disabled_metadata_provider_ids:
                 return None
-            if not config.metadata_tmdb_api_key.strip():
+            if not _has_tmdb_access(config):
                 return None
             query = MetadataContext(vod=vod, source_kind=source_kind).to_query()
             if infer_tmdb_media_type(query) == "movie":
@@ -1918,7 +1925,7 @@ class AppCoordinator(QObject):
             tmdb_proxy_base_url=config.metadata_tmdb_proxy_base_url,
         )
         media_detail_controller = None
-        if str(config.metadata_tmdb_api_key or "").strip():
+        if _has_tmdb_access(config):
             media_detail_controller = MediaDetailController(
                 client=_build_tmdb_client(
                     api_key=config.metadata_tmdb_api_key,

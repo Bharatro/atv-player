@@ -7483,10 +7483,13 @@ def test_advanced_settings_dialog_populates_existing_config(qtbot) -> None:
     assert dialog.metadata_enabled_checkbox.isChecked() is False
     assert dialog.douban_cookie_edit.toPlainText() == "bid=demo;"
     assert dialog.tmdb_api_key_edit.text() == "tmdb-demo-key"
+    assert dialog.tmdb_endpoint_combo.currentData() == "__custom__"
     assert dialog.tmdb_proxy_base_url_edit.text() == "https://tmdb.example.com"
     assert dialog.bangumi_access_token_edit.text() == "bgm-demo-token"
     assert dialog.douban_cookie_edit.isEnabled() is False
     assert dialog.tmdb_api_key_edit.isEnabled() is False
+    assert dialog.tmdb_endpoint_combo.isEnabled() is False
+    assert dialog.tmdb_speed_test_button.isEnabled() is False
     assert dialog.tmdb_proxy_base_url_edit.isEnabled() is False
     assert dialog.bangumi_access_token_edit.isEnabled() is False
     assert dialog.douban_cookie_edit.placeholderText() == "填写豆瓣 Cookie；留空时跳过豆瓣官方抓取"
@@ -7500,13 +7503,20 @@ def test_advanced_settings_dialog_toggles_input_enabled_state(qtbot) -> None:
 
     assert dialog.douban_cookie_edit.isEnabled() is True
     assert dialog.tmdb_api_key_edit.isEnabled() is True
-    assert dialog.tmdb_proxy_base_url_edit.isEnabled() is True
+    assert dialog.tmdb_endpoint_combo.isEnabled() is True
+    assert dialog.tmdb_speed_test_button.isEnabled() is True
+    assert dialog.tmdb_proxy_base_url_edit.isEnabled() is False
     assert dialog.bangumi_access_token_edit.isEnabled() is True
+
+    dialog.tmdb_endpoint_combo.setCurrentIndex(dialog.tmdb_endpoint_combo.findData("__custom__"))
+    assert dialog.tmdb_proxy_base_url_edit.isEnabled() is True
 
     dialog.metadata_enabled_checkbox.setChecked(False)
 
     assert dialog.douban_cookie_edit.isEnabled() is False
     assert dialog.tmdb_api_key_edit.isEnabled() is False
+    assert dialog.tmdb_endpoint_combo.isEnabled() is False
+    assert dialog.tmdb_speed_test_button.isEnabled() is False
     assert dialog.tmdb_proxy_base_url_edit.isEnabled() is False
     assert dialog.bangumi_access_token_edit.isEnabled() is False
 
@@ -7514,6 +7524,8 @@ def test_advanced_settings_dialog_toggles_input_enabled_state(qtbot) -> None:
 
     assert dialog.douban_cookie_edit.isEnabled() is True
     assert dialog.tmdb_api_key_edit.isEnabled() is True
+    assert dialog.tmdb_endpoint_combo.isEnabled() is True
+    assert dialog.tmdb_speed_test_button.isEnabled() is True
     assert dialog.tmdb_proxy_base_url_edit.isEnabled() is True
     assert dialog.bangumi_access_token_edit.isEnabled() is True
 
@@ -7529,6 +7541,7 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     dialog.metadata_enabled_checkbox.setChecked(False)
     dialog.douban_cookie_edit.setPlainText(" bid=demo; ll=118282 \n")
     dialog.tmdb_api_key_edit.setText(" tmdb-demo-key ")
+    dialog.tmdb_endpoint_combo.setCurrentIndex(dialog.tmdb_endpoint_combo.findData("__custom__"))
     dialog.tmdb_proxy_base_url_edit.setText(" https://tmdb.example.com/ ")
     dialog.bangumi_access_token_edit.setText(" bgm-demo-token ")
     dialog._save()
@@ -7539,6 +7552,47 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert config.metadata_tmdb_proxy_base_url == "https://tmdb.example.com"
     assert config.metadata_bangumi_access_token == "bgm-demo-token"
     assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_saves_preset_tmdb_proxy(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.tmdb_endpoint_combo.setCurrentIndex(
+        dialog.tmdb_endpoint_combo.findData("https://tmdb.8866033.xyz")
+    )
+    dialog._save()
+
+    assert config.metadata_tmdb_proxy_base_url == "https://tmdb.8866033.xyz"
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_displays_tmdb_speed_results(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog._apply_tmdb_speed_results(
+        [
+            {"label": "官方 API", "value": "", "elapsed_ms": 120, "status": "OK"},
+            {
+                "label": "Worker 8866033.xyz",
+                "value": "https://tmdb.8866033.xyz",
+                "elapsed_ms": 80,
+                "status": "OK",
+            },
+        ]
+    )
+
+    official_index = dialog.tmdb_endpoint_combo.findData("")
+    worker_index = dialog.tmdb_endpoint_combo.findData("https://tmdb.8866033.xyz")
+    assert "120 ms" in dialog.tmdb_endpoint_combo.itemText(official_index)
+    assert "80 ms" in dialog.tmdb_endpoint_combo.itemText(worker_index)
 
 
 def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:

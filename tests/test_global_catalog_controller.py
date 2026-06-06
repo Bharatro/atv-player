@@ -91,6 +91,7 @@ def test_global_catalog_service_uses_tmdb_proxy_base_for_api_and_images() -> Non
     def handler(request: httpx.Request) -> httpx.Response:
         seen_urls.append(str(request.url))
         assert request.url.path == "/3/movie/popular"
+        assert "api_key" not in request.url.params
         return httpx.Response(
             200,
             json={
@@ -107,7 +108,7 @@ def test_global_catalog_service_uses_tmdb_proxy_base_for_api_and_images() -> Non
         )
 
     service = GlobalCatalogService(
-        tmdb_api_key="tmdb-key",
+        tmdb_api_key="",
         tmdb_proxy_base_url="https://tmdb.example.com/3",
         transport=httpx.MockTransport(handler),
     )

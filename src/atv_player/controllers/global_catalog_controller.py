@@ -379,7 +379,9 @@ class GlobalCatalogService:
         return [], 0
 
     def _tmdb_get(self, path: str, params: dict[str, object]) -> dict[str, Any]:
-        query = {"api_key": self._tmdb_api_key, "language": "zh-CN"}
+        query = {"language": "zh-CN"}
+        if self._tmdb_api_key:
+            query["api_key"] = self._tmdb_api_key
         query.update({key: value for key, value in params.items() if value not in ("", None)})
         response = self._client.get(path, params=query)
         response.raise_for_status()

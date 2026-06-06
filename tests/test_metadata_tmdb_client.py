@@ -48,11 +48,12 @@ def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:
     }
 
 
-def test_tmdb_client_uses_proxy_base_url_for_api_and_images() -> None:
+def test_tmdb_client_uses_proxy_base_url_for_api_and_images_without_local_api_key() -> None:
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
+        assert "api_key" not in request.url.params
         if request.url.path == "/3/configuration":
             return httpx.Response(
                 200,
@@ -77,7 +78,7 @@ def test_tmdb_client_uses_proxy_base_url_for_api_and_images() -> None:
         raise AssertionError(request.url.path)
 
     client = TMDBClient(
-        api_key="tmdb-key",
+        api_key="",
         proxy_base_url="https://tmdb.example.com/",
         transport=httpx.MockTransport(handler),
     )

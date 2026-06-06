@@ -4,7 +4,9 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
+from urllib.parse import urlparse, urlunparse
 
+import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -49,6 +51,30 @@ from atv_player.ui.theme import (
 )
 from atv_player.ui.window_chrome import ThemedDialogBase
 
+_TMDB_CUSTOM_ENDPOINT_VALUE = "__custom__"
+_TMDB_ENDPOINT_OPTIONS = [
+    ("官方 API - https://api.themoviedb.org", "", "https://api.themoviedb.org"),
+    ("Worker - https://tmdb.8866033.xyz", "https://tmdb.8866033.xyz", "https://tmdb.8866033.xyz"),
+    ("Worker - https://tmdb.swust-oj.workers.dev", "https://tmdb.swust-oj.workers.dev", "https://tmdb.swust-oj.workers.dev"),
+    ("Worker - https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev"),
+]
+_TMDB_ENDPOINT_PRESET_VALUES = {item[1] for item in _TMDB_ENDPOINT_OPTIONS}
+
+
+def _normalize_tmdb_proxy_base_url(value: object) -> str:
+    text = str(value or "").strip().rstrip("/")
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return text
+    path = parsed.path.rstrip("/")
+    if path == "/3":
+        path = ""
+    elif path.endswith("/3"):
+        path = path[:-2].rstrip("/")
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
 
 def _build_source_checkbox_layout(checkboxes: list[QCheckBox]) -> QGridLayout:
     layout = QGridLayout()
@@ -65,6 +91,7 @@ class _InitialContentSignals(QObject):
     cache_failed = Signal(str)
     logs_loaded = Signal(object)
     logs_failed = Signal(str)
+    tmdb_speed_test_finished = Signal(object)
 
 
 class AdvancedSettingsDialog(ThemedDialogBase):
@@ -123,9 +150,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
-        self.tmdb_api_key_edit.setPlaceholderText("填写 TMDB API Key")
+        self.tmdb_api_key_edit.setPlaceholderText("可选；代理已隐藏 Key 时可留空")
+        self.tmdb_endpoint_combo = FlatComboBox()
+        for label, value, _speed_base_url in _TMDB_ENDPOINT_OPTIONS:
+            self.tmdb_endpoint_combo.addItem(label, value)
+        self.tmdb_endpoint_combo.addItem("自定义代理", _TMDB_CUSTOM_ENDPOINT_VALUE)
+        self.tmdb_speed_test_button = QPushButton("测速")
+        self._tmdb_speed_test_running = False
+        self._last_custom_tmdb_proxy_base_url = ""
         self.tmdb_proxy_base_url_edit = QLineEdit()
-        self.tmdb_proxy_base_url_edit.setPlaceholderText("可选，例如 https://tmdb.example.com")
+        self.tmdb_proxy_base_url_edit.setPlaceholderText("例如 https://tmdb.example.com")
         self.bangumi_access_token_edit = QLineEdit()
         self.bangumi_access_token_edit.setPlaceholderText("可选；留空时使用匿名访问")
         self.ai_group = QGroupBox("AI 智能功能")
@@ -263,6 +297,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._initial_content_signals.cache_failed.connect(self._show_cache_summary_error)
         self._initial_content_signals.logs_loaded.connect(self.log_console.apply_records)
         self._initial_content_signals.logs_failed.connect(self.log_console.set_status_message)
+        self._initial_content_signals.tmdb_speed_test_finished.connect(self._apply_tmdb_speed_results)
         self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
         self.cache_group = QGroupBox("缓存管理")
         self.cache_root_label = QLabel("")
@@ -313,7 +348,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
-        self.tmdb_proxy_base_url_edit.setText(config.metadata_tmdb_proxy_base_url)
+        self._select_tmdb_endpoint(config.metadata_tmdb_proxy_base_url)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
         self.ai_enabled_checkbox.setChecked(config.ai_enabled)
         self.ai_metadata_enrichment_checkbox.setChecked(config.ai_metadata_enrichment_enabled)
@@ -394,6 +429,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         metadata_layout.addRow(self.metadata_enabled_checkbox)
         metadata_layout.addRow(self.episode_title_enhancement_checkbox)
         metadata_layout.addRow("TMDB API Key", self.tmdb_api_key_edit)
+        tmdb_endpoint_row = QHBoxLayout()
+        tmdb_endpoint_row.addWidget(self.tmdb_endpoint_combo, 1)
+        tmdb_endpoint_row.addWidget(self.tmdb_speed_test_button)
+        metadata_layout.addRow("TMDB 接入", tmdb_endpoint_row)
         metadata_layout.addRow("TMDB 代理地址", self.tmdb_proxy_base_url_edit)
         metadata_layout.addRow("Bangumi Access Token", self.bangumi_access_token_edit)
         metadata_layout.addRow("豆瓣 Cookie", self.douban_cookie_edit)
@@ -524,6 +563,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         layout.addLayout(button_row)
 
         self.metadata_enabled_checkbox.toggled.connect(self._sync_metadata_inputs)
+        self.tmdb_endpoint_combo.currentIndexChanged.connect(self._sync_tmdb_endpoint_inputs)
+        self.tmdb_speed_test_button.clicked.connect(self._test_tmdb_endpoints)
         self.network_proxy_mode_combo.currentIndexChanged.connect(self._sync_network_proxy_inputs)
         self.youtube_category_source_combo.currentIndexChanged.connect(self._sync_youtube_category_source_inputs)
         self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
@@ -538,6 +579,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.save_button.clicked.connect(self._save)
         self.cancel_button.clicked.connect(self.reject)
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
+        self._sync_tmdb_endpoint_inputs()
         self._sync_network_proxy_inputs()
         self._apply_theme()
 
@@ -592,6 +634,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         for combo in (
             self.theme_mode_combo,
             self.home_mode_combo,
+            self.tmdb_endpoint_combo,
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
             self.youtube_max_height_combo,
@@ -768,13 +811,106 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             f"{cache_management.format_cache_size(cleanup_result.removed_size_bytes)}。",
         )
 
+    def _select_tmdb_endpoint(self, value: object) -> None:
+        normalized = _normalize_tmdb_proxy_base_url(value)
+        if normalized in _TMDB_ENDPOINT_PRESET_VALUES:
+            self.tmdb_endpoint_combo.setCurrentIndex(max(0, self.tmdb_endpoint_combo.findData(normalized)))
+            self.tmdb_proxy_base_url_edit.setText(normalized)
+            return
+        self._last_custom_tmdb_proxy_base_url = normalized
+        self.tmdb_endpoint_combo.setCurrentIndex(
+            max(0, self.tmdb_endpoint_combo.findData(_TMDB_CUSTOM_ENDPOINT_VALUE))
+        )
+        self.tmdb_proxy_base_url_edit.setText(normalized)
+
     def _sync_metadata_inputs(self, enabled: bool) -> None:
         self.episode_title_enhancement_checkbox.setEnabled(enabled)
         self.douban_cookie_edit.setEnabled(enabled)
         self.tmdb_api_key_edit.setEnabled(enabled)
-        self.tmdb_proxy_base_url_edit.setEnabled(enabled)
+        self.tmdb_endpoint_combo.setEnabled(enabled)
+        self.tmdb_speed_test_button.setEnabled(enabled and not self._tmdb_speed_test_running)
+        self._sync_tmdb_endpoint_inputs()
         self.bangumi_access_token_edit.setEnabled(enabled)
         self.metadata_source_group.setEnabled(enabled)
+
+    def _sync_tmdb_endpoint_inputs(self) -> None:
+        enabled = self.metadata_enabled_checkbox.isChecked()
+        data = str(self.tmdb_endpoint_combo.currentData() or "")
+        custom = data == _TMDB_CUSTOM_ENDPOINT_VALUE
+        if custom:
+            if not self.tmdb_proxy_base_url_edit.text().strip() and self._last_custom_tmdb_proxy_base_url:
+                self.tmdb_proxy_base_url_edit.setText(self._last_custom_tmdb_proxy_base_url)
+            self.tmdb_proxy_base_url_edit.setEnabled(enabled)
+            return
+        current_custom = _normalize_tmdb_proxy_base_url(self.tmdb_proxy_base_url_edit.text())
+        if current_custom and current_custom not in _TMDB_ENDPOINT_PRESET_VALUES:
+            self._last_custom_tmdb_proxy_base_url = current_custom
+        self.tmdb_proxy_base_url_edit.setText(data)
+        self.tmdb_proxy_base_url_edit.setEnabled(False)
+
+    def _current_tmdb_proxy_base_url(self) -> str:
+        data = str(self.tmdb_endpoint_combo.currentData() or "")
+        if data == _TMDB_CUSTOM_ENDPOINT_VALUE:
+            return _normalize_tmdb_proxy_base_url(self.tmdb_proxy_base_url_edit.text())
+        return data
+
+    def _test_tmdb_endpoints(self) -> None:
+        if self._tmdb_speed_test_running:
+            return
+        self._tmdb_speed_test_running = True
+        self.tmdb_speed_test_button.setEnabled(False)
+        self.tmdb_speed_test_button.setText("测速中...")
+        api_key = self.tmdb_api_key_edit.text().strip()
+        threading.Thread(
+            target=self._test_tmdb_endpoints_in_background,
+            args=(api_key,),
+            daemon=True,
+        ).start()
+
+    def _test_tmdb_endpoints_in_background(self, api_key: str) -> None:
+        results: list[dict[str, object]] = []
+        for label, value, speed_base_url in _TMDB_ENDPOINT_OPTIONS:
+            started_at = time.perf_counter()
+            status_text = ""
+            elapsed_ms = 0
+            try:
+                params = {"language": "zh-CN"}
+                if api_key:
+                    params["api_key"] = api_key
+                response = httpx.get(
+                    f"{speed_base_url.rstrip('/')}/3/configuration",
+                    params=params,
+                    timeout=5.0,
+                )
+                elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                status_text = "OK" if response.status_code < 500 else str(response.status_code)
+            except Exception as exc:
+                elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                status_text = f"失败: {exc.__class__.__name__}"
+            results.append(
+                {
+                    "label": label,
+                    "value": value,
+                    "elapsed_ms": elapsed_ms,
+                    "status": status_text,
+                }
+            )
+        self._emit_initial_content_signal(self._initial_content_signals.tmdb_speed_test_finished, results)
+
+    def _apply_tmdb_speed_results(self, results: list[dict[str, object]]) -> None:
+        self._tmdb_speed_test_running = False
+        self.tmdb_speed_test_button.setText("测速")
+        for result in results:
+            value = str(result.get("value") or "")
+            index = self.tmdb_endpoint_combo.findData(value)
+            if index < 0:
+                continue
+            label = str(result.get("label") or self.tmdb_endpoint_combo.itemText(index))
+            elapsed_ms = int(result.get("elapsed_ms") or 0)
+            status = str(result.get("status") or "")
+            suffix = f"{elapsed_ms} ms" if status == "OK" else f"{elapsed_ms} ms, {status}"
+            self.tmdb_endpoint_combo.setItemText(index, f"{label} ({suffix})")
+        self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
 
     def _sync_network_proxy_inputs(self) -> None:
         manual_mode = self.network_proxy_mode_combo.currentData() in {"http", "https", "socks5"}
@@ -1149,7 +1285,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         ]
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
-        self._config.metadata_tmdb_proxy_base_url = self.tmdb_proxy_base_url_edit.text().strip().rstrip("/")
+        self._config.metadata_tmdb_proxy_base_url = self._current_tmdb_proxy_base_url()
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
         (
             self._config.ai_enabled,

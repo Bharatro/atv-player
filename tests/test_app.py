@@ -8661,6 +8661,58 @@ def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypat
     assert "tmdb_client" in captured
 
 
+def test_app_coordinator_enables_tmdb_provider_with_proxy_only(monkeypatch) -> None:
+    config = AppConfig(
+        metadata_tmdb_api_key="",
+        metadata_tmdb_proxy_base_url="https://tmdb.example.com",
+        disabled_metadata_provider_ids=[
+            "plugin",
+            "bangumi",
+            "bilibili",
+            "iqiyi",
+            "tencent",
+            "youku",
+            "official_douban",
+            "sohu",
+            "local_douban",
+            "remote_douban",
+        ],
+    )
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return config
+
+    class RecordingTMDBClient:
+        def __init__(self, api_key: str, proxy_base_url: str = "", proxy_decider=None) -> None:
+            del proxy_decider
+            captured["api_key"] = api_key
+            captured["proxy_base_url"] = proxy_base_url
+
+    class RecordingTMDBProvider:
+        name = "tmdb"
+
+        def __init__(self, client) -> None:
+            captured["provider_client"] = client
+
+    captured: dict[str, object] = {}
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
+    monkeypatch.setattr(app_module, "TMDBProvider", RecordingTMDBProvider, raising=False)
+
+    providers = coordinator._build_metadata_providers(
+        api_client=object(),
+        config=config,
+        source_kind="browse",
+        raw_detail=None,
+    )
+
+    assert [provider.name for provider in providers] == ["tmdb"]
+    assert captured["api_key"] == ""
+    assert captured["proxy_base_url"] == "https://tmdb.example.com"
+    assert "provider_client" in captured
+
+
 def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_path) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:
