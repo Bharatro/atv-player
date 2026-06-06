@@ -175,6 +175,7 @@ def _match_media_kind(match: MetadataMatch) -> str:
         raw.get("categories"),
         raw.get("baseTags"),
         raw.get("category"),
+        raw.get("type"),
     )
 
 
@@ -510,6 +511,9 @@ class MetadataScrapeService:
         for provider in providers:
             cached_matches = cached_matches_by_provider.get(id(provider))
             if cached_matches is not None:
+                cached_matches = [
+                    match for match in cached_matches if self._is_manual_search_match_compatible(query, match)
+                ]
                 groups.append(
                     MetadataScrapeGroup(
                         provider=provider.name,
@@ -529,11 +533,12 @@ class MetadataScrapeService:
                     )
                 )
                 continue
+            matches = [match for match in result.matches if self._is_manual_search_match_compatible(query, match)]
             groups.append(
                 MetadataScrapeGroup(
                     provider=provider.name,
                     provider_label=self._provider_label(provider.name),
-                    items=[self._candidate_from_match(match) for match in result.matches],
+                    items=[self._candidate_from_match(match) for match in matches],
                 )
             )
         return groups

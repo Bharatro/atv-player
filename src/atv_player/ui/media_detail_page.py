@@ -140,6 +140,9 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
     def set_status(self, text: str) -> None:
         self.status_label.setText(str(text or ""))
 
+    def set_refresh_metadata_busy(self, busy: bool) -> None:
+        self.refresh_metadata_button.setEnabled(not bool(busy))
+
     def _build_layout(self) -> None:
         for button in (
             self.back_button,

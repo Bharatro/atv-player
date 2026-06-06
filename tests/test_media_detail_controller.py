@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from atv_player.following_models import FollowingMetadataBundle
+from atv_player.following_models import FollowingMetadataSourceSnapshot
 from atv_player.controllers.media_detail_controller import MediaDetailController
 from atv_player.controllers.media_detail_controller import MediaDetailIdentity
 from atv_player.controllers.media_detail_controller import MediaDetailLookup
@@ -112,6 +113,7 @@ class FakeMetadataSearchService:
     def __init__(self) -> None:
         self.queries = []
         self.detail_candidates = []
+        self.reset_calls = []
 
     def search_following(self, query):
         self.queries.append(query)
@@ -143,6 +145,9 @@ class FakeMetadataSearchService:
             genres=["剧情"],
             detail_fields=[{"label": "豆瓣ID", "value": candidate.provider_id}],
         )
+
+    def reset(self, query, **kwargs):
+        self.reset_calls.append((query, kwargs))
 
 
 class FakeDualDoubanMetadataSearchService:
@@ -196,6 +201,34 @@ class FakeDualDoubanMetadataSearchService:
             genres=["剧情"],
             douban_id=129,
         )
+
+
+class FakeIncompatibleMetadataSearchService:
+    def __init__(self, provider: str, record: MetadataRecord) -> None:
+        self.provider = provider
+        self.record = record
+        self.detail_candidates = []
+
+    def search_following(self, query):
+        return [
+            MetadataScrapeGroup(
+                provider=self.provider,
+                provider_label=self.provider,
+                items=[
+                    MetadataScrapeCandidate(
+                        provider=self.provider,
+                        provider_label=self.provider,
+                        provider_id=self.record.provider_id,
+                        title=self.record.title or query.title,
+                        year=self.record.year,
+                    )
+                ],
+            )
+        ]
+
+    def detail_record_full(self, candidate):
+        self.detail_candidates.append(candidate)
+        return self.record
 
 
 def test_media_detail_controller_maps_tv_detail_from_vod() -> None:
@@ -365,6 +398,51 @@ def test_media_detail_controller_uses_local_douban_only_when_official_fails() ->
     ]
 
 
+def test_media_detail_controller_rejects_incompatible_bangumi_anime_for_live_action_tv() -> None:
+    service = FakeIncompatibleMetadataSearchService(
+        "bangumi",
+        MetadataRecord(
+            provider="bangumi",
+            provider_id="subject:175445",
+            title="主角是僵僵",
+            year="2024",
+            genres=["中国", "WEB", "漫画改", "国产", "动画"],
+            detail_fields=[{"label": "Bangumi ID", "value": "175445"}],
+        ),
+    )
+    controller = MediaDetailController(client=FakeTMDBClient(), metadata_search_service=service)
+
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏"))
+
+    assert service.detail_candidates
+    assert view.metadata_bundle is not None
+    assert "bangumi" not in view.metadata_bundle.source_snapshots
+
+
+def test_media_detail_controller_rejects_incompatible_migu_tv_for_movie() -> None:
+    service = FakeIncompatibleMetadataSearchService(
+        "migu",
+        MetadataRecord(
+            provider="migu",
+            provider_id="944307802",
+            title="错误剧集",
+            year="2024",
+            genres=["电视剧"],
+            detail_fields=[
+                {"label": "类型", "value": "电视剧"},
+                {"label": "播放链接", "value": "https://www.miguvideo.com/p/detail/944307802"},
+            ],
+        ),
+    )
+    controller = MediaDetailController(client=FakeTMDBClient(), metadata_search_service=service)
+
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:movie:550", vod_name="科幻电影"))
+
+    assert service.detail_candidates
+    assert view.metadata_bundle is not None
+    assert "migu" not in view.metadata_bundle.source_snapshots
+
+
 def test_media_detail_controller_searches_when_heat_item_has_no_tmdb_id() -> None:
     client = FakeTMDBClient()
     controller = MediaDetailController(client=client)
@@ -387,6 +465,31 @@ def test_media_detail_controller_searches_when_lookup_has_no_tmdb_id() -> None:
     assert view.identity.media_type == "tv"
     assert client.tv_search_calls == [("Gen V", "2023")]
     assert client.tv_detail_calls == [("1399", 1)]
+
+
+def test_media_detail_controller_refresh_resets_search_and_detail_caches() -> None:
+    service = FakeMetadataSearchService()
+    controller = MediaDetailController(client=FakeTMDBClient(), metadata_search_service=service)
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏"))
+    assert view.metadata_bundle is not None
+    view.metadata_bundle.source_snapshots["migu"] = FollowingMetadataSourceSnapshot(
+        source_key="migu",
+        provider="migu",
+        provider_label="咪咕",
+        provider_id="944307802",
+    )
+
+    refreshed = controller.refresh(view)
+
+    assert refreshed.identity.tmdb_id == "1399"
+    assert service.reset_calls
+    query, kwargs = service.reset_calls[0]
+    assert query.title == "权力的游戏"
+    assert query.source_kind == "tmdb"
+    assert query.vod_id == "tv:1399"
+    assert kwargs["bound_provider"] == "tmdb"
+    assert kwargs["bound_provider_id"] == "tv:1399:season:1"
+    assert ("migu", "944307802") in kwargs["detail_keys"]
 
 
 def test_media_detail_controller_builds_following_candidate() -> None:

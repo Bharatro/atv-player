@@ -172,6 +172,46 @@ def test_metadata_scrape_service_search_following_reuses_cached_results_without_
     assert provider.search_calls == []
 
 
+def test_metadata_scrape_service_search_following_filters_cached_incompatible_bangumi(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    cached_match = MetadataMatch(
+        provider="bangumi",
+        provider_id="subject:175445",
+        title="主角是僵僵",
+        year="2024",
+        raw={"categories": ["动漫"]},
+    )
+    cache.save_search("bangumi", "某真人剧", "2026", [cached_match])
+    provider = FakeProvider("bangumi", matches=[])
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    groups = service.search_following(MetadataQuery(title="某真人剧", year="2026", category_name="剧集"))
+
+    assert groups == [MetadataScrapeGroup(provider="bangumi", provider_label="Bangumi", items=[])]
+    assert provider.search_calls == []
+
+
+def test_metadata_scrape_service_search_following_filters_incompatible_migu_tv_for_movie(tmp_path: Path) -> None:
+    cache = MetadataCache(tmp_path)
+    provider = FakeProvider(
+        "migu",
+        matches=[
+            MetadataMatch(
+                provider="migu",
+                provider_id="944307802",
+                title="错误剧集",
+                year="2024",
+                raw={"type": "电视剧"},
+            )
+        ],
+    )
+    service = MetadataScrapeService(cache=cache, providers=[provider])
+
+    groups = service.search_following(MetadataQuery(title="科幻电影", year="2026", category_name="电影"))
+
+    assert groups == [MetadataScrapeGroup(provider="migu", provider_label="migu", items=[])]
+
+
 def test_metadata_scrape_service_uses_ai_refined_query_before_original(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

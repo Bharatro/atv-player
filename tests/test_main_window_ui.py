@@ -1902,6 +1902,7 @@ class FakeMediaDetailController:
         return _media_detail_view(MediaDetailIdentity(media_type=lookup.media_type or "tv", tmdb_id="100", title=lookup.title))
 
     def refresh(self, view: MediaDetailView) -> MediaDetailView:
+        time.sleep(0.02)
         self.refresh_calls.append(view)
         return _media_detail_view(view.identity, overview="刷新后的简介")
 
@@ -2045,7 +2046,11 @@ def test_media_detail_actions_search_follow_refresh_and_related(qtbot, monkeypat
     assert following.added_candidates[0].title == "权力的游戏"
 
     window.media_detail_page.refresh_metadata_requested.emit(view)
-    assert detail_controller.refresh_calls == [view]
+    assert window.media_detail_page.status_label.text() == "正在更新元数据..."
+    assert window.media_detail_page.refresh_metadata_button.isEnabled() is False
+    qtbot.waitUntil(lambda: detail_controller.refresh_calls == [view], timeout=1000)
+    qtbot.waitUntil(lambda: "刷新后的简介" in window.media_detail_page.overview_label.text(), timeout=1000)
+    assert window.media_detail_page.refresh_metadata_button.isEnabled() is True
     assert "刷新后的简介" in window.media_detail_page.overview_label.text()
 
     related_identity = MediaDetailIdentity(media_type="tv", tmdb_id="1412", title="绿箭侠")

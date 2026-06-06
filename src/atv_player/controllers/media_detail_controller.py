@@ -186,6 +186,7 @@ class MediaDetailController:
         return self._placeholder_view(identity, title=identity.title)
 
     def refresh(self, view: MediaDetailView) -> MediaDetailView:
+        self._reset_metadata_cache_for_view(view)
         return self.load_from_identity(view.identity)
 
     def load_season(self, view: MediaDetailView, *, season_number: int) -> MediaDetailView:
@@ -571,10 +572,59 @@ class MediaDetailController:
         for provider, items in groups_by_provider.items():
             if provider in {"official_douban", "local_douban", "douban"}:
                 continue
-            provider_record = self._load_first_provider_record(service, items)
+            provider_record = self._load_first_provider_record(
+                service,
+                items,
+                base_record=tmdb_record,
+            )
             if provider_record is not None:
                 records[provider] = provider_record
         return records
+
+    def _reset_metadata_cache_for_view(self, view: MediaDetailView) -> None:
+        service = self._metadata_search_service
+        reset = getattr(service, "reset", None)
+        if not callable(reset):
+            return
+        media_type = self._normalize_media_type(view.media_type)
+        query = MetadataQuery(
+            title=view.title,
+            year=view.year,
+            source_kind="tmdb",
+            vod_id=f"{media_type}:{view.identity.tmdb_id}",
+            category_name="电影" if media_type == "movie" else "剧集",
+        )
+        detail_keys = self._metadata_detail_keys_from_view(view)
+        try:
+            reset(
+                query,
+                bound_provider="tmdb",
+                bound_provider_id=self._tmdb_provider_id(
+                    media_type=media_type,
+                    tmdb_id=str(view.identity.tmdb_id or "").strip(),
+                ),
+                detail_keys=detail_keys,
+            )
+        except Exception:
+            return
+
+    def _metadata_detail_keys_from_view(self, view: MediaDetailView) -> list[tuple[str, str]]:
+        bundle = view.metadata_bundle
+        if bundle is None:
+            return []
+        keys: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for source_key, snapshot in dict(bundle.source_snapshots or {}).items():
+            provider = str(getattr(snapshot, "provider", "") or source_key or "").strip()
+            provider_id = str(getattr(snapshot, "provider_id", "") or "").strip()
+            if not provider or not provider_id:
+                continue
+            key = (provider, provider_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+        return keys
 
     def _load_douban_provider_record(
         self,
@@ -596,11 +646,15 @@ class MediaDetailController:
         self,
         service,
         items: list[object],
+        *,
+        base_record: MetadataRecord | None = None,
     ) -> tuple[MetadataRecord, float] | None:
         for candidate in items:
             try:
                 record = service.detail_record_full(candidate)
             except Exception:
+                continue
+            if not _metadata_record_media_kind_compatible(base_record, record):
                 continue
             confidence = float(getattr(candidate, "confidence", 1.0) or 1.0)
             return record, confidence
@@ -850,3 +904,81 @@ class MediaDetailController:
             posters=[view.poster_url] if view.poster_url else [],
             backdrops=[view.backdrop_url] if view.backdrop_url else [],
         )
+
+
+_ANIME_MEDIA_MARKERS = ("动漫", "动画", "番剧", "anime", "acg", "国创", "声优")
+_LIVE_ACTION_MEDIA_MARKERS = ("电视剧", "剧集", "连续剧", "真人", "短剧")
+_MOVIE_MEDIA_MARKERS = ("电影", "影片", "movie")
+
+
+def _metadata_record_media_kind_compatible(
+    base_record: MetadataRecord | None,
+    candidate_record: MetadataRecord,
+) -> bool:
+    base_kind = _metadata_record_media_kind(base_record)
+    candidate_kind = _metadata_record_media_kind(candidate_record)
+    if not base_kind or not candidate_kind:
+        return True
+    return base_kind == candidate_kind
+
+
+def _metadata_record_media_kind(record: MetadataRecord | None) -> str:
+    if record is None:
+        return ""
+    provider = str(getattr(record, "provider", "") or "").strip()
+    provider_id = str(getattr(record, "provider_id", "") or "").strip()
+    if provider == "bangumi":
+        return "anime"
+    if provider == "tmdb":
+        if provider_id.startswith("movie:"):
+            return "movie"
+        if provider_id.startswith("tv:"):
+            if _metadata_values_contain_any(getattr(record, "genres", []), _ANIME_MEDIA_MARKERS):
+                return "anime"
+            return "live_action"
+    return _classify_metadata_media_kind(
+        getattr(record, "genres", []),
+        getattr(record, "detail_fields", []),
+        getattr(record, "title", ""),
+        getattr(record, "original_title", ""),
+    )
+
+
+def _classify_metadata_media_kind(*values: object) -> str:
+    tokens = " ".join(
+        str(token or "").strip().lower()
+        for value in values
+        for token in _iter_metadata_kind_tokens(value)
+        if str(token or "").strip()
+    )
+    if not tokens:
+        return ""
+    if any(marker in tokens for marker in _ANIME_MEDIA_MARKERS):
+        return "anime"
+    if any(marker in tokens for marker in _MOVIE_MEDIA_MARKERS):
+        return "movie"
+    if any(marker in tokens for marker in _LIVE_ACTION_MEDIA_MARKERS):
+        return "live_action"
+    return ""
+
+
+def _metadata_values_contain_any(value: object, markers: tuple[str, ...]) -> bool:
+    text = " ".join(str(item or "").strip().lower() for item in _iter_metadata_kind_tokens(value))
+    return any(marker in text for marker in markers)
+
+
+def _iter_metadata_kind_tokens(value: object) -> list[str]:
+    if isinstance(value, dict):
+        values: list[str] = []
+        for key in ("label", "value"):
+            values.extend(_iter_metadata_kind_tokens(value.get(key)))
+        return values
+    if isinstance(value, list):
+        values = []
+        for item in value:
+            values.extend(_iter_metadata_kind_tokens(item))
+        return values
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[,/|、，·\s]+", text) if part.strip()]

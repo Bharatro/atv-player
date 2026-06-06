@@ -5875,11 +5875,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _handle_media_detail_load_succeeded(self, request_id: int, view) -> None:
         if request_id != self._media_detail_load_request_id:
             return
+        self.media_detail_page.set_refresh_metadata_busy(False)
         self.media_detail_page.load_view(view)
 
     def _handle_media_detail_load_failed(self, request_id: int, message: str) -> None:
         if request_id != self._media_detail_load_request_id:
             return
+        self.media_detail_page.set_refresh_metadata_busy(False)
         self.media_detail_page.set_status(f"元数据加载失败: {message}")
 
     def _show_media_detail_view(self, view) -> None:
@@ -5933,12 +5935,22 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if controller is None or not hasattr(controller, "refresh"):
             self.media_detail_page.set_status("未配置媒体详情数据源")
             return
-        try:
-            refreshed = controller.refresh(view)
-        except Exception as exc:
-            self.media_detail_page.set_status(str(exc))
-            return
-        self.media_detail_page.load_view(refreshed)
+        self._media_detail_load_request_id += 1
+        request_id = self._media_detail_load_request_id
+        self.media_detail_page.set_status("正在更新元数据...")
+        self.media_detail_page.set_refresh_metadata_busy(True)
+
+        def refresh() -> None:
+            try:
+                refreshed = controller.refresh(view)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._media_detail_load_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._media_detail_load_signals.succeeded.emit(request_id, refreshed)
+
+        threading.Thread(target=refresh, daemon=True).start()
 
     def load_media_detail_season(self, view, season_number: int) -> None:
         controller = self._media_detail_controller
