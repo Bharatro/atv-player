@@ -8954,7 +8954,6 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: type("P", (), {"name": "tencent"})(), raising=False)
     monkeypatch.setattr(app_module, "YoukuMetadataProvider", lambda: type("P", (), {"name": "youku"})(), raising=False)
     monkeypatch.setattr(app_module, "SohuMetadataProvider", lambda: type("P", (), {"name": "sohu"})(), raising=False)
-    monkeypatch.setattr(app_module, "MiguMetadataProvider", lambda: type("P", (), {"name": "migu"})(), raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanClient", RecordingLocalDoubanClient)
     monkeypatch.setattr(app_module, "OfficialDoubanProvider", RecordingLocalDoubanProvider, raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", RecordingTMDBClient, raising=False)
@@ -8975,7 +8974,6 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
         "tencent",
         "youku",
         "sohu",
-        "migu",
         "remote_douban",
     ]
     assert bangumi_tokens == [""]
@@ -9011,7 +9009,6 @@ def test_app_coordinator_scrape_service_excludes_disabled_metadata_sources(monke
     monkeypatch.setattr(app_module, "TencentMetadataProvider", lambda: RecordingProvider("tencent"), raising=False)
     monkeypatch.setattr(app_module, "YoukuMetadataProvider", lambda: RecordingProvider("youku"), raising=False)
     monkeypatch.setattr(app_module, "SohuMetadataProvider", lambda: RecordingProvider("sohu"), raising=False)
-    monkeypatch.setattr(app_module, "MiguMetadataProvider", lambda: RecordingProvider("migu"), raising=False)
     monkeypatch.setattr(app_module, "LocalDoubanClient", lambda cookie="", proxy_decider=None: object(), raising=False)
     monkeypatch.setattr(app_module, "OfficialDoubanProvider", lambda client: RecordingProvider("official_douban"), raising=False)
     monkeypatch.setattr(app_module, "TMDBClient", lambda api_key="", proxy_decider=None: object(), raising=False)
