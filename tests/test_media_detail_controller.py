@@ -17,6 +17,7 @@ class FakeTMDBClient:
 
     def get_tv_detail_with_season(self, tmdb_id: str, *, season_number: int | None = None):
         self.tv_detail_calls.append((str(tmdb_id), season_number))
+        resolved_season = season_number or 1
         return {
             "id": 1399,
             "name": "权力的游戏",
@@ -30,12 +31,12 @@ class FakeTMDBClient:
                 {"season_number": 1, "name": "第 1 季", "episode_count": 10},
                 {"season_number": 2, "name": "第 2 季", "episode_count": 10},
             ],
-            "season/1": {
+            f"season/{resolved_season}": {
                 "episodes": [
                     {
-                        "season_number": 1,
+                        "season_number": resolved_season,
                         "episode_number": 1,
-                        "name": "凛冬将至",
+                        "name": "凛冬将至" if resolved_season == 1 else f"S{resolved_season}E1",
                         "air_date": "2011-04-17",
                         "overview": "故事开始。",
                         "still_url": "https://image.example/ep1.jpg",
@@ -113,6 +114,64 @@ def test_media_detail_controller_maps_tv_detail_from_vod() -> None:
     assert view.related[0].identity == MediaDetailIdentity(media_type="tv", tmdb_id="1412", title="绿箭侠")
     assert client.tv_detail_calls == [("1399", 1)]
     assert client.recommendation_calls == [("tv", "1399")]
+
+
+def test_media_detail_controller_builds_image_urls_from_tmdb_paths() -> None:
+    class PathOnlyTMDBClient(FakeTMDBClient):
+        def get_tv_detail_with_season(self, tmdb_id: str, *, season_number: int | None = None):
+            raw = super().get_tv_detail_with_season(tmdb_id, season_number=season_number)
+            raw.pop("poster_url", None)
+            raw.pop("backdrop_url", None)
+            raw["poster_path"] = "/poster-path.jpg"
+            raw["backdrop_path"] = "/backdrop-path.jpg"
+            return raw
+
+    controller = MediaDetailController(client=PathOnlyTMDBClient())
+
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏"))
+
+    assert view.poster_url == "https://image.tmdb.org/t/p/w500/poster-path.jpg"
+    assert view.backdrop_url == "https://image.tmdb.org/t/p/w780/backdrop-path.jpg"
+
+
+def test_media_detail_controller_loads_tv_detail_for_selected_season() -> None:
+    client = FakeTMDBClient()
+    controller = MediaDetailController(client=client)
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:tv:1399", vod_name="权力的游戏"))
+
+    selected = controller.load_season(view, season_number=2)
+
+    assert client.tv_detail_calls == [("1399", 1), ("1399", 2)]
+    assert selected.identity == view.identity
+    assert selected.episodes[0].season_number == 2
+    assert selected.episodes[0].title == "S2E1"
+
+
+def test_media_detail_controller_uses_credits_fallback_for_tv_people() -> None:
+    class CreditsOnlyTMDBClient(FakeTMDBClient):
+        def get_tv_detail_with_season(self, tmdb_id: str, *, season_number: int | None = None):
+            raw = super().get_tv_detail_with_season(tmdb_id, season_number=season_number)
+            raw.pop("aggregate_credits", None)
+            raw["credits"] = {
+                "cast": [
+                    {
+                        "name": "Pedro Pascal",
+                        "character": "Joel Miller",
+                        "profile_path": "/pedro.jpg",
+                    }
+                ],
+                "crew": [{"name": "Craig Mazin", "job": "Creator"}],
+            }
+            return raw
+
+    controller = MediaDetailController(client=CreditsOnlyTMDBClient())
+
+    view = controller.load_from_vod(VodItem(vod_id="tmdb:tv:1399", vod_name="最后生还者"))
+
+    assert [(person.name, person.role) for person in view.people] == [
+        ("Pedro Pascal", "Joel Miller"),
+        ("Craig Mazin", "Creator"),
+    ]
 
 
 def test_media_detail_controller_loads_heat_recommendation_from_media_key() -> None:

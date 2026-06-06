@@ -103,10 +103,26 @@ class MediaDetailController:
             raw = self._client.get_movie_detail(tmdb_id)
         else:
             raw = self._client.get_tv_detail_with_season(tmdb_id, season_number=1)
-        return self._map_detail(raw, identity=MediaDetailIdentity(media_type=media_type, tmdb_id=tmdb_id, title=identity.title))
+        return self._map_detail(
+            raw,
+            identity=MediaDetailIdentity(media_type=media_type, tmdb_id=tmdb_id, title=identity.title),
+            season_number=1,
+        )
 
     def refresh(self, view: MediaDetailView) -> MediaDetailView:
         return self.load_from_identity(view.identity)
+
+    def load_season(self, view: MediaDetailView, *, season_number: int) -> MediaDetailView:
+        if view.media_type == "movie":
+            return view
+        normalized_season = max(1, self._int_value(season_number))
+        identity = MediaDetailIdentity(
+            media_type=self._normalize_media_type(view.identity.media_type),
+            tmdb_id=str(view.identity.tmdb_id or "").strip(),
+            title=view.identity.title or view.title,
+        )
+        raw = self._client.get_tv_detail_with_season(identity.tmdb_id, season_number=normalized_season)
+        return self._map_detail(raw, identity=identity, season_number=normalized_season)
 
     def candidate_for_following(self, view: MediaDetailView) -> MetadataScrapeCandidate:
         provider_id = f"{view.media_type}:{view.identity.tmdb_id}"
@@ -194,7 +210,13 @@ class MediaDetailController:
                     return MediaDetailIdentity(media_type=current_type, tmdb_id=tmdb_id, title=result_title)
         return None
 
-    def _map_detail(self, raw: dict[str, Any], *, identity: MediaDetailIdentity) -> MediaDetailView:
+    def _map_detail(
+        self,
+        raw: dict[str, Any],
+        *,
+        identity: MediaDetailIdentity,
+        season_number: int = 1,
+    ) -> MediaDetailView:
         media_type = self._normalize_media_type(identity.media_type)
         title = str(raw.get("title") or raw.get("name") or identity.title).strip()
         release_date = str(raw.get("release_date") or raw.get("first_air_date") or "").strip()
@@ -207,26 +229,33 @@ class MediaDetailController:
             year=release_date[:4],
             release_date=release_date,
             overview=str(raw.get("overview") or "").strip(),
-            poster_url=str(raw.get("poster_url") or "").strip(),
-            backdrop_url=str(raw.get("backdrop_url") or "").strip(),
+            poster_url=self._image_url(raw.get("poster_url") or raw.get("poster_path"), kind="poster"),
+            backdrop_url=self._image_url(raw.get("backdrop_url") or raw.get("backdrop_path"), kind="backdrop"),
             rating=self._rating_text(raw.get("vote_average")),
             genres=[
                 str(genre.get("name") or "").strip()
                 for genre in list(raw.get("genres") or [])
                 if isinstance(genre, dict) and str(genre.get("name") or "").strip()
             ],
-            seasons=[dict(season) for season in list(raw.get("seasons") or []) if isinstance(season, dict)],
+            seasons=[self._map_season(season) for season in list(raw.get("seasons") or []) if isinstance(season, dict)],
             raw=dict(raw),
         )
-        view.episodes = self._map_episodes(raw, media_type=media_type)
+        view.episodes = self._map_episodes(raw, media_type=media_type, season_number=season_number)
         view.people = self._map_people(raw, media_type=media_type)
         view.related = self._map_related(media_type=media_type, tmdb_id=tmdb_id)
         return view
 
-    def _map_episodes(self, raw: dict[str, Any], *, media_type: str) -> list[MediaDetailEpisode]:
+    def _map_episodes(
+        self,
+        raw: dict[str, Any],
+        *,
+        media_type: str,
+        season_number: int = 1,
+    ) -> list[MediaDetailEpisode]:
         if media_type == "movie":
             return []
-        season_payload = raw.get("season/1") if isinstance(raw.get("season/1"), dict) else {}
+        season_key = f"season/{max(1, self._int_value(season_number))}"
+        season_payload = raw.get(season_key) if isinstance(raw.get(season_key), dict) else {}
         episodes = []
         for episode in list(season_payload.get("episodes") or []):
             if not isinstance(episode, dict):
@@ -247,8 +276,7 @@ class MediaDetailController:
         return episodes
 
     def _map_people(self, raw: dict[str, Any], *, media_type: str) -> list[MediaDetailPerson]:
-        credits_key = "credits" if media_type == "movie" else "aggregate_credits"
-        credits = raw.get(credits_key) if isinstance(raw.get(credits_key), dict) else {}
+        credits = self._credits_payload(raw, media_type=media_type)
         people: list[MediaDetailPerson] = []
         for person in list(credits.get("cast") or [])[:12]:
             if not isinstance(person, dict):
@@ -287,6 +315,14 @@ class MediaDetailController:
                 )
             )
         return people
+
+    def _credits_payload(self, raw: dict[str, Any], *, media_type: str) -> dict[str, Any]:
+        keys = ["credits"] if media_type == "movie" else ["aggregate_credits", "credits"]
+        for key in keys:
+            payload = raw.get(key)
+            if isinstance(payload, dict):
+                return payload
+        return {}
 
     def _map_related(self, *, media_type: str, tmdb_id: str) -> list[MediaDetailRecommendation]:
         related: list[MediaDetailRecommendation] = []
@@ -336,3 +372,20 @@ class MediaDetailController:
         if path.startswith("http://") or path.startswith("https://"):
             return path
         return f"https://image.tmdb.org/t/p/w185{path}"
+
+    @staticmethod
+    def _image_url(value: object, *, kind: str) -> str:
+        path = str(value or "").strip()
+        if not path:
+            return ""
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        size = "w780" if kind == "backdrop" else "w500"
+        return f"https://image.tmdb.org/t/p/{size}{path}"
+
+    def _map_season(self, season: dict[str, object]) -> dict[str, object]:
+        mapped = dict(season)
+        poster = self._image_url(mapped.get("poster_url") or mapped.get("poster_path"), kind="poster")
+        if poster:
+            mapped["poster_url"] = poster
+        return mapped

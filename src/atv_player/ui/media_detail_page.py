@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import threading
+
+import shiboken6
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -13,29 +17,43 @@ from atv_player.controllers.media_detail_controller import (
 )
 from atv_player.following_models import FollowingEpisode, FollowingSeason
 from atv_player.metadata.discovery import DiscoveryItem
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.detail_scaffold import MediaDetailScaffold, detail_scaffold_qss
 from atv_player.ui.following_detail_page import (
+    FollowingEpisodePreviewDialog,
     FollowingPersonCard,
     FollowingRelatedRecommendationCard,
     _clear_layout,
+    _carousel_image_qss,
     _image_placeholder_qss,
+    _person_inner_label_qss,
+    _unique_sources,
 )
 from atv_player.ui.following_episode_browser import (
     FollowingEpisodeBrowser,
     build_episode_season_groups,
 )
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+)
 
 
-class MediaDetailPage(QWidget):
+class MediaDetailPage(AsyncGuardMixin, QWidget):
     back_requested = Signal()
     search_play_requested = Signal(object)
     add_following_requested = Signal(object)
     refresh_metadata_requested = Signal(object)
     related_open_requested = Signal(object)
+    season_requested = Signal(object, int)
+    image_loaded = Signal(QLabel, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._init_async_guard()
         self.current_view: MediaDetailView | None = None
+        self._selected_season_number = 0
         self.person_cards: list[FollowingPersonCard] = []
         self.related_cards: list[FollowingRelatedRecommendationCard] = []
 
@@ -77,10 +95,16 @@ class MediaDetailPage(QWidget):
         self.meta_label.setText(" · ".join(part for part in meta_parts if part))
         self.rating_strip.setText(f"TMDB {view.rating}" if view.rating else "")
         self.overview_label.setText(view.overview or "暂无简介")
-        self.poster_carousel_label.setText("海报轮播" if view.backdrop_url or view.poster_url else "暂无海报")
+        self._render_poster_carousel(view)
         self._render_episodes(view)
         self._render_people(view)
         self._render_related(view)
+
+    def load_season_view(self, view: MediaDetailView, *, season_number: int) -> None:
+        self.current_view = view
+        self._selected_season_number = max(0, _int_value(season_number))
+        self._render_episodes(view, selected_season_number=self._selected_season_number)
+        self.status_label.setText("")
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(str(text or ""))
@@ -96,7 +120,7 @@ class MediaDetailPage(QWidget):
 
         self.poster_carousel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_carousel_label.setMinimumSize(720, 405)
-        self.poster_carousel_label.setStyleSheet(_image_placeholder_qss())
+        self.poster_carousel_label.setStyleSheet(_carousel_image_qss())
         self.title_label.setObjectName("followingDetailTitle")
         self.title_label.setWordWrap(True)
         self.meta_label.setWordWrap(True)
@@ -152,12 +176,23 @@ class MediaDetailPage(QWidget):
         self.search_play_button.clicked.connect(lambda: self._emit_view(self.search_play_requested))
         self.add_following_button.clicked.connect(lambda: self._emit_view(self.add_following_requested))
         self.refresh_metadata_button.clicked.connect(lambda: self._emit_view(self.refresh_metadata_requested))
+        self._connect_async_signal(self.image_loaded, self._handle_image_loaded)
+        self.episode_browser.episode_activated.connect(self._open_episode_preview)
+        self.episode_browser.season_changed.connect(self._handle_season_changed)
 
     def _emit_view(self, signal) -> None:
         if self.current_view is not None:
             signal.emit(self.current_view)
 
-    def _render_episodes(self, view: MediaDetailView) -> None:
+    def _render_poster_carousel(self, view: MediaDetailView) -> None:
+        self.poster_carousel_label.clear()
+        self.poster_carousel_label.setStyleSheet(_carousel_image_qss())
+        sources = _unique_sources([view.backdrop_url, view.poster_url])
+        self.poster_carousel_label.setText("海报轮播" if sources else "暂无海报")
+        if sources:
+            self._start_image_load(self.poster_carousel_label, sources[0])
+
+    def _render_episodes(self, view: MediaDetailView, *, selected_season_number: int | None = None) -> None:
         episodes = [
             FollowingEpisode(
                 season_number=episode.season_number,
@@ -182,18 +217,58 @@ class MediaDetailPage(QWidget):
             for season in view.seasons
             if isinstance(season, dict)
         ]
-        fallback_season = episodes[0].season_number if episodes else 1
+        fallback_season = self._fallback_season_number(view, episodes)
+        selected_season = selected_season_number if selected_season_number is not None else fallback_season
+        self._selected_season_number = max(0, _int_value(selected_season))
         groups = build_episode_season_groups(episodes, seasons=seasons, fallback_season=fallback_season)
         self.episode_browser.set_content(
             groups=groups,
             current_season_number=0,
             current_episode=0,
-            selected_season_number=fallback_season,
+            selected_season_number=self._selected_season_number,
             latest_episode=0,
             latest_season_number=fallback_season,
             next_episode=None,
         )
         self.episodes_section.setVisible(view.media_type != "movie")
+
+    def _fallback_season_number(self, view: MediaDetailView, episodes: list[FollowingEpisode]) -> int:
+        if episodes:
+            return episodes[0].season_number or 1
+        for season in view.seasons:
+            if not isinstance(season, dict):
+                continue
+            season_number = _int_value(season.get("season_number"))
+            if season_number > 0:
+                return season_number
+        return 1
+
+    def _handle_season_changed(self, season_number: int) -> None:
+        normalized = max(0, _int_value(season_number))
+        if normalized <= 0 or self.current_view is None or self.current_view.media_type == "movie":
+            return
+        if normalized == self._selected_season_number and self._current_view_matches_season(normalized):
+            return
+        self._selected_season_number = normalized
+        self.status_label.setText(f"正在加载第 {normalized} 季分集...")
+        self.season_requested.emit(self.current_view, normalized)
+
+    def _open_episode_preview(self, episode: FollowingEpisode) -> None:
+        dialog = FollowingEpisodePreviewDialog(
+            episode,
+            status_text=self.episode_browser.status_text_for_episode(episode),
+            can_mark_watched=False,
+            parent=self,
+        )
+        dialog.exec()
+
+    def _current_view_matches_season(self, season_number: int) -> bool:
+        if self.current_view is None:
+            return False
+        return any(
+            (episode.season_number or season_number) == season_number
+            for episode in self.current_view.episodes
+        )
 
     def _render_people(self, view: MediaDetailView) -> None:
         _clear_layout(self._cast_layout)
@@ -209,6 +284,7 @@ class MediaDetailPage(QWidget):
             )
             self._cast_layout.addWidget(card)
             self.person_cards.append(card)
+            self._start_image_load(card.avatar_label, person.profile_url)
         self._cast_layout.addStretch(1)
 
     def _render_related(self, view: MediaDetailView) -> None:
@@ -237,10 +313,36 @@ class MediaDetailPage(QWidget):
             )
             self._related_recommendation_layout.addWidget(card)
             self.related_cards.append(card)
+            self._start_image_load(card.poster_label, item.poster_url)
         self._related_recommendation_layout.addStretch(1)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(detail_scaffold_qss())
+
+    def _start_image_load(self, label: QLabel, source: str) -> None:
+        image_url = normalize_poster_url(source)
+        if not image_url:
+            return
+        target_size = label.minimumSize()
+        if target_size.isEmpty():
+            target_size = QSize(max(1, label.width()), max(1, label.height()))
+
+        def load() -> None:
+            image = load_local_poster_image(source, target_size)
+            if image is None:
+                image = load_remote_poster_image(image_url, target_size)
+            if image is not None and self._can_deliver_async_result():
+                self.image_loaded.emit(label, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_image_loaded(self, label: QLabel, image) -> None:
+        if not shiboken6.isValid(label):
+            return
+        label.setText("")
+        if label.property("person_avatar"):
+            label.setStyleSheet(_person_inner_label_qss())
+        label.setPixmap(QPixmap.fromImage(image))
 
 
 def _int_value(value: object) -> int:

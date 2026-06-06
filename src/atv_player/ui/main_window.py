@@ -648,6 +648,11 @@ class _GlobalSearchPopupSignals(QObject):
     heat_recommendations_loaded = Signal(int, object)
 
 
+class _MediaDetailSeasonSignals(QObject):
+    succeeded = Signal(int, object, int)
+    failed = Signal(int, int, str)
+
+
 class _HelpPayloadSignals(QObject):
     loaded = Signal(int, object, str, str)
 
@@ -1708,6 +1713,16 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._media_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._media_request_signals.succeeded, self._handle_media_load_succeeded)
         self._connect_async_signal(self._media_request_signals.failed, self._handle_media_load_failed)
+        self._media_detail_season_request_id = 0
+        self._media_detail_season_signals = _MediaDetailSeasonSignals()
+        self._connect_async_signal(
+            self._media_detail_season_signals.succeeded,
+            self._handle_media_detail_season_succeeded,
+        )
+        self._connect_async_signal(
+            self._media_detail_season_signals.failed,
+            self._handle_media_detail_season_failed,
+        )
         self._restore_signals = _RestoreSignals()
         self._connect_async_signal(self._restore_signals.succeeded, self._handle_restore_succeeded)
         self._connect_async_signal(self._restore_signals.failed, self._handle_restore_failed)
@@ -1948,6 +1963,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.media_detail_page.add_following_requested.connect(self.add_following_from_media_detail)
         self.media_detail_page.refresh_metadata_requested.connect(self.refresh_media_detail_metadata)
         self.media_detail_page.related_open_requested.connect(self.open_media_detail_from_identity)
+        self.media_detail_page.season_requested.connect(self.load_media_detail_season)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.global_history_page.open_detail_requested.connect(self.open_history_detail)
         self.history_page.global_search_requested.connect(self._handle_favorite_global_search)
@@ -5831,6 +5847,45 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.media_detail_page.set_status(str(exc))
             return
         self.media_detail_page.load_view(refreshed)
+
+    def load_media_detail_season(self, view, season_number: int) -> None:
+        controller = self._media_detail_controller
+        load_season = getattr(controller, "load_season", None)
+        normalized_season = max(0, int(season_number or 0))
+        if normalized_season <= 0:
+            return
+        if not callable(load_season):
+            self.media_detail_page.set_status("当前详情数据源不支持分季加载")
+            return
+        self._media_detail_season_request_id += 1
+        request_id = self._media_detail_season_request_id
+        self.media_detail_page.set_status(f"正在加载第 {normalized_season} 季分集...")
+
+        def load() -> None:
+            try:
+                refreshed = load_season(view, season_number=normalized_season)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._media_detail_season_signals.failed.emit(request_id, normalized_season, str(exc))
+                return
+            if self._is_window_alive():
+                self._media_detail_season_signals.succeeded.emit(
+                    request_id,
+                    refreshed,
+                    normalized_season,
+                )
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_media_detail_season_succeeded(self, request_id: int, view, season_number: int) -> None:
+        if request_id != self._media_detail_season_request_id:
+            return
+        self.media_detail_page.load_season_view(view, season_number=season_number)
+
+    def _handle_media_detail_season_failed(self, request_id: int, season_number: int, message: str) -> None:
+        if request_id != self._media_detail_season_request_id:
+            return
+        self.media_detail_page.set_status(f"第 {season_number} 季分集加载失败: {message}")
 
     def open_following_detail(self, following_id: int) -> None:
         following_id = int(following_id)

@@ -50,6 +50,7 @@ from atv_player.ui.main_window import (
     load_tencent_hot_search_sections,
     load_tencent_hot_searches,
 )
+from atv_player.ui.following_episode_browser import EPISODE_ROLE
 from atv_player.ui.player_window import PlayerWindow
 
 
@@ -1840,6 +1841,7 @@ class FakeMediaDetailController:
         self.heat_calls: list[object] = []
         self.identity_calls: list[MediaDetailIdentity] = []
         self.refresh_calls: list[MediaDetailView] = []
+        self.season_calls: list[tuple[MediaDetailView, int]] = []
         self.following_candidates: list[MediaDetailView] = []
 
     def load_from_vod(self, vod: VodItem) -> MediaDetailView:
@@ -1860,6 +1862,19 @@ class FakeMediaDetailController:
         self.refresh_calls.append(view)
         return _media_detail_view(view.identity, overview="刷新后的简介")
 
+    def load_season(self, view: MediaDetailView, *, season_number: int) -> MediaDetailView:
+        self.season_calls.append((view, season_number))
+        return _media_detail_view(
+            view.identity,
+            episodes=[
+                MediaDetailEpisode(
+                    season_number=season_number,
+                    episode_number=1,
+                    title=f"第 {season_number} 季第 1 集",
+                )
+            ],
+        )
+
     def candidate_for_following(self, view: MediaDetailView):
         self.following_candidates.append(view)
         return SimpleNamespace(provider="tmdb", provider_id=f"{view.media_type}:{view.identity.tmdb_id}", title=view.title)
@@ -1868,7 +1883,12 @@ class FakeMediaDetailController:
         return view.title
 
 
-def _media_detail_view(identity: MediaDetailIdentity, *, overview: str = "九大家族争夺铁王座。") -> MediaDetailView:
+def _media_detail_view(
+    identity: MediaDetailIdentity,
+    *,
+    overview: str = "九大家族争夺铁王座。",
+    episodes: list[MediaDetailEpisode] | None = None,
+) -> MediaDetailView:
     return MediaDetailView(
         identity=identity,
         title=identity.title or "权力的游戏",
@@ -1878,7 +1898,11 @@ def _media_detail_view(identity: MediaDetailIdentity, *, overview: str = "九大
         overview=overview,
         rating="8.4",
         genres=["剧情"],
-        episodes=[MediaDetailEpisode(season_number=1, episode_number=1, title="凛冬将至")],
+        seasons=[
+            {"season_number": 1, "name": "第 1 季", "episode_count": 1},
+            {"season_number": 2, "name": "第 2 季", "episode_count": 1},
+        ],
+        episodes=episodes or [MediaDetailEpisode(season_number=1, episode_number=1, title="凛冬将至")],
         people=[MediaDetailPerson(name="Emilia Clarke", role="Daenerys Targaryen")],
         related=[
             MediaDetailRecommendation(
@@ -1980,6 +2004,35 @@ def test_media_detail_actions_search_follow_refresh_and_related(qtbot, monkeypat
     window.media_detail_page.related_open_requested.emit(related_identity)
     assert detail_controller.identity_calls == [related_identity]
     assert window.media_detail_page.title_label.text() == "绿箭侠"
+
+
+def test_media_detail_season_switch_loads_selected_season(qtbot) -> None:
+    detail_controller = FakeMediaDetailController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        media_detail_controller=detail_controller,
+    )
+    qtbot.addWidget(window)
+    view = _media_detail_view(MediaDetailIdentity(media_type="tv", tmdb_id="1399", title="权力的游戏"))
+    window.media_detail_page.load_view(view)
+
+    window.media_detail_page.season_requested.emit(view, 2)
+
+    qtbot.waitUntil(lambda: detail_controller.season_calls == [(view, 2)], timeout=1000)
+    qtbot.waitUntil(
+        lambda: window.media_detail_page.episode_browser.episode_model.index(0, 0).data(EPISODE_ROLE).title
+        == "第 2 季第 1 集",
+        timeout=1000,
+    )
 
 
 def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qtbot) -> None:
