@@ -31,6 +31,8 @@ def _sample_view() -> MediaDetailView:
         metadata_fields=[
             {"label": "类型", "value": "剧情 / 科幻奇幻"},
             {"label": "首播", "value": "2011-04-17"},
+            {"label": "豆瓣ID", "value": "3016187"},
+            {"label": "IMDb ID", "value": "tt0944947"},
             {"label": "TMDB ID", "value": "1399"},
         ],
         ratings=[FollowingRatingEntry(provider="tmdb", label="TMDB", value="8.4")],
@@ -145,6 +147,24 @@ def test_media_detail_page_uses_following_metadata_source_tabs(qtbot) -> None:
     assert page.metadata_source_buttons[1].isChecked()
     assert "TMDB ID:" in page.overview_label.text()
     assert "1399" in page.overview_label.text()
+
+
+def test_media_detail_page_metadata_external_ids_are_links(qtbot, monkeypatch) -> None:
+    page = MediaDetailPage()
+    qtbot.addWidget(page)
+    opened: list[str] = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+
+    page.load_view(_sample_view())
+
+    text = page.overview_label.text()
+    assert 'href="https://movie.douban.com/subject/3016187/"' in text
+    assert 'href="https://www.imdb.com/title/tt0944947"' in text
+    assert 'href="https://www.themoviedb.org/tv/1399"' in text
+
+    page.overview_label.linkActivated.emit("https://www.themoviedb.org/tv/1399")
+
+    assert opened == ["https://www.themoviedb.org/tv/1399"]
 
 
 def test_media_detail_page_emits_action_signals(qtbot) -> None:

@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 
 import shiboken6
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -162,7 +162,10 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         self.title_label.setTextInteractionFlags(selectable_flags)
         self.meta_label.setTextInteractionFlags(selectable_flags)
         self.rating_strip.setTextInteractionFlags(selectable_flags)
-        self.overview_label.setTextInteractionFlags(selectable_flags)
+        self.overview_label.setTextFormat(Qt.TextFormat.RichText)
+        self.overview_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.overview_label.setOpenExternalLinks(False)
+        self.overview_label.linkActivated.connect(self._open_external_link)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self.back_button)
@@ -283,9 +286,13 @@ class MediaDetailPage(AsyncGuardMixin, QWidget):
         label.setWordWrap(True)
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        label.setOpenExternalLinks(True)
+        label.setOpenExternalLinks(False)
+        label.linkActivated.connect(self._open_external_link)
         self.playback_platform_widgets.append(label)
         self.playback_platform_layout.addWidget(label)
+
+    def _open_external_link(self, url: str) -> None:
+        QDesktopServices.openUrl(QUrl(str(url or "")))
 
     def _render_episodes(self, view: MediaDetailView, *, selected_season_number: int | None = None) -> None:
         episodes = [
