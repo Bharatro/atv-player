@@ -226,7 +226,7 @@ def test_builtin_tab_manager_saves_hidden_renamed_ordered_rows(qtbot) -> None:
 
     assert [dialog.builtin_tab_list.item(index).text() for index in range(dialog.builtin_tab_list.count())] == [
         "播放记录",
-        "电影",
+        "豆瓣电影 -> 电影",
         "电报影视（已隐藏）",
     ]
 
@@ -238,6 +238,18 @@ def test_builtin_tab_manager_saves_hidden_renamed_ordered_rows(qtbot) -> None:
 
     assert saved == ['{"order":["douban","history","telegram"],"hidden":["history","telegram"],"renames":{"douban":"电影"}}']
     assert dialog.builtin_tabs_dirty is True
+
+
+def test_builtin_tab_manager_shows_original_name_for_renamed_rows(qtbot) -> None:
+    dialog = PluginManagerDialog(
+        FakePluginManager(),
+        builtin_tabs=[{"key": "douban", "title": "豆瓣电影"}],
+        builtin_tab_overrides_json='{"renames":{"douban":"豆瓣"}}',
+        save_builtin_tab_overrides=lambda _json: None,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.builtin_tab_list.item(0).text() == "豆瓣电影 -> 豆瓣"
 
 
 def test_plugin_manager_copy_mentions_javascript(qtbot) -> None:

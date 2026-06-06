@@ -354,7 +354,9 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             current_row = self._current_builtin_row()
         self.builtin_tab_list.clear()
         for row in self._builtin_draft_rows:
-            label = row.display_title
+            label = row.raw_title
+            if row.display_title.strip() and row.display_title.strip() != row.raw_title:
+                label = f"{row.raw_title} -> {row.display_title}"
             if row.hidden:
                 label = f"{label}（已隐藏）"
             item = QListWidgetItem(label)
