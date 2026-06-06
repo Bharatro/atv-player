@@ -167,6 +167,60 @@ def test_main_window_classic_plugin_folder_click_loads_folder_in_classic_grid(qt
     }
 
 
+def test_main_window_plugin_msearch_item_starts_global_search_without_player(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("搜索插件")
+    player_windows: list[object] = []
+    monkeypatch.setattr(main_window_module, "PlayerWindow", lambda *args, **kwargs: player_windows.append(object()))
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "搜索插件", "controller": controller, "search_enabled": True}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    searches: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda **_kwargs: searches.append(window.global_search_edit.text()))
+
+    window._open_spider_item(controller, "plugin-1", VodItem(vod_id="msearch:三体", vod_name="三体"))
+
+    assert searches == ["三体"]
+    assert controller.open_calls == []
+    assert player_windows == []
+    assert window.player_window is None
+
+
+def test_main_window_classic_plugin_msearch_item_starts_global_search(qtbot, monkeypatch) -> None:
+    controller = FakeSpiderController("搜索插件")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(home_mode="classic", last_selected_tab="plugin:plugin-1"),
+        spider_plugins=[{"id": "plugin-1", "title": "搜索插件", "controller": controller, "search_enabled": True}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+    searches: list[str] = []
+    monkeypatch.setattr(window, "_start_global_search", lambda **_kwargs: searches.append(window.global_search_edit.text()))
+
+    window._handle_classic_item_open(VodItem(vod_id="msearch:庆余年", vod_name="庆余年"))
+
+    assert searches == ["庆余年"]
+    assert controller.open_calls == []
+
+
 class FakePluginManager:
     def __init__(self) -> None:
         self.dialog_opened = 0

@@ -5248,7 +5248,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if self.isHidden():
             self._show_main_again()
 
+    def _start_global_search_from_msearch_item(self, item: Any) -> bool:
+        vod_id = str(getattr(item, "vod_id", "") or "").strip()
+        if not vod_id.startswith("msearch:"):
+            return False
+        keyword = str(getattr(item, "vod_name", "") or "").strip()
+        if not keyword:
+            return True
+        self.global_search_edit.setText(keyword)
+        self._start_global_search()
+        return True
+
     def _open_spider_item(self, controller, plugin_id: str, item: Any) -> None:
+        if self._start_global_search_from_msearch_item(item):
+            return
         if getattr(item, "vod_tag", "") == "folder":
             page = None
             if (

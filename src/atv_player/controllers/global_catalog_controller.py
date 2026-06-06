@@ -103,47 +103,6 @@ def _year_options() -> list[tuple[str, str]]:
 def _categories() -> list[DoubanCategory]:
     return [
         DoubanCategory(
-            type_id="anime",
-            type_name="动漫全境聚合",
-            filters=[
-                _filter(
-                    "anime_source",
-                    "选择数据源",
-                    [
-                        ("Bangumi 追番日历", "cal"),
-                        ("Bilibili 热度榜单", "bili"),
-                        ("Bangumi 近期热门", "hot"),
-                        ("Bangumi 年季度榜", "rank"),
-                        ("Bangumi 每日放送", "daily"),
-                        ("TMDB 热门/新番", "tmdb"),
-                        ("AniList 流行榜单", "anilist"),
-                        ("MAL 权威榜单", "mal"),
-                    ],
-                ),
-                _filter(
-                    "cal_day",
-                    "选择日期",
-                    [
-                        ("今日更新", "today"),
-                        ("周一", "1"),
-                        ("周二", "2"),
-                        ("周三", "3"),
-                        ("周四", "4"),
-                        ("周五", "5"),
-                        ("周六", "6"),
-                        ("周日", "7"),
-                    ],
-                ),
-                _filter("tmdb_sort", "TMDB 榜单", [("实时流行", "trending"), ("最新首播", "new"), ("高分神作", "top")]),
-                _filter("rank_year", "年份", _year_options()),
-                _filter(
-                    "rank_month",
-                    "月份/季度",
-                    [("全年", "all"), ("冬季", "1"), ("春季", "4"), ("夏季", "7"), ("秋季", "10")],
-                ),
-            ],
-        ),
-        DoubanCategory(
             type_id="genre_rank",
             type_name="全球影剧类别",
             filters=[
@@ -289,7 +248,7 @@ def _categories() -> list[DoubanCategory]:
         ),
         DoubanCategory(
             type_id="top10",
-            type_name="流媒体 TOP10",
+            type_name="流媒体TOP10",
             filters=[
                 _filter(
                     "region",
@@ -302,6 +261,47 @@ def _categories() -> list[DoubanCategory]:
                     [("Netflix", "netflix"), ("HBO", "hbo"), ("Disney+", "disney"), ("Apple TV+", "apple-tv"), ("Amazon Prime", "amazon-prime")],
                 ),
                 _filter("mediaType", "榜单类型", [("剧集", "tv"), ("电影", "movie")]),
+            ],
+        ),
+        DoubanCategory(
+            type_id="anime",
+            type_name="动漫全境聚合",
+            filters=[
+                _filter(
+                    "anime_source",
+                    "选择数据源",
+                    [
+                        ("Bangumi 追番日历", "cal"),
+                        ("Bilibili 热度榜单", "bili"),
+                        ("Bangumi 近期热门", "hot"),
+                        ("Bangumi 年季度榜", "rank"),
+                        ("Bangumi 每日放送", "daily"),
+                        ("TMDB 热门/新番", "tmdb"),
+                        ("AniList 流行榜单", "anilist"),
+                        ("MAL 权威榜单", "mal"),
+                    ],
+                ),
+                _filter(
+                    "cal_day",
+                    "选择日期",
+                    [
+                        ("今日更新", "today"),
+                        ("周一", "1"),
+                        ("周二", "2"),
+                        ("周三", "3"),
+                        ("周四", "4"),
+                        ("周五", "5"),
+                        ("周六", "6"),
+                        ("周日", "7"),
+                    ],
+                ),
+                _filter("tmdb_sort", "TMDB 榜单", [("实时流行", "trending"), ("最新首播", "new"), ("高分神作", "top")]),
+                _filter("rank_year", "年份", _year_options()),
+                _filter(
+                    "rank_month",
+                    "月份/季度",
+                    [("全年", "all"), ("冬季", "1"), ("春季", "4"), ("夏季", "7"), ("秋季", "10")],
+                ),
             ],
         ),
     ]
