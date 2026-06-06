@@ -127,6 +127,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
     _FILTER_PANEL_MAX_HEIGHT = 310
+    _ACTION_BUTTON_MAX_WIDTH = 96
 
     def __init__(
         self,
@@ -237,25 +238,27 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.filter_scroll_area.hide()
         self.filter_toggle_button.hide()
         self._sync_category_list_visibility()
+        for button in (self.refresh_button, self.filter_toggle_button):
+            button.setMaximumWidth(self._ACTION_BUTTON_MAX_WIDTH)
+            button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
 
         right = QVBoxLayout()
+        search_row = QHBoxLayout()
+        self._search_row = search_row
         if self._search_enabled:
-            search_row = QHBoxLayout()
-            self._search_row = search_row
             search_row.addWidget(self.keyword_edit, 1)
             search_row.addWidget(self.search_button)
             search_row.addWidget(self.clear_button)
-            search_row.addWidget(self.refresh_button)
-            search_row.addWidget(self.filter_toggle_button)
-            self._search_controls_container = QWidget(self)
-            self._search_controls_container.setLayout(search_row)
-            right.addWidget(self._search_controls_container)
         else:
             self.keyword_edit.hide()
             self.search_button.hide()
             self.clear_button.hide()
-            self.refresh_button.hide()
-            right.addWidget(self.filter_toggle_button)
+            search_row.addStretch(1)
+        search_row.addWidget(self.refresh_button)
+        search_row.addWidget(self.filter_toggle_button)
+        self._search_controls_container = QWidget(self)
+        self._search_controls_container.setLayout(search_row)
+        right.addWidget(self._search_controls_container)
         right.addWidget(self.filter_scroll_area)
         right.addWidget(self.breadcrumb_bar)
         right.addWidget(self.status_label)
@@ -287,11 +290,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.category_list.currentRowChanged.connect(self._handle_category_row_changed)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
+        self.refresh_button.clicked.connect(self._refresh_current_view)
         self.filter_toggle_button.clicked.connect(self._toggle_filters)
         if self._search_enabled:
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
-            self.refresh_button.clicked.connect(self._refresh_current_view)
             self.keyword_edit.returnPressed.connect(self.search)
             self.keyword_edit.textChanged.connect(self._handle_keyword_text_changed)
             self._update_search_action_buttons()

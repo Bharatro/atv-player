@@ -350,6 +350,24 @@ def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     assert page.clear_button.isEnabled() is False
 
 
+def test_poster_grid_page_shows_refresh_button_without_search(qtbot) -> None:
+    controller = FakeDoubanController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=False))
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    assert page.keyword_edit.isHidden() is True
+    assert page.search_button.isHidden() is True
+    assert page.clear_button.isHidden() is True
+    assert page.refresh_button.isHidden() is False
+    assert page.refresh_button.maximumWidth() == PosterGridPage._ACTION_BUTTON_MAX_WIDTH
+
+    baseline_call_count = len(controller.item_calls)
+    page.refresh_button.click()
+
+    qtbot.waitUntil(lambda: len(controller.item_calls) == baseline_call_count + 1)
+    assert controller.item_calls[-1] == ("suggestion", 1)
+
+
 def test_poster_grid_page_can_render_external_results_without_controller_reload(qtbot) -> None:
     controller = ExternalResultController()
     page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
@@ -535,6 +553,22 @@ def test_poster_grid_page_places_filter_button_after_clear_button(qtbot) -> None
     }
 
     assert indexes[page.search_button] < indexes[page.clear_button] < indexes[page.filter_toggle_button]
+
+
+def test_poster_grid_page_places_non_search_actions_on_right_with_limited_width(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=False))
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+
+    search_row = page._search_row
+
+    assert search_row is not None
+    assert search_row.itemAt(0) is not None
+    assert search_row.itemAt(0).spacerItem() is not None
+    assert page.refresh_button.isHidden() is False
+    assert page.filter_toggle_button.isHidden() is False
+    assert page.refresh_button.maximumWidth() == PosterGridPage._ACTION_BUTTON_MAX_WIDTH
+    assert page.filter_toggle_button.maximumWidth() == PosterGridPage._ACTION_BUTTON_MAX_WIDTH
+    assert search_row.indexOf(page.refresh_button) < search_row.indexOf(page.filter_toggle_button)
 
 
 def test_poster_grid_page_hides_filter_button_by_default(qtbot) -> None:
