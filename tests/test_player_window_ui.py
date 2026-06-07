@@ -1547,6 +1547,62 @@ def test_player_window_rerun_danmaku_search_uses_fallback_current_vod_title(qtbo
     )
 
 
+def test_player_window_danmaku_source_rerun_button_queues_while_auto_search_is_active(qtbot) -> None:
+    class BlockingDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, str | None, str | None]] = []
+            self.search_started = threading.Event()
+            self.release_search = threading.Event()
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            return False
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            search_title_override: str | None = None,
+            search_episode_override: str | None = None,
+            playlist: list[PlayItem] | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> None:
+            self.calls.append((query_override, search_title_override, search_episode_override))
+            self.search_started.set()
+            assert self.release_search.wait(timeout=1)
+
+    controller = BlockingDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="深空彼岸"),
+        playlist=[PlayItem(title="第1集", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._open_danmaku_source_dialog()
+    assert controller.search_started.wait(timeout=1)
+    assert window._danmaku_source_rerun_button is not None
+    assert window._danmaku_source_rerun_button.isEnabled() is True
+
+    window._danmaku_source_rerun_button.click()
+    controller.release_search.set()
+
+    qtbot.waitUntil(
+        lambda: controller.calls
+        == [
+            (None, "深空彼岸", None),
+            (None, "深空彼岸", ""),
+        ]
+    )
+
+
 def test_player_window_open_danmaku_source_dialog_loads_cached_results_with_fallback_current_vod_title(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:

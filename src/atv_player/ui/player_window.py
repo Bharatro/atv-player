@@ -8512,9 +8512,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
-            self._danmaku_source_rerun_button.setEnabled(
-                bool(current_item is not None and not self._has_active_danmaku_source_task(current_item))
-            )
+            self._danmaku_source_rerun_button.setEnabled(current_item is not None)
         if self._danmaku_source_clear_button is not None:
             self._danmaku_source_clear_button.setEnabled(
                 bool(
