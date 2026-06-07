@@ -327,6 +327,40 @@ def test_local_hls_proxy_server_accepts_legacy_query_playlist_url() -> None:
     assert body.startswith(b"#EXTM3U\n")
 
 
+def test_local_hls_proxy_server_retries_playlist_over_http_after_tls_protocol_error() -> None:
+    class FakeResponse:
+        text = "#EXTM3U\n#EXTINF:5.0,\nsegment-0001.ts\n"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    requests: list[str] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        requests.append(url)
+        if url == "https://media.example/path/index.m3u8":
+            raise httpx.ConnectError("[SSL] record layer failure (_ssl.c:1010)")
+        return FakeResponse()
+
+    server = LocalHlsProxyServer(get=fake_get)
+    playlist_url = server.create_playlist_url("https://media.example/path/index.m3u8", {})
+    token = playlist_url.rsplit("/", 1)[-1]
+
+    status, headers, body = server.handle_request("GET", f"/m3u/{token}")
+
+    session = server._registry.get(token)
+    assert session is not None
+    assert status == 200
+    assert headers == [("Content-Type", "application/vnd.apple.mpegurl")]
+    assert body.startswith(b"#EXTM3U\n")
+    assert requests == [
+        "https://media.example/path/index.m3u8",
+        "http://media.example/path/index.m3u8",
+    ]
+    assert session.playlist_url == "http://media.example/path/index.m3u8"
+    assert session.segments[0].url == "http://media.example/path/segment-0001.ts"
+
+
 def test_local_hls_proxy_server_creates_iso_media_url() -> None:
     server = LocalHlsProxyServer()
 

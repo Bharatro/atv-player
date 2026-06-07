@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
+_TLS_PROTOCOL_MISMATCH_MARKERS = (
+    "wrong version number",
+    "record layer failure",
+)
 
 
 def _is_client_disconnect_error(exc: BaseException) -> bool:
@@ -308,6 +312,57 @@ def _default_stream(
         timeout=timeout,
         follow_redirects=follow_redirects,
     )
+
+
+def _is_tls_protocol_mismatch(exc: httpx.TransportError) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _TLS_PROTOCOL_MISMATCH_MARKERS)
+
+
+def _plain_http_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return ""
+    return parsed._replace(scheme="http").geturl()
+
+
+def _get_playlist_with_plain_http_fallback(
+    get: Any,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout: float,
+    follow_redirects: bool,
+) -> tuple[Any, str]:
+    try:
+        return (
+            get(
+                url,
+                headers=headers,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+            ),
+            url,
+        )
+    except httpx.TransportError as exc:
+        fallback_url = _plain_http_url(url)
+        if not fallback_url or not _is_tls_protocol_mismatch(exc):
+            raise
+        logger.info(
+            "Retry HLS playlist over plain HTTP after TLS protocol mismatch url=%s fallback_url=%s",
+            url,
+            fallback_url,
+            extra={"log_category": "network", "log_source": "app"},
+        )
+        return (
+            get(
+                fallback_url,
+                headers=headers,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+            ),
+            fallback_url,
+        )
 
 
 class LocalHlsProxyServer:
@@ -880,13 +935,15 @@ class LocalHlsProxyServer:
                 if not session.playlist_url and session.cached_playlist_text is not None:
                     return 200, [("Content-Type", "application/vnd.apple.mpegurl")], session.cached_playlist_text.encode("utf-8")
                 try:
-                    response = self._get(
+                    response, effective_playlist_url = _get_playlist_with_plain_http_fallback(
+                        self._get,
                         session.playlist_url,
                         headers=session.headers,
                         timeout=10.0,
                         follow_redirects=True,
                     )
                     response.raise_for_status()
+                    session.playlist_url = effective_playlist_url
                 except httpx.HTTPStatusError as exc:
                     if exc.response is not None and exc.response.status_code == 403:
                         if session.cached_playlist_text is not None:
