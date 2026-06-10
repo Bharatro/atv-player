@@ -100,6 +100,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
             ("全部来源", ""),
             ("远程", "remote"),
             ("电报影视", "telegram"),
+            ("电报频道", "telegram_channel"),
             ("插件", "spider_plugin"),
             ("Emby", "emby"),
             ("B站", "bilibili"),
@@ -406,6 +407,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
     def _source_label(self, record: HistoryRecord) -> str:
         if record.source_kind == "telegram":
             return record.source_name or "电报影视"
+        if record.source_kind == "telegram_channel":
+            return record.source_name or "电报频道"
         if record.source_kind == "spider_plugin":
             return record.source_name or record.source_plugin_name or "插件"
         if record.source_kind == "emby":

@@ -8556,6 +8556,39 @@ def test_history_page_search_styles_follow_resolved_dark_theme(qtbot) -> None:
     assert tokens.button_disabled_text in page.continue_button.styleSheet()
 
 
+def test_history_page_lists_and_labels_telegram_channel_source(qtbot) -> None:
+    from atv_player.ui.history_page import HistoryPage
+
+    class FakeHistoryController:
+        def load_page(self, **kwargs):
+            del kwargs
+            return [], 0
+
+    page = HistoryPage(controller=FakeHistoryController())
+    qtbot.addWidget(page)
+
+    source_values = [page.source_combo.itemData(index) for index in range(page.source_combo.count())]
+
+    assert "telegram_channel" in source_values
+    assert page._source_label(
+        HistoryRecord(
+            id=1,
+            key="tg-channel-vod-1",
+            vod_name="频道视频",
+            vod_pic="",
+            vod_remarks="",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="telegram_channel",
+        )
+    ) == "电报频道"
+
+
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
@@ -11483,7 +11516,7 @@ def test_main_window_does_not_prepare_metadata_for_loading_placeholder(qtbot) ->
     assert hydrator_calls == ["低智商犯罪"]
 
 
-@pytest.mark.parametrize("source_kind", ["telegram", "emby", "jellyfin", "feiniu"])
+@pytest.mark.parametrize("source_kind", ["telegram", "telegram_channel", "emby", "jellyfin", "feiniu"])
 def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(qtbot, source_kind: str) -> None:
     hydrator = object()
     scrape_service = object()

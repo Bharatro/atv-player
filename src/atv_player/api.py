@@ -176,6 +176,30 @@ class ApiClient:
     def get_drive_share_detail(self, link: str) -> dict[str, Any]:
         return self._request("GET", f"/tg-search/{self._vod_token}", params={"id": link, "ac": "gui"})
 
+    def search_telegram_items(self, keyword: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"web": True, "wd": keyword}
+        if page > 1:
+            params["pg"] = page
+        return self._request("GET", f"/tg-search/{self._vod_token}", params=params)
+
+    def list_telegram_channel_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/tgsc/{self._vod_token}")
+
+    def list_telegram_channel_items(self, category_id: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id}
+        if category_id != "0":
+            params["pg"] = page
+        return self._request("GET", f"/tgsc/{self._vod_token}", params=params)
+
+    def get_telegram_channel_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/tgsc/{self._vod_token}", params={"id": vod_id, "ac": "gui"})
+
+    def search_telegram_channel_items(self, keyword: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"wd": keyword}
+        if page > 1:
+            params["pg"] = page
+        return self._request("GET", f"/tgsc/{self._vod_token}", params=params)
+
     def get_offline_download_detail(self, link: str) -> dict[str, Any]:
         return self._request(
             "POST",
@@ -183,12 +207,6 @@ class ApiClient:
             params={"ac": "gui"},
             json={"url": link},
         )
-
-    def search_telegram_items(self, keyword: str, page: int) -> dict[str, Any]:
-        params: dict[str, Any] = {"web": True, "wd": keyword}
-        if page > 1:
-            params["pg"] = page
-        return self._request("GET", f"/tg-search/{self._vod_token}", params=params)
 
     def list_live_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/live/{self._vod_token}")

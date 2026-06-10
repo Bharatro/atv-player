@@ -44,6 +44,7 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
+from atv_player.controllers.telegram_channel_controller import TelegramChannelController
 from atv_player.controllers.youtube_category_config import load_youtube_category_config
 from atv_player.controllers.youtube_controller import YouTubeController, default_youtube_categories
 from atv_player.crash_diagnostics import install_crash_diagnostics
@@ -817,7 +818,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request
@@ -861,7 +862,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_scrape_service_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key
@@ -934,7 +935,7 @@ class AppCoordinator(QObject):
     def _build_danmaku_controller_factory(self):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, vod, raw_detail
-            if source_kind not in {"telegram", "emby", "jellyfin", "feiniu"}:
+            if source_kind not in {"telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}:
                 return None
             if self._danmaku_service is None:
                 return None
@@ -1378,7 +1379,7 @@ class AppCoordinator(QObject):
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
-            if source_kind not in {"plugin", "browse", "telegram", "emby", "jellyfin", "feiniu"} or vod is None:
+            if source_kind not in {"plugin", "browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"} or vod is None:
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:
@@ -1950,6 +1951,20 @@ class AppCoordinator(QObject):
                 source_name="电报影视",
             ),
         )
+        telegram_channel_controller = TelegramChannelController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("telegram_channel", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "telegram_channel",
+                vod_id,
+                payload,
+                source_name="电报频道",
+            ),
+        )
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
         bilibili_controller = BilibiliController(
             self._api_client,
@@ -2043,6 +2058,7 @@ class AppCoordinator(QObject):
             detail_loader_by_source={
                 "browse": lambda record, controller=browse_controller: controller.build_request_from_detail(record.vod_id).vod,
                 "telegram": lambda record, controller=telegram_controller: controller.build_request(record.vod_id).vod,
+                "telegram_channel": lambda record, controller=telegram_channel_controller: controller.build_request(record.vod_id).vod,
                 "bilibili": lambda record, controller=bilibili_controller: controller.build_request(record.vod_id).vod,
                 "youtube": lambda record, controller=youtube_controller: None if controller is None else controller.build_request(record.vod_id).vod,
                 "live": lambda record, controller=live_controller: controller.build_request(record.vod_id).vod,
@@ -2083,11 +2099,12 @@ class AppCoordinator(QObject):
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
-            "Show main window bilibili=%s emby=%s jellyfin=%s feiniu=%s spider_plugins=%s",
+            "Show main window bilibili=%s emby=%s jellyfin=%s feiniu=%s telegram_channel=%s spider_plugins=%s",
             bool(capabilities.get("bilibili")),
             bool(capabilities.get("emby")),
             bool(capabilities.get("jellyfin")),
             bool(capabilities.get("feiniu")),
+            bool(capabilities.get("telegram_channel")),
             0,
         )
         self.main_window = MainWindow(
@@ -2105,6 +2122,7 @@ class AppCoordinator(QObject):
             global_catalog_controller=global_catalog_controller,
             media_detail_controller=media_detail_controller,
             telegram_controller=telegram_controller,
+            telegram_channel_controller=telegram_channel_controller,
             bilibili_controller=bilibili_controller,
             youtube_controller=youtube_controller,
             live_controller=live_controller,
@@ -2136,6 +2154,7 @@ class AppCoordinator(QObject):
                 source_name="全局解析",
             ),
             default_video_cover_loader=getattr(self._api_client, "get_video_cover", None),
+            show_telegram_channel_tab=bool(capabilities.get("telegram_channel")),
             show_bilibili_tab=bool(capabilities.get("bilibili")),
             show_youtube_tab=show_youtube_tab,
             show_emby_tab=bool(capabilities.get("emby")),
@@ -2217,7 +2236,7 @@ class AppCoordinator(QObject):
         threading.Thread(target=refresh_sources, daemon=True).start()
 
     def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
-        default_capabilities = {"bilibili": False, "emby": True, "jellyfin": True, "feiniu": True, "pansou": False}
+        default_capabilities = {"bilibili": False, "emby": True, "jellyfin": True, "feiniu": True, "pansou": False, "telegram_channel": False}
         get_capabilities = getattr(api_client, "get_capabilities", None)
         if not callable(get_capabilities):
             return default_capabilities
@@ -2235,6 +2254,7 @@ class AppCoordinator(QObject):
         capabilities["jellyfin"] = bool(response.get("jellyfin", capabilities["jellyfin"]))
         capabilities["feiniu"] = bool(response.get("feiniu", capabilities["feiniu"]))
         capabilities["pansou"] = bool(response.get("pansou", capabilities["pansou"]))
+        capabilities["telegram_channel"] = bool(response.get("telegram_channel", capabilities["telegram_channel"]))
         return capabilities
 
     def _handle_login_succeeded(self) -> None:

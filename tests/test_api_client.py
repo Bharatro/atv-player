@@ -744,6 +744,35 @@ def test_api_client_searches_telegram_items_by_keyword() -> None:
     ]
 
 
+def test_api_client_uses_tgsc_endpoints_for_telegram_channel() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, request.url.query.decode()))
+        return httpx.Response(200, json={"list": [], "class": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_telegram_channel_categories()
+    client.list_telegram_channel_items("0", page=1)
+    client.list_telegram_channel_items("Movie", page=2)
+    client.get_telegram_channel_detail("tg-channel-vod-1")
+    client.search_telegram_channel_items("黑袍纠察队", page=3)
+
+    assert seen == [
+        ("/tgsc/Harold", ""),
+        ("/tgsc/Harold", "t=0"),
+        ("/tgsc/Harold", "t=Movie&pg=2"),
+        ("/tgsc/Harold", "id=tg-channel-vod-1&ac=gui"),
+        ("/tgsc/Harold", "wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F&pg=3"),
+    ]
+
+
 def test_api_client_lists_live_categories() -> None:
     seen = {"path": "", "query": ""}
 

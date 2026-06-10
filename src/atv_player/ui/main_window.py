@@ -1445,6 +1445,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             douban_controller=None,
             global_catalog_controller=None,
             telegram_controller=None,
+            telegram_channel_controller=None,
             bilibili_controller=None,
             youtube_controller=None,
             live_controller=None,
@@ -1466,6 +1467,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             global_search_hotkey_loader=None,
             global_search_suggestion_loader=None,
             youtube_category_text_loader=None,
+            show_telegram_channel_tab: bool = False,
             show_bilibili_tab: bool = False,
             show_youtube_tab: bool = False,
             show_emby_tab: bool = True,
@@ -1591,6 +1593,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             initial_category_id=self._initial_category_id_for_tab("telegram"),
             filter_panel_state=self._filter_panel_state,
         )
+        self.telegram_channel_page = None
+        if show_telegram_channel_tab:
+            self.telegram_channel_page = PosterGridPage(
+                telegram_channel_controller or _EmptyTelegramController(),
+                click_action="open",
+                search_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab("telegram_channel"),
+                filter_panel_state=self._filter_panel_state,
+            )
         self.bilibili_page = None
         if show_bilibili_tab:
             self.bilibili_page = PosterGridPage(
@@ -1681,6 +1692,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self.telegram_channel_controller = telegram_channel_controller or _EmptyTelegramController()
         self._skip_next_telegram_open_request_vod_id = ""
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
         self.youtube_controller = youtube_controller or _EmptyYouTubeController()
@@ -1843,6 +1855,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             _TabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
+        if self.telegram_channel_page is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition("telegram_channel", "电报频道", self.telegram_channel_page, self.telegram_channel_controller)
+            )
         if self.bilibili_page is not None:
             self._static_tab_definitions.append(
                 _TabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller)
@@ -2021,6 +2037,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._connect_video_item_context_menu(self.telegram_page)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        if self.telegram_channel_page is not None:
+            telegram_channel_page = self.telegram_channel_page
+            self._connect_video_item_context_menu(telegram_channel_page)
+            telegram_channel_page.item_open_requested.connect(self._handle_telegram_channel_item_open_requested)
+            telegram_channel_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index, page=telegram_channel_page: self._handle_media_breadcrumb_requested(
+                    page,
+                    self.telegram_channel_controller,
+                    node_id,
+                    kind,
+                    index,
+                )
+            )
         if self.bilibili_page is not None:
             bilibili_page = self.bilibili_page
             self._connect_video_item_context_menu(bilibili_page)
@@ -2103,6 +2132,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.telegram_page.selected_category_changed.connect(
             lambda category_id, page=self.telegram_page: self._handle_selected_category_changed(page, category_id)
         )
+        if self.telegram_channel_page is not None:
+            self.telegram_channel_page.unauthorized.connect(self.logout_requested.emit)
+            self.telegram_channel_page.selected_category_changed.connect(
+                lambda category_id, page=self.telegram_channel_page: self._handle_selected_category_changed(page, category_id)
+            )
         if self.bilibili_page is not None:
             self.bilibili_page.unauthorized.connect(self.logout_requested.emit)
             self.bilibili_page.selected_category_changed.connect(
@@ -2237,6 +2271,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.telegram_page,
             self.live_page,
             self.emby_page,
+            self.telegram_channel_page,
             self.bilibili_page,
             self.youtube_page,
             self.jellyfin_page,
@@ -2950,6 +2985,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             _BuiltinTabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _BuiltinTabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
+        if self.telegram_channel_page is not None:
+            definitions.append(_BuiltinTabDefinition("telegram_channel", "电报频道", self.telegram_channel_page, self.telegram_channel_controller))
         if self.bilibili_page is not None:
             definitions.append(_BuiltinTabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller))
         if self.youtube_page is not None:
@@ -3790,6 +3827,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.telegram_page:
             self.telegram_page.ensure_loaded()
             return
+        if widget is self.telegram_channel_page and self.telegram_channel_page is not None:
+            self.telegram_channel_page.ensure_loaded()
+            return
         if widget is self.bilibili_page and self.bilibili_page is not None:
             self.bilibili_page.ensure_loaded()
             return
@@ -4127,6 +4167,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _video_item_favorite_source(self, page: PosterGridPage) -> tuple[str, str, str] | None:
         static_sources = {
             self.telegram_page: ("telegram", "", "电报影视"),
+            self.telegram_channel_page: ("telegram_channel", "", "电报频道"),
             self.live_page: ("live", "", "网络直播"),
             self.emby_page: ("emby", "", "Emby"),
             self.bilibili_page: ("bilibili", "", "B站"),
@@ -4328,6 +4369,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._skip_next_telegram_open_request_vod_id = ""
             return
         self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
+
+    def _handle_telegram_channel_item_open_requested(self, item) -> None:
+        vod_id = item.vod_id
+        self._start_open_request(lambda: self.telegram_channel_controller.build_request(vod_id))
 
     def _handle_bilibili_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -5475,6 +5520,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "plugin": "插件",
             "spider_plugin": "插件",
             "telegram": "电报影视",
+            "telegram_channel": "电报频道",
             "bilibili": "B站",
             "youtube": "YouTube",
             "live": "网络直播",
@@ -6224,6 +6270,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "telegram":
             self._start_open_request(lambda: self._apply_request_playback_history_title(self.telegram_controller.build_request(record.key)))
             return
+        if record.source_kind == "telegram_channel":
+            self._start_open_request(
+                lambda: self._apply_request_playback_history_title(self.telegram_channel_controller.build_request(record.key))
+            )
+            return
         if record.source_kind == "bilibili":
             self._start_open_request(
                 lambda: self._apply_request_playback_history_title(self.bilibili_controller.build_request(record.key))
@@ -6260,6 +6311,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._open_favorite_placeholder(record)
         if record.source_kind == "telegram":
             self._start_open_request(lambda: self.telegram_controller.build_request(record.vod_id))
+            return
+        if record.source_kind == "telegram_channel":
+            self._start_open_request(lambda: self.telegram_channel_controller.build_request(record.vod_id))
             return
         if record.source_kind == "bilibili":
             self._start_open_request(lambda: self.bilibili_controller.build_request(record.vod_id))
@@ -6505,7 +6559,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None
-            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_hydrator = self._metadata_hydrator_factory(
                 request=request,
@@ -6516,7 +6570,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_scrape_service is None
             and self._metadata_scrape_service_factory is not None
-            and request.source_kind in {"browse", "telegram", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
         ):
             request.metadata_scrape_service = self._metadata_scrape_service_factory(
                 request=request,
@@ -6527,7 +6581,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.danmaku_controller is None
             and self._danmaku_controller_factory is not None
-            and request.source_kind in {"telegram", "emby", "jellyfin", "feiniu"}
+            and request.source_kind in {"telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
         ):
             request.danmaku_controller = self._danmaku_controller_factory(
                 request=request,
@@ -6538,7 +6592,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.episode_title_enhancer is None
             and self._episode_title_enhancer_factory is not None
-            and request.source_kind in {"browse", "telegram", "emby", "jellyfin", "feiniu"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
         ):
             request.episode_title_enhancer = self._episode_title_enhancer_factory(
                 request=request,
@@ -6933,6 +6987,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _build_detail_restore_request(self, source: str, vod_id: str):
         if source == "telegram":
             request = self.telegram_controller.build_request(vod_id)
+            return self._apply_request_playback_history_title(request)
+        if source == "telegram_channel":
+            request = self.telegram_channel_controller.build_request(vod_id)
             return self._apply_request_playback_history_title(request)
         if source == "live":
             return self.live_controller.build_request(vod_id)

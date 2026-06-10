@@ -26,6 +26,7 @@ from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQ
 from atv_player.models import (
     AppConfig,
     DoubanCategory,
+    FavoriteRecord,
     HistoryRecord,
     OpenPlayerRequest,
     PlayItem,
@@ -97,6 +98,23 @@ class FakeTelegramController(FakeDoubanController):
             vod=VodItem(vod_id=vod_id, vod_name="Telegram Movie"),
             playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-1")],
             clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+
+class FakeTelegramChannelController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.build_calls: list[str] = []
+
+    def build_request(self, vod_id: str):
+        self.build_calls.append(vod_id)
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Telegram Channel Movie"),
+            playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-tg-channel-1")],
+            clicked_index=0,
+            source_kind="telegram_channel",
             source_mode="detail",
             source_vod_id=vod_id,
         )
@@ -193,8 +211,10 @@ class FakeBilibiliController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
         self.folder_calls: list[str] = []
+        self.build_calls: list[str] = []
 
     def build_request(self, vod_id: str):
+        self.build_calls.append(vod_id)
         return OpenPlayerRequest(
             vod=VodItem(vod_id=vod_id, vod_name="B站视频"),
             playlist=[PlayItem(title="第1话", url="", vod_id="BVep-1")],
@@ -501,6 +521,8 @@ class FakePlayerController:
         source_groups=None,
         source_group_index: int = 0,
         source_index: int = 0,
+        source_kind: str = "",
+        source_key: str = "",
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
@@ -530,6 +552,8 @@ class FakePlayerController:
             "source_groups": source_groups,
             "source_group_index": source_group_index,
             "source_index": source_index,
+            "source_kind": source_kind,
+            "source_key": source_key,
             "detail_resolver": detail_resolver,
             "resolved_vod_by_id": resolved_vod_by_id or {},
             "use_local_history": use_local_history,
@@ -2876,6 +2900,47 @@ def test_main_window_opens_player_from_bilibili_card_signal(qtbot, monkeypatch) 
     assert opened[0][1] is False
 
 
+def test_main_window_opens_player_from_telegram_channel_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeTelegramChannelController()
+    bilibili_controller = FakeBilibiliController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        telegram_channel_controller=controller,
+        bilibili_controller=bilibili_controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_telegram_channel_tab=True,
+        show_bilibili_tab=True,
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+
+    window.telegram_channel_page.item_open_requested.emit(
+        VodItem(vod_id="tg-channel-vod-1", vod_name="频道视频", vod_tag="file")
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert controller.build_calls == ["tg-channel-vod-1"]
+    assert bilibili_controller.build_calls == []
+    assert opened[0][0].vod.vod_name == "Telegram Channel Movie"
+    assert opened[0][0].source_kind == "telegram_channel"
+    assert opened[0][0].source_vod_id == "tg-channel-vod-1"
+    assert opened[0][1] is False
+
+
 def test_main_window_opens_player_from_youtube_card_signal(qtbot, monkeypatch) -> None:
     controller = FakeYoutubeController()
     window = MainWindow(
@@ -3796,6 +3861,101 @@ def test_main_window_opens_telegram_history_detail_asynchronously(qtbot, monkeyp
     assert browse_controller.calls == []
     assert opened[0].vod.vod_name == "电报影视剧"
     assert opened[0].source_vod_id == "1$125208$1"
+
+
+def test_main_window_opens_telegram_channel_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = FakeTelegramChannelController()
+
+    class BrowseController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request_from_detail(self, vod_id: str):
+            self.calls.append(vod_id)
+            return _make_telegram_request(vod_id, vod_name="不应走到这里")
+
+    browse_controller = BrowseController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        telegram_channel_controller=controller,
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=browse_controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=10,
+            key="tg-channel-vod-1",
+            vod_name="电报频道剧",
+            vod_pic="",
+            vod_remarks="第1集",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="telegram_channel",
+            source_name="电报频道",
+        )
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert controller.build_calls == ["tg-channel-vod-1"]
+    assert browse_controller.calls == []
+    assert opened[0].vod.vod_name == "Telegram Channel Movie"
+    assert opened[0].source_kind == "telegram_channel"
+    assert opened[0].source_vod_id == "tg-channel-vod-1"
+
+
+def test_main_window_opens_telegram_channel_favorite_record(qtbot, monkeypatch) -> None:
+    controller = FakeTelegramChannelController()
+    opened: list[OpenPlayerRequest] = []
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        telegram_channel_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_open_favorite_placeholder", lambda record: None)
+    monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
+
+    window.open_favorite_detail(
+        FavoriteRecord(
+            source_kind="telegram_channel",
+            source_key="",
+            source_name="电报频道",
+            vod_id="tg-channel-vod-1",
+            vod_name_snapshot="频道视频",
+            latest_vod_name="频道视频",
+            vod_pic="",
+            vod_remarks="",
+            title_changed=False,
+            created_at=10,
+            updated_at=10,
+        )
+    )
+
+    assert controller.build_calls == ["tg-channel-vod-1"]
+    assert opened[0].source_kind == "telegram_channel"
+    assert opened[0].source_vod_id == "tg-channel-vod-1"
 
 
 def test_main_window_opens_direct_parse_history_detail_asynchronously(qtbot, monkeypatch) -> None:
@@ -8932,8 +9092,9 @@ def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch,
     hydrator_factory = coordinator._build_metadata_hydrator_factory(api_client)
     scrape_factory = coordinator._build_metadata_scrape_service_factory(api_client)
 
-    assert callable(hydrator_factory(source_kind="telegram", vod=VodItem(vod_id="v1", vod_name="成何体统")))
-    assert scrape_factory(source_kind="telegram", vod=VodItem(vod_id="v1", vod_name="成何体统")) is not None
+    for source_kind in ("telegram", "telegram_channel"):
+        assert callable(hydrator_factory(source_kind=source_kind, vod=VodItem(vod_id="v1", vod_name="成何体统")))
+        assert scrape_factory(source_kind=source_kind, vod=VodItem(vod_id="v1", vod_name="成何体统")) is not None
 
 
 def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_required_config(monkeypatch, tmp_path) -> None:
@@ -10463,6 +10624,58 @@ def test_main_window_restore_last_player_routes_telegram_detail_with_playback_hi
     assert session["use_local_history"] is False
     assert session["playback_history_loader"] is not None
     assert session["playback_history_loader"]().position == 45000
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_telegram_channel_detail_to_channel_controller(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = FakeTelegramChannelController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="telegram_channel",
+        last_playback_mode="detail",
+        last_playback_vod_id="tg-channel-vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        telegram_channel_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert controller.build_calls == ["tg-channel-vod-1"]
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Telegram Channel Movie"
+    assert window.player_window.opened[0][0]["source_kind"] == "telegram_channel"
     assert window.player_window.opened[0][1] is True
 
 
