@@ -141,6 +141,27 @@ def test_heat_identity_merges_play_item_fields() -> None:
     assert has_required_heat_external_id(identity) is True
 
 
+def test_heat_identity_uses_tmdb_scraped_title_over_play_item_media_title() -> None:
+    vod = VodItem(
+        vod_id="x",
+        vod_name="莫离",
+        type_name="剧集",
+        detail_fields=[PlaybackDetailField("TMDB ID", "292696")],
+        metadata_field_sources={"title": "tmdb"},
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        media_title="莫离（真彩）",
+    )
+
+    identity = heat_identity_from_vod(vod, item)
+
+    assert identity is not None
+    assert identity.media_key == "tmdb:tv:292696"
+    assert identity.title == "莫离"
+
+
 def test_heat_identity_from_following_uses_provider_identity() -> None:
     record = FollowingRecord(
         id=1,

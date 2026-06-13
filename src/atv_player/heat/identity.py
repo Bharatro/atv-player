@@ -97,11 +97,18 @@ def heat_identity_from_vod(
         *list(getattr(vod, "detail_fields", []) or []),
         *list(getattr(item, "detail_fields", []) or []),
     ]
-    title = (
-        str(getattr(item, "media_title", "") or "").strip()
-        or str(getattr(vod, "vod_name", "") or "").strip()
-        or str(getattr(item, "title", "") or "").strip()
-    )
+    vod_title = str(getattr(vod, "vod_name", "") or "").strip()
+    title_source = str(
+        dict(getattr(vod, "metadata_field_sources", {}) or {}).get("title") or ""
+    ).strip()
+    if title_source == "tmdb" and vod_title:
+        title = vod_title
+    else:
+        title = (
+            str(getattr(item, "media_title", "") or "").strip()
+            or vod_title
+            or str(getattr(item, "title", "") or "").strip()
+        )
     if not title:
         return None
 
