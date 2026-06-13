@@ -16,6 +16,7 @@ from atv_player.following_models import (
     progress_after_dismissed_prompt,
     progress_at_or_beyond,
     resolve_following_completion_state,
+    resolve_latest_released_season_number,
     resolve_new_episode_count,
     resolve_progress_season,
 )
@@ -116,22 +117,12 @@ class FollowingUpdateService(QObject):
                 latest = max(latest, record.latest_episode)
                 if record.total_episodes > 0:
                     total = max(total, record.total_episodes)
-            snapshot_seasons = [
-                season.season_number
-                for season in snapshot.seasons
-                if season.season_number > 0
-            ]
-            snapshot_seasons.extend(
-                episode.season_number
-                for episode in snapshot.episodes
-                if episode.season_number > 0 and not episode.is_special
-            )
-            if snapshot.next_episode is not None and snapshot.next_episode.season_number > 0:
-                snapshot_seasons.append(snapshot.next_episode.season_number)
-            latest_season_number = (
-                (max(snapshot_seasons) if snapshot_seasons else 0)
-                or refreshed_record.season_number
-                or record.season_number
+            latest_season_number = resolve_latest_released_season_number(
+                record_season_number=refreshed_record.season_number or record.season_number,
+                latest_episode=latest,
+                current_season_number=record.current_season_number,
+                episodes=snapshot.episodes,
+                today=datetime.fromtimestamp(now, BEIJING_TZ).date(),
             )
             current_season_number = resolve_progress_season(
                 record.current_season_number,

@@ -76,8 +76,8 @@ class FollowingMetadataSourceSnapshot:
     metadata_fields: list[dict[str, str]] = field(default_factory=list)
     ratings: list[FollowingRatingEntry] = field(default_factory=list)
     playback_platforms: list[FollowingPlaybackPlatformEntry] = field(default_factory=list)
-    episodes: list["FollowingEpisode"] = field(default_factory=list)
-    seasons: list["FollowingSeason"] = field(default_factory=list)
+    episodes: list[FollowingEpisode] = field(default_factory=list)
+    seasons: list[FollowingSeason] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -420,6 +420,41 @@ def resolve_following_completion_state(
         if air_date is not None and air_date > resolved_today:
             return FollowingCompletionState.ONGOING
     return FollowingCompletionState.COMPLETED
+
+
+def resolve_latest_released_season_number(
+    *,
+    record_season_number: int,
+    latest_episode: int,
+    current_season_number: int = 0,
+    episodes: list[FollowingEpisode] | None = None,
+    today: date | None = None,
+) -> int:
+    base = resolve_progress_season(
+        record_season_number,
+        latest_episode,
+        fallback_season=record_season_number,
+    )
+    current_season = max(0, int(current_season_number or 0))
+    if current_season > base:
+        base = current_season
+    if max(0, int(latest_episode or 0)) <= 0:
+        return base
+    resolved_today = today or datetime.now(BEIJING_TZ).date()
+    released_seasons = [
+        int(episode.season_number)
+        for episode in episodes or []
+        if int(episode.season_number or 0) > 0
+        and int(episode.episode_number or 0) > 0
+        and not episode.is_special
+        and (
+            (air_date := _episode_air_date(episode.air_date)) is None
+            or air_date <= resolved_today
+        )
+    ]
+    if not released_seasons:
+        return base
+    return max(base, max(released_seasons))
 
 
 def resolve_following_episode_state(

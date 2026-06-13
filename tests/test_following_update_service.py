@@ -877,3 +877,60 @@ def test_update_service_reports_completion_state_from_snapshot(tmp_path: Path) -
     results = service.check_due_records(limit=10)
 
     assert results[0].completion_state == "completed"
+
+
+def test_update_service_does_not_prompt_completed_watched_series_for_future_unreleased_season(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(
+        _record(
+            title="剑来",
+            provider="tmdb",
+            provider_id="tv:240411",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "240411"},
+            season_number=1,
+            current_season_number=1,
+            current_episode=26,
+            latest_episode=26,
+            previous_latest_episode=26,
+            total_episodes=26,
+            watched_latest_episode=True,
+        )
+    )
+    gateway = FakeMetadataGateway()
+    gateway.responses["tmdb"] = (
+        _record(
+            id=record_id,
+            title="剑来",
+            provider="tmdb",
+            provider_id="tv:240411",
+            provider_priority=["tmdb"],
+            external_ids={"tmdb": "240411"},
+            season_number=1,
+            latest_episode=26,
+            total_episodes=26,
+        ),
+        FollowingDetailSnapshot(
+            following_id=record_id,
+            seasons=[
+                FollowingSeason(season_number=1, episode_count=26),
+                FollowingSeason(season_number=2, episode_count=26),
+            ],
+            episodes=[
+                FollowingEpisode(season_number=1, episode_number=26, air_date="2025-02-15"),
+                FollowingEpisode(season_number=2, episode_number=1, air_date="2026-12-01"),
+            ],
+            refreshed_at=1779638400,
+        ),
+    )
+    service = FollowingUpdateService(repo, metadata_gateway=gateway, now=lambda: 1779638400)
+
+    results = service.check_record(record_id)
+
+    record = repo.get(record_id)
+    assert results is not None
+    assert results.has_update is False
+    assert results.homepage_prompt_pending is False
+    assert record is not None
+    assert record.has_update is False
+    assert record.homepage_prompt_pending is False

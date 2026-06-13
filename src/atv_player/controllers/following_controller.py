@@ -39,6 +39,7 @@ from atv_player.following_models import (
     provider_priority_for_media_kind,
     resolve_display_total_episodes,
     resolve_following_completion_state,
+    resolve_latest_released_season_number,
     resolve_new_episode_count,
     resolve_progress_season,
 )
@@ -1200,7 +1201,13 @@ class FollowingController:
         refreshed_record.latest_episode = new_latest
         refreshed_record.previous_latest_episode = record.previous_latest_episode
         refreshed_record.total_episodes = new_total
-        latest_season_number = self._latest_season_number(refreshed_record, snapshot)
+        latest_season_number = resolve_latest_released_season_number(
+            record_season_number=refreshed_record.season_number,
+            latest_episode=new_latest,
+            current_season_number=record.current_season_number,
+            episodes=snapshot.episodes,
+            today=datetime.fromtimestamp(self._now()).date(),
+        )
         has_update = not progress_at_or_beyond(
             record.current_season_number,
             record.current_episode,
