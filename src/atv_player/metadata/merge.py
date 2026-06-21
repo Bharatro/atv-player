@@ -185,6 +185,22 @@ def _can_override_title(vod: VodItem, provider: str) -> bool:
     return provider_rank <= current_rank
 
 
+def _candidate_title_extends_current(current_title: object, candidate_title: object) -> bool:
+    """True when the candidate title merely *adds* content beyond the current title.
+
+    A longer candidate whose normalized form contains the current title is almost
+    always a different/companion work (e.g. a "剧情揭秘" plot-reveal special for the
+    real show), not a cleaner version of the same title. Such a candidate must not
+    clobber an already-correct title. The legitimate "cleaner title" direction goes
+    the other way (candidate shorter than, or a typo of, the current title).
+    """
+    current = normalize_match_title(current_title)
+    candidate = normalize_match_title(candidate_title)
+    if not current or not candidate or candidate == current:
+        return False
+    return current in candidate
+
+
 def _set_field_source(vod: VodItem, field_name: str, provider: str) -> None:
     vod.metadata_field_sources[field_name] = provider
 
@@ -502,7 +518,9 @@ def merge_metadata_record(vod: VodItem, record: MetadataRecord, provider_priorit
         if not vod.vod_name:
             vod.vod_name = record.title
             _set_field_source(vod, "title", record.provider)
-        elif _can_override_title(vod, record.provider):
+        elif _can_override_title(vod, record.provider) and not _candidate_title_extends_current(
+            vod.vod_name, record.title
+        ):
             vod.vod_name = record.title
             _set_field_source(vod, "title", record.provider)
         elif (
@@ -603,7 +621,11 @@ def fill_missing_metadata_record(vod: VodItem, record: MetadataRecord) -> VodIte
     if not vod.vod_name and record.title:
         vod.vod_name = record.title
         _set_field_source(vod, "title", record.provider)
-    elif record.title and _can_override_title(vod, record.provider):
+    elif (
+        record.title
+        and _can_override_title(vod, record.provider)
+        and not _candidate_title_extends_current(vod.vod_name, record.title)
+    ):
         vod.vod_name = record.title
         _set_field_source(vod, "title", record.provider)
     if not vod.vod_pic and record.poster:

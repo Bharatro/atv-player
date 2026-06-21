@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
 _MIN_CONFIDENT_MATCH_SCORE = 0.45
+# A match whose title merely *extends* the query (e.g. a "剧情揭秘" companion special
+# for the real show) is a different work. Score it below confidence so corroborating
+# signals (year/area/actors) are required to promote it.
+_COMPANION_TITLE_SIMILARITY_SCORE = 0.35
 _CATEGORY_MATCH_BONUS = 0.12
 _CATEGORY_MISMATCH_PENALTY = 0.08
 _AREA_MATCH_BONUS = 0.03
@@ -127,8 +131,13 @@ def _title_similarity_score(query_title: str, match_title: str) -> float:
     match_base = normalize_match_title(strip_match_season_suffix(match_title))
     if query_base and query_base == match_base:
         return 0.78
-    if query_base and match_base and (query_base in match_base or match_base in query_base):
-        return 0.65
+    if query_base and match_base:
+        if match_base in query_base:
+            # Match is the canonical base show; the query adds a suffix/variant.
+            return 0.65
+        if query_base in match_base:
+            # Match adds content beyond the query → likely a companion/derivative work.
+            return _COMPANION_TITLE_SIMILARITY_SCORE
     return SequenceMatcher(a=query_base or normalized_query, b=match_base or normalized_match).ratio() * 0.6
 
 

@@ -555,6 +555,42 @@ def test_merge_metadata_iqiyi_overrides_clean_existing_title() -> None:
     assert vod.vod_name == "国色芳华"
 
 
+def test_fill_missing_keeps_title_against_longer_companion_title() -> None:
+    # A non-primary provider (Youku) returned a "plot reveal" companion special
+    # whose title merely extends the real show's title. It must NOT clobber the
+    # already-correct title set by the primary provider.
+    vod = VodItem(vod_id="v1", vod_name="爱情有烟火")
+    vod.metadata_field_sources["title"] = "tencent"
+    youku = MetadataRecord(
+        provider="youku",
+        provider_id="https://v.youku.com/v_show/id_Xjuqing.html",
+        title="《爱情有烟火》剧情揭秘",
+        year="2026",
+        detail_fields=[{"label": "播放链接", "value": "https://v.youku.com/v_show/id_Xjuqing.html"}],
+    )
+
+    fill_missing_metadata_record(vod, youku)
+
+    assert vod.vod_name == "爱情有烟火"
+    assert vod.metadata_field_sources["title"] == "tencent"
+
+
+def test_merge_keeps_title_against_longer_companion_title() -> None:
+    vod = VodItem(vod_id="v1", vod_name="爱情有烟火")
+    vod.metadata_field_sources["title"] = "tencent"
+    youku = MetadataRecord(
+        provider="youku",
+        provider_id="https://v.youku.com/v_show/id_Xjuqing.html",
+        title="《爱情有烟火》剧情揭秘",
+        year="2026",
+    )
+
+    merge_metadata_record(vod, youku, provider_priority=["tencent", "youku"])
+
+    assert vod.vod_name == "爱情有烟火"
+    assert vod.metadata_field_sources["title"] == "tencent"
+
+
 def test_merge_metadata_iqiyi_overrides_drive_folder_style_title_with_record_title() -> None:
     vod = VodItem(vod_id="v1", vod_name="di|纸上|f|紫微(2026)")
     record = MetadataRecord(provider="iqiyi", provider_id="iqiyi:1", title="纸上紫微", year="2026")

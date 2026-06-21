@@ -174,3 +174,33 @@ def test_score_match_rejects_large_year_conflict_even_for_exact_title() -> None:
     )
 
     assert is_confident_match(score_match(query, mismatched_year)) is False
+
+
+def test_score_match_longer_companion_title_is_not_confident() -> None:
+    # Youku returns a "plot reveal" companion special whose title merely starts
+    # with the real show's title. It is a different work and must NOT be confident.
+    query = MetadataQuery(title="爱情有烟火", year="2026")
+    companion = MetadataMatch(
+        provider="youku",
+        provider_id="https://v.youku.com/v_show/id_Xjuqing.html",
+        title="《爱情有烟火》剧情揭秘",
+        year="2026",
+        raw={"category": "优酷"},
+    )
+
+    assert is_confident_match(score_match(query, companion)) is False
+
+
+def test_score_match_shorter_base_title_stays_confident() -> None:
+    # The reverse direction — query has extra, match is the canonical base show —
+    # must remain a confident match (regression guard for the asymmetric change).
+    query = MetadataQuery(title="爱情有烟火完整版", year="2026")
+    base = MetadataMatch(
+        provider="tencent",
+        provider_id="tx:1",
+        title="爱情有烟火",
+        year="2026",
+        raw={},
+    )
+
+    assert is_confident_match(score_match(query, base)) is True
