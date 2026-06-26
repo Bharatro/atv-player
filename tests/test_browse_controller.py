@@ -10,6 +10,8 @@ class FakeApiClient:
         self.list_vod_calls: list[tuple[str, int, int]] = []
         self.search_keywords: list[str] = []
         self.search_payload: list[dict] = []
+        self.alist_search_calls: list[tuple[str, int]] = []
+        self.alist_search_payload: dict = {"list": []}
         self.detail_calls: list[str] = []
         self.rename_video_calls: list[tuple[str, str]] = []
         self.delete_video_calls: list[str] = []
@@ -43,6 +45,10 @@ class FakeApiClient:
     def telegram_search(self, keyword: str) -> list[dict]:
         self.search_keywords.append(keyword)
         return self.search_payload
+
+    def search_alist_items(self, keyword: str, page: int = 1) -> dict:
+        self.alist_search_calls.append((keyword, page))
+        return self.alist_search_payload
 
     def rename_video(self, video_id: str, name: str) -> None:
         self.rename_video_calls.append((video_id, name))
@@ -100,6 +106,28 @@ def test_search_formats_timestamp_to_local_time() -> None:
     results = controller.search("")
 
     assert results[0].vod_time == datetime.fromtimestamp(1713168000000 / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_search_alist_maps_cms_vod_items() -> None:
+    api = FakeApiClient()
+    api.alist_search_payload = {
+        "list": [
+            {
+                "vod_id": "40$abc$1",
+                "vod_name": "疑犯追踪（1.2.4）[440.16GB]",
+                "vod_pic": "http://192.168.50.60:4567/115.jpg",
+                "vod_tag": "file",
+            }
+        ]
+    }
+    controller = BrowseController(api)
+
+    results = controller.search_alist("疑犯追踪")
+
+    assert api.alist_search_calls == [("疑犯追踪", 1)]
+    assert results[0].vod_id == "40$abc$1"
+    assert results[0].vod_name == "疑犯追踪（1.2.4）[440.16GB]"
+    assert results[0].vod_tag == "file"
 
 
 def test_build_playlist_from_folder_starts_at_clicked_video() -> None:

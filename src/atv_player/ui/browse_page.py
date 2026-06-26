@@ -146,8 +146,11 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._initial_load_started = False
         self.keyword_edit = QLineEdit()
         self.keyword_edit.setClearButtonEnabled(True)
-        self.search_button = QPushButton("搜索")
+        self.search_button = QPushButton("电报搜索")
         self.search_refresh_button = QPushButton("刷新")
+        self.alist_keyword_edit = QLineEdit()
+        self.alist_keyword_edit.setClearButtonEnabled(True)
+        self.alist_search_button = QPushButton("文件搜索")
         self.filter_combo = FlatComboBox()
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
@@ -187,6 +190,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._page_state_by_path: dict[str, tuple[int, int]] = {}
         self._results: list[VodItem] = []
         self._filtered_results: list[VodItem] = []
+        self._result_source = "telegram"
         self._sortable_columns = {1, 2, 3, 4, 5}
         self._sorted_column: int | None = None
         self._sort_order = Qt.SortOrder.AscendingOrder
@@ -227,7 +231,10 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         top_search_controls = QHBoxLayout()
         top_search_controls.addWidget(self.keyword_edit)
         top_search_controls.addWidget(self.search_button)
-        top_search_controls.addWidget(self.search_refresh_button)
+        # top_search_controls.addWidget(self.search_refresh_button)
+        top_search_controls.addSpacing(12)
+        top_search_controls.addWidget(self.alist_keyword_edit)
+        top_search_controls.addWidget(self.alist_search_button)
 
         result_actions = QHBoxLayout()
         result_actions.addWidget(self.filter_combo)
@@ -272,7 +279,10 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.content_splitter.splitterMoved.connect(self._persist_content_splitter_state)
 
         self.search_button.clicked.connect(self.search)
+        self.keyword_edit.returnPressed.connect(self.search)
         self.search_refresh_button.clicked.connect(self.search)
+        self.alist_search_button.clicked.connect(self.alist_search)
+        self.alist_keyword_edit.returnPressed.connect(self.alist_search)
         self.clear_button.clicked.connect(self.clear_results)
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_search_result)
@@ -315,7 +325,9 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         return self._can_deliver_async_result()
 
     def _apply_theme(self) -> None:
-        self.keyword_edit.setStyleSheet(build_search_line_edit_qss(current_tokens()))
+        search_qss = build_search_line_edit_qss(current_tokens())
+        self.keyword_edit.setStyleSheet(search_qss)
+        self.alist_keyword_edit.setStyleSheet(search_qss)
 
     def ensure_loaded(self, path: str | None = None) -> None:
         if self._initial_load_started:
@@ -356,7 +368,14 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.search()
 
     def search(self) -> None:
-        keyword = self.keyword_edit.text().strip()
+        self._result_source = "telegram"
+        self._run_search(self.keyword_edit.text().strip(), self.controller.search)
+
+    def alist_search(self) -> None:
+        self._result_source = "alist"
+        self._run_search(self.alist_keyword_edit.text().strip(), self.controller.search_alist)
+
+    def _run_search(self, keyword: str, fetcher) -> None:
         self._search_request_id += 1
         self._resolve_request_id += 1
         request_id = self._search_request_id
@@ -369,7 +388,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
 
         def run() -> None:
             try:
-                results = self.controller.search(keyword)
+                results = fetcher(keyword)
             except UnauthorizedError:
                 if self._is_widget_alive():
                     self._search_signals.unauthorized.emit(request_id)
@@ -387,6 +406,8 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._search_request_id += 1
         self._resolve_request_id += 1
         self.keyword_edit.clear()
+        self.alist_keyword_edit.clear()
+        self._result_source = "telegram"
         self.filter_combo.setCurrentIndex(0)
         self._results = []
         self._filtered_results = []
@@ -412,6 +433,12 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         if not (0 <= row < len(self._filtered_results)):
             return
         item = self._filtered_results[row]
+        if self._result_source == "alist":
+            self._show_search_results_panel()
+            self.status_label.show()
+            self.status_label.setText("打开中...")
+            self._start_open_request(lambda: self.controller.build_request_from_detail(item.vod_id))
+            return
         self._resolve_request_id += 1
         request_id = self._resolve_request_id
         self._show_search_results_panel()
@@ -468,6 +495,8 @@ class BrowsePage(QWidget, AsyncGuardMixin):
     def _set_search_loading(self, loading: bool) -> None:
         self.keyword_edit.setEnabled(not loading)
         self.search_button.setEnabled(not loading)
+        self.alist_keyword_edit.setEnabled(not loading)
+        self.alist_search_button.setEnabled(not loading)
         self.filter_combo.setEnabled(not loading)
         self.clear_button.setEnabled(not loading)
         if loading:

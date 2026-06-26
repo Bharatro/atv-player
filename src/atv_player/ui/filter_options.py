@@ -13,4 +13,8 @@ SEARCH_DRIVE_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("迅雷", "2"),
     ("移动", "6"),
     ("PikPak", "1"),
+    ("光鸭", "12"),
+    ("磁力", "magnet"),
+    ("电驴", "ed2k"),
+    ("视频", "video"),
 ]

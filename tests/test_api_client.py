@@ -101,6 +101,49 @@ def test_api_client_uses_vod_token_for_vod_requests() -> None:
     assert seen_path["value"] == "/vod/vod-123"
 
 
+def test_api_client_search_alist_items_uses_vod_token_and_keyword_param() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["wd"] = request.url.params.get("wd")
+        seen["ac"] = request.url.params.get("ac")
+        seen["pg"] = request.url.params.get("pg")
+        return httpx.Response(200, json={"list": [], "pagecount": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="vod-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_alist_items("疑犯追踪")
+
+    assert seen["path"] == "/vod/vod-123"
+    assert seen["wd"] == "疑犯追踪"
+    assert seen["ac"] == "gui"
+    assert seen["pg"] is None
+
+
+def test_api_client_search_alist_items_includes_page_param_after_first_page() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["pg"] = request.url.params.get("pg")
+        return httpx.Response(200, json={"list": [], "pagecount": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        vod_token="vod-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_alist_items("疑犯追踪", page=2)
+
+    assert seen["pg"] == "2"
+
+
 def test_api_client_raises_unauthorized_error_for_401() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "Unauthorized"})

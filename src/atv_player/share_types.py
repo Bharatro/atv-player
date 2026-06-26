@@ -11,6 +11,10 @@ SHARE_TYPE_NAME_BY_ID: dict[str, str] = {
     "2": "迅雷",
     "6": "移动",
     "1": "PikPak",
+    "12": "光鸭",
+    "magnet": "磁力",
+    "ed2k": "电驴",
+    "video": "视频",
 }
 
 

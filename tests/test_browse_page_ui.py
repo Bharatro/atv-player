@@ -128,6 +128,16 @@ class RecordingSearchController(FakeBrowseController):
         return []
 
 
+class RecordingAListSearchController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.alist_calls: list[str] = []
+
+    def search_alist(self, keyword: str):
+        self.alist_calls.append(keyword)
+        return []
+
+
 class AsyncBrowseController(FakeBrowseController):
     def __init__(self) -> None:
         super().__init__()
@@ -412,6 +422,40 @@ def test_browse_page_search_keyword_sets_input_and_starts_search(qtbot) -> None:
 
     assert controller.search_calls == ["霸王别姬"]
     assert page.keyword_edit.text() == "霸王别姬"
+
+
+def test_browse_page_alist_search_button_invokes_controller_search_alist(qtbot) -> None:
+    controller = RecordingAListSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.alist_keyword_edit.setText("疑犯追踪")
+    page.alist_search_button.click()
+
+    qtbot.waitUntil(lambda: controller.alist_calls == ["疑犯追踪"], timeout=1000)
+    assert page._result_source == "alist"
+
+
+def test_browse_page_alist_result_opens_detail_for_playback(qtbot) -> None:
+    controller = AsyncOpenController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page._result_source = "alist"
+    page._results = [VodItem(vod_id="40$abc$1", vod_name="疑犯追踪")]
+    page._filtered_results = list(page._results)
+
+    opened: list[OpenPlayerRequest] = []
+    page.open_requested.connect(opened.append)
+
+    page._open_search_result(0, 0)
+    _wait_for_open_call(qtbot, controller, "detail", "40$abc$1")
+    controller.finish("detail", "40$abc$1")
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0].source_vod_id == "40$abc$1"
 
 
 def test_tables_are_read_only(qtbot) -> None:
@@ -768,7 +812,7 @@ def test_search_filter_options_cover_web_drive_types(qtbot) -> None:
     qtbot.addWidget(browse_page)
     qtbot.addWidget(search_page)
 
-    expected_values = {"", "0", "1", "2", "3", "5", "6", "7", "8", "9", "10"}
+    expected_values = {"", "0", "1", "2", "3", "5", "6", "7", "8", "9", "10", "12", "magnet", "ed2k", "video"}
 
     browse_values = {browse_page.filter_combo.itemData(index) for index in range(browse_page.filter_combo.count())}
     search_values = {search_page.filter_combo.itemData(index) for index in range(search_page.filter_combo.count())}
@@ -783,7 +827,7 @@ def test_search_filter_options_show_pure_drive_names(qtbot) -> None:
     qtbot.addWidget(browse_page)
     qtbot.addWidget(search_page)
 
-    expected_labels = ["全部", "百度", "天翼", "夸克", "UC", "阿里", "115", "123", "迅雷", "移动", "PikPak"]
+    expected_labels = ["全部", "百度", "天翼", "夸克", "UC", "阿里", "115", "123", "迅雷", "移动", "PikPak", "光鸭", "磁力", "电驴", "视频"]
 
     browse_labels = [browse_page.filter_combo.itemText(index) for index in range(browse_page.filter_combo.count())]
     search_labels = [search_page.filter_combo.itemText(index) for index in range(search_page.filter_combo.count())]

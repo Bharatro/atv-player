@@ -131,6 +131,10 @@ class BrowseController:
             for item in payload
         ]
 
+    def search_alist(self, keyword: str) -> list[VodItem]:
+        payload = self._api_client.search_alist_items(keyword)
+        return [_map_vod_item(item) for item in payload.get("list", [])]
+
     def build_playlist_from_folder(
         self,
         folder_items: list[VodItem],
