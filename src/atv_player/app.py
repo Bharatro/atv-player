@@ -2268,6 +2268,7 @@ class AppCoordinator(QObject):
 
     def _handle_logout_requested(self) -> None:
         logger.info("Logout requested")
+        self._api_client.logout()
         self.repo.clear_token()
         widget = self._show_login()
         widget.show()

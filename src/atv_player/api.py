@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +33,7 @@ class ApiClient:
         client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         headers = {"Authorization": token} if token else {}
+        headers.setdefault("User-Agent", platform.platform() + " ATV-Player")
         self._vod_token = vod_token
         client_kwargs: dict[str, Any] = dict(
             base_url=base_url,
@@ -120,6 +122,9 @@ class ApiClient:
             "/api/accounts/login",
             json={"username": username, "password": password},
         )
+
+    def logout(self) -> None:
+        return self._request("POST", "/api/accounts/logout")
 
     def list_vod(self, path_id: str, page: int, size: int) -> dict[str, Any]:
         return self._request(
