@@ -10,7 +10,7 @@ import zlib
 
 import httpx
 
-from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
+from atv_player.danmaku.errors import DanmakuEmptyResultError, DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import (
@@ -116,6 +116,7 @@ class IqiyiDanmakuProvider:
         records: list[DanmakuRecord] = []
         seen: set[tuple[float, str]] = set()
         parse_failures = 0
+        empty_segments = 0
         page_indexes = range(1, total_pages + 1)
         for batch in iter_bounded_settled(
             page_indexes,
@@ -124,8 +125,11 @@ class IqiyiDanmakuProvider:
             for settled in batch:
                 if settled.error is not None:
                     raise settled.error
+                if not settled.value:
+                    empty_segments += 1
+                    continue
                 try:
-                    xml_text = zlib.decompress(settled.value or b"", 15 + 32).decode("utf-8", errors="ignore")
+                    xml_text = zlib.decompress(settled.value, 15 + 32).decode("utf-8", errors="ignore")
                     for record in self._parse_segment_records(xml_text, duration_seconds):
                         key = (record.time_offset, record.content)
                         if key in seen:
@@ -134,6 +138,8 @@ class IqiyiDanmakuProvider:
                         records.append(record)
                 except Exception:
                     parse_failures += 1
+        if empty_segments == total_pages and not records:
+            raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
         if parse_failures == total_pages and not records:
             raise DanmakuResolveError("爱奇艺弹幕分片解析失败")
         records.sort(key=lambda record: (record.time_offset, record.content))
@@ -157,6 +163,8 @@ class IqiyiDanmakuProvider:
             follow_redirects=True,
             timeout=10.0,
         )
+        if segment_response.status_code == 404:
+            return b""
         return segment_response.content
 
     def _extract_search_items(self, payload: dict, query_name: str) -> list[DanmakuSearchItem]:

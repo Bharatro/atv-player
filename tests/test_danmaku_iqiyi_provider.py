@@ -6,7 +6,7 @@ import zlib
 import httpx
 import pytest
 
-from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
+from atv_player.danmaku.errors import DanmakuEmptyResultError, DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.providers.iqiyi import IqiyiDanmakuProvider
 
 
@@ -1401,6 +1401,28 @@ def test_iqiyi_resolve_raises_when_all_segments_fail_to_decompress() -> None:
     provider = IqiyiDanmakuProvider(get=fake_get)
 
     with pytest.raises(DanmakuResolveError, match="爱奇艺弹幕分片解析失败"):
+        provider.resolve("https://www.iqiyi.com/v_demo.html")
+
+
+def test_iqiyi_resolve_treats_missing_segment_files_as_empty_result() -> None:
+    page_info = {
+        "duration": "00:00:10",
+        "tvName": "不识君第2集",
+        "albumId": 1487716835404101,
+        "tvId": 1551087939776900,
+        "cid": 2,
+    }
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://www.iqiyi.com/v_demo.html":
+            return JsonResponse(
+                text=f'<html><script>window.Q.PageInfo.playPageInfo={json.dumps(page_info)};</script></html>'
+            )
+        return JsonResponse(status_code=404, content=b'{"code":"NoSuchKey"}')
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    with pytest.raises(DanmakuEmptyResultError, match="未找到弹幕"):
         provider.resolve("https://www.iqiyi.com/v_demo.html")
 
 

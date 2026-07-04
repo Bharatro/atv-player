@@ -781,13 +781,20 @@ class DanmakuService:
         )
 
     def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
-        for key in self._provider_order:
+        provider_keys = list(self._provider_order)
+        selected_option_matches = option is not None and option.url == page_url and bool(option.provider)
+        if selected_option_matches:
+            provider_keys = [option.provider, *(key for key in provider_keys if key != option.provider)]
+        for key in provider_keys:
             if not self._provider_enabled(key):
                 continue
             provider = self._providers.get(key)
-            if provider is None or not provider.supports(page_url):
+            if provider is None:
                 continue
-            if option is not None and option.url == page_url:
+            use_selected_context = bool(selected_option_matches and key == option.provider and option.resolve_context)
+            if not use_selected_context and not provider.supports(page_url):
+                continue
+            if selected_option_matches and key == option.provider:
                 prime_resolve_context = getattr(provider, "prime_resolve_context", None)
                 if callable(prime_resolve_context):
                     prime_resolve_context(page_url, option.resolve_context)

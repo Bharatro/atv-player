@@ -1410,6 +1410,69 @@ def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:
     assert tencent.resolve_calls == ["https://video.tencent/item"]
 
 
+def test_resolve_danmu_prefers_selected_option_provider_when_url_is_ambiguous() -> None:
+    class AmbiguousProvider(FakeProvider):
+        def supports(self, page_url: str) -> bool:
+            return "shared.example" in page_url
+
+    iqiyi = AmbiguousProvider(
+        "iqiyi",
+        [],
+        [DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="wrong")],
+    )
+    sohu = AmbiguousProvider(
+        "sohu",
+        [],
+        [DanmakuRecord(time_offset=2.0, pos=1, color="16777215", content="right")],
+    )
+    service = DanmakuService({"iqiyi": iqiyi, "sohu": sohu}, provider_order=["iqiyi", "sohu"])
+    option = DanmakuSourceOption(provider="sohu", name="不识君 第2集", url="https://shared.example/video")
+
+    xml = service.resolve_danmu("https://shared.example/video", option=option)
+
+    assert "right" in xml
+    assert sohu.resolve_calls == ["https://shared.example/video"]
+    assert iqiyi.resolve_calls == []
+
+
+def test_resolve_danmu_uses_selected_option_provider_context_even_when_url_matches_another_site() -> None:
+    class ContextOnlyProvider(FakeProvider):
+        def __init__(self, key: str, items: list[DanmakuSearchItem], records: list[DanmakuRecord]) -> None:
+            super().__init__(key, items, records)
+            self.primed_contexts: list[dict[str, str | int | None]] = []
+
+        def supports(self, page_url: str) -> bool:
+            return self.key in page_url
+
+        def prime_resolve_context(self, page_url: str, resolve_context: dict[str, str | int | None]) -> None:
+            self.primed_contexts.append(dict(resolve_context))
+
+    iqiyi = ContextOnlyProvider(
+        "iqiyi",
+        [],
+        [DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="wrong")],
+    )
+    sohu = ContextOnlyProvider(
+        "sohu",
+        [],
+        [DanmakuRecord(time_offset=2.0, pos=1, color="16777215", content="right")],
+    )
+    service = DanmakuService({"iqiyi": iqiyi, "sohu": sohu}, provider_order=["iqiyi", "sohu"])
+    option = DanmakuSourceOption(
+        provider="sohu",
+        name="不识君 第2集",
+        url="https://www.iqiyi.com/v_demo.html?vfm=m_312_shsp",
+        resolve_context={"aid": "1001352658", "vid": "458728253"},
+    )
+
+    xml = service.resolve_danmu(option.url, option=option)
+
+    assert "right" in xml
+    assert sohu.primed_contexts == [{"aid": "1001352658", "vid": "458728253"}]
+    assert sohu.resolve_calls == [option.url]
+    assert iqiyi.resolve_calls == []
+
+
 def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
     service = DanmakuService({}, provider_order=[])
 

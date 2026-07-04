@@ -346,6 +346,48 @@ def test_sohu_search_uses_embedded_search_videos_when_playlist_api_is_unavailabl
     ]
 
 
+def test_sohu_search_skips_cross_site_embedded_videos() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "aid": 1001352658,
+                                "album_name": "<<<不识君>>>",
+                                "year": 2025,
+                                "meta": [
+                                    {"txt": "24集全"},
+                                    {"txt": "电视剧 | 内地 | 2025年"},
+                                    {"txt": "播放源：爱奇艺"},
+                                ],
+                                "videos": [
+                                    {
+                                        "aid": 1001352658,
+                                        "vid": 458728253,
+                                        "video_name": "不识君第2集",
+                                        "video_order": 2,
+                                        "url_html5": "http://www.iqiyi.com/v_gjfsxj94o8.html",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            raise AssertionError("embedded cross-site videos should not trigger fallback lookup")
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("不识君", original_name="不识君 2集")
+
+    assert items == []
+
+
 def test_sohu_search_ignores_non_mapping_search_items_and_embedded_videos() -> None:
     def fake_get(url: str, **kwargs):
         if url == "https://m.so.tv.sohu.com/search/pc/keyword":

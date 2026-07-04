@@ -154,7 +154,8 @@ class SohuDanmakuProvider:
         requested_issue_key: str | None,
     ) -> list[DanmakuSearchItem]:
         embedded_videos = album.get("videos")
-        videos = embedded_videos if isinstance(embedded_videos, list) and embedded_videos else self._playlist_videos(str(album["aid"]))
+        has_embedded_videos = isinstance(embedded_videos, list) and bool(embedded_videos)
+        videos = embedded_videos if has_embedded_videos else self._playlist_videos(str(album["aid"]))
         if not videos:
             return [self._album_fallback_item(album)]
         category_name = str(album.get("category_name") or "")
@@ -166,6 +167,8 @@ class SohuDanmakuProvider:
             return [item] if item is not None else [self._album_fallback_item(album)]
         items = [item for item in (self._video_to_item(album, video) for video in videos) if item is not None]
         if not items:
+            if has_embedded_videos:
+                return []
             return [self._album_fallback_item(album)]
         if requested_issue_key:
             matched = [item for item in items if item.resolve_context.get("variety_year") == requested_issue_key]
@@ -309,6 +312,8 @@ class SohuDanmakuProvider:
             or ""
         ).strip()
         if not vid or not url:
+            return None
+        if "sohu.com" not in url:
             return None
         album_title = self._normalize_display_title(str(album["title"]))
         video_name = self._normalize_display_title(str(video.get("video_name") or "").strip())
