@@ -77,6 +77,13 @@ def test_build_poster_request_headers_uses_iqiyi_referer_for_iqiyi_cdn() -> None
     assert headers["User-Agent"] == poster_loader_module.POSTER_USER_AGENT
 
 
+def test_build_poster_request_headers_uses_tencent_referer_for_tencent_cdn() -> None:
+    headers = build_poster_request_headers("https://inews.gtimg.com/om_ls/example/0")
+
+    assert headers["Referer"] == "https://v.qq.com/"
+    assert headers["User-Agent"] == poster_loader_module.POSTER_USER_AGENT
+
+
 def test_load_remote_poster_image_scales_downloaded_image() -> None:
     def fake_get(
         url: str,

@@ -74,6 +74,8 @@ def build_poster_request_headers(image_url: str) -> dict[str, str]:
     referer = DEFAULT_POSTER_REFERER
     if "ytimg.com" in image_url:
         referer = "https://www.youtube.com/"
+    elif "gtimg.com" in image_url or "qpic.cn" in image_url:
+        referer = "https://v.qq.com/"
     elif "iqiyipic.com" in image_url:
         referer = "https://www.iqiyi.com/"
     elif "netease.com" in image_url or "163.com" in image_url:
