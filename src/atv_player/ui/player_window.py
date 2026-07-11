@@ -4141,6 +4141,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._show_video_poster_overlay(pixmap)
 
     def _handle_playback_failed(self, message: str) -> None:
+        if self._should_recover_recent_seek_failure():
+            self._append_log(message)
+            self._recover_current_item_after_seek()
+            return
         if self._try_auto_switch_source_after_failure():
             return
         self._show_failed_startup_state(message)
@@ -4149,6 +4153,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         pixmap = self.video_poster_overlay.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
+
+    def _should_recover_recent_seek_failure(self) -> bool:
+        target_seconds = self._recent_user_seek_target_seconds
+        if (
+            target_seconds is None
+            or time.monotonic() >= self._ignore_playback_finished_until
+        ):
+            return False
+        try:
+            duration = int(self.video.duration_seconds() or 0)
+        except Exception:
+            duration = 0
+        if duration <= 0:
+            return True
+        ending_seconds = self.ending_spin.value() if hasattr(self, "ending_spin") else 0
+        end_margin = max(2, int(ending_seconds or 0))
+        return int(target_seconds) + end_margin < duration
 
     def _reset_log(self) -> None:
         self.log_view.clear()
@@ -9178,7 +9199,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception as exc:
             self._recent_user_seek_target_seconds = seconds
             if self._current_media_duration_seconds() <= 0:
-                self._reload_current_item_after_seek_finished()
+                self._append_log(f"跳转失败: {exc}")
+                self._recover_current_item_after_seek()
                 return
             self._append_log(f"跳转失败: {exc}")
 
@@ -9599,7 +9621,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         recent_seek_action = self._recent_seek_playback_finished_action()
         if recent_seek_action == "reload":
-            self._reload_current_item_after_seek_finished()
+            self._recover_current_item_after_seek()
             return
         if recent_seek_action == "ignore":
             return
@@ -9628,19 +9650,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         end_margin = max(2, int(ending_seconds or 0))
         return "ignore" if position + end_margin < duration else "handle"
 
-    def _reload_current_item_after_seek_finished(self) -> None:
+    def _recover_current_item_after_seek(self) -> None:
         if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
             return
         start_position_seconds = max(0, int(self._recent_user_seek_target_seconds or 0))
         self._ignore_playback_finished_until = 0.0
         self._recent_user_seek_target_seconds = None
+        self._append_log(f"正在恢复播放进度: {self._format_time(start_position_seconds)}")
         try:
             self._start_current_item_playback(
-                start_position_seconds=0,
+                start_position_seconds=start_position_seconds,
                 pause=not self.is_playing,
             )
-            if start_position_seconds > 0:
-                self._attempt_resume_seek(start_position_seconds, retries_remaining=5)
         except Exception as exc:
             self._append_log(f"播放恢复失败: {exc}")
 

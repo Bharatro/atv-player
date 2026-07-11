@@ -9604,6 +9604,50 @@ def test_player_window_ignores_playback_finished_immediately_after_progress_seek
     assert video.seek_calls == [75]
 
 
+def test_player_window_recovers_current_item_when_playback_fails_after_progress_seek(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class SeekableRecordingVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    controller = RecordingPlayerController()
+    video = SeekableRecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    auto_switch_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_try_auto_switch_source_after_failure",
+        lambda: auto_switch_calls.append(True) or False,
+    )
+
+    video.load_calls.clear()
+    window.progress.setMaximum(120)
+    window.progress.setValue(75)
+
+    window._seek_from_slider()
+    window._handle_playback_failed("播放失败: 没有可播放的音视频流 (-16)")
+
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+    assert video.seek_calls == [75]
+    assert video.load_calls == [("http://m/1.m3u8", 75)]
+    assert auto_switch_calls == []
+    assert "没有可播放的音视频流 (-16)" in window.log_view.toPlainText()
+    assert "正在恢复播放进度: 01:15" in window.log_view.toPlainText()
+
+
 def test_player_window_reloads_current_item_when_seek_finished_unloads_media(qtbot) -> None:
     class SeekableRecordingVideo(RecordingVideo):
         def __init__(self) -> None:
@@ -9623,30 +9667,19 @@ def test_player_window_reloads_current_item_when_seek_finished_unloads_media(qtb
     window = PlayerWindow(controller)
     qtbot.addWidget(window)
     window.video = video
-    resume_seek_calls: list[tuple[int, int]] = []
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        window,
-        "_attempt_resume_seek",
-        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
-    )
     window.open_session(make_player_session(start_index=0))
 
-    try:
-        video.load_calls.clear()
-        window.progress.setMaximum(120)
-        window.progress.setValue(75)
+    video.load_calls.clear()
+    window.progress.setMaximum(120)
+    window.progress.setValue(75)
 
-        window._seek_from_slider()
-        window.video_widget.playback_finished.emit()
+    window._seek_from_slider()
+    window.video_widget.playback_finished.emit()
 
-        assert window.current_index == 0
-        assert window.playlist.currentRow() == 0
-        assert video.seek_calls == [75]
-        assert video.load_calls == [("http://m/1.m3u8", 0)]
-        assert resume_seek_calls == [(75, 5)]
-    finally:
-        monkeypatch.undo()
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+    assert video.seek_calls == [75]
+    assert video.load_calls == [("http://m/1.m3u8", 75)]
 
 
 def test_player_window_reloads_current_item_when_progress_seek_fails_after_unloading_media(qtbot) -> None:
@@ -9669,29 +9702,20 @@ def test_player_window_reloads_current_item_when_progress_seek_fails_after_unloa
     window = PlayerWindow(controller)
     qtbot.addWidget(window)
     window.video = video
-    resume_seek_calls: list[tuple[int, int]] = []
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        window,
-        "_attempt_resume_seek",
-        lambda seconds, retries_remaining: resume_seek_calls.append((seconds, retries_remaining)),
-    )
     window.open_session(make_player_session(start_index=0))
 
-    try:
-        video.load_calls.clear()
-        window.progress.setMaximum(120)
-        window.progress.setValue(75)
+    video.load_calls.clear()
+    window.progress.setMaximum(120)
+    window.progress.setValue(75)
 
-        window._seek_from_slider()
+    window._seek_from_slider()
 
-        assert window.current_index == 0
-        assert window.playlist.currentRow() == 0
-        assert video.seek_calls == [75]
-        assert video.load_calls == [("http://m/1.m3u8", 0)]
-        assert resume_seek_calls == [(75, 5)]
-    finally:
-        monkeypatch.undo()
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+    assert video.seek_calls == [75]
+    assert video.load_calls == [("http://m/1.m3u8", 75)]
+    assert "跳转失败" in window.log_view.toPlainText()
+    assert "正在恢复播放进度: 01:15" in window.log_view.toPlainText()
 
 
 def test_player_window_advances_after_progress_seek_near_end(qtbot) -> None:
