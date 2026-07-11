@@ -7966,61 +7966,6 @@ def test_player_window_falls_back_when_saved_splitter_state_collapses_sidebar(qt
     assert all(size > 0 for size in sizes)
 
 
-def test_player_window_retries_resume_seek_when_player_is_not_ready(qtbot, monkeypatch) -> None:
-    class FakeVideo:
-        def __init__(self) -> None:
-            self.seek_calls = 0
-            self.can_seek_calls = 0
-
-        def can_seek(self) -> bool:
-            self.can_seek_calls += 1
-            return self.can_seek_calls > 1
-
-        def seek(self, seconds: int) -> None:
-            self.seek_calls += 1
-
-    scheduled_delays: list[int] = []
-
-    def immediate_single_shot(delay: int, callback) -> None:
-        scheduled_delays.append(delay)
-        callback()
-
-    window = PlayerWindow(FakePlayerController())
-    qtbot.addWidget(window)
-    window.video = FakeVideo()
-    monkeypatch.setattr(window, "_schedule_window_single_shot", immediate_single_shot)
-
-    window._attempt_resume_seek(42, retries_remaining=2)
-
-    assert window.video.seek_calls == 1
-    assert scheduled_delays == [300]
-
-
-def test_player_window_reports_failure_after_seek_retries_are_exhausted(qtbot, monkeypatch) -> None:
-    class FakeVideo:
-        def can_seek(self) -> bool:
-            return False
-
-        def seek(self, seconds: int) -> None:
-            raise AssertionError("seek should not be called when player is not seekable")
-
-    scheduled_delays: list[int] = []
-
-    def immediate_single_shot(delay: int, callback) -> None:
-        scheduled_delays.append(delay)
-        callback()
-
-    window = PlayerWindow(FakePlayerController())
-    qtbot.addWidget(window)
-    window.video = FakeVideo()
-    monkeypatch.setattr(window, "_schedule_window_single_shot", immediate_single_shot)
-
-    window._attempt_resume_seek(42, retries_remaining=1)
-
-    assert scheduled_delays == [300]
-    assert "恢复播放失败" in window.log_view.toPlainText()
-
-
 def test_player_window_passes_resume_offset_into_video_load(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:

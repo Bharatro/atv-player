@@ -5058,27 +5058,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         return any(pending is not None and pending.index == self.current_index for pending in pending_items)
 
-    def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
-        if hasattr(self.video, "can_seek") and not self.video.can_seek():
-            if retries_remaining > 0:
-                self._schedule_window_single_shot(
-                    300,
-                    lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
-                )
-                return
-            self._append_log("恢复播放失败: 媒体尚未进入可跳转状态")
-            return
-        try:
-            self.video.seek(seconds)
-        except Exception as exc:
-            if retries_remaining > 0:
-                self._schedule_window_single_shot(
-                    300,
-                    lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
-                )
-                return
-            self._append_log(f"恢复播放失败: {exc}")
-
     def report_progress(self, force_remote_report: bool = False) -> None:
         if self.session is None:
             return
