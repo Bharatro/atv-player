@@ -789,6 +789,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._video_surface_ready = False
         self._video_picture_state = "idle"
         self._auto_advance_locked = False
+        self._observed_media_duration_seconds = 0
+        self._last_playback_position_seconds = 0
+        self._premature_finish_recovery_attempts = 0
         self._ignore_playback_finished_until = 0.0
         self._recent_user_seek_target_seconds: int | None = None
         self._auto_switched_failure_sources: set[tuple[int, int]] = set()
@@ -3551,6 +3554,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        self._reset_playback_observation()
         self._ignore_playback_finished_until = 0.0
         self._recent_user_seek_target_seconds = None
         self._set_startup_state(self._startup_coordinator.preparing())
@@ -8593,6 +8597,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception:
             return 0
 
+    def _reset_playback_observation(self) -> None:
+        self._observed_media_duration_seconds = 0
+        self._last_playback_position_seconds = 0
+        self._premature_finish_recovery_attempts = 0
+
+    def _update_playback_observation(self, *, position: int, duration: int) -> int:
+        if duration > 0:
+            self._observed_media_duration_seconds = max(
+                self._observed_media_duration_seconds,
+                int(duration),
+            )
+        effective_duration = self._observed_media_duration_seconds
+        if position >= 0 and (
+            effective_duration <= 0 or position <= effective_duration + 2
+        ):
+            self._last_playback_position_seconds = int(position)
+        return effective_duration if effective_duration > 0 else max(0, int(duration))
+
     def _rerun_current_item_danmaku_search(self) -> None:
         if (
             self.session is None
@@ -9198,21 +9220,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 position = 0
         else:
             position = 0
+        effective_duration = self._update_playback_observation(
+            position=int(position),
+            duration=int(duration),
+        )
         if (
             not self._auto_advance_locked
             and self.session is not None
             and self.current_index + 1 < len(self.session.playlist)
-            and duration > self.opening_spin.value() + self.ending_spin.value()
-            and position < duration
-            and position + self.ending_spin.value() >= duration
+            and effective_duration > self.opening_spin.value() + self.ending_spin.value()
+            and position < effective_duration
+            and position + self.ending_spin.value() >= effective_duration
         ):
+            logger.info(
+                "PlayerWindow auto advance reason=ending index=%s position=%s duration=%s ending=%s",
+                self.current_index,
+                position,
+                effective_duration,
+                self.ending_spin.value(),
+            )
             self._auto_advance_locked = True
             self.play_next()
             return
-        self.progress.setMaximum(max(duration, 0))
+        self.progress.setMaximum(max(effective_duration, 0))
         self.progress.setValue(max(min(position, self.progress.maximum()), 0))
         self.current_time_label.setText(self._format_time(position))
-        self.duration_label.setText(self._format_time(duration))
+        self.duration_label.setText(self._format_time(effective_duration))
 
     def toggle_fullscreen(self) -> None:
         if self.isFullScreen():

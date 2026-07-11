@@ -9549,6 +9549,35 @@ def test_player_window_ignores_playback_finished_immediately_after_progress_seek
     assert video.seek_calls == [75]
 
 
+def test_player_window_uses_max_observed_duration_after_proxy_duration_shrinks(qtbot) -> None:
+    class ShrinkingDurationVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.duration = 2681
+            self.position = 1000
+
+        def duration_seconds(self) -> int:
+            return self.duration
+
+        def position_seconds(self) -> int:
+            return self.position
+
+    video = ShrinkingDurationVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    window._sync_progress_slider()
+    video.duration = 1100
+    video.position = 1003
+    window._sync_progress_slider()
+
+    assert window.current_index == 0
+    assert window.progress.maximum() == 2681
+    assert window.duration_label.text() == "44:41"
+
+
 def test_player_window_recovers_current_item_when_playback_fails_after_progress_seek(
     qtbot,
     monkeypatch,
