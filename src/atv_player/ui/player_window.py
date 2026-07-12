@@ -8609,8 +8609,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 int(duration),
             )
         effective_duration = self._observed_media_duration_seconds
-        if position >= 0 and (
-            effective_duration <= 0 or position <= effective_duration + 2
+        if (
+            position >= 0
+            and (effective_duration <= 0 or position <= effective_duration + 2)
+            and (position > 0 or self._last_playback_position_seconds <= 0)
         ):
             self._last_playback_position_seconds = int(position)
         return effective_duration if effective_duration > 0 else max(0, int(duration))

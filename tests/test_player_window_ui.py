@@ -9601,6 +9601,64 @@ def test_player_window_reloads_current_item_after_premature_eof(qtbot) -> None:
     assert "播放提前结束，正在恢复" in window.log_view.toPlainText()
 
 
+def test_player_window_advances_when_mpv_resets_position_before_normal_eof(qtbot) -> None:
+    class ResettingNearEndVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.position = 2679
+
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return self.position
+
+    video = ResettingNearEndVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    video.position = 0
+    window._sync_progress_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+    assert "播放提前结束，正在恢复" not in window.log_view.toPlainText()
+
+
+def test_player_window_recovers_last_position_when_mpv_resets_before_premature_eof(qtbot) -> None:
+    class ResettingPrematureEofVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.position = 1003
+
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return self.position
+
+    video = ResettingPrematureEofVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    video.position = 0
+    window._sync_progress_slider()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert video.load_calls == [("http://m/1.m3u8", 1003)]
+    assert "播放提前结束，正在恢复: 16:43 / 44:41" in window.log_view.toPlainText()
+
+
 def test_player_window_stops_after_repeated_premature_eof(qtbot) -> None:
     class PrematureEofVideo(RecordingVideo):
         def duration_seconds(self) -> int:
