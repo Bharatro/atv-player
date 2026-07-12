@@ -9578,6 +9578,126 @@ def test_player_window_uses_max_observed_duration_after_proxy_duration_shrinks(q
     assert window.duration_label.text() == "44:41"
 
 
+def test_player_window_reloads_current_item_after_premature_eof(qtbot) -> None:
+    class PrematureEofVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return 1003
+
+    video = PrematureEofVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert video.load_calls == [("http://m/1.m3u8", 1003)]
+    assert "播放提前结束，正在恢复" in window.log_view.toPlainText()
+
+
+def test_player_window_stops_after_repeated_premature_eof(qtbot) -> None:
+    class PrematureEofVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return 1003
+
+    controller = RecordingPlayerController()
+    video = PrematureEofVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+    video.load_calls.clear()
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert video.load_calls == []
+    assert window.is_playing is False
+    assert "播放提前结束，恢复失败" in window.log_view.toPlainText()
+
+
+def test_player_window_stops_when_premature_eof_reload_fails(qtbot) -> None:
+    class ReloadFailingVideo(RecordingVideo):
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            super().load(url, pause=pause, start_seconds=start_seconds)
+            if start_seconds > 0:
+                raise RuntimeError("reload failed")
+
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return 1003
+
+    video = ReloadFailingVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert window.is_playing is False
+    assert "播放提前结束，恢复失败: reload failed" in window.log_view.toPlainText()
+
+
+def test_player_window_advances_when_eof_is_near_observed_end(qtbot) -> None:
+    class NearEndVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 2681
+
+        def position_seconds(self) -> int:
+            return 2679
+
+    video = NearEndVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+
+
+def test_player_window_keeps_existing_eof_behavior_when_duration_is_unknown(qtbot) -> None:
+    class UnknownDurationVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 0
+
+        def position_seconds(self) -> int:
+            return 1003
+
+    video = UnknownDurationVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+
+
 def test_player_window_recovers_current_item_when_playback_fails_after_progress_seek(
     qtbot,
     monkeypatch,

@@ -9628,6 +9628,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
 
+    def _playback_finished_is_premature(self) -> bool:
+        duration = self._observed_media_duration_seconds
+        if duration <= 0:
+            return False
+        position = self._last_playback_position_seconds
+        ending_seconds = self.ending_spin.value() if hasattr(self, "ending_spin") else 0
+        end_margin = max(2, int(ending_seconds or 0))
+        return position + end_margin < duration
+
     def _handle_playback_finished(self) -> None:
         if self.session is None:
             return
@@ -9637,6 +9646,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         if recent_seek_action == "ignore":
             return
+        if self._playback_finished_is_premature():
+            self._recover_current_item_after_premature_finish()
+            return
+        logger.info(
+            "PlayerWindow auto advance reason=eof-near-end index=%s position=%s duration=%s",
+            self.current_index,
+            self._last_playback_position_seconds,
+            self._observed_media_duration_seconds,
+        )
         if self.current_index + 1 >= len(self.session.playlist):
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
@@ -9676,6 +9694,44 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         except Exception as exc:
             self._append_log(f"播放恢复失败: {exc}")
+
+    def _recover_current_item_after_premature_finish(self) -> None:
+        position = max(0, int(self._last_playback_position_seconds))
+        duration = max(0, int(self._observed_media_duration_seconds))
+        if self._premature_finish_recovery_attempts > 0:
+            self._stop_after_premature_finish_failure(
+                "播放提前结束，恢复失败: "
+                f"index={self.current_index} position={position} duration={duration}"
+            )
+            return
+        self._premature_finish_recovery_attempts += 1
+        logger.warning(
+            "PlayerWindow premature EOF recovery index=%s position=%s duration=%s",
+            self.current_index,
+            position,
+            duration,
+        )
+        self._append_log(
+            f"播放提前结束，正在恢复: {self._format_time(position)} / {self._format_time(duration)}"
+        )
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=position,
+                pause=not self.is_playing,
+            )
+        except Exception as exc:
+            self._stop_after_premature_finish_failure(
+                f"播放提前结束，恢复失败: {exc}"
+            )
+
+    def _stop_after_premature_finish_failure(self, message: str) -> None:
+        logger.warning("PlayerWindow %s", message)
+        self._append_log(message)
+        self.is_playing = False
+        self._set_last_player_paused(True)
+        self._update_play_button_icon()
+        self._refresh_window_title()
+        self._stop_current_playback()
 
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)
