@@ -6343,6 +6343,88 @@ def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episod
     assert [item.original_title for item in updated] == ["S01E01.mkv", "S01E02.mkv"]
 
 
+def test_app_coordinator_episode_title_enhancer_preserves_variety_playlist_order(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            assert api_key == "tmdb-key"
+            del proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            assert title == "开始推理吧"
+            assert year == ""
+            return [{"id": 42, "name": "开始推理吧", "first_air_date": "2026-01-01"}]
+
+        def get_tv_season_detail(
+            self,
+            tmdb_id: str | int,
+            season_number: int,
+        ) -> dict[str, object]:
+            assert tmdb_id == "42"
+            assert season_number == 4
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "初入推理世界"},
+                    {"episode_number": 2, "name": "第二个谜案"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    vod = VodItem(
+        vod_id="v1",
+        vod_name="开始推理吧 第4季",
+        vod_year="2026",
+        type_name="剧情,爱情",
+    )
+    enhance = factory(source_kind="telegram", vod=vod)
+    original_titles = [
+        "2026-05-20 序章.mp4",
+        "2026-05-26 《副本解锁中》第1期.mp4",
+        "2026-06-02 《副本解锁中》第2期.mp4",
+        "2026-05-27 第1期上.mp4",
+    ]
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=vod,
+            playlist=[
+                PlayItem(title=title, url=f"http://m/{index}.mp4", original_title=title)
+                for index, title in enumerate(original_titles)
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.original_title for item in updated] == original_titles
+    assert sum(bool(item.episode_display_title) for item in updated) >= 3
+
+    cached = enhance(
+        SimpleNamespace(
+            vod=vod,
+            playlist=[
+                PlayItem(title=title, url=f"http://m/{index}.mp4", original_title=title)
+                for index, title in enumerate(original_titles)
+            ],
+        )
+    )
+
+    assert cached is not None
+    assert [item.original_title for item in cached] == original_titles
+
+
 def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_path, monkeypatch) -> None:
     class FakeRepo:
         def load_config(self) -> AppConfig:

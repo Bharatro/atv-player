@@ -48,7 +48,10 @@ from atv_player.controllers.telegram_channel_controller import TelegramChannelCo
 from atv_player.controllers.youtube_category_config import load_youtube_category_config
 from atv_player.controllers.youtube_controller import YouTubeController, default_youtube_categories
 from atv_player.crash_diagnostics import install_crash_diagnostics
-from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.danmaku.utils import (
+    infer_playlist_episode_number,
+    is_likely_variety_title,
+)
 from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
     episode_version_slots_by_index,
@@ -123,7 +126,7 @@ _METADATA_SEARCH_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _METADATA_EMPTY_SEARCH_CACHE_TTL_SECONDS = 3600
 _METADATA_DETAIL_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _EPISODE_SORT_SENTINEL = 10**9
-_EPISODE_TITLE_PLAYLIST_CACHE_VERSION = "v3"
+_EPISODE_TITLE_PLAYLIST_CACHE_VERSION = "v4"
 _QUALITY_VARIANT_EPISODE_RE = re.compile(
     r"(?:^|[\s\-_.])0*(\d{1,3})\s*[-_. ~～〜]\s*(?:4k|2160p|1080p|720p|480p|360p)\b",
     re.IGNORECASE,
@@ -1162,12 +1165,17 @@ class AppCoordinator(QObject):
         def _finalize_episode_playlist(
             playlist: list[PlayItem],
             season_episode_pairs: list[tuple[int, int] | None],
+            *,
+            original_playlist: list[PlayItem] | None = None,
+            preserve_order: bool = False,
         ) -> list[PlayItem] | None:
             if not playlist_has_title_variants(playlist):
                 return None
-            resolved_pairs = [pair for pair in season_episode_pairs if pair is not None]
-            has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
-            if len(playlist) > 1:
+            if preserve_order and original_playlist is not None:
+                playlist = _restore_original_playlist_order(original_playlist, playlist)
+            elif len(playlist) > 1:
+                resolved_pairs = [pair for pair in season_episode_pairs if pair is not None]
+                has_multi_version_pairs = len(resolved_pairs) != len(set(resolved_pairs))
                 indexed_playlist = list(enumerate(playlist))
                 if has_multi_version_pairs:
                     version_slot_by_index = episode_version_slots_by_index(
@@ -1201,6 +1209,43 @@ class AppCoordinator(QObject):
                 str(item.title or "").strip(),
                 str(item.play_source or "").strip(),
             )
+
+        def _is_variety_playlist(session_vod: VodItem, playlist: list[PlayItem]) -> bool:
+            metadata_text = " ".join(
+                str(value or "").strip().casefold()
+                for value in (
+                    session_vod.type_name,
+                    session_vod.category_name,
+                    session_vod.vod_tag,
+                    session_vod.vod_content,
+                )
+                if str(value or "").strip()
+            )
+            variety_markers = ("综艺", "真人秀", "脱口秀", "variety")
+            if any(marker in metadata_text for marker in variety_markers):
+                return True
+            variety_items = sum(
+                is_likely_variety_title(item.original_title or item.title or item.path)
+                for item in playlist
+            )
+            return variety_items >= 2 and variety_items * 2 >= len(playlist)
+
+        def _restore_original_playlist_order(
+            original_playlist: list[PlayItem],
+            updated_playlist: list[PlayItem],
+        ) -> list[PlayItem]:
+            items_by_identity: dict[tuple[str, str, str, str], list[PlayItem]] = {}
+            for item in updated_playlist:
+                items_by_identity.setdefault(_episode_title_cache_item_identity(item), []).append(item)
+            restored: list[PlayItem] = []
+            for original_item in original_playlist:
+                identity = _episode_title_cache_item_identity(original_item)
+                matching_items = items_by_identity.get(identity)
+                if matching_items:
+                    restored.append(matching_items.pop(0))
+            restored_ids = {id(item) for item in restored}
+            restored.extend(item for item in updated_playlist if id(item) not in restored_ids)
+            return restored
 
         def _episode_title_cache_key(
             provider_source_kind: str,
@@ -1539,6 +1584,7 @@ class AppCoordinator(QObject):
                 current_playlist = list(getattr(session, "playlist", []) or [])
                 if not current_playlist:
                     return None
+                preserve_playlist_order = _is_variety_playlist(session_vod, current_playlist)
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
                 cached_playlist = _restore_cached_episode_title_playlist(source_kind, session_vod, current_playlist)
                 if cached_playlist is not None:
@@ -1570,7 +1616,12 @@ class AppCoordinator(QObject):
                     )
                     if updated_playlist is not None:
                         updated_pairs = _season_episode_pairs(updated_playlist, default_season)
-                        finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                        finalized = _finalize_episode_playlist(
+                            updated_playlist,
+                            updated_pairs,
+                            original_playlist=current_playlist,
+                            preserve_order=preserve_playlist_order,
+                        )
                         if finalized is not None:
                             logger.info(
                                 "Episode title enhancer applied bound candidate provider=%s mapped_count=%s",
@@ -1696,7 +1747,12 @@ class AppCoordinator(QObject):
                             if str(item.episode_display_title or "").strip()
                         }
                         if titles_by_index:
-                            finalized = _finalize_episode_playlist(playlist, season_episode_pairs)
+                            finalized = _finalize_episode_playlist(
+                                playlist,
+                                season_episode_pairs,
+                                original_playlist=current_playlist,
+                                preserve_order=preserve_playlist_order,
+                            )
                             if finalized is not None:
                                 logger.info(
                                     "Episode title enhancer applied TMDB titles tmdb_id=%s mapped_count=%s unresolved_pairs=%s",
@@ -1752,7 +1808,12 @@ class AppCoordinator(QObject):
                     if updated_playlist is None:
                         continue
                     updated_pairs = _season_episode_pairs(updated_playlist, default_season)
-                    finalized = _finalize_episode_playlist(updated_playlist, updated_pairs)
+                    finalized = _finalize_episode_playlist(
+                        updated_playlist,
+                        updated_pairs,
+                        original_playlist=current_playlist,
+                        preserve_order=preserve_playlist_order,
+                    )
                     if finalized is None:
                         continue
                     mapped_count = _count_mapped_episode_titles(finalized)
@@ -1774,7 +1835,12 @@ class AppCoordinator(QObject):
                         )
                         playlist = finalized
                         season_episode_pairs = updated_pairs
-                finalized_playlist = _finalize_episode_playlist(playlist, season_episode_pairs)
+                finalized_playlist = _finalize_episode_playlist(
+                    playlist,
+                    season_episode_pairs,
+                    original_playlist=current_playlist,
+                    preserve_order=preserve_playlist_order,
+                )
                 if finalized_playlist is not None:
                     logger.info(
                         "Episode title enhancer finalized mapped_count=%s sources=%s",
