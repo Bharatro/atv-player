@@ -26,7 +26,14 @@ _SHARE_TYPE_DOMAINS: dict[str, tuple[str, ...]] = {
     "7": ("uc.cn",),
     "0": ("alipan.com", "aliyundrive.com"),
     "8": ("115.com", "115cdn.com", "anxia.com"),
-    "3": ("123pan.com", "123pan.cn", "123684.com", "123865.com", "123912.com", "123592.com"),
+    "3": (
+        "123pan.com",
+        "123pan.cn",
+        "123684.com",
+        "123865.com",
+        "123912.com",
+        "123592.com",
+    ),
     "2": ("xunlei.com",),
     "6": ("139.com",),
     "1": ("mypikpak.com",),
@@ -40,7 +47,10 @@ def infer_share_type(value: str) -> str:
         return ""
     hostname = (urlparse(text).hostname or "").lower().rstrip(".")
     for share_type, domains in _SHARE_TYPE_DOMAINS.items():
-        if any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains):
+        if any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in domains
+        ):
             return share_type
     return ""
 

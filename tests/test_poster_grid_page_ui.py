@@ -400,11 +400,17 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.category_list.isHidden() is True
 
 
-def test_poster_grid_page_filters_current_external_result_page_without_request(qtbot) -> None:
+def test_poster_grid_page_filters_current_external_result_page_without_request(
+    qtbot,
+) -> None:
     controller = ExternalResultController()
     page = show_loaded_page(
         qtbot,
-        PosterGridPage(controller, click_action="open", search_drive_filter_enabled=True),
+        PosterGridPage(
+            controller,
+            click_action="open",
+            search_drive_filter_enabled=True,
+        ),
     )
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     baseline_calls = controller.load_items_calls
@@ -419,17 +425,23 @@ def test_poster_grid_page_filters_current_external_result_page_without_request(q
     )
 
     assert page.search_drive_filter_combo.isHidden() is False
-    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+    page.search_drive_filter_combo.setCurrentIndex(
+        page.search_drive_filter_combo.findData("5")
+    )
 
     assert [button.text() for button in page.card_buttons] == ["夸克资源"]
     assert page.total_items == 61
     assert controller.load_items_calls == baseline_calls
 
-    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData(""))
+    page.search_drive_filter_combo.setCurrentIndex(
+        page.search_drive_filter_combo.findData("")
+    )
     assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
 
 
-def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(qtbot) -> None:
+def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(
+    qtbot,
+) -> None:
     page = show_loaded_page(
         qtbot,
         PosterGridPage(
@@ -446,10 +458,14 @@ def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(qtbo
         total=2,
         page=1,
     )
-    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+    page.search_drive_filter_combo.setCurrentIndex(
+        page.search_drive_filter_combo.findData("5")
+    )
 
     page._refresh_current_view()
-    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData(""))
+    page.search_drive_filter_combo.setCurrentIndex(
+        page.search_drive_filter_combo.findData("")
+    )
 
     assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
 
@@ -457,8 +473,20 @@ def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(qtbo
 def test_poster_grid_page_preserves_drive_filter_for_later_search_page(qtbot) -> None:
     controller = DriveFilterSearchController()
     controller.search_results_by_page = {
-        1: ([VodItem(vod_id="q1", vod_name="夸克一", share_type="5"), VodItem(vod_id="b1", vod_name="百度一", share_type="10")], 61),
-        2: ([VodItem(vod_id="q2", vod_name="夸克二", share_type="5"), VodItem(vod_id="b2", vod_name="百度二", share_type="10")], 61),
+        1: (
+            [
+                VodItem(vod_id="q1", vod_name="夸克一", share_type="5"),
+                VodItem(vod_id="b1", vod_name="百度一", share_type="10"),
+            ],
+            61,
+        ),
+        2: (
+            [
+                VodItem(vod_id="q2", vod_name="夸克二", share_type="5"),
+                VodItem(vod_id="b2", vod_name="百度二", share_type="10"),
+            ],
+            61,
+        ),
     }
 
     def search_items(keyword: str, page: int, category_id: str = ""):
@@ -480,7 +508,9 @@ def test_poster_grid_page_preserves_drive_filter_for_later_search_page(qtbot) ->
     page.keyword_edit.setText("资源")
     page.search()
     qtbot.waitUntil(lambda: page.card_buttons and page.card_buttons[0].text() == "夸克一")
-    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+    page.search_drive_filter_combo.setCurrentIndex(
+        page.search_drive_filter_combo.findData("5")
+    )
     page.next_page()
     qtbot.waitUntil(lambda: page.card_buttons and page.card_buttons[0].text() == "夸克二")
 

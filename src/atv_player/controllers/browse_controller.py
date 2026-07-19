@@ -65,7 +65,8 @@ def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodIt
     return [
         item
         for item in results
-        if item.share_type == drive_type or (drive_name and drive_name in item.type_name)
+        if item.share_type == drive_type
+        or (drive_name and drive_name in item.type_name)
     ]
 
 

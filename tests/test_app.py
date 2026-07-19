@@ -1980,7 +1980,9 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
     assert window.live_page.keyword_edit.isHidden() is True
 
 
-def test_main_window_enables_drive_filter_for_telegram_sources_and_pansou(qtbot) -> None:
+def test_main_window_enables_drive_filter_for_telegram_sources_and_pansou(
+    qtbot,
+) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),

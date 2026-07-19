@@ -1,4 +1,6 @@
-from atv_player.controllers.telegram_channel_controller import TelegramChannelController
+from atv_player.controllers.telegram_channel_controller import (
+    TelegramChannelController,
+)
 
 
 class FakeApiClient:

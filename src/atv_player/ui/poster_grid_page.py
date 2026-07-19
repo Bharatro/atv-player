@@ -32,8 +32,18 @@ from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import CategoryFilterOption
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
-from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
-from atv_player.ui.theme import FlatComboBox, build_accent_label_qss, build_pill_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+)
+from atv_player.ui.theme import (
+    FlatComboBox,
+    build_accent_label_qss,
+    build_pill_button_qss,
+    build_search_line_edit_qss,
+    current_tokens,
+)
 
 
 class _PosterGridSignals(QObject):
@@ -321,7 +331,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.next_page_button.clicked.connect(self.next_page)
         self.refresh_button.clicked.connect(self._refresh_current_view)
         self.filter_toggle_button.clicked.connect(self._toggle_filters)
-        self.search_drive_filter_combo.currentIndexChanged.connect(self._apply_search_drive_filter)
+        self.search_drive_filter_combo.currentIndexChanged.connect(
+            self._apply_search_drive_filter
+        )
         if self._search_enabled:
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
@@ -859,7 +871,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._unfiltered_items = list(items)
         self.total_items = max(0, int(total or 0))
         self._current_empty_message = empty_message
-        self._update_page_size_estimate(len(self._unfiltered_items), self.total_items, self.current_page)
+        self._update_page_size_estimate(
+            len(self._unfiltered_items), self.total_items, self.current_page
+        )
         self._apply_search_drive_filter()
 
     def show_external_results(
@@ -960,7 +974,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             and not self._folder_view_active
             and (self._search_mode or self._external_results_active)
         )
-        drive_type = str(self.search_drive_filter_combo.currentData() or "") if filter_active else ""
+        drive_type = (
+            str(self.search_drive_filter_combo.currentData() or "")
+            if filter_active
+            else ""
+        )
         self.items = filter_search_results(self._unfiltered_items, drive_type)
         if self.items:
             self.status_label.setText("")
