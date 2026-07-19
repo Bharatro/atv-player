@@ -6,6 +6,7 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.share_types import get_share_type_name, infer_share_type
 
 
 def _looks_like_media_url(value: str) -> bool:
@@ -54,6 +55,13 @@ def build_detail_playlist(detail: VodItem) -> list[PlayItem]:
     return playlist
 
 
+def _map_telegram_item(payload: dict) -> VodItem:
+    item = _map_item(payload)
+    item.share_type = item.share_type or infer_share_type(item.vod_id)
+    item.type_name = item.type_name or get_share_type_name(item.share_type)
+    return item
+
+
 class TelegramSearchController:
     _PAGE_SIZE = 30
     uses_page_count_for_pagination = True
@@ -87,7 +95,7 @@ class TelegramSearchController:
 
     def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_telegram_items(keyword, page=page)
-        items = [_map_item(item) for item in payload.get("list", [])]
+        items = [_map_telegram_item(item) for item in payload.get("list", [])]
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count
 

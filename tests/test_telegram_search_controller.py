@@ -91,6 +91,7 @@ def test_search_items_maps_search_payload() -> None:
                 "vod_name": "黑袍纠察队",
                 "vod_pic": "poster.jpg",
                 "vod_remarks": "4K",
+                "type_name": "夸克网盘",
             }
         ],
         "total": 31,
@@ -105,6 +106,8 @@ def test_search_items_maps_search_payload() -> None:
     assert items[0].vod_name == "黑袍纠察队"
     assert items[0].vod_pic == "poster.jpg"
     assert items[0].vod_remarks == "4K"
+    assert items[0].share_type == "5"
+    assert items[0].type_name == "夸克网盘"
 
 
 def test_search_items_uses_pagecount_when_total_is_missing() -> None:

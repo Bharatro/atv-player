@@ -5,6 +5,7 @@ from collections.abc import Callable
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.pagination import page_count_from_payload
+from atv_player.controllers.telegram_search_controller import _map_telegram_item
 from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
 
@@ -87,7 +88,7 @@ class TelegramChannelController:
 
     def search_items(self, keyword: str, page: int, category_id: str = "") -> tuple[list[VodItem], int]:
         payload = self._api_client.search_telegram_channel_items(keyword, page=page)
-        items = [_map_item(item) for item in payload.get("list", [])]
+        items = [_map_telegram_item(item) for item in payload.get("list", [])]
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
         return items, page_count
 
