@@ -113,6 +113,18 @@ class SearchableDoubanController(FakeDoubanController):
         return self.search_results
 
 
+class DriveFilterSearchController(SearchableDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_results = (
+            [
+                VodItem(vod_id="quark", vod_name="夸克资源", share_type="5"),
+                VodItem(vod_id="baidu", vod_name="百度资源", share_type="10"),
+            ],
+            61,
+        )
+
+
 class ExternalResultController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -386,6 +398,87 @@ def test_poster_grid_page_can_render_external_results_without_controller_reload(
     assert page.page_label.text() == "第 1 / 1 页"
     assert page.status_label.text() == ""
     assert page.category_list.isHidden() is True
+
+
+def test_poster_grid_page_filters_current_external_result_page_without_request(qtbot) -> None:
+    controller = ExternalResultController()
+    page = show_loaded_page(
+        qtbot,
+        PosterGridPage(controller, click_action="open", search_drive_filter_enabled=True),
+    )
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    baseline_calls = controller.load_items_calls
+
+    page.show_external_results(
+        items=[
+            VodItem(vod_id="quark", vod_name="夸克资源", share_type="5"),
+            VodItem(vod_id="baidu", vod_name="百度资源", share_type="10"),
+        ],
+        total=61,
+        page=1,
+    )
+
+    assert page.search_drive_filter_combo.isHidden() is False
+    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+
+    assert [button.text() for button in page.card_buttons] == ["夸克资源"]
+    assert page.total_items == 61
+    assert controller.load_items_calls == baseline_calls
+
+    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData(""))
+    assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
+
+
+def test_poster_grid_page_preserves_drive_filter_for_later_search_page(qtbot) -> None:
+    controller = DriveFilterSearchController()
+    controller.search_results_by_page = {
+        1: ([VodItem(vod_id="q1", vod_name="夸克一", share_type="5"), VodItem(vod_id="b1", vod_name="百度一", share_type="10")], 61),
+        2: ([VodItem(vod_id="q2", vod_name="夸克二", share_type="5"), VodItem(vod_id="b2", vod_name="百度二", share_type="10")], 61),
+    }
+
+    def search_items(keyword: str, page: int, category_id: str = ""):
+        controller.search_calls.append((keyword, page, category_id))
+        return controller.search_results_by_page[page]
+
+    controller.search_items = search_items
+    page = show_loaded_page(
+        qtbot,
+        PosterGridPage(
+            controller,
+            click_action="open",
+            search_enabled=True,
+            search_drive_filter_enabled=True,
+        ),
+    )
+    qtbot.waitUntil(lambda: page.selected_category_id == "suggestion")
+
+    page.keyword_edit.setText("资源")
+    page.search()
+    qtbot.waitUntil(lambda: page.card_buttons and page.card_buttons[0].text() == "夸克一")
+    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+    page.next_page()
+    qtbot.waitUntil(lambda: page.card_buttons and page.card_buttons[0].text() == "夸克二")
+
+    assert [button.text() for button in page.card_buttons] == ["夸克二"]
+    assert controller.search_calls[-1][1] == 2
+
+
+def test_poster_grid_page_hides_drive_filter_outside_search_results(qtbot) -> None:
+    page = show_loaded_page(
+        qtbot,
+        PosterGridPage(FakeDoubanController(), search_drive_filter_enabled=True),
+    )
+    qtbot.waitUntil(lambda: bool(page.card_buttons))
+
+    assert page.search_drive_filter_combo.isHidden() is True
+
+    page.show_folder_items(
+        [VodItem(vod_id="folder", vod_name="文件夹")],
+        1,
+        folder_id="folder",
+        page_loader=lambda _folder_id, _page: ([], 0),
+    )
+    assert page.search_drive_filter_combo.isHidden() is True
 
 
 def test_poster_grid_page_reflows_external_results_after_layout_width_settles(qtbot, monkeypatch) -> None:

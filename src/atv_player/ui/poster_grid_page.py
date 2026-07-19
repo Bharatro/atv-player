@@ -28,10 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.api import ApiError, UnauthorizedError
+from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import CategoryFilterOption
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
-from atv_player.ui.theme import build_accent_label_qss, build_pill_button_qss, build_search_line_edit_qss, current_tokens
+from atv_player.ui.theme import FlatComboBox, build_accent_label_qss, build_pill_button_qss, build_search_line_edit_qss, current_tokens
 
 
 class _PosterGridSignals(QObject):
@@ -140,6 +142,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         controller,
         click_action: str = "search",
         search_enabled: bool = False,
+        search_drive_filter_enabled: bool = False,
         folder_navigation_enabled: bool = False,
         initial_category_id: str = "",
         category_layout: str = "list",
@@ -151,6 +154,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.controller = controller
         self._click_action = click_action
         self._search_enabled = search_enabled
+        self._search_drive_filter_enabled = search_drive_filter_enabled
         self._folder_navigation_enabled = folder_navigation_enabled
         self._initial_category_id = initial_category_id
         self._category_layout = category_layout
@@ -170,6 +174,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._total_is_page_count = bool(getattr(controller, "uses_page_count_for_pagination", False))
         self._search_row: QHBoxLayout | None = None
         self._search_controls_container: QWidget | None = None
+        self._search_drive_filter_container: QWidget | None = None
         self.category_list = QListWidget(self)
         if self._category_layout == "tabs":
             self.category_list.setHidden(True)
@@ -177,6 +182,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.keyword_edit.setClearButtonEnabled(True)
         self.search_button = QPushButton("搜索", self)
         self.clear_button = QPushButton("清空", self)
+        self.search_drive_filter_combo = FlatComboBox(self)
+        self.search_drive_filter_combo.hide()
         self.refresh_button = QPushButton("刷新", self)
         self.filter_toggle_button = QPushButton("筛选", self)
         self.filter_panel = QFrame(self)
@@ -204,6 +211,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.filter_buttons: dict[str, list[QPushButton]] = {}
         self.categories = []
         self.items = []
+        self._unfiltered_items = []
+        self._current_empty_message = "当前分类暂无内容"
         self.selected_category_id = ""
         self.current_page = 1
         self.page_size = 30
@@ -221,6 +230,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._signals.failed, self._handle_failed)
         self._connect_async_signal(self._signals.unauthorized, self._handle_unauthorized)
         self._connect_async_signal(self._signals.poster_loaded, self._handle_poster_loaded)
+
+        for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
+            self.search_drive_filter_combo.addItem(label, value)
 
         for button in (
             self.search_button,
@@ -268,6 +280,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_controls_container = QWidget(self)
         self._search_controls_container.setLayout(search_row)
         right.addWidget(self._search_controls_container)
+        search_drive_filter_row = QHBoxLayout()
+        search_drive_filter_row.setContentsMargins(0, 0, 0, 0)
+        search_drive_filter_row.addWidget(QLabel("网盘类型", self))
+        search_drive_filter_row.addWidget(self.search_drive_filter_combo)
+        search_drive_filter_row.addStretch(1)
+        self._search_drive_filter_container = QWidget(self)
+        self._search_drive_filter_container.setLayout(search_drive_filter_row)
+        right.addWidget(self._search_drive_filter_container)
         right.addWidget(self.filter_scroll_area)
         right.addWidget(self.breadcrumb_bar)
         right.addWidget(self.status_label)
@@ -301,6 +321,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.next_page_button.clicked.connect(self.next_page)
         self.refresh_button.clicked.connect(self._refresh_current_view)
         self.filter_toggle_button.clicked.connect(self._toggle_filters)
+        self.search_drive_filter_combo.currentIndexChanged.connect(self._apply_search_drive_filter)
         if self._search_enabled:
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
@@ -308,6 +329,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.keyword_edit.textChanged.connect(self._handle_keyword_text_changed)
             self._update_search_action_buttons()
             self._sync_search_controls_visibility()
+        self._sync_search_drive_filter_visibility()
         self._apply_theme()
 
     def _is_widget_alive(self) -> bool:
@@ -350,6 +372,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._folder_view_id = ""
         self._folder_page_loader = None
         self._sync_category_list_visibility()
+        self._sync_search_drive_filter_visibility()
         self._items_request_id += 1
         request_id = self._items_request_id
         active_filters = dict(self._category_filter_state.get(category_id, {}))
@@ -724,12 +747,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._folder_page_loader = None
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
+        self._reset_search_drive_filter()
         self._search_mode = True
         self._search_keyword = keyword
         self.current_page = 1
         self.filter_toggle_button.hide()
         self.filter_scroll_area.hide()
         self.filter_panel.hide()
+        self._sync_search_drive_filter_visibility()
         self._search_items(keyword, self.current_page)
 
     def clear_search(self) -> None:
@@ -746,6 +771,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.keyword_edit.clear()
         self._search_mode = False
         self._search_keyword = ""
+        self._reset_search_drive_filter()
+        self._sync_search_drive_filter_visibility()
         self._update_search_action_buttons()
         self.current_page = 1
         self._rebuild_filter_panel()
@@ -829,12 +856,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._items_request_id += 1
         if page is not None:
             self.current_page = page
-        self.items = list(items)
+        self._unfiltered_items = list(items)
         self.total_items = max(0, int(total or 0))
-        self._update_page_size_estimate(len(self.items), self.total_items, self.current_page)
-        self.status_label.setText("" if self.items else empty_message)
-        self._render_cards()
-        self._update_pagination()
+        self._current_empty_message = empty_message
+        self._update_page_size_estimate(len(self._unfiltered_items), self.total_items, self.current_page)
+        self._apply_search_drive_filter()
 
     def show_external_results(
         self,
@@ -848,8 +874,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._external_empty_message = empty_message
         self._external_page_loader = page_loader
         self._external_loading = False
+        if page <= 1:
+            self._reset_search_drive_filter()
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
+        self._sync_search_drive_filter_visibility()
         rendered_items = list(items)
         self.show_items(rendered_items, total, page=page, empty_message=empty_message)
 
@@ -872,6 +901,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._folder_page_loader = page_loader
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
+        self._sync_search_drive_filter_visibility()
         self.show_items(items, total, page=page, empty_message=empty_message)
 
     def clear_folder_view(self) -> None:
@@ -887,8 +917,10 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._external_empty_message = "暂无内容"
         self._external_page_loader = None
         self._external_loading = False
+        self._reset_search_drive_filter()
         self._sync_category_list_visibility()
         self._sync_search_controls_visibility()
+        self._sync_search_drive_filter_visibility()
         if self.selected_category_id:
             self.current_page = 1
             self.load_items(self.selected_category_id, self.current_page)
@@ -903,6 +935,41 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if self._search_controls_container is None:
             return
         self._search_controls_container.setHidden(self._external_results_active)
+
+    def _sync_search_drive_filter_visibility(self) -> None:
+        if self._search_drive_filter_container is None:
+            return
+        visible = (
+            self._search_drive_filter_enabled
+            and not self._folder_view_active
+            and (self._search_mode or self._external_results_active)
+        )
+        self._search_drive_filter_container.setVisible(visible)
+        self.search_drive_filter_combo.setVisible(visible)
+
+    def _reset_search_drive_filter(self) -> None:
+        if self.search_drive_filter_combo.currentIndex() == 0:
+            return
+        self.search_drive_filter_combo.blockSignals(True)
+        self.search_drive_filter_combo.setCurrentIndex(0)
+        self.search_drive_filter_combo.blockSignals(False)
+
+    def _apply_search_drive_filter(self) -> None:
+        filter_active = (
+            self._search_drive_filter_enabled
+            and not self._folder_view_active
+            and (self._search_mode or self._external_results_active)
+        )
+        drive_type = str(self.search_drive_filter_combo.currentData() or "") if filter_active else ""
+        self.items = filter_search_results(self._unfiltered_items, drive_type)
+        if self.items:
+            self.status_label.setText("")
+        elif self._unfiltered_items and drive_type:
+            self.status_label.setText("当前页无该网盘类型结果")
+        else:
+            self.status_label.setText(self._current_empty_message)
+        self._render_cards()
+        self._update_pagination()
 
     def reset_folder_breadcrumbs_to_root(self) -> None:
         if not self._folder_navigation_enabled:
