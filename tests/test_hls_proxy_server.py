@@ -42,6 +42,40 @@ def test_m3u8_ad_filter_leaves_non_m3u8_url_unchanged() -> None:
     assert ad_filter.should_prepare("https://media.example/video.mp4") is False
 
 
+def test_m3u8_ad_filter_treats_api_m3u8_path_as_remote_playlist() -> None:
+    class FakeResponse:
+        content = b"#EXTM3U\n#EXTINF:5.0,\nsegment.ts\n"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u/api-token"
+
+        def close(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        return FakeResponse()
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, get=fake_get)
+    url = "https://gddyrs.cc/api/m3u8?origin=super&url=episode-1"
+
+    prepared = ad_filter.prepare(url)
+
+    assert prepared == "http://127.0.0.1:2323/m3u/api-token"
+    assert server.calls == [(url, {})]
+
+
 def test_m3u8_ad_filter_treats_dash_data_uri_as_proxy_candidate() -> None:
     class FakeServer:
         def __init__(self) -> None:
@@ -325,6 +359,33 @@ def test_local_hls_proxy_server_accepts_legacy_query_playlist_url() -> None:
     assert status == 200
     assert headers == [("Content-Type", "application/vnd.apple.mpegurl")]
     assert body.startswith(b"#EXTM3U\n")
+
+
+def test_local_hls_proxy_server_uses_final_redirect_url_for_relative_segments() -> None:
+    class FakeResponse:
+        text = "#EXTM3U\n#EXTINF:5.0,\n/api/ts?id=segment-0001\n"
+        url = "https://box.dyrs.com.de/api/m3u8?id=playlist-0001"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        assert url == "https://dyrsvip.cc/api/m3u8?id=playlist-0001"
+        return FakeResponse()
+
+    server = LocalHlsProxyServer(get=fake_get)
+    playlist_url = server.create_playlist_url("https://dyrsvip.cc/api/m3u8?id=playlist-0001", {})
+    token = playlist_url.rsplit("/", 1)[-1]
+
+    status, headers, body = server.handle_request("GET", f"/m3u/{token}")
+
+    session = server._registry.get(token)
+    assert session is not None
+    assert status == 200
+    assert headers == [("Content-Type", "application/vnd.apple.mpegurl")]
+    assert body.startswith(b"#EXTM3U\n")
+    assert session.playlist_url == FakeResponse.url
+    assert session.segments[0].url == "https://box.dyrs.com.de/api/ts?id=segment-0001"
 
 
 def test_local_hls_proxy_server_retries_playlist_over_http_after_tls_protocol_error() -> None:

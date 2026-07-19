@@ -37,6 +37,19 @@ def test_repair_segment_bytes_strips_multiple_png_preambles_before_ts_payload() 
     assert len(repaired) == 376
 
 
+def test_repair_segment_bytes_extracts_ts_embedded_before_png_end_marker() -> None:
+    png_wrapped_ts = (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00" * 500
+        + (b"\x47" + b"\x00" * 187) * 2
+        + b"IEND\xaeB`\x82"
+    )
+
+    repaired = repair_segment_bytes(png_wrapped_ts)
+
+    assert repaired == (b"\x47" + b"\x00" * 187) * 2
+
+
 def test_repair_segment_bytes_preserves_plain_ts_payload() -> None:
     plain_ts = (b"\x47" + b"\x01" * 187) * 3
 

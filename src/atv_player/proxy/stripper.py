@@ -8,14 +8,14 @@ TS_PACKET_SIZE = 188
 
 def repair_segment_bytes(data: bytes) -> bytes:
     stripped = _strip_png_prefix(data)
-    sync_index = stripped.find(bytes([TS_SYNC]))
-    if sync_index < 0:
-        return data
-    candidate = stripped[sync_index:]
-    if not _looks_like_ts_payload(candidate):
-        return data
-    aligned = _align_ts_packets(candidate)
-    return aligned if aligned else candidate
+    for source in (stripped, data) if stripped != data else (data,):
+        sync_index = _find_ts_sync_offset(source)
+        if sync_index < 0:
+            continue
+        candidate = source[sync_index:]
+        aligned = _align_ts_packets(candidate)
+        return aligned if aligned else candidate
+    return data
 
 
 def _strip_png_prefix(data: bytes) -> bytes:
@@ -40,6 +40,17 @@ def _align_ts_packets(data: bytes) -> bytes:
             usable = len(trimmed) - (len(trimmed) % TS_PACKET_SIZE)
             return trimmed[:usable] if usable else trimmed
     return data
+
+
+def _find_ts_sync_offset(data: bytes) -> int:
+    search_start = 0
+    while True:
+        sync_index = data.find(bytes([TS_SYNC]), search_start)
+        if sync_index < 0:
+            return -1
+        if _looks_like_ts_payload(data[sync_index:]):
+            return sync_index
+        search_start = sync_index + 1
 
 
 def _looks_like_ts_payload(data: bytes) -> bool:

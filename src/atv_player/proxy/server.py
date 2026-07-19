@@ -335,15 +335,13 @@ def _get_playlist_with_plain_http_fallback(
     follow_redirects: bool,
 ) -> tuple[Any, str]:
     try:
-        return (
-            get(
-                url,
-                headers=headers,
-                timeout=timeout,
-                follow_redirects=follow_redirects,
-            ),
+        response = get(
             url,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
         )
+        return response, _response_effective_url(response, url)
     except httpx.TransportError as exc:
         fallback_url = _plain_http_url(url)
         if not fallback_url or not _is_tls_protocol_mismatch(exc):
@@ -354,15 +352,21 @@ def _get_playlist_with_plain_http_fallback(
             fallback_url,
             extra={"log_category": "network", "log_source": "app"},
         )
-        return (
-            get(
-                fallback_url,
-                headers=headers,
-                timeout=timeout,
-                follow_redirects=follow_redirects,
-            ),
+        response = get(
             fallback_url,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
         )
+        return response, _response_effective_url(response, fallback_url)
+
+
+def _response_effective_url(response: Any, fallback_url: str) -> str:
+    response_url = getattr(response, "url", None)
+    if response_url is None:
+        return fallback_url
+    normalized_url = str(response_url).strip()
+    return normalized_url or fallback_url
 
 
 class LocalHlsProxyServer:

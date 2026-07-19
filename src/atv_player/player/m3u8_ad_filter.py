@@ -114,7 +114,10 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
 def _is_remote_m3u8_url(url: str) -> bool:
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
-    if parsed.scheme not in {"http", "https"} or ".m3u8" not in url.lower() or not hostname:
+    path_name = (parsed.path or "").rstrip("/").rsplit("/", 1)[-1].lower()
+    has_m3u8_suffix = ".m3u8" in url.lower()
+    has_m3u8_endpoint = path_name == "m3u8"
+    if parsed.scheme not in {"http", "https"} or not (has_m3u8_suffix or has_m3u8_endpoint) or not hostname:
         return False
     if hostname == "localhost":
         return True
@@ -243,6 +246,8 @@ class M3U8AdFilter:
                     selected_video_id=dash_video_id,
                 )
             return self._proxy_server.create_dash_url(url, headers=normalized_headers)
+        if _is_remote_m3u8_url(url):
+            return self._proxy_server.create_playlist_url(url, headers=normalized_headers)
         if _is_disguised_media_url(url):
             return self._proxy_server.create_media_url(url, headers=normalized_headers)
         if _is_extensionless_remote_url(url):
