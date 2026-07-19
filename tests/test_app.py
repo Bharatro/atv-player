@@ -120,6 +120,14 @@ class FakeTelegramChannelController(FakeDoubanController):
         )
 
 
+class FakePansouController(FakeDoubanController):
+    def search_items(self, keyword: str, page: int, category_id: str = ""):
+        return [], 0
+
+    def resolve_search_result(self, item: VodItem) -> str:
+        return item.vod_id
+
+
 class FakeLiveController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -1970,6 +1978,37 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
     assert window.douban_page.keyword_edit.isHidden() is True
     assert window.telegram_page.keyword_edit.isHidden() is False
     assert window.live_page.keyword_edit.isHidden() is True
+
+
+def test_main_window_enables_drive_filter_for_telegram_sources_and_pansou(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        telegram_channel_controller=FakeTelegramChannelController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        pansou_controller=FakePansouController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_telegram_channel_tab=True,
+    )
+    qtbot.addWidget(window)
+
+    assert window.telegram_page._search_drive_filter_enabled is True
+    assert window.telegram_channel_page._search_drive_filter_enabled is True
+    assert window.pansou_page._search_drive_filter_enabled is True
+    assert window.douban_page._search_drive_filter_enabled is False
+    assert window.live_page._search_drive_filter_enabled is False
+
+    window.pansou_page.show_external_results(
+        [VodItem(vod_id="p1", vod_name="盘搜结果", share_type="5")],
+        total=1,
+    )
+
+    assert window.pansou_page.search_drive_filter_combo.isHidden() is False
 
 
 def test_main_window_keeps_search_controls_hidden_for_live_page(qtbot) -> None:

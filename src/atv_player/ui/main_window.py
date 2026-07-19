@@ -1590,6 +1590,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
+            search_drive_filter_enabled=True,
             initial_category_id=self._initial_category_id_for_tab("telegram"),
             filter_panel_state=self._filter_panel_state,
         )
@@ -1599,6 +1600,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 telegram_channel_controller or _EmptyTelegramController(),
                 click_action="open",
                 search_enabled=True,
+                search_drive_filter_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("telegram_channel"),
                 filter_panel_state=self._filter_panel_state,
             )
@@ -1687,6 +1689,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self.pansou_page = PosterGridPage(
                 pansou_controller,
                 click_action="open",
+                search_drive_filter_enabled=True,
                 initial_category_id=self._initial_category_id_for_tab("pansou"),
                 filter_panel_state=self._filter_panel_state,
             )
