@@ -429,6 +429,31 @@ def test_poster_grid_page_filters_current_external_result_page_without_request(q
     assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
 
 
+def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(qtbot) -> None:
+    page = show_loaded_page(
+        qtbot,
+        PosterGridPage(
+            ExternalResultController(),
+            click_action="open",
+            search_drive_filter_enabled=True,
+        ),
+    )
+    page.show_external_results(
+        items=[
+            VodItem(vod_id="quark", vod_name="夸克资源", share_type="5"),
+            VodItem(vod_id="baidu", vod_name="百度资源", share_type="10"),
+        ],
+        total=2,
+        page=1,
+    )
+    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData("5"))
+
+    page._refresh_current_view()
+    page.search_drive_filter_combo.setCurrentIndex(page.search_drive_filter_combo.findData(""))
+
+    assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
+
+
 def test_poster_grid_page_preserves_drive_filter_for_later_search_page(qtbot) -> None:
     controller = DriveFilterSearchController()
     controller.search_results_by_page = {

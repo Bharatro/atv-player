@@ -782,7 +782,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _refresh_current_view(self) -> None:
         if self._external_results_active:
             self.show_items(
-                self.items,
+                self._unfiltered_items,
                 self.total_items,
                 page=self.current_page,
                 empty_message=self._external_empty_message,
