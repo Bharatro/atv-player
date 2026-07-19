@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 SHARE_TYPE_NAME_BY_ID: dict[str, str] = {
     "10": "百度",
@@ -43,6 +43,8 @@ _SHARE_TYPE_DOMAINS: dict[str, tuple[str, ...]] = {
 
 def infer_share_type(value: str) -> str:
     text = str(value or "").strip()
+    if not text.lower().startswith(("http://", "https://")):
+        text = unquote(text)
     if not text.lower().startswith(("http://", "https://")):
         return ""
     hostname = (urlparse(text).hostname or "").lower().rstrip(".")
