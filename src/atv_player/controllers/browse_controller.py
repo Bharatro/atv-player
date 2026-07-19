@@ -61,10 +61,11 @@ def _map_vod_item(payload: dict) -> VodItem:
 def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodItem]:
     if not drive_type:
         return list(results)
+    drive_name = get_share_type_name(drive_type)
     return [
         item
         for item in results
-        if item.share_type == drive_type or drive_type in item.type_name
+        if item.share_type == drive_type or (drive_name and drive_name in item.type_name)
     ]
 
 

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from atv_player.controllers.browse_controller import BrowseController, build_vod_list_path, filter_search_results
 from atv_player.models import VodItem
+from atv_player.share_types import infer_share_type
 
 
 class FakeApiClient:
@@ -66,6 +67,18 @@ def test_filter_search_results_by_drive_type() -> None:
     filtered = filter_search_results(items, "0")
 
     assert [item.vod_id for item in filtered] == ["1"]
+
+
+def test_infer_share_type_uses_share_link_hostname() -> None:
+    assert infer_share_type("https://pan.quark.cn/s/demo") == "5"
+    assert infer_share_type("https://pan.baidu.com/s/demo") == "10"
+    assert infer_share_type("https://example.test/share") == ""
+
+
+def test_filter_search_results_matches_canonical_name_without_share_type() -> None:
+    items = [VodItem(vod_id="1", vod_name="夸克资源", type_name="夸克")]
+
+    assert filter_search_results(items, "5") == items
 
 
 def test_search_maps_share_type_id_to_pure_name() -> None:
