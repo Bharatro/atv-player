@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLayoutItem,
     QLineEdit,
     QListWidget,
+    QComboBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -243,6 +244,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.search_drive_filter_combo.addItem(label, value)
+        self._configure_search_drive_filter_combo()
 
         for button in (
             self.search_button,
@@ -555,6 +557,24 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
     def _set_button_cursor(self, button: QPushButton | QToolButton) -> None:
         button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _configure_search_drive_filter_combo(self) -> None:
+        combo = self.search_drive_filter_combo
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.setMinimumContentsLength(
+            max(len(combo.itemText(index)) for index in range(combo.count()))
+        )
+        combo.setMaxVisibleItems(12)
+        longest_label_width = max(
+            combo.fontMetrics().horizontalAdvance(combo.itemText(index))
+            for index in range(combo.count())
+        )
+        left_padding = int(combo.property("flat_combo_left_padding") or 12)
+        indicator_padding = int(combo.property("flat_combo_indicator_padding") or 40)
+        combo.setMinimumWidth(longest_label_width + left_padding + indicator_padding)
+        combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def _apply_filter_button_style(self, button: QPushButton) -> None:
         button.setStyleSheet(build_pill_button_qss(current_tokens(), checked_accent=True))

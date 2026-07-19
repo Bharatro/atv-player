@@ -2,6 +2,7 @@ import threading
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
@@ -468,6 +469,29 @@ def test_poster_grid_page_refresh_preserves_unfiltered_external_result_page(
     )
 
     assert [button.text() for button in page.card_buttons] == ["夸克资源", "百度资源"]
+
+
+def test_poster_grid_page_drive_filter_combo_reserves_width_for_longest_label(
+    qtbot,
+) -> None:
+    page = PosterGridPage(
+        FakeDoubanController(),
+        search_drive_filter_enabled=True,
+    )
+    qtbot.addWidget(page)
+    combo = page.search_drive_filter_combo
+    longest_label_width = max(
+        combo.fontMetrics().horizontalAdvance(combo.itemText(index))
+        for index in range(combo.count())
+    )
+    reserved_width = int(combo.property("flat_combo_left_padding") or 12) + int(
+        combo.property("flat_combo_indicator_padding") or 40
+    )
+
+    assert combo.sizeAdjustPolicy() == (
+        QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+    )
+    assert combo.minimumWidth() >= longest_label_width + reserved_width
 
 
 def test_poster_grid_page_preserves_drive_filter_for_later_search_page(qtbot) -> None:

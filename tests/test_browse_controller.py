@@ -81,6 +81,12 @@ def test_filter_search_results_matches_canonical_name_without_share_type() -> No
     assert filter_search_results(items, "5") == items
 
 
+def test_filter_search_results_matches_displayed_drive_remarks() -> None:
+    items = [VodItem(vod_id="1", vod_name="夸克资源", vod_remarks="夸克")]
+
+    assert filter_search_results(items, "5") == items
+
+
 def test_search_maps_share_type_id_to_pure_name() -> None:
     api = FakeApiClient()
     api.search_payload = [
