@@ -154,3 +154,31 @@ live-0002.ts
         "https://media.example/path/live-0001.ts",
         "https://media.example/path/live-0002.ts",
     ]
+
+
+def test_rewrite_playlist_marks_aes_encrypted_session() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    encrypted = """#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="enc.key",IV=0x00000000000000000000000000000000
+#EXTINF:5.0,
+seg0.ts
+"""
+    rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/path/index.m3u8",
+        content=encrypted,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+    assert registry.get(token).media_encrypted is True
+
+    plain_token = registry.create_session("https://media.example/path/index.m3u8", {})
+    rewrite_playlist(
+        token=plain_token,
+        playlist_url="https://media.example/path/index.m3u8",
+        content="#EXTM3U\n#EXTINF:5.0,\nseg0.ts\n",
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+    assert registry.get(plain_token).media_encrypted is False

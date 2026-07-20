@@ -225,3 +225,28 @@ def test_segment_proxy_waits_for_in_flight_duplicate_request_instead_of_returnin
     assert second == first_result["payload"]
     assert second.startswith(b"\x47")
     assert requests == ["https://media.example/path/0001.ts"]
+
+
+def test_segment_proxy_does_not_strip_aes_encrypted_segment() -> None:
+    # AES-128 HLS 分片是密文: stripper 会误判 0x47 同步并截断, 破坏解密。
+    # 加密会话必须原样透传分片字节。
+    encrypted_payload = bytes(range(256)) * 64  # 含 0x47 的伪密文, 长度 16 的倍数
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers, timeout, follow_redirects):
+        return FakeResponse(encrypted_payload)
+
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://cdn.example/hls/x/index.m3u8", {})
+    session = registry.get(token)
+    session.media_encrypted = True
+    session.segments = [PlaylistSegment(index=0, url="https://cdn.example/hls/x/seg0.ts", duration=5.0)]
+    proxy = SegmentProxy(session_registry=registry, get=fake_get)
+
+    assert proxy.fetch_segment(token, 0) == encrypted_payload

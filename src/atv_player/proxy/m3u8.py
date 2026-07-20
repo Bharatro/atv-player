@@ -43,6 +43,9 @@ def rewrite_playlist(
     output: list[str] = []
     pending_duration: float | None = None
     segment_index = 0
+    # AES-128(等)加密播放列表: 分片是密文, 不能交给 stripper 做 TS 同步"修复"
+    # (会在密文里误判 0x47 同步字节并截断, 破坏 16 字节对齐导致解密失败)。
+    session.media_encrypted = any(line.startswith("#EXT-X-KEY") for line in lines)
     for line in lines:
         if line.startswith("#EXTINF:"):
             pending_duration = float(line.split(":", 1)[1].split(",", 1)[0])

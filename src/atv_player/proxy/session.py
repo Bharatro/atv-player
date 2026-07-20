@@ -41,6 +41,7 @@ class ProxySession:
     selected_dash_video_id: str = ""
     selected_dash_audio_id: str = ""
     cached_playlist_text: str | None = None
+    media_encrypted: bool = False
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)
 

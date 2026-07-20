@@ -55,7 +55,9 @@ class SegmentProxy:
                     **build_httpx_kwargs_for_url(self._proxy_decider, segment.url),
                 )
                 response.raise_for_status()
-                repaired = repair_segment_bytes(bytes(response.content))
+                raw = bytes(response.content)
+                # 加密分片是密文, 直接透传给播放器解密; stripper 仅用于明文/伪装 TS。
+                repaired = raw if session.media_encrypted else repair_segment_bytes(raw)
                 self._cache.set_segment(cache_key, repaired)
             finally:
                 self._cache.clear_in_flight(cache_key)
