@@ -867,7 +867,7 @@ class SpiderPluginController:
         if self._home_loaded:
             return
         try:
-            payload = self._spider.homeContent(False) or {}
+            payload = self._spider.homeContent(True) or {}
         except Exception as exc:
             logger.exception("Spider plugin home load failed plugin=%s", self._plugin_name)
             raise ApiError(str(exc)) from exc
