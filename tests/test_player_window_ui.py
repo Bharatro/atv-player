@@ -23108,3 +23108,76 @@ def test_clickable_slider_paints_without_error_with_buffer(qtbot) -> None:
     pixmap = slider.grab()
 
     assert not pixmap.isNull()
+
+
+def test_sync_progress_slider_sets_buffer_value_from_cache(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    window.open_session(session)
+    window.video = type(
+        "Video",
+        (),
+        {
+            "position_seconds": lambda _self: 30,
+            "duration_seconds": lambda _self: 120,
+            "demuxer_cache_duration_seconds": lambda _self: 40,
+        },
+    )()
+
+    window._sync_progress_slider()
+
+    assert window.progress.value() == 30
+    assert window.progress._buffer_value == 70
+
+
+def test_sync_progress_slider_clamps_buffer_to_duration(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    window.open_session(session)
+    window.video = type(
+        "Video",
+        (),
+        {
+            "position_seconds": lambda _self: 100,
+            "duration_seconds": lambda _self: 120,
+            "demuxer_cache_duration_seconds": lambda _self: 200,
+        },
+    )()
+
+    window._sync_progress_slider()
+
+    assert window.progress._buffer_value == 120
+
+
+def test_sync_progress_slider_handles_missing_cache_method(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    window.open_session(session)
+    window.video = RecordingVideo()  # 没有 demuxer_cache_duration_seconds
+
+    window._sync_progress_slider()
+
+    assert window.progress._buffer_value == window.progress.value()
+
+
+def test_open_session_resets_buffer_value(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window.progress.setMaximum(100)
+    window.progress.set_buffer_value(90)
+    session = make_player_session(start_index=0)
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie")
+
+    window.open_session(session)
+
+    assert window.progress._buffer_value == 0

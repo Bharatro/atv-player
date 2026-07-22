@@ -3053,6 +3053,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_detail_actions()
         self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
+        self.progress.set_buffer_value(0)
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
         self._reset_audio_combo()
@@ -9260,6 +9261,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self.progress.setMaximum(max(effective_duration, 0))
         self.progress.setValue(max(min(position, self.progress.maximum()), 0))
+        cache_duration = 0
+        if hasattr(self.video, "demuxer_cache_duration_seconds"):
+            try:
+                cache_duration = int(self.video.demuxer_cache_duration_seconds() or 0)
+            except Exception:
+                cache_duration = 0
+        buffer_end = min(int(position) + cache_duration, effective_duration)
+        self.progress.set_buffer_value(buffer_end)
         self.current_time_label.setText(self._format_time(position))
         self.duration_label.setText(self._format_time(effective_duration))
 
