@@ -171,6 +171,7 @@ class ThemeTokens:
     player_button_hover_bg: str
     player_button_pressed_bg: str
     player_button_border: str
+    player_buffer: str
     player_button_icon: str
     player_primary_button_bg: str
     player_primary_button_hover_bg: str
@@ -218,6 +219,7 @@ LIGHT_TOKENS = ThemeTokens(
     player_button_hover_bg="#313a4d",
     player_button_pressed_bg="#1d2430",
     player_button_border="#536078",
+    player_buffer="#6e7a90",
     player_button_icon="#f5f7fb",
     player_primary_button_bg="#ff6a3d",
     player_primary_button_hover_bg="#ff835b",
@@ -265,6 +267,7 @@ DARK_TOKENS = ThemeTokens(
     player_button_hover_bg="#313a4d",
     player_button_pressed_bg="#1d2430",
     player_button_border="#536078",
+    player_buffer="#6e7a90",
     player_button_icon="#f5f7fb",
     player_primary_button_bg="#ff6a3d",
     player_primary_button_hover_bg="#ff835b",
@@ -312,6 +315,7 @@ PLAYER_IMMERSIVE_TOKENS = ThemeTokens(
     player_button_hover_bg="#313a4d",
     player_button_pressed_bg="#1d2430",
     player_button_border="#536078",
+    player_buffer="#6e7a90",
     player_button_icon="#f5f7fb",
     player_primary_button_bg="#ff6a3d",
     player_primary_button_hover_bg="#ff835b",

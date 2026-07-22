@@ -402,3 +402,11 @@ def test_build_player_spinbox_qss_draws_full_height_step_buttons() -> None:
     assert f"border-left: 1px solid {tokens.player_button_border};" in qss
     assert "spinbox-step-up.svg" in qss
     assert "spinbox-step-down.svg" in qss
+
+
+def test_theme_tokens_expose_player_buffer() -> None:
+    manager = ThemeManager(system_theme_getter=lambda: "light")
+
+    assert manager.tokens_for("light").player_buffer.startswith("#")
+    assert manager.tokens_for("dark").player_buffer.startswith("#")
+    assert manager.player_tokens_for("dark").player_buffer.startswith("#")
