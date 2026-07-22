@@ -31,7 +31,7 @@ else:
 POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
 POSTER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 DEFAULT_POSTER_REFERER = "https://movie.douban.com/"
 _YOUTUBE_PAGE_HOSTS = {
@@ -78,6 +78,8 @@ def build_poster_request_headers(image_url: str) -> dict[str, str]:
         referer = "https://v.qq.com/"
     elif "iqiyipic.com" in image_url:
         referer = "https://www.iqiyi.com/"
+    elif "tutu.pm" in image_url:
+        referer = ""
     elif "netease.com" in image_url or "163.com" in image_url:
         referer = "https://cc.163.com/"
     elif "javbus.com" in image_url:

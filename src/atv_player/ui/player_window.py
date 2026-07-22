@@ -881,7 +881,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.resize(1280, 800)
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(800, 600)
         self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
 
         self.video_widget = MpvWidget(self, config=self.config)
