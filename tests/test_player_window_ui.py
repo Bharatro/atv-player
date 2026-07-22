@@ -7721,7 +7721,7 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
         "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
         {
             "Referer": "https://movie.douban.com/",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         },
         10.0,
     )
@@ -7844,7 +7844,7 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
 
     expected_headers = {
         "Referer": "https://www.youtube.com/",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
     }
     assert requested_headers
     assert all(headers == expected_headers for headers in requested_headers)
@@ -7905,7 +7905,7 @@ def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypat
 
     expected_headers = {
         "Referer": "https://cc.163.com/",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
     }
     assert requested_headers
     assert all(headers == expected_headers for headers in requested_headers)
@@ -21708,7 +21708,10 @@ def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(
 
     assert restored.sidebar_container.isHidden() is False
     assert restored_sizes[1] > 0
-    assert abs(restored_ratio - expected_ratio) < 0.02
+    # Lower minimum window size (800x600) lets the content pane's min-width clamp
+    # shift the restored splitter proportion further from the saved ratio, so a
+    # wider round-trip tolerance is needed than at the old 1000x700 minimum.
+    assert abs(restored_ratio - expected_ratio) < 0.08
 
 
 def test_player_window_restores_sidebar_after_toggling_wide_mode_from_fullscreen(qtbot) -> None:
