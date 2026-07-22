@@ -278,6 +278,7 @@ class ClickableSlider(QSlider):
     def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
         super().__init__(orientation, parent)
         self._hover_tooltip_formatter: Callable[[int], str] | None = None
+        self._buffer_value: int = 0
 
     def paintEvent(self, event) -> None:
         if self.orientation() != Qt.Orientation.Horizontal:
@@ -301,6 +302,12 @@ class ClickableSlider(QSlider):
         track_color = tokens.player_button_border if self.isEnabled() else tokens.border_subtle
         painter.setBrush(QColor(track_color))
         painter.drawRoundedRect(0, track_top, self.width(), track_height, track_height / 2, track_height / 2)
+
+        if self.isEnabled() and self._buffer_value > self.value():
+            buffer_progress = (self._buffer_value - self.minimum()) / value_range
+            buffer_end_x = handle_diameter / 2 + buffer_progress * available_width
+            painter.setBrush(QColor(tokens.player_buffer))
+            painter.drawRoundedRect(0, track_top, buffer_end_x, track_height, track_height / 2, track_height / 2)
 
         if self.isEnabled() and handle_center_x > handle_diameter / 2:
             painter.setBrush(QColor(tokens.accent))
@@ -348,6 +355,13 @@ class ClickableSlider(QSlider):
     def leaveEvent(self, event) -> None:
         QToolTip.hideText()
         super().leaveEvent(event)
+
+    def set_buffer_value(self, value: int) -> None:
+        clamped = max(self.minimum(), min(int(value), self.maximum()))
+        if clamped == self._buffer_value:
+            return
+        self._buffer_value = clamped
+        self.update()
 
     def set_hover_tooltip_formatter(self, formatter: Callable[[int], str] | None) -> None:
         self._hover_tooltip_formatter = formatter

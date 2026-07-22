@@ -39,7 +39,7 @@ import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
 import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.poster_loader as poster_loader_module
 import atv_player.ui.player_window as player_window_module
-from atv_player.ui.player_window import PlayerWindow
+from atv_player.ui.player_window import ClickableSlider, PlayerWindow
 
 
 def assert_timestamped_log_line(line: str, message: str) -> None:
@@ -23077,3 +23077,34 @@ def test_player_window_close_during_quit_clears_session_for_future_restore(qtbot
     window.close()
 
     assert window.session is None
+
+
+def test_clickable_slider_buffer_value_clamps_to_range(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(100)
+    slider.setValue(30)
+
+    slider.set_buffer_value(70)
+    assert slider._buffer_value == 70
+
+    slider.set_buffer_value(250)
+    assert slider._buffer_value == 100
+
+    slider.set_buffer_value(-5)
+    assert slider._buffer_value == 0
+
+
+def test_clickable_slider_paints_without_error_with_buffer(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(100)
+    slider.setValue(30)
+    slider.set_buffer_value(70)
+    slider.resize(200, 24)
+
+    pixmap = slider.grab()
+
+    assert not pixmap.isNull()
