@@ -2705,3 +2705,42 @@ def test_mpv_widget_can_select_a_specific_embedded_audio_track(qtbot) -> None:
 
     assert selected_track_id == 9
     assert player.aid == 9
+
+
+def test_mpv_widget_demuxer_cache_duration_reads_live_property(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            if key == "demuxer-cache-duration":
+                return 42.7
+            raise KeyError(key)
+
+    widget._player = FakePlayer()
+
+    assert widget.demuxer_cache_duration_seconds() == 42
+
+
+def test_mpv_widget_demuxer_cache_duration_returns_zero_when_missing(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise KeyError(key)
+
+    widget._player = FakePlayer()
+
+    assert widget.demuxer_cache_duration_seconds() == 0
+
+
+def test_mpv_widget_demuxer_cache_duration_returns_zero_without_player(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    widget._player = None
+
+    assert widget.demuxer_cache_duration_seconds() == 0

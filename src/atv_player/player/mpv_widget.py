@@ -1314,6 +1314,13 @@ class MpvWidget(QWidget):
         except Exception:
             return 0
 
+    def demuxer_cache_duration_seconds(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.demuxer_cache_duration_seconds) or 0)
+        if self._player is None:
+            return 0
+        return self._seconds_property_value(self._player_property("demuxer-cache-duration", None))
+
     def _subtitle_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
         return {
