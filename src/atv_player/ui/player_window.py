@@ -7433,6 +7433,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _handle_video_context_menu_hidden(self, menu: QMenu) -> None:
         if self._video_context_menu is menu:
             self._video_context_menu = None
+        action = self._always_on_top_menu_action
+        if action is not None and action.parent() is menu:
+            self._always_on_top_menu_action = None
 
     def _close_video_context_menu(self) -> bool:
         menu = self._video_context_menu
@@ -7461,6 +7464,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
+        always_on_top_action = menu.addAction("始终置顶")
+        always_on_top_action.setCheckable(True)
+        always_on_top_action.toggled.connect(
+            lambda checked, action=always_on_top_action: self._set_always_on_top(
+                checked,
+                menu_action=action,
+            )
+        )
+        self._always_on_top_menu_action = always_on_top_action
+        self._sync_always_on_top_controls(menu_action=always_on_top_action)
         menu.addAction("退出播放", self._return_to_main)
         return menu
 
