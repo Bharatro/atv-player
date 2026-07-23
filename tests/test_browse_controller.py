@@ -224,6 +224,84 @@ def test_build_request_from_detail_preserves_original_filename_separately_from_r
     assert request.playlist[0].original_title == "S02E03.mp4"
 
 
+def test_build_request_from_detail_maps_playlist_sort_metadata() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "detail-1",
+                "vod_name": "Series",
+                "items": [
+                    {
+                        "name": "Episode 2.mkv",
+                        "title": "第2集",
+                        "url": "http://m/2.m3u8",
+                        "size": 2048,
+                        "rating": "8.5",
+                        "time": "2026-07-23T10:00:00+08:00",
+                    }
+                ],
+            }
+        ]
+    }
+
+    item = BrowseController(api).build_request_from_detail("detail-1").playlist[0]
+
+    assert item.original_title == "Episode 2.mkv"
+    assert item.size == 2048
+    assert item.rating == 8.5
+    assert item.time == "2026-07-23T10:00:00+08:00"
+
+
+def test_build_request_from_detail_tolerates_invalid_sort_metadata() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "detail-1",
+                "vod_name": "Series",
+                "items": [
+                    {
+                        "title": "Episode",
+                        "url": "1",
+                        "size": "bad",
+                        "rating": "bad",
+                        "time": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    item = BrowseController(api).build_request_from_detail("detail-1").playlist[0]
+
+    assert item.size == 0
+    assert item.rating == 0.0
+    assert item.time == ""
+
+
+def test_build_playlist_from_folder_maps_reliable_sort_metadata() -> None:
+    controller = BrowseController(FakeApiClient())
+    folder_items = [
+        VodItem(
+            vod_id="v1",
+            vod_name="Episode 1.mkv",
+            path="/TV/Episode 1.mkv",
+            type=2,
+            vod_tag="file",
+            vod_remarks="1.5 GB",
+            vod_time="2026-07-23 10:00:00",
+        )
+    ]
+
+    playlist, _ = controller.build_playlist_from_folder(folder_items, "v1")
+
+    assert playlist[0].original_title == "Episode 1.mkv"
+    assert playlist[0].size == int(1.5 * 1024**3)
+    assert playlist[0].rating == 0.0
+    assert playlist[0].time == "2026-07-23 10:00:00"
+
+
 def test_build_request_from_detail_maps_title_metadata_fields() -> None:
     api = FakeApiClient()
     api.detail_payload = {

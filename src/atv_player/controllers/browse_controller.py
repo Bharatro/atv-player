@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+
 from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
+from atv_player.playlist_sorting import parse_size_bytes
 from atv_player.share_types import get_share_type_name
 from atv_player.time_utils import format_local_datetime
 
@@ -17,6 +20,14 @@ def _video_id_from_vod_id(vod_id: str) -> str:
     return str(vod_id or "")
 
 
+def _safe_rating(value: object) -> float:
+    try:
+        rating = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return rating if math.isfinite(rating) and rating > 0 else 0.0
+
+
 def _map_play_item(payload: dict, index: int) -> PlayItem:
     title = str(payload.get("title") or payload.get("name") or "")
     original_title = str(payload.get("name") or payload.get("title") or "")
@@ -26,7 +37,9 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
         url=str(payload.get("url") or ""),
         path=str(payload.get("path") or ""),
         index=index,
-        size=int(payload.get("size") or 0),
+        size=parse_size_bytes(payload.get("size")),
+        rating=_safe_rating(payload.get("rating")),
+        time=str(payload.get("time") or ""),
         vod_id=str(payload.get("vod_id") or ""),
     )
 
@@ -154,10 +167,13 @@ class BrowseController:
             index = len(playlist)
             playlist_item = PlayItem(
                 title=item.vod_name,
+                original_title=item.vod_name,
                 url=item.vod_play_url,
                 path=item.path,
                 index=index,
-                size=0,
+                size=parse_size_bytes(item.vod_remarks) if item.vod_tag == "file" else 0,
+                rating=0.0,
+                time=str(item.vod_time or ""),
                 vod_id=item.vod_id,
             )
             playlist.append(playlist_item)
