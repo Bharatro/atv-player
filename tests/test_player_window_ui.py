@@ -47,6 +47,10 @@ def assert_timestamped_log_line(line: str, message: str) -> None:
     assert re.fullmatch(pattern, line), line
 
 
+def _player_window_is_always_on_top(window: PlayerWindow) -> bool:
+    return bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+
+
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
     deadline = time.perf_counter() + timeout_seconds
     while time.perf_counter() < deadline:
@@ -9375,6 +9379,124 @@ def test_player_window_title_bar_exposes_return_to_main_button(qtbot) -> None:
     assert window.title_bar_return_button.text() == ""
     assert window.title_bar_return_button.property("icon_name") == "home.svg"
     assert window.title_bar_return_button.toolTip() == "返回主窗口 (Ctrl+P)"
+
+
+def test_player_window_always_on_top_defaults_to_off(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert _player_window_is_always_on_top(window) is False
+    assert window.always_on_top_button.isCheckable() is True
+    assert window.always_on_top_button.isChecked() is False
+    assert window.always_on_top_button.toolTip() == "始终置顶"
+
+
+def test_player_window_title_bar_button_toggles_always_on_top(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.always_on_top_button.click()
+    assert _player_window_is_always_on_top(window) is True
+    assert window.always_on_top_button.isChecked() is True
+
+    window.always_on_top_button.click()
+    assert _player_window_is_always_on_top(window) is False
+    assert window.always_on_top_button.isChecked() is False
+
+
+def test_player_window_always_on_top_does_not_persist_to_config(qtbot) -> None:
+    saved: list[bool] = []
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.append(True),
+    )
+    qtbot.addWidget(window)
+
+    window.always_on_top_button.click()
+
+    assert saved == []
+    assert not hasattr(config, "player_always_on_top")
+
+
+def test_player_window_always_on_top_failure_restores_actual_state(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    messages: list[str] = []
+
+    def fail_to_set_window_flag(*_args, **_kwargs) -> None:
+        raise RuntimeError("unsupported")
+
+    monkeypatch.setattr(window, "setWindowFlag", fail_to_set_window_flag)
+    monkeypatch.setattr(window, "_append_log", messages.append)
+
+    window.always_on_top_button.click()
+
+    assert _player_window_is_always_on_top(window) is False
+    assert window.always_on_top_button.isChecked() is False
+    assert window.always_on_top_button.toolTip() == "始终置顶"
+    assert messages == ["置顶切换失败: unsupported"]
+
+
+def test_player_window_context_menu_always_on_top_action_syncs_with_title_bar(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    menu = window._build_video_context_menu()
+    action = next(item for item in menu.actions() if item.text() == "始终置顶")
+
+    assert action.isCheckable() is True
+    assert action.isChecked() is False
+
+    window.always_on_top_button.click()
+    assert action.isChecked() is True
+
+    action.trigger()
+    assert _player_window_is_always_on_top(window) is False
+    assert window.always_on_top_button.isChecked() is False
+
+
+def test_player_window_always_on_top_survives_hide_but_not_new_instance(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.always_on_top_button.click()
+    window.hide()
+
+    assert _player_window_is_always_on_top(window) is True
+    window.show()
+    assert _player_window_is_always_on_top(window) is True
+
+    new_window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(new_window)
+    assert _player_window_is_always_on_top(new_window) is False
+
+
+@pytest.mark.parametrize("state", ["normal", "maximized", "fullscreen"])
+def test_player_window_always_on_top_preserves_window_state(qtbot, state: str) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    if state == "maximized":
+        window.showMaximized()
+    elif state == "fullscreen":
+        window.showFullScreen()
+    qtbot.wait(30)
+
+    before = (
+        window.isVisible(),
+        window.isMinimized(),
+        window.isMaximized(),
+        window.isFullScreen(),
+    )
+    window._set_always_on_top(True)
+    qtbot.wait(30)
+
+    assert (
+        window.isVisible(),
+        window.isMinimized(),
+        window.isMaximized(),
+        window.isFullScreen(),
+    ) == before
 
 
 def test_player_window_enables_resize_support(qtbot) -> None:
