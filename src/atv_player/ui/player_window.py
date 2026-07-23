@@ -134,6 +134,7 @@ from atv_player.ui.theme import (
 )
 from atv_player.ui.toggle_switch import ToggleSwitch
 from atv_player.ui.window_chrome import ThemedDialogBase, ThemedWidgetWindowBase
+from atv_player.ui.x11_window import set_x11_window_above
 from atv_player.yt_dlp_service import looks_like_youtube_video_id
 
 _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
@@ -721,6 +722,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._quit_requested = False
         self._app_quit_requested = False
         self._close_event_returns_to_main = False
+        self._always_on_top_enabled = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
@@ -1637,19 +1639,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return f"{label} ({shortcut})"
 
     def _is_always_on_top(self) -> bool:
-        handle = self.windowHandle()
-        flags = handle.flags() if handle is not None else self.windowFlags()
-        return bool(flags & Qt.WindowType.WindowStaysOnTopHint)
+        return self._always_on_top_enabled
 
     def _set_native_always_on_top(self, enabled: bool) -> None:
+        # Qt flag changes can invalidate libmpv's native child after hide/show
+        # on X11, so ask the window manager to change stacking in place.
+        if QApplication.platformName().strip().lower() == "xcb":
+            set_x11_window_above(int(self.winId()), enabled)
+            return
         handle = self.windowHandle()
         if handle is None:
             self.winId()
             handle = self.windowHandle()
         if handle is None:
             raise RuntimeError("player native window is unavailable")
-        # QWidget flag changes hide/recreate the native hierarchy and can
-        # terminate libmpv, which renders into the native child window.
+        # Avoid QWidget.setWindowFlag(), which explicitly hides the window.
         handle.setFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
 
     def _sync_always_on_top_controls(self, *, menu_action: QAction | None = None) -> bool:
@@ -1686,14 +1690,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if requested != self._is_always_on_top():
             try:
                 self._set_native_always_on_top(requested)
-                if requested and self.isVisible() and not self.isMinimized():
-                    self.raise_()
             except Exception as exc:
                 logger.exception("PlayerWindow always-on-top toggle failed")
                 try:
                     self._append_log(f"置顶切换失败: {exc}")
                 except Exception:
                     pass
+            else:
+                self._always_on_top_enabled = requested
+                if requested and self.isVisible() and not self.isMinimized():
+                    self.raise_()
         self._sync_always_on_top_controls(menu_action=menu_action)
 
     def _apply_favorite_button_theme(self) -> None:
