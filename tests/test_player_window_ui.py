@@ -9479,6 +9479,34 @@ def test_player_window_xcb_always_on_top_uses_ewmh_across_hide_and_show(
     assert window._is_always_on_top() is False
 
 
+def test_player_window_reapplies_xcb_always_on_top_after_show(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(30)
+    ewmh_calls: list[tuple[int, bool]] = []
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(
+        player_window_module,
+        "set_x11_window_above",
+        lambda window_id, enabled: ewmh_calls.append((window_id, enabled)),
+        raising=False,
+    )
+    window_id = int(window.winId())
+
+    window._set_always_on_top(True)
+    ewmh_calls.clear()
+    window.hide()
+    window.show()
+    qtbot.wait(30)
+
+    assert ewmh_calls == [(window_id, True)]
+    assert window._is_always_on_top() is True
+
+
 def test_player_window_always_on_top_does_not_persist_to_config(qtbot) -> None:
     saved: list[bool] = []
     config = AppConfig()

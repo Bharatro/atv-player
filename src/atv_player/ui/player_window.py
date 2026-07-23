@@ -9847,6 +9847,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_window_title()
         self._stop_current_playback()
 
+    def _reapply_always_on_top_after_show(self) -> None:
+        if not self._always_on_top_enabled or not self.isVisible():
+            return
+        try:
+            self._set_native_always_on_top(True)
+        except Exception as exc:
+            logger.exception("PlayerWindow always-on-top restore failed")
+            try:
+                self._append_log(f"恢复置顶失败: {exc}")
+            except Exception:
+                pass
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._always_on_top_enabled:
+            QTimer.singleShot(0, self._reapply_always_on_top_after_show)
+
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)
         if row == self.current_index or self.session is None:
