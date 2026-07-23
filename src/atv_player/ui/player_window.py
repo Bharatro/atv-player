@@ -919,6 +919,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.always_on_top_button.setCheckable(True)
         self.always_on_top_button.setIconSize(QSize(16, 16))
         self.always_on_top_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.always_on_top_button.toggled.connect(self._set_always_on_top)
         self.title_bar_return_button = QPushButton("", self.title_bar())
         self.title_bar_return_button.setObjectName("customTitleBarReturnButton")
         self.title_bar_return_button.setProperty("icon_name", "home.svg")
@@ -1661,6 +1662,39 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             finally:
                 action.blockSignals(previous_block_state)
         return enabled
+
+    def _set_always_on_top(
+        self,
+        enabled: bool,
+        *,
+        menu_action: QAction | None = None,
+    ) -> None:
+        requested = bool(enabled)
+        if requested != self._is_always_on_top():
+            was_visible = self.isVisible()
+            was_minimized = self.isMinimized()
+            was_fullscreen = self.isFullScreen()
+            was_maximized = self.isMaximized()
+            try:
+                self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, requested)
+                if was_visible:
+                    if was_minimized:
+                        self.showMinimized()
+                    elif was_fullscreen:
+                        self.showFullScreen()
+                    elif was_maximized:
+                        self.showMaximized()
+                    else:
+                        self.show()
+                    if not was_minimized:
+                        self.raise_()
+            except Exception as exc:
+                logger.exception("PlayerWindow always-on-top toggle failed")
+                try:
+                    self._append_log(f"置顶切换失败: {exc}")
+                except Exception:
+                    pass
+        self._sync_always_on_top_controls(menu_action=menu_action)
 
     def _apply_favorite_button_theme(self) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
