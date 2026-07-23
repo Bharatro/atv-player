@@ -48,7 +48,7 @@ def assert_timestamped_log_line(line: str, message: str) -> None:
 
 
 def _player_window_is_always_on_top(window: PlayerWindow) -> bool:
-    return bool(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+    return window._is_always_on_top()
 
 
 def _spin_until(predicate, timeout_seconds: float = 5.0) -> None:
@@ -9404,6 +9404,41 @@ def test_player_window_title_bar_button_toggles_always_on_top(qtbot) -> None:
     assert window.always_on_top_button.isChecked() is False
 
 
+def test_player_window_always_on_top_preserves_mpv_native_surface(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(30)
+    player_window_id = int(window.winId())
+    video_window_id = int(window.video_widget.winId())
+    qwidget_flag_calls: list[tuple[Qt.WindowType, bool]] = []
+    video_shutdown_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        window,
+        "setWindowFlag",
+        lambda flag, enabled: qwidget_flag_calls.append((flag, enabled)),
+    )
+    monkeypatch.setattr(
+        window.video_widget,
+        "shutdown",
+        lambda: video_shutdown_calls.append(True),
+    )
+
+    window._set_always_on_top(True)
+    qtbot.wait(30)
+
+    assert qwidget_flag_calls == []
+    assert video_shutdown_calls == []
+    assert int(window.winId()) == player_window_id
+    assert int(window.video_widget.winId()) == video_window_id
+    assert window.isVisible() is True
+    assert window._is_always_on_top() is True
+
+
 def test_player_window_always_on_top_does_not_persist_to_config(qtbot) -> None:
     saved: list[bool] = []
     config = AppConfig()
@@ -9425,10 +9460,14 @@ def test_player_window_always_on_top_failure_restores_actual_state(qtbot, monkey
     qtbot.addWidget(window)
     messages: list[str] = []
 
-    def fail_to_set_window_flag(*_args, **_kwargs) -> None:
+    def fail_to_set_native_always_on_top(*_args, **_kwargs) -> None:
         raise RuntimeError("unsupported")
 
-    monkeypatch.setattr(window, "setWindowFlag", fail_to_set_window_flag)
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        fail_to_set_native_always_on_top,
+    )
     monkeypatch.setattr(window, "_append_log", messages.append)
 
     window.always_on_top_button.click()

@@ -1637,7 +1637,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return f"{label} ({shortcut})"
 
     def _is_always_on_top(self) -> bool:
-        return bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        handle = self.windowHandle()
+        flags = handle.flags() if handle is not None else self.windowFlags()
+        return bool(flags & Qt.WindowType.WindowStaysOnTopHint)
+
+    def _set_native_always_on_top(self, enabled: bool) -> None:
+        handle = self.windowHandle()
+        if handle is None:
+            self.winId()
+            handle = self.windowHandle()
+        if handle is None:
+            raise RuntimeError("player native window is unavailable")
+        # QWidget flag changes hide/recreate the native hierarchy and can
+        # terminate libmpv, which renders into the native child window.
+        handle.setFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
 
     def _sync_always_on_top_controls(self, *, menu_action: QAction | None = None) -> bool:
         enabled = self._is_always_on_top()
@@ -1671,23 +1684,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> None:
         requested = bool(enabled)
         if requested != self._is_always_on_top():
-            was_visible = self.isVisible()
-            was_minimized = self.isMinimized()
-            was_fullscreen = self.isFullScreen()
-            was_maximized = self.isMaximized()
             try:
-                self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, requested)
-                if was_visible:
-                    if was_minimized:
-                        self.showMinimized()
-                    elif was_fullscreen:
-                        self.showFullScreen()
-                    elif was_maximized:
-                        self.showMaximized()
-                    else:
-                        self.show()
-                    if not was_minimized:
-                        self.raise_()
+                self._set_native_always_on_top(requested)
+                if requested and self.isVisible() and not self.isMinimized():
+                    self.raise_()
             except Exception as exc:
                 logger.exception("PlayerWindow always-on-top toggle failed")
                 try:
