@@ -744,6 +744,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._pending_episode_title_session = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
+        self._always_on_top_menu_action: QAction | None = None
         self._poster_preview_dialog: QDialog | None = None
         self._poster_preview_label: QLabel | None = None
         self._poster_preview_previous_button: QToolButton | None = None
@@ -913,6 +914,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._pending_ytdlp_metadata_hydration: tuple[PlayItem, int] | None = None
         self._danmaku_render_request_id = 0
         self._pending_danmaku_render_item: PlayItem | None = None
+        self.always_on_top_button = QPushButton("", self.title_bar())
+        self.always_on_top_button.setObjectName("customTitleBarAlwaysOnTopButton")
+        self.always_on_top_button.setCheckable(True)
+        self.always_on_top_button.setIconSize(QSize(16, 16))
+        self.always_on_top_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.title_bar_return_button = QPushButton("", self.title_bar())
         self.title_bar_return_button.setObjectName("customTitleBarReturnButton")
         self.title_bar_return_button.setProperty("icon_name", "home.svg")
@@ -921,7 +927,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.title_bar_return_button.setToolTip(self._format_tooltip("返回主窗口", "Ctrl+P"))
         self.title_bar_return_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.title_bar_return_button.clicked.connect(self._return_to_main)
-        self.title_bar().set_extra_action_buttons([self.title_bar_return_button])
+        self.title_bar().set_extra_action_buttons(
+            [self.always_on_top_button, self.title_bar_return_button]
+        )
+        self._sync_always_on_top_controls()
         self.title_bar().close_requested.disconnect()
         self.title_bar().close_requested.connect(self._quit_application)
         self.playlist_title_mode = "episode"
@@ -1625,6 +1634,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if shortcut is None:
             return label
         return f"{label} ({shortcut})"
+
+    def _is_always_on_top(self) -> bool:
+        return bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+
+    def _sync_always_on_top_controls(self, *, menu_action: QAction | None = None) -> bool:
+        enabled = self._is_always_on_top()
+        action = menu_action or self._always_on_top_menu_action
+        button = getattr(self, "always_on_top_button", None)
+        label = "取消始终置顶" if enabled else "始终置顶"
+        if button is not None:
+            previous_block_state = button.blockSignals(True)
+            try:
+                button.setChecked(enabled)
+                button.setToolTip(label)
+                button.setAccessibleName(label)
+                icon_name = "pin-filled.svg" if enabled else "pin.svg"
+                button.setProperty("icon_name", icon_name)
+                button.setIcon(load_icon(self._icons_dir / icon_name))
+            finally:
+                button.blockSignals(previous_block_state)
+        if action is not None:
+            previous_block_state = action.blockSignals(True)
+            try:
+                action.setChecked(enabled)
+            finally:
+                action.blockSignals(previous_block_state)
+        return enabled
 
     def _apply_favorite_button_theme(self) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
