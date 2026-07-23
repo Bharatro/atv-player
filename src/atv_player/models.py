@@ -191,6 +191,8 @@ class PlayItem:
     path: str = ""
     index: int = 0
     size: int = 0
+    rating: float = 0.0
+    time: str = ""
     duration_seconds: int = 0
     vod_id: str = ""
     detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
