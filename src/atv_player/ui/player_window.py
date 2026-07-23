@@ -103,6 +103,11 @@ from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
+from atv_player.playlist_sorting import (
+    ORIGINAL,
+    PlaylistSortState,
+    find_playlist_item_index,
+)
 from atv_player.request_headers import normalize_media_request_headers
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.external_links import external_link_html
@@ -943,6 +948,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_group_combo.setHidden(True)
         self.playlist_source_combo = FlatComboBox()
         self.playlist_source_combo.setHidden(True)
+        self.playlist_sort_combo = FlatComboBox()
+        self.playlist_sort_combo.setHidden(True)
+        self._playlist_sort_state = PlaylistSortState()
         self.playlist_title_tabs = QTabBar()
         self.playlist_title_tabs.addTab("剧集标题")
         self.playlist_title_tabs.addTab("原始文件名")
@@ -1034,6 +1042,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ]
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
+        self._configure_control_combo(self.playlist_sort_combo, minimum_contents_length=10)
         self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72, fixed_height=28)
         self._configure_control_combo(self.subtitle_combo, minimum_contents_length=2, maximum_width=74, fixed_height=28)
         self._configure_control_combo(self.danmaku_combo, minimum_contents_length=2, maximum_width=72, fixed_height=28)
@@ -1282,6 +1291,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.playlist_source_combo)
+        sidebar_layout.addWidget(self.playlist_sort_combo)
         sidebar_layout.addWidget(self.playlist_title_tabs)
         sidebar_layout.addWidget(self.sidebar_splitter)
         self.sidebar_container = QWidget()
@@ -1332,6 +1342,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
+        self.playlist_sort_combo.currentIndexChanged.connect(self._change_playlist_sort)
         self.playlist_title_tabs.currentChanged.connect(self._change_playlist_title_mode)
         self._metadata_original_toggle.toggled.connect(self._toggle_original_metadata_view)
         self._poster_previous_button.clicked.connect(lambda: self._step_metadata_poster(-1))
@@ -2095,6 +2106,54 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_title_tabs.blockSignals(True)
         self.playlist_title_tabs.setCurrentIndex(0 if self.playlist_title_mode == "episode" else 1)
         self.playlist_title_tabs.blockSignals(False)
+
+    def _render_playlist_sort_combo(self) -> None:
+        playlist = self.session.playlist if self.session is not None else []
+        options = self._playlist_sort_state.options_for(playlist)
+        supported = {option.value for option in options}
+        if self._playlist_sort_state.mode not in supported:
+            self._playlist_sort_state.mode = ORIGINAL
+        self.playlist_sort_combo.blockSignals(True)
+        self.playlist_sort_combo.clear()
+        for option in options:
+            self.playlist_sort_combo.addItem(option.label, option.value)
+        selected = self.playlist_sort_combo.findData(self._playlist_sort_state.mode)
+        self.playlist_sort_combo.setCurrentIndex(max(0, selected))
+        self.playlist_sort_combo.blockSignals(False)
+        visible = (
+            self._playlist_panel_visible()
+            and not self._bilibili_grouped_playlist_tree_enabled()
+            and len(options) > 1
+        )
+        self.playlist_sort_combo.setHidden(not visible)
+
+    def _apply_playlist_sort(self, current_item: PlayItem | None = None) -> None:
+        if self.session is None:
+            return
+        fallback = self.current_index
+        if current_item is None and 0 <= fallback < len(self.session.playlist):
+            current_item = self.session.playlist[fallback]
+        self._playlist_sort_state.apply(self.session.playlist)
+        self.current_index = find_playlist_item_index(
+            self.session.playlist,
+            current_item,
+            fallback,
+        )
+        self.session.start_index = self.current_index
+        self._render_playlist_sort_combo()
+        self._render_playlist_items()
+
+    def _change_playlist_sort(self, _index: int) -> None:
+        if self.session is None:
+            return
+        mode = str(self.playlist_sort_combo.currentData() or ORIGINAL)
+        current_item = (
+            self.session.playlist[self.current_index]
+            if 0 <= self.current_index < len(self.session.playlist)
+            else None
+        )
+        self._playlist_sort_state.mode = mode
+        self._apply_playlist_sort(current_item)
 
     def _render_playlist_items(self) -> None:
         self.playlist.clear()
@@ -3050,6 +3109,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
+        self._playlist_sort_state.reset(session.playlists)
         initial_item = session.playlist[session.start_index] if 0 <= session.start_index < len(session.playlist) else None
         if initial_item is not None:
             self._snapshot_item_detail_fields(initial_item)
@@ -3122,6 +3182,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._update_play_button_icon()
         self._refresh_window_title()
         self._render_playlist_source_combos()
+        self._render_playlist_sort_combo()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._render_bilibili_playlist_tree()
@@ -9406,6 +9467,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         else:
             self.playlist_group_combo.setHidden(True)
             self.playlist_source_combo.setHidden(True)
+        self._render_playlist_sort_combo()
         self._render_playlist_title_tabs()
         self.details.setHidden(is_fullscreen or not metadata_visible)
         self.metadata_section.setHidden(is_fullscreen or not metadata_visible)

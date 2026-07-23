@@ -276,6 +276,108 @@ def make_bilibili_grouped_session() -> PlayerSession:
     )
 
 
+def make_sortable_player_session() -> PlayerSession:
+    return PlayerSession(
+        vod=VodItem(vod_id="series", vod_name="Series"),
+        playlist=[
+            PlayItem(
+                title="第10集",
+                original_title="Episode 10.mkv",
+                url="10",
+                size=100,
+            ),
+            PlayItem(
+                title="第2集",
+                original_title="Episode 2.mkv",
+                url="2",
+                size=20,
+            ),
+            PlayItem(
+                title="第1集",
+                original_title="Episode 1.mkv",
+                url="1",
+                size=10,
+            ),
+        ],
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+
+def test_player_window_playlist_sort_combo_uses_available_fields(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_sortable_player_session())
+
+    assert not window.playlist_sort_combo.isHidden()
+    assert [
+        window.playlist_sort_combo.itemData(index)
+        for index in range(window.playlist_sort_combo.count())
+    ] == ["index", "name,asc", "name,desc", "size,asc", "size,desc"]
+
+
+def test_player_window_playlist_sort_keeps_current_item_and_does_not_reload(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    window.open_session(make_sortable_player_session())
+    current = window.session.playlist[window.current_index]
+    load_count = len(video.load_calls)
+
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,asc")
+    )
+
+    assert [item.url for item in window.session.playlist] == ["1", "2", "10"]
+    assert window.session.playlist[window.current_index] is current
+    assert window.playlist.currentRow() == window.current_index
+    assert len(video.load_calls) == load_count
+
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("index")
+    )
+    assert [item.url for item in window.session.playlist] == ["10", "2", "1"]
+    assert window.session.playlist[window.current_index] is current
+
+
+def test_player_window_next_uses_sorted_playlist_order(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_sortable_player_session())
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,asc")
+    )
+    played: list[int] = []
+    monkeypatch.setattr(
+        window,
+        "_play_item_at_index",
+        lambda index, **_kwargs: played.append(index),
+    )
+
+    window.play_next()
+
+    assert played == [2]
+    assert window.session.playlist[played[0]].url == "10"
+
+
+def test_player_window_hides_playlist_sort_without_metadata_and_resets_new_session(
+    qtbot,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_sortable_player_session())
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,desc")
+    )
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.playlist_sort_combo.currentData() == "index"
+    assert window.playlist_sort_combo.isHidden()
+
+
 def test_player_window_renders_heat_summary_in_detail_fields(qtbot) -> None:
     heat = FakeHeatController("23 人正在播放")
     session = make_player_session(start_index=0)
