@@ -3347,11 +3347,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             0,
             min(load_result.replacement_start_index, len(replacement) - 1),
         )
+        replacement_item = replacement[self.current_index]
+        self._playlist_sort_state.remember(replacement)
+        self._playlist_sort_state.apply(replacement)
+        self.current_index = find_playlist_item_index(
+            replacement,
+            replacement_item,
+            self.current_index,
+        )
+        self.session.start_index = self.current_index
         if self._bilibili_grouped_playlist_tree_enabled():
             self._activate_bilibili_tree_playlist(
                 preferred_group_item=(self.session.playlist_index, self.current_index)
             )
         self._render_playlist_source_combos()
+        self._render_playlist_sort_combo()
         self.playlist_title_mode = "episode"
         self._render_playlist_title_tabs()
         self._render_playlist_items()
@@ -5064,8 +5074,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is not pending_session:
             return
         current_item = self.session.playlist[self.current_index] if 0 <= self.current_index < len(self.session.playlist) else None
-        self.session.playlist = self._merge_episode_title_enhancement_playlist(updated_playlist)
-        self.current_index = self._find_updated_playlist_index(self.session.playlist, current_item, self.current_index)
+        merged_playlist = self._merge_episode_title_enhancement_playlist(updated_playlist)
+        self._playlist_sort_state.remember(merged_playlist)
+        self.session.playlist = merged_playlist
+        self._playlist_sort_state.apply(self.session.playlist)
+        self.current_index = find_playlist_item_index(
+            self.session.playlist,
+            current_item,
+            self.current_index,
+        )
         self.session.start_index = self.current_index
         if 0 <= self.session.playlist_index < len(self.session.playlists):
             self.session.playlists[self.session.playlist_index] = self.session.playlist
@@ -5075,6 +5092,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if 0 <= self.session.source_index < len(group.sources):
                 group.sources[self.session.source_index].playlist = self.session.playlist
         self.playlist_title_mode = "episode"
+        self._render_playlist_sort_combo()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._refresh_window_title()
@@ -5342,12 +5360,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.session.source_index = source_index
         self.session.playlist_index = mapping[(source_group_index, source_index)]
         self.session.playlist = target_playlist
+        self._playlist_sort_state.apply(target_playlist)
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
         self.current_index = target_index
+        self.session.start_index = self.current_index
         self.playlist_title_mode = "episode"
         self._render_playlist_source_combos()
+        self._render_playlist_sort_combo()
         self._render_playlist_title_tabs()
         self._render_playlist_items()
         self._render_bilibili_playlist_tree()

@@ -378,6 +378,177 @@ def test_player_window_hides_playlist_sort_without_metadata_and_resets_new_sessi
     assert window.playlist_sort_combo.isHidden()
 
 
+def test_player_window_playlist_sort_follows_source_and_preserves_target_episode(
+    qtbot,
+    monkeypatch,
+) -> None:
+    first = [
+        PlayItem(title="A2", original_title="Episode 2.mkv", url="a2"),
+        PlayItem(title="A1", original_title="Episode 1.mkv", url="a1"),
+    ]
+    second = [
+        PlayItem(title="B2", original_title="Episode 2.mkv", url="b2"),
+        PlayItem(title="B1", original_title="Episode 1.mkv", url="b1"),
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="series", vod_name="Series"),
+        playlist=first,
+        playlists=[first, second],
+        source_groups=[
+            PlaybackSourceGroup(
+                label="线路",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=first),
+                    PlaybackSource(label="线路2", playlist=second),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,asc")
+    )
+    monkeypatch.setattr(window, "_load_current_item", lambda **_kwargs: None)
+
+    window._switch_active_source(0, 1)
+
+    assert [item.url for item in window.session.playlist] == ["b1", "b2"]
+    assert window.session.playlist[window.current_index].url == "b2"
+
+
+def test_player_window_playlist_sort_falls_back_when_target_source_lacks_field(
+    qtbot,
+    monkeypatch,
+) -> None:
+    first = [PlayItem(title="A", original_title="A.mkv", url="a")]
+    second = [PlayItem(title="B", url="b")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="series", vod_name="Series"),
+        playlist=first,
+        playlists=[first, second],
+        source_groups=[
+            PlaybackSourceGroup(
+                label="线路",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=first),
+                    PlaybackSource(label="线路2", playlist=second),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,desc")
+    )
+    monkeypatch.setattr(window, "_load_current_item", lambda **_kwargs: None)
+
+    window._switch_active_source(0, 1)
+
+    assert window._playlist_sort_state.mode == "index"
+    assert window.playlist_sort_combo.isHidden()
+
+
+def test_player_window_playlist_sort_applies_to_replacement_and_keeps_requested_item(
+    qtbot,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_sortable_player_session())
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,asc")
+    )
+    replacement = [
+        PlayItem(title="第3集", original_title="Episode 3.mkv", url="3"),
+        PlayItem(title="第1集", original_title="Episode 1.mkv", url="1-new"),
+    ]
+
+    window._apply_playback_loader_result(
+        PlaybackLoadResult(
+            replacement_playlist=replacement,
+            replacement_start_index=0,
+        )
+    )
+
+    assert [item.url for item in window.session.playlist] == ["1-new", "3"]
+    assert window.session.playlist[window.current_index].url == "3"
+
+
+def test_player_window_playlist_sort_survives_episode_title_enhancement(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = make_sortable_player_session()
+    window.open_session(session)
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("name,asc")
+    )
+    current = window.session.playlist[window.current_index]
+    window._pending_episode_title_session = session
+    window._episode_title_request_id = 7
+    updated = [
+        PlayItem(
+            title="第10集",
+            original_title="Episode 10.mkv",
+            episode_display_title="新标题10",
+            url="10",
+        ),
+        PlayItem(
+            title="第1集",
+            original_title="Episode 1.mkv",
+            episode_display_title="新标题1",
+            url="1",
+        ),
+        PlayItem(
+            title="第2集",
+            original_title="Episode 2.mkv",
+            episode_display_title="新标题2",
+            url="2",
+        ),
+    ]
+
+    window._handle_episode_title_enhancement_succeeded(7, updated)
+
+    assert [item.original_title for item in window.session.playlist] == [
+        "Episode 1.mkv",
+        "Episode 2.mkv",
+        "Episode 10.mkv",
+    ]
+    assert window.session.playlist[window.current_index] is current
+
+    window.playlist_sort_combo.setCurrentIndex(
+        window.playlist_sort_combo.findData("index")
+    )
+    assert [item.original_title for item in window.session.playlist] == [
+        "Episode 10.mkv",
+        "Episode 1.mkv",
+        "Episode 2.mkv",
+    ]
+
+
+def test_player_window_hides_playlist_sort_in_bilibili_tree_mode(qtbot) -> None:
+    config = AppConfig(bilibili_grouped_playlist_tree_enabled=True)
+    session = make_bilibili_grouped_session()
+    for group in session.playlists:
+        for index, item in enumerate(group):
+            item.original_title = f"Episode {index + 1}.mp4"
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window._bilibili_grouped_playlist_tree_enabled()
+    assert window.playlist_sort_combo.isHidden()
+
+
 def test_player_window_renders_heat_summary_in_detail_fields(qtbot) -> None:
     heat = FakeHeatController("23 人正在播放")
     session = make_player_session(start_index=0)
