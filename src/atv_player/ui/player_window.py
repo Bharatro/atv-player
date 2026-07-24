@@ -728,6 +728,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._app_quit_requested = False
         self._close_event_returns_to_main = False
         self._always_on_top_enabled = False
+        self._restore_activation_after_always_on_top_remap = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
@@ -1667,6 +1668,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         # Avoid QWidget.setWindowFlag(), which explicitly hides the window.
         handle.setFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
 
+    def _remap_maximized_xcb_window_for_always_on_top(self) -> None:
+        if (
+            QApplication.platformName().strip().lower() != "xcb"
+            or not self.isVisible()
+            or not self.isMaximized()
+        ):
+            return
+        self._restore_activation_after_always_on_top_remap = self.isActiveWindow()
+        self.hide()
+        self.showMaximized()
+
     def _sync_always_on_top_controls(self, *, menu_action: QAction | None = None) -> bool:
         enabled = self._is_always_on_top()
         action = menu_action or self._always_on_top_menu_action
@@ -1709,6 +1721,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     pass
             else:
                 self._always_on_top_enabled = requested
+                if requested:
+                    self._remap_maximized_xcb_window_for_always_on_top()
                 if requested and self.isVisible() and not self.isMinimized():
                     self.raise_()
         self._sync_always_on_top_controls(menu_action=menu_action)
@@ -9933,6 +9947,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _reapply_always_on_top_after_show(self) -> None:
         if not self._always_on_top_enabled or not self.isVisible():
             return
+        restore_activation = self._restore_activation_after_always_on_top_remap
+        self._restore_activation_after_always_on_top_remap = False
         try:
             self._set_native_always_on_top(True)
         except Exception as exc:
@@ -9941,6 +9957,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 self._append_log(f"恢复置顶失败: {exc}")
             except Exception:
                 pass
+        else:
+            if restore_activation and not self.isMinimized():
+                self.raise_()
+                self.activateWindow()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

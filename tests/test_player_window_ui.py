@@ -9879,6 +9879,92 @@ def test_player_window_always_on_top_preserves_window_state(qtbot, state: str) -
     ) == before
 
 
+def test_player_window_xcb_always_on_top_does_not_show_hidden_maximized_window(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(window, "isVisible", lambda: False)
+    monkeypatch.setattr(window, "isMaximized", lambda: True)
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "showNormal", lambda: calls.append(("normal", None)))
+    monkeypatch.setattr(
+        window,
+        "showMaximized",
+        lambda: calls.append(("maximized", None)),
+    )
+    monkeypatch.setattr(
+        window,
+        "setWindowState",
+        lambda state: calls.append(("state", state)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: calls.append(("native", enabled)),
+    )
+
+    window._set_always_on_top(True)
+
+    assert calls == [("native", True)]
+
+
+def test_player_window_xcb_always_on_top_remaps_visible_maximized_window(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(window, "isVisible", lambda: True)
+    monkeypatch.setattr(window, "isMaximized", lambda: True)
+    monkeypatch.setattr(window, "isMinimized", lambda: False)
+    monkeypatch.setattr(window, "isActiveWindow", lambda: True)
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "hide", lambda: calls.append(("hide", None)))
+    monkeypatch.setattr(
+        window,
+        "showMaximized",
+        lambda: calls.append(("maximized", window._is_always_on_top())),
+    )
+    monkeypatch.setattr(window, "raise_", lambda: calls.append(("raise", None)))
+    monkeypatch.setattr(
+        window,
+        "activateWindow",
+        lambda: calls.append(("activate", None)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: calls.append(("native", enabled)),
+    )
+
+    window._set_always_on_top(True)
+
+    assert calls == [
+        ("native", True),
+        ("hide", None),
+        ("maximized", True),
+        ("raise", None),
+    ]
+
+    window._reapply_always_on_top_after_show()
+
+    assert calls == [
+        ("native", True),
+        ("hide", None),
+        ("maximized", True),
+        ("raise", None),
+        ("native", True),
+        ("raise", None),
+        ("activate", None),
+    ]
+
+
 def test_player_window_enables_resize_support(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
