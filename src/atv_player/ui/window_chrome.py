@@ -106,7 +106,12 @@ class CustomTitleBar(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             window = self.window()
             if window is not None:
-                self._drag_restore_pending = bool(window.isMaximized())
+                is_effectively_maximized = getattr(
+                    window,
+                    "_is_effectively_maximized",
+                    window.isMaximized,
+                )
+                self._drag_restore_pending = bool(is_effectively_maximized())
                 if not self._drag_restore_pending:
                     self._drag_offset = event.globalPosition().toPoint() - window.frameGeometry().topLeft()
                 else:
@@ -119,17 +124,32 @@ class CustomTitleBar(QWidget):
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             window = self.window()
             if window is not None:
-                if window.isMaximized():
-                    normal_geometry = window.normalGeometry()
+                is_effectively_maximized = getattr(
+                    window,
+                    "_is_effectively_maximized",
+                    window.isMaximized,
+                )
+                if is_effectively_maximized():
+                    normal_geometry_getter = getattr(
+                        window,
+                        "_normal_geometry_for_title_bar_restore",
+                        window.normalGeometry,
+                    )
+                    normal_geometry = normal_geometry_getter()
                     restore_x = min(
                         max(int(event.position().x() * normal_geometry.width() / max(1, self.width())), 0),
                         max(0, normal_geometry.width() - 1),
                     )
                     restore_y = min(max(self._drag_offset.y(), 0), max(0, normal_geometry.height() - 1))
-                    window.showNormal()
+                    restore_window = getattr(
+                        window,
+                        "_restore_from_effective_maximized",
+                        window.showNormal,
+                    )
+                    restore_window()
                     self._drag_offset = QPoint(restore_x, restore_y)
                     self._drag_restore_pending = False
-                if not window.isMaximized():
+                if not is_effectively_maximized():
                     window.move(event.globalPosition().toPoint() - self._drag_offset)
                 event.accept()
                 return
@@ -141,11 +161,15 @@ class CustomTitleBar(QWidget):
             self._drag_offset is not None
             and event.button() == Qt.MouseButton.LeftButton
             and window is not None
-            and not window.isMaximized()
+            and not getattr(
+                window,
+                "_is_effectively_maximized",
+                window.isMaximized,
+            )()
             and self.maximize_button.isVisible()
             and event.globalPosition().toPoint().y() <= 0
         ):
-            window.showMaximized()
+            self.maximize_toggle_requested.emit()
             event.accept()
         self._drag_offset = None
         self._drag_restore_pending = False
@@ -233,14 +257,27 @@ class _ThemedChromeMixin:
         self._window_chrome_root.setStyleSheet(build_window_chrome_qss(current_tokens()))
 
     def _toggle_maximized(self) -> None:
-        if self.isMaximized():
+        if self._is_effectively_maximized():
             self.showNormal()
         else:
             self.showMaximized()
         self._update_window_chrome_state()
 
+    def _is_effectively_maximized(self) -> bool:
+        return self.isMaximized()
+
+    def _normal_geometry_for_title_bar_restore(self) -> QRect:
+        return self.normalGeometry()
+
+    def _restore_from_effective_maximized(self) -> None:
+        self.showNormal()
+
     def _can_resize_window(self) -> bool:
-        return self._window_resizable and not self.isMaximized() and not self.isFullScreen()
+        return (
+            self._window_resizable
+            and not self._is_effectively_maximized()
+            and not self.isFullScreen()
+        )
 
     def _resize_region_at(self, pos: QPoint) -> _ResizeRegion:
         if not self._can_resize_window():
@@ -358,7 +395,7 @@ class _ThemedChromeMixin:
         return True
 
     def _update_window_chrome_state(self) -> None:
-        maximized = self.isMaximized() and not self.isFullScreen()
+        maximized = self._is_effectively_maximized() and not self.isFullScreen()
         self._window_chrome_root.setProperty("maximized", maximized)
         style = self._window_chrome_root.style()
         if style is not None:

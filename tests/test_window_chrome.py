@@ -416,14 +416,25 @@ def test_dragging_maximized_title_bar_down_restores_window(qtbot, monkeypatch) -
     moved_positions: list[QPoint] = []
     normal_geometry = QRect(160, 120, 640, 480)
 
-    monkeypatch.setattr(window, "isMaximized", lambda: state["maximized"])
-    monkeypatch.setattr(window, "normalGeometry", lambda: QRect(normal_geometry))
+    monkeypatch.setattr(window, "isMaximized", lambda: False)
+    monkeypatch.setattr(window, "_is_effectively_maximized", lambda: state["maximized"])
+    monkeypatch.setattr(
+        window,
+        "_normal_geometry_for_title_bar_restore",
+        lambda: QRect(normal_geometry),
+        raising=False,
+    )
 
-    def fake_show_normal() -> None:
-        calls.append("showNormal")
+    def fake_restore() -> None:
+        calls.append("restore")
         state["maximized"] = False
 
-    monkeypatch.setattr(window, "showNormal", fake_show_normal)
+    monkeypatch.setattr(
+        window,
+        "_restore_from_effective_maximized",
+        fake_restore,
+        raising=False,
+    )
     monkeypatch.setattr(window, "move", lambda pos: moved_positions.append(QPoint(pos)))
 
     QApplication.sendEvent(
@@ -449,7 +460,7 @@ def test_dragging_maximized_title_bar_down_restores_window(qtbot, monkeypatch) -
         ),
     )
 
-    assert calls == ["showNormal"]
+    assert calls == ["restore"]
     assert moved_positions
 
 

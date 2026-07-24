@@ -9664,6 +9664,158 @@ def test_player_window_playback_always_on_top_defaults_to_off(qtbot) -> None:
     assert window.always_on_top_button.toolTip() == "播放时置顶"
 
 
+def test_player_window_xcb_maximize_toggle_uses_work_area_and_restores_geometry(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    normal_geometry = QRect(120, 90, 900, 650)
+    work_area = QRect(0, 28, 1920, 1052)
+
+    class FakeScreen:
+        def availableGeometry(self) -> QRect:
+            return QRect(work_area)
+
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "screen", lambda: FakeScreen())
+    window.setGeometry(normal_geometry)
+
+    window._toggle_maximized()
+
+    assert window._pseudo_maximized is True
+    assert window.isMaximized() is False
+    assert window.geometry() == work_area
+    assert window._is_effectively_maximized() is True
+    assert window._can_resize_window() is False
+
+    window._toggle_maximized()
+
+    assert window._pseudo_maximized is False
+    assert window.geometry() == normal_geometry
+    assert window._is_effectively_maximized() is False
+    assert window._can_resize_window() is True
+
+
+def test_player_window_non_xcb_maximize_toggle_remains_native(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    calls: list[str] = []
+    monkeypatch.setattr(QApplication, "platformName", lambda: "wayland")
+    monkeypatch.setattr(window, "isMaximized", lambda: False)
+    monkeypatch.setattr(window, "showMaximized", lambda: calls.append("maximized"))
+
+    window._toggle_maximized()
+
+    assert calls == ["maximized"]
+
+
+def test_player_window_xcb_topmost_converts_true_maximize_to_pseudo_maximize(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    normal_geometry = QRect(180, 120, 1000, 700)
+    work_area = QRect(0, 30, 1920, 1050)
+    calls: list[object] = []
+    maximized = {"value": True}
+
+    class FakeScreen:
+        def availableGeometry(self) -> QRect:
+            return QRect(work_area)
+
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "isVisible", lambda: True)
+    monkeypatch.setattr(window, "isMaximized", lambda: maximized["value"])
+    monkeypatch.setattr(window, "normalGeometry", lambda: QRect(normal_geometry))
+    monkeypatch.setattr(window, "screen", lambda: FakeScreen())
+
+    def show_normal() -> None:
+        calls.append("normal")
+        maximized["value"] = False
+
+    monkeypatch.setattr(window, "showNormal", show_normal)
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: calls.append(("native", enabled)),
+    )
+
+    window._set_always_on_top(True)
+
+    assert calls == ["normal", ("native", True)]
+    assert window._pseudo_maximized is True
+    assert window.geometry() == work_area
+    assert window._always_on_top_applied is True
+
+
+def test_player_window_persists_and_restores_xcb_pseudo_maximize(
+    qtbot,
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    normal_geometry = QRect(20, 20, 800, 600)
+    work_area = QRect(0, 24, 1280, 696)
+
+    class FakeScreen:
+        def availableGeometry(self) -> QRect:
+            return QRect(work_area)
+
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(PlayerWindow, "screen", lambda _self: FakeScreen())
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.setGeometry(normal_geometry)
+    window._toggle_maximized()
+
+    window._persist_geometry()
+
+    assert config.player_window_geometry is not None
+    assert config.player_window_geometry.startswith(PlayerWindow._PSEUDO_MAXIMIZED_GEOMETRY_PREFIX)
+
+    restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+    restored.show()
+    qtbot.waitUntil(lambda: restored._pseudo_maximized)
+
+    assert restored.isMaximized() is False
+    assert restored.geometry() == work_area
+
+    restored._toggle_maximized()
+
+    assert restored._pseudo_maximized is False
+    assert restored.geometry() == normal_geometry
+
+
+def test_player_window_fullscreen_round_trip_restores_xcb_pseudo_maximize(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    work_area = QRect(0, 30, 1280, 690)
+
+    class FakeScreen:
+        def availableGeometry(self) -> QRect:
+            return QRect(work_area)
+
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "screen", lambda: FakeScreen())
+    window.show()
+    window._toggle_maximized()
+
+    window.toggle_fullscreen()
+    assert window.isFullScreen() is True
+
+    window.toggle_fullscreen()
+
+    assert window.isFullScreen() is False
+    assert window._pseudo_maximized is True
+    assert window.isMaximized() is False
+    assert window.geometry() == work_area
+
+
 def test_player_window_title_bar_button_toggles_playback_always_on_top(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -9853,7 +10005,7 @@ def test_player_window_xcb_topmost_does_not_remap_minimized_maximized_window(
     assert calls == []
 
 
-def test_player_window_restores_activation_after_failed_topmost_reapply(
+def test_player_window_logs_failed_topmost_reapply_without_stealing_activation(
     qtbot,
     monkeypatch,
 ) -> None:
@@ -9864,7 +10016,6 @@ def test_player_window_restores_activation_after_failed_topmost_reapply(
     window._always_on_top_enabled = True
     window._always_on_top_applied = True
     window.is_playing = True
-    window._restore_activation_after_always_on_top_remap = True
     monkeypatch.setattr(window, "isVisible", lambda: True)
     monkeypatch.setattr(window, "isMinimized", lambda: False)
 
@@ -9878,7 +10029,7 @@ def test_player_window_restores_activation_after_failed_topmost_reapply(
 
     window._reapply_always_on_top_after_show()
 
-    assert calls == ["raise", "activate"]
+    assert calls == []
     assert messages == ["恢复置顶失败: unsupported"]
     assert window._always_on_top_applied is False
 
@@ -9920,6 +10071,51 @@ def test_player_window_always_on_top_failure_restores_actual_state(qtbot, monkey
     assert window.always_on_top_button.isChecked() is False
     assert window.always_on_top_button.toolTip() == "播放时置顶"
     assert messages == ["置顶切换失败: unsupported"]
+
+
+def test_player_window_xcb_topmost_failure_restores_true_maximized_state(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    maximized = {"value": True}
+    calls: list[str] = []
+
+    class FakeScreen:
+        def availableGeometry(self) -> QRect:
+            return QRect(0, 24, 1280, 696)
+
+    monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "isVisible", lambda: True)
+    monkeypatch.setattr(window, "isMaximized", lambda: maximized["value"])
+    monkeypatch.setattr(window, "isMinimized", lambda: False)
+    monkeypatch.setattr(window, "normalGeometry", lambda: QRect(100, 80, 900, 650))
+    monkeypatch.setattr(window, "screen", lambda: FakeScreen())
+
+    def show_normal() -> None:
+        calls.append("normal")
+        maximized["value"] = False
+
+    def show_maximized() -> None:
+        calls.append("maximized")
+        maximized["value"] = True
+
+    def fail_native_state(_enabled: bool) -> None:
+        calls.append("native")
+        raise RuntimeError("unsupported")
+
+    monkeypatch.setattr(window, "showNormal", show_normal)
+    monkeypatch.setattr(window, "showMaximized", show_maximized)
+    monkeypatch.setattr(window, "_set_native_always_on_top", fail_native_state)
+    monkeypatch.setattr(window, "_append_log", lambda _message: None)
+
+    window._set_always_on_top(True)
+
+    assert calls == ["normal", "native", "maximized"]
+    assert window._pseudo_maximized is False
+    assert window.isMaximized() is True
+    assert window._is_always_on_top() is False
 
 
 def test_player_window_context_menu_playback_topmost_syncs_with_title_bar(qtbot) -> None:
@@ -10015,20 +10211,16 @@ def test_player_window_xcb_always_on_top_does_not_show_hidden_maximized_window(
     assert calls == [("native", True)]
 
 
-def test_player_window_xcb_always_on_top_remaps_through_real_maximized_state(
+def test_player_window_xcb_always_on_top_does_not_remap_real_maximized_window(
     qtbot,
     monkeypatch,
 ) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     calls: list[tuple[str, object]] = []
-    cached_state = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowActive
-
     monkeypatch.setattr(window, "isVisible", lambda: True)
     monkeypatch.setattr(window, "isMaximized", lambda: True)
     monkeypatch.setattr(window, "isMinimized", lambda: False)
-    monkeypatch.setattr(window, "isActiveWindow", lambda: True)
-    monkeypatch.setattr(window, "windowState", lambda: cached_state)
     monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
     monkeypatch.setattr(window, "hide", lambda: calls.append(("hide", None)))
     monkeypatch.setattr(
@@ -10055,24 +10247,15 @@ def test_player_window_xcb_always_on_top_remaps_through_real_maximized_state(
 
     window._set_always_on_top(True)
 
-    assert calls == [
-        ("native", True),
-        ("hide", None),
-        ("state", Qt.WindowState.WindowActive),
-        ("maximized", True),
-        ("raise", None),
-    ]
+    assert calls == [("native", True), ("raise", None)]
+    assert window._pseudo_maximized is True
 
     window._reapply_always_on_top_after_show()
 
-    assert calls[-3:] == [
-        ("native", True),
-        ("raise", None),
-        ("activate", None),
-    ]
+    assert calls[-1:] == [("native", True)]
 
 
-def test_player_window_xcb_maximized_resume_reuses_topmost_remap(qtbot, monkeypatch) -> None:
+def test_player_window_xcb_pseudo_maximized_resume_only_reapplies_topmost(qtbot, monkeypatch) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = RecordingVideo()
@@ -10103,30 +10286,37 @@ def test_player_window_xcb_maximized_resume_reuses_topmost_remap(qtbot, monkeypa
     assert calls == [
         ("native", False),
         ("native", True),
-        ("hide", None),
-        ("maximized", True),
         ("raise", None),
     ]
 
 
-def test_player_window_xcb_maximized_remap_preserves_native_surface_ids(
+def test_player_window_xcb_true_to_pseudo_conversion_preserves_native_surface_ids(
     qtbot,
     monkeypatch,
 ) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
-    window.showMaximized()
-    qtbot.waitUntil(window.isMaximized)
+    window.show()
+    qtbot.waitUntil(window.isVisible)
     player_window_id = int(window.winId())
     video_window_id = int(window.video_widget.winId())
+    maximized = {"value": True}
     monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
+    monkeypatch.setattr(window, "isMaximized", lambda: maximized["value"])
+    monkeypatch.setattr(window, "normalGeometry", lambda: QRect(100, 80, 900, 650))
+
+    def show_normal() -> None:
+        maximized["value"] = False
+
+    monkeypatch.setattr(window, "showNormal", show_normal)
     monkeypatch.setattr(window, "_set_native_always_on_top", lambda _enabled: None)
 
     window._set_always_on_top(True)
     qtbot.wait(30)
 
     assert window.isVisible() is True
-    assert window.isMaximized() is True
+    assert window.isMaximized() is False
+    assert window._pseudo_maximized is True
     assert int(window.winId()) == player_window_id
     assert int(window.video_widget.winId()) == video_window_id
 
@@ -23600,11 +23790,6 @@ def test_player_window_playback_topmost_pause_resume_preserves_window_state(
         window,
         "_set_native_always_on_top",
         lambda enabled: native_calls.append(enabled),
-    )
-    monkeypatch.setattr(
-        window,
-        "_remap_maximized_xcb_window_for_always_on_top",
-        lambda: None,
     )
     window._set_always_on_top(True)
     native_calls.clear()

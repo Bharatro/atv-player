@@ -7,6 +7,7 @@ import json
 import logging
 import queue
 import re
+import struct
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ from typing import cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -615,6 +616,8 @@ class _PlayerToolDialog(ThemedDialogBase):
 
 
 class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
+    _PSEUDO_MAXIMIZED_GEOMETRY_PREFIX = b"ATV_PLAYER_PSEUDO_MAXIMIZED_V1\0"
+    _PSEUDO_MAXIMIZED_GEOMETRY_RECT_SIZE = struct.calcsize(">4i")
     _DASH_DATA_URI_PREFIX = "data:application/dash+xml;base64,"
     closed_to_main = Signal()
     global_search_requested = Signal(str)
@@ -729,7 +732,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._close_event_returns_to_main = False
         self._always_on_top_enabled = False
         self._always_on_top_applied = False
-        self._restore_activation_after_always_on_top_remap = False
+        self._pseudo_maximized = False
+        self._normal_geometry_before_pseudo_maximize: QRect | None = None
+        self._normal_window_state_before_pseudo_maximize: bytes | None = None
+        self._restore_pseudo_maximized_on_show = False
+        self._restored_pseudo_normal_geometry: QRect | None = None
         self._always_on_top_reapply_pending = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
@@ -1321,7 +1328,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         layout.addWidget(self.main_splitter, 1)
         layout.addWidget(self.bottom_area, 0)
         if self.config and self.config.player_window_geometry:
-            self.restoreGeometry(to_qbytearray(self.config.player_window_geometry))
+            self._restore_player_window_geometry(self.config.player_window_geometry)
             self._sidebar_sizes = self.main_splitter.sizes()
 
         self.play_button.clicked.connect(self.toggle_playback)
@@ -1655,6 +1662,105 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _is_always_on_top(self) -> bool:
         return self._always_on_top_enabled
 
+    def _uses_xcb_pseudo_maximize(self) -> bool:
+        return QApplication.platformName().strip().lower() == "xcb"
+
+    def _is_effectively_maximized(self) -> bool:
+        return bool(getattr(self, "_pseudo_maximized", False)) or self.isMaximized()
+
+    def _normal_geometry_for_title_bar_restore(self) -> QRect:
+        if self._pseudo_maximized and self._normal_geometry_before_pseudo_maximize is not None:
+            return QRect(self._normal_geometry_before_pseudo_maximize)
+        return super()._normal_geometry_for_title_bar_restore()
+
+    def _restore_from_effective_maximized(self) -> None:
+        if self._pseudo_maximized:
+            self._leave_pseudo_maximized()
+            return
+        super()._restore_from_effective_maximized()
+
+    def _enter_pseudo_maximized(self, *, normal_geometry: QRect | None = None) -> None:
+        if self._pseudo_maximized:
+            return
+        if normal_geometry is None:
+            normal_geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
+        normal_geometry = QRect(normal_geometry)
+        if self.isMaximized():
+            self.showNormal()
+        self.setGeometry(normal_geometry)
+        self._normal_geometry_before_pseudo_maximize = QRect(normal_geometry)
+        self._normal_window_state_before_pseudo_maximize = qbytearray_to_bytes(
+            self.saveGeometry()
+        )
+        self._pseudo_maximized = True
+        self.setGeometry(self.screen().availableGeometry())
+        self._update_window_chrome_state()
+
+    def _leave_pseudo_maximized(self) -> None:
+        if not self._pseudo_maximized:
+            return
+        normal_geometry = self._normal_geometry_before_pseudo_maximize
+        self._pseudo_maximized = False
+        if normal_geometry is not None:
+            self.setGeometry(normal_geometry)
+        self._update_window_chrome_state()
+
+    def _toggle_maximized(self) -> None:
+        if not self._uses_xcb_pseudo_maximize():
+            super()._toggle_maximized()
+            return
+        if self._pseudo_maximized:
+            self._leave_pseudo_maximized()
+        elif self.isMaximized():
+            self.showNormal()
+        else:
+            self._enter_pseudo_maximized()
+        self._update_window_chrome_state()
+
+    def _convert_true_maximize_to_pseudo_maximize(self) -> bool:
+        if (
+            not self._uses_xcb_pseudo_maximize()
+            or self._pseudo_maximized
+            or not self.isVisible()
+            or not self.isMaximized()
+            or self.isMinimized()
+        ):
+            return False
+        self._enter_pseudo_maximized(normal_geometry=self.normalGeometry())
+        return True
+
+    @classmethod
+    def _decode_pseudo_maximized_geometry(
+        cls,
+        saved_geometry: bytes,
+    ) -> tuple[QRect, bytes] | None:
+        if not saved_geometry.startswith(cls._PSEUDO_MAXIMIZED_GEOMETRY_PREFIX):
+            return None
+        payload = saved_geometry[len(cls._PSEUDO_MAXIMIZED_GEOMETRY_PREFIX) :]
+        if len(payload) <= cls._PSEUDO_MAXIMIZED_GEOMETRY_RECT_SIZE:
+            return None
+        x, y, width, height = struct.unpack(
+            ">4i",
+            payload[: cls._PSEUDO_MAXIMIZED_GEOMETRY_RECT_SIZE],
+        )
+        if width <= 0 or height <= 0:
+            return None
+        return (
+            QRect(x, y, width, height),
+            payload[cls._PSEUDO_MAXIMIZED_GEOMETRY_RECT_SIZE :],
+        )
+
+    def _restore_player_window_geometry(self, saved_geometry: bytes) -> None:
+        decoded = self._decode_pseudo_maximized_geometry(bytes(saved_geometry))
+        if decoded is None:
+            self.restoreGeometry(to_qbytearray(saved_geometry))
+            return
+        normal_geometry, normal_window_state = decoded
+        self.restoreGeometry(to_qbytearray(normal_window_state))
+        self.setGeometry(normal_geometry)
+        self._restored_pseudo_normal_geometry = QRect(normal_geometry)
+        self._restore_pseudo_maximized_on_show = True
+
     def _set_native_always_on_top(self, enabled: bool) -> None:
         # Qt flag changes can invalidate libmpv's native child after hide/show
         # on X11, so ask the window manager to change stacking in place.
@@ -1670,30 +1776,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         # Avoid QWidget.setWindowFlag(), which explicitly hides the window.
         handle.setFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
 
-    def _remap_maximized_xcb_window_for_always_on_top(self) -> None:
-        if (
-            QApplication.platformName().strip().lower() != "xcb"
-            or not self.isVisible()
-            or not self.isMaximized()
-            or self.isMinimized()
-        ):
-            return
-        self._restore_activation_after_always_on_top_remap = self.isActiveWindow()
-        cached_state = self.windowState()
-        self.hide()
-        self.setWindowState(cached_state & ~Qt.WindowState.WindowMaximized)
-        self.showMaximized()
-
     def _should_apply_always_on_top(self) -> bool:
         return self._always_on_top_enabled and self.is_playing
 
     def _sync_native_always_on_top(self, *, failure_message: str) -> bool:
         desired = self._should_apply_always_on_top()
-        if desired == self._always_on_top_applied:
+        converted_from_true_maximize = (
+            self._convert_true_maximize_to_pseudo_maximize() if desired else False
+        )
+        if desired == self._always_on_top_applied and not converted_from_true_maximize:
             return True
         try:
             self._set_native_always_on_top(desired)
         except Exception as exc:
+            if converted_from_true_maximize:
+                self._leave_pseudo_maximized()
+                self.showMaximized()
             logger.exception("PlayerWindow playback always-on-top synchronization failed")
             try:
                 self._append_log(f"{failure_message}: {exc}")
@@ -1702,7 +1800,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return False
         self._always_on_top_applied = desired
         if desired:
-            self._remap_maximized_xcb_window_for_always_on_top()
             if self.isVisible() and not self.isMinimized():
                 self.raise_()
         return True
@@ -9630,7 +9727,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _persist_geometry(self) -> None:
         if self.config is None:
             return
-        self.config.player_window_geometry = qbytearray_to_bytes(self.saveGeometry())
+        if (
+            self._pseudo_maximized
+            and self._normal_geometry_before_pseudo_maximize is not None
+            and self._normal_window_state_before_pseudo_maximize is not None
+        ):
+            normal = self._normal_geometry_before_pseudo_maximize
+            rect_payload = struct.pack(
+                ">4i",
+                normal.x(),
+                normal.y(),
+                normal.width(),
+                normal.height(),
+            )
+            self.config.player_window_geometry = (
+                self._PSEUDO_MAXIMIZED_GEOMETRY_PREFIX
+                + rect_payload
+                + self._normal_window_state_before_pseudo_maximize
+            )
+        else:
+            self.config.player_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self.config.player_main_splitter_state = self._main_splitter_state_for_persistence()
         self._save_config()
 
@@ -9985,13 +10101,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _reapply_always_on_top_after_show(self) -> None:
         should_apply = self._should_apply_always_on_top()
         if not should_apply or not self.isVisible():
-            if not should_apply:
-                self._restore_activation_after_always_on_top_remap = False
             return
-        restore_activation = self._restore_activation_after_always_on_top_remap
-        self._restore_activation_after_always_on_top_remap = False
         self._always_on_top_applied = False
         try:
+            self._convert_true_maximize_to_pseudo_maximize()
             self._set_native_always_on_top(True)
         except Exception as exc:
             logger.exception("PlayerWindow always-on-top restore failed")
@@ -10001,13 +10114,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 pass
         else:
             self._always_on_top_applied = True
-        finally:
-            if restore_activation and not self.isMinimized():
-                self.raise_()
-                self.activateWindow()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if self._restore_pseudo_maximized_on_show:
+            self._restore_pseudo_maximized_on_show = False
+            normal_geometry = self._restored_pseudo_normal_geometry
+            self._restored_pseudo_normal_geometry = None
+            if self._uses_xcb_pseudo_maximize():
+                self._enter_pseudo_maximized(normal_geometry=normal_geometry)
         self._schedule_always_on_top_reapply()
 
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
