@@ -9826,6 +9826,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         else:
             self.video.resume()
         self.is_playing = not self.is_playing
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._set_last_player_paused(not self.is_playing)
         self._update_play_button_icon()
         self._refresh_window_title()

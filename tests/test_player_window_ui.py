@@ -23267,6 +23267,140 @@ def test_player_window_toggle_playback_persists_last_player_paused(qtbot) -> Non
     assert saved["count"] >= 2
 
 
+def test_player_window_playback_topmost_releases_on_pause_and_restores_on_resume(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
+
+    window.toggle_playback()
+
+    assert window.is_playing is False
+    assert native_calls == [False]
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is False
+    assert window.always_on_top_button.isChecked() is True
+
+    window.toggle_playback()
+
+    assert window.is_playing is True
+    assert native_calls == [False, True]
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is True
+
+
+def test_player_window_disabling_playback_topmost_while_paused_blocks_restore(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    window.toggle_playback()
+    native_calls.clear()
+
+    window.always_on_top_button.click()
+    window.toggle_playback()
+
+    assert window.is_playing is True
+    assert native_calls == []
+    assert window._is_always_on_top() is False
+    assert window._always_on_top_applied is False
+
+
+@pytest.mark.parametrize("state", ["normal", "maximized", "fullscreen"])
+def test_player_window_playback_topmost_pause_resume_preserves_window_state(
+    qtbot,
+    monkeypatch,
+    state: str,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.show()
+    if state == "maximized":
+        window.showMaximized()
+    elif state == "fullscreen":
+        window.showFullScreen()
+    qtbot.wait(30)
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    monkeypatch.setattr(
+        window,
+        "_remap_maximized_xcb_window_for_always_on_top",
+        lambda: None,
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
+    before = (
+        window.isVisible(),
+        window.isMinimized(),
+        window.isMaximized(),
+        window.isFullScreen(),
+    )
+
+    window.toggle_playback()
+    window.toggle_playback()
+
+    assert native_calls == [False, True]
+    assert (
+        window.isVisible(),
+        window.isMinimized(),
+        window.isMaximized(),
+        window.isFullScreen(),
+    ) == before
+
+
+@pytest.mark.parametrize("transition", ["pause", "resume"])
+def test_player_window_playback_continues_when_topmost_sync_fails(
+    qtbot,
+    monkeypatch,
+    transition: str,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    messages: list[str] = []
+    monkeypatch.setattr(window, "_set_native_always_on_top", lambda _enabled: None)
+    window._set_always_on_top(True)
+    if transition == "resume":
+        window.toggle_playback()
+
+    def fail_native_state(_enabled: bool) -> None:
+        raise RuntimeError("unsupported")
+
+    monkeypatch.setattr(window, "_set_native_always_on_top", fail_native_state)
+    monkeypatch.setattr(window, "_append_log", messages.append)
+
+    window.toggle_playback()
+
+    assert window.is_playing is (transition == "resume")
+    assert window._is_always_on_top() is True
+    assert window.always_on_top_button.isChecked() is True
+    assert messages == ["播放时置顶同步失败: unsupported"]
+
+
 def test_player_window_pausing_playback_restores_application_title(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
