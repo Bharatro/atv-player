@@ -11735,7 +11735,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "弹幕源",
         "弹幕设置",
         "视频信息",
-        "始终置顶",
+        "播放时置顶",
         "退出播放",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
@@ -12505,7 +12505,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "弹幕源",
         "弹幕设置",
         "视频信息",
-        "始终置顶",
+        "播放时置顶",
         "退出播放",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
