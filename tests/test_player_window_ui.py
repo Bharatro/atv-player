@@ -10015,20 +10015,27 @@ def test_player_window_xcb_always_on_top_does_not_show_hidden_maximized_window(
     assert calls == [("native", True)]
 
 
-def test_player_window_xcb_always_on_top_remaps_visible_maximized_window(
+def test_player_window_xcb_always_on_top_remaps_through_real_maximized_state(
     qtbot,
     monkeypatch,
 ) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     calls: list[tuple[str, object]] = []
+    cached_state = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowActive
 
     monkeypatch.setattr(window, "isVisible", lambda: True)
     monkeypatch.setattr(window, "isMaximized", lambda: True)
     monkeypatch.setattr(window, "isMinimized", lambda: False)
     monkeypatch.setattr(window, "isActiveWindow", lambda: True)
+    monkeypatch.setattr(window, "windowState", lambda: cached_state)
     monkeypatch.setattr(QApplication, "platformName", lambda: "xcb")
     monkeypatch.setattr(window, "hide", lambda: calls.append(("hide", None)))
+    monkeypatch.setattr(
+        window,
+        "setWindowState",
+        lambda state: calls.append(("state", state)),
+    )
     monkeypatch.setattr(
         window,
         "showMaximized",
@@ -10051,17 +10058,14 @@ def test_player_window_xcb_always_on_top_remaps_visible_maximized_window(
     assert calls == [
         ("native", True),
         ("hide", None),
+        ("state", Qt.WindowState.WindowActive),
         ("maximized", True),
         ("raise", None),
     ]
 
     window._reapply_always_on_top_after_show()
 
-    assert calls == [
-        ("native", True),
-        ("hide", None),
-        ("maximized", True),
-        ("raise", None),
+    assert calls[-3:] == [
         ("native", True),
         ("raise", None),
         ("activate", None),

@@ -1678,7 +1678,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ):
             return
         self._restore_activation_after_always_on_top_remap = self.isActiveWindow()
+        cached_state = self.windowState()
         self.hide()
+        self.setWindowState(cached_state & ~Qt.WindowState.WindowMaximized)
         self.showMaximized()
 
     def _should_apply_always_on_top(self) -> bool:
