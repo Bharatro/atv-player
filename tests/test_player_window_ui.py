@@ -9654,27 +9654,52 @@ def test_player_window_title_bar_exposes_return_to_main_button(qtbot) -> None:
     assert window.title_bar_return_button.toolTip() == "返回主窗口 (Ctrl+P)"
 
 
-def test_player_window_always_on_top_defaults_to_off(qtbot) -> None:
+def test_player_window_playback_always_on_top_defaults_to_off(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     assert _player_window_is_always_on_top(window) is False
     assert window.always_on_top_button.isCheckable() is True
     assert window.always_on_top_button.isChecked() is False
-    assert window.always_on_top_button.toolTip() == "始终置顶"
+    assert window.always_on_top_button.toolTip() == "播放时置顶"
 
 
-def test_player_window_title_bar_button_toggles_always_on_top(qtbot) -> None:
+def test_player_window_title_bar_button_toggles_playback_always_on_top(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     window.always_on_top_button.click()
     assert _player_window_is_always_on_top(window) is True
     assert window.always_on_top_button.isChecked() is True
+    assert window.always_on_top_button.toolTip() == "取消播放时置顶"
 
     window.always_on_top_button.click()
     assert _player_window_is_always_on_top(window) is False
     assert window.always_on_top_button.isChecked() is False
+    assert window.always_on_top_button.toolTip() == "播放时置顶"
+
+
+def test_player_window_enabling_playback_topmost_while_paused_defers_native_state(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    native_calls: list[bool] = []
+    window.is_playing = False
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+
+    window.always_on_top_button.click()
+
+    assert native_calls == []
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is False
+    assert window.always_on_top_button.isChecked() is True
+    assert window.always_on_top_button.toolTip() == "取消播放时置顶"
 
 
 def test_player_window_always_on_top_preserves_mpv_native_surface(
@@ -9815,15 +9840,15 @@ def test_player_window_always_on_top_failure_restores_actual_state(qtbot, monkey
 
     assert _player_window_is_always_on_top(window) is False
     assert window.always_on_top_button.isChecked() is False
-    assert window.always_on_top_button.toolTip() == "始终置顶"
+    assert window.always_on_top_button.toolTip() == "播放时置顶"
     assert messages == ["置顶切换失败: unsupported"]
 
 
-def test_player_window_context_menu_always_on_top_action_syncs_with_title_bar(qtbot) -> None:
+def test_player_window_context_menu_playback_topmost_syncs_with_title_bar(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     menu = window._build_video_context_menu()
-    action = next(item for item in menu.actions() if item.text() == "始终置顶")
+    action = next(item for item in menu.actions() if item.text() == "播放时置顶")
 
     assert action.isCheckable() is True
     assert action.isChecked() is False

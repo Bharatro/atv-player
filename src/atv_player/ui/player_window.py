@@ -728,6 +728,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._app_quit_requested = False
         self._close_event_returns_to_main = False
         self._always_on_top_enabled = False
+        self._always_on_top_applied = False
         self._restore_activation_after_always_on_top_remap = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
@@ -1679,11 +1680,34 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.hide()
         self.showMaximized()
 
+    def _should_apply_always_on_top(self) -> bool:
+        return self._always_on_top_enabled and self.is_playing
+
+    def _sync_native_always_on_top(self, *, failure_message: str) -> bool:
+        desired = self._should_apply_always_on_top()
+        if desired == self._always_on_top_applied:
+            return True
+        try:
+            self._set_native_always_on_top(desired)
+        except Exception as exc:
+            logger.exception("PlayerWindow playback always-on-top synchronization failed")
+            try:
+                self._append_log(f"{failure_message}: {exc}")
+            except Exception:
+                pass
+            return False
+        self._always_on_top_applied = desired
+        if desired:
+            self._remap_maximized_xcb_window_for_always_on_top()
+            if self.isVisible() and not self.isMinimized():
+                self.raise_()
+        return True
+
     def _sync_always_on_top_controls(self, *, menu_action: QAction | None = None) -> bool:
         enabled = self._is_always_on_top()
         action = menu_action or self._always_on_top_menu_action
         button = getattr(self, "always_on_top_button", None)
-        label = "取消始终置顶" if enabled else "始终置顶"
+        label = "取消播放时置顶" if enabled else "播放时置顶"
         if button is not None:
             previous_block_state = button.blockSignals(True)
             try:
@@ -1710,21 +1734,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu_action: QAction | None = None,
     ) -> None:
         requested = bool(enabled)
-        if requested != self._is_always_on_top():
-            try:
-                self._set_native_always_on_top(requested)
-            except Exception as exc:
-                logger.exception("PlayerWindow always-on-top toggle failed")
-                try:
-                    self._append_log(f"置顶切换失败: {exc}")
-                except Exception:
-                    pass
-            else:
-                self._always_on_top_enabled = requested
-                if requested:
-                    self._remap_maximized_xcb_window_for_always_on_top()
-                if requested and self.isVisible() and not self.isMinimized():
-                    self.raise_()
+        previous = self._always_on_top_enabled
+        if requested != previous:
+            self._always_on_top_enabled = requested
+            if not self._sync_native_always_on_top(failure_message="置顶切换失败"):
+                self._always_on_top_enabled = previous
         self._sync_always_on_top_controls(menu_action=menu_action)
 
     def _apply_favorite_button_theme(self) -> None:
@@ -7566,7 +7580,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
-        always_on_top_action = menu.addAction("始终置顶")
+        always_on_top_action = menu.addAction("播放时置顶")
         always_on_top_action.setCheckable(True)
         always_on_top_action.toggled.connect(
             lambda checked, action=always_on_top_action: self._set_always_on_top(
