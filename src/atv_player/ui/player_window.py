@@ -1674,6 +1674,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             QApplication.platformName().strip().lower() != "xcb"
             or not self.isVisible()
             or not self.isMaximized()
+            or self.isMinimized()
         ):
             return
         self._restore_activation_after_always_on_top_remap = self.isActiveWindow()
@@ -9965,10 +9966,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._stop_current_playback()
 
     def _reapply_always_on_top_after_show(self) -> None:
-        if not self._always_on_top_enabled or not self.isVisible():
+        should_apply = self._should_apply_always_on_top()
+        if not should_apply or not self.isVisible():
+            if not should_apply:
+                self._restore_activation_after_always_on_top_remap = False
             return
         restore_activation = self._restore_activation_after_always_on_top_remap
         self._restore_activation_after_always_on_top_remap = False
+        self._always_on_top_applied = False
         try:
             self._set_native_always_on_top(True)
         except Exception as exc:
@@ -9978,13 +9983,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             except Exception:
                 pass
         else:
+            self._always_on_top_applied = True
+        finally:
             if restore_activation and not self.isMinimized():
                 self.raise_()
                 self.activateWindow()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._always_on_top_enabled:
+        if self._should_apply_always_on_top():
             QTimer.singleShot(0, self._reapply_always_on_top_after_show)
 
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
