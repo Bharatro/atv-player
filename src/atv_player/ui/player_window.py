@@ -3206,6 +3206,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if speed_index >= 0:
             self.speed_combo.setCurrentIndex(speed_index)
         self.is_playing = not start_paused
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._set_last_player_paused(start_paused)
         self._update_play_button_icon()
         self._refresh_window_title()
@@ -5453,6 +5454,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self.is_playing = True
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._update_play_button_icon()
         self._refresh_window_title()
         self.playlist.setCurrentRow(self.current_index)
@@ -9760,6 +9762,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception:
             pass
         self.is_playing = False
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self.report_progress(force_remote_report=True)
         self._invalidate_play_item_resolution()
         self._stop_current_playback()
@@ -9808,6 +9811,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.is_playing = False
             self._set_last_player_paused(True)
             self._append_log(f"恢复播放失败: {exc}")
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._update_play_button_icon()
         self._refresh_window_title()
         self._sync_video_cursor_autohide()
@@ -9954,6 +9958,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         logger.warning("PlayerWindow %s", message)
         self._append_log(message)
         self.is_playing = False
+        self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._set_last_player_paused(True)
         self._update_play_button_icon()
         self._refresh_window_title()

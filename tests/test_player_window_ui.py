@@ -10272,7 +10272,7 @@ def test_player_window_recovers_last_position_when_mpv_resets_before_premature_e
     assert "播放提前结束，正在恢复: 16:43 / 44:41" in window.log_view.toPlainText()
 
 
-def test_player_window_stops_after_repeated_premature_eof(qtbot) -> None:
+def test_player_window_stops_after_repeated_premature_eof(qtbot, monkeypatch) -> None:
     class PrematureEofVideo(RecordingVideo):
         def duration_seconds(self) -> int:
             return 2681
@@ -10288,6 +10288,14 @@ def test_player_window_stops_after_repeated_premature_eof(qtbot) -> None:
     window.open_session(make_player_session(start_index=0))
     video.load_calls.clear()
     window._sync_progress_slider()
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
 
     window.video_widget.playback_finished.emit()
     video.load_calls.clear()
@@ -10296,10 +10304,11 @@ def test_player_window_stops_after_repeated_premature_eof(qtbot) -> None:
     assert window.current_index == 0
     assert video.load_calls == []
     assert window.is_playing is False
+    assert native_calls == [False]
     assert "播放提前结束，恢复失败" in window.log_view.toPlainText()
 
 
-def test_player_window_stops_when_premature_eof_reload_fails(qtbot) -> None:
+def test_player_window_stops_when_premature_eof_reload_fails(qtbot, monkeypatch) -> None:
     class ReloadFailingVideo(RecordingVideo):
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
             super().load(url, pause=pause, start_seconds=start_seconds)
@@ -10318,11 +10327,20 @@ def test_player_window_stops_when_premature_eof_reload_fails(qtbot) -> None:
     window.video = video
     window.open_session(make_player_session(start_index=0))
     window._sync_progress_slider()
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
 
     window.video_widget.playback_finished.emit()
 
     assert window.current_index == 0
     assert window.is_playing is False
+    assert native_calls == [False]
     assert "播放提前结束，恢复失败: reload failed" in window.log_view.toPlainText()
 
 
@@ -23424,6 +23442,52 @@ def test_player_window_opening_session_paused_keeps_application_title(qtbot) -> 
     assert window.windowTitle() == "alist-tvbox 播放器"
 
 
+def test_player_window_opening_paused_session_releases_playback_topmost(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
+
+    window.open_session(make_player_session(start_index=0), start_paused=True)
+
+    assert window.is_playing is False
+    assert native_calls == [False]
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is False
+
+
+def test_player_window_replay_restores_playback_topmost(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    window.toggle_playback()
+    native_calls.clear()
+
+    window._replay_current_item()
+
+    assert window.is_playing is True
+    assert native_calls == [True]
+    assert window._always_on_top_applied is True
+
+
 def test_player_window_play_next_updates_window_title_to_new_item(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(controller)
@@ -23689,6 +23753,76 @@ def test_player_window_resume_from_main_reloads_current_item_and_updates_state(q
     assert window.is_playing is True
     assert window.windowTitle() == "Movie - Episode 1"
     assert config.last_player_paused is False
+
+
+def test_player_window_playback_topmost_releases_on_return_and_restores_from_main(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(last_active_window="player"),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    native_calls.clear()
+
+    window._return_to_main()
+
+    assert native_calls == [False]
+    assert window.is_playing is False
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is False
+
+    window.resume_from_main()
+
+    assert native_calls == [False, True]
+    assert window.is_playing is True
+    assert window._always_on_top_applied is True
+
+
+def test_player_window_failed_resume_from_main_does_not_restore_topmost(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(last_active_window="player"),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+    native_calls: list[bool] = []
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    window._set_always_on_top(True)
+    window._return_to_main()
+    native_calls.clear()
+    monkeypatch.setattr(
+        window,
+        "_play_item_at_index",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("load failed")),
+    )
+
+    window.resume_from_main()
+
+    assert window.is_playing is False
+    assert native_calls == []
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is False
 
 
 def test_player_window_resume_from_main_preserves_scraped_metadata_over_cached_resolved_detail(qtbot) -> None:
