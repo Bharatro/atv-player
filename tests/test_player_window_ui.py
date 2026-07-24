@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
@@ -10238,6 +10238,102 @@ def test_player_window_window_state_change_reapplies_visibility_state(qtbot) -> 
     assert window.bottom_area.isHidden() is False
     assert window.sidebar_actions_widget.isHidden() is False
     assert window.title_bar().isVisible() is True
+
+
+def test_player_window_window_state_change_reapplies_playback_topmost(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    native_calls: list[bool] = []
+    window._always_on_top_enabled = True
+    window._always_on_top_applied = True
+    window.is_playing = True
+    monkeypatch.setattr(window, "isVisible", lambda: True)
+    monkeypatch.setattr(window, "isMinimized", lambda: False)
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    monkeypatch.setattr(
+        QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callback()),
+    )
+
+    QApplication.sendEvent(window, QEvent(QEvent.Type.WindowStateChange))
+
+    assert native_calls == [True]
+    assert window._is_always_on_top() is True
+    assert window._always_on_top_applied is True
+
+
+def test_player_window_coalesces_playback_topmost_reapply_requests(
+    qtbot,
+    monkeypatch,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    callbacks: list[object] = []
+    native_calls: list[bool] = []
+    window._always_on_top_enabled = True
+    window._always_on_top_applied = True
+    window.is_playing = True
+    monkeypatch.setattr(window, "isVisible", lambda: True)
+    monkeypatch.setattr(window, "isMinimized", lambda: False)
+    monkeypatch.setattr(
+        window,
+        "_set_native_always_on_top",
+        lambda enabled: native_calls.append(enabled),
+    )
+    monkeypatch.setattr(
+        QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+
+    window._schedule_always_on_top_reapply()
+    window._schedule_always_on_top_reapply()
+
+    assert len(callbacks) == 1
+    callback = callbacks.pop()
+    assert callable(callback)
+    callback()
+    assert native_calls == [True]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "is_playing", "is_minimized"),
+    [
+        (False, True, False),
+        (True, False, False),
+        (True, True, True),
+    ],
+)
+def test_player_window_window_state_change_skips_inactive_topmost_mode(
+    qtbot,
+    monkeypatch,
+    enabled: bool,
+    is_playing: bool,
+    is_minimized: bool,
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    callbacks: list[object] = []
+    window._always_on_top_enabled = enabled
+    window.is_playing = is_playing
+    monkeypatch.setattr(window, "isMinimized", lambda: is_minimized)
+    monkeypatch.setattr(
+        QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+
+    QApplication.sendEvent(window, QEvent(QEvent.Type.WindowStateChange))
+
+    assert callbacks == []
 
 
 def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:

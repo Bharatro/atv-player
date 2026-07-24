@@ -730,6 +730,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._always_on_top_enabled = False
         self._always_on_top_applied = False
         self._restore_activation_after_always_on_top_remap = False
+        self._always_on_top_reapply_pending = False
         self._video_pointer_inside = False
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
@@ -9967,6 +9968,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_window_title()
         self._stop_current_playback()
 
+    def _schedule_always_on_top_reapply(self) -> None:
+        if (
+            self._always_on_top_reapply_pending
+            or not self._should_apply_always_on_top()
+            or self.isMinimized()
+        ):
+            return
+        self._always_on_top_reapply_pending = True
+        QTimer.singleShot(0, self._run_scheduled_always_on_top_reapply)
+
+    def _run_scheduled_always_on_top_reapply(self) -> None:
+        self._always_on_top_reapply_pending = False
+        self._reapply_always_on_top_after_show()
+
     def _reapply_always_on_top_after_show(self) -> None:
         should_apply = self._should_apply_always_on_top()
         if not should_apply or not self.isVisible():
@@ -9993,8 +10008,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._should_apply_always_on_top():
-            QTimer.singleShot(0, self._reapply_always_on_top_after_show)
+        self._schedule_always_on_top_reapply()
 
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)
@@ -10061,6 +10075,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             self._apply_visibility_state()
+            self._schedule_always_on_top_reapply()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
