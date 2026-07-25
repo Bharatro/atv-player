@@ -180,3 +180,33 @@ def test_migu_supports_migu_urls() -> None:
 
     assert provider.supports("https://webapi.miguvideo.com/gateway/live_barrage/videox/barrage/v2/list/a/b") is True
     assert provider.supports("https://www.miguvideo.com/p/detail/123") is True
+
+
+def test_expand_page_url_expands_episodes_from_content_info() -> None:
+    # 豆瓣给 migu 的是 content-info URL；需 GET content-info 取 body.data.datas 分集，
+    # 每集用 pID + 专辑 epsID 拼 barrage url。
+    def fake_get(url: str, **kwargs):
+        assert "/content-info/665602579/1" in url
+        return httpx.Response(
+            200,
+            json={
+                "body": {
+                    "data": {
+                        "name": "三体",
+                        "epsID": "760834922",
+                        "datas": [
+                            {"name": "三体 第01集", "pID": "760835542", "duration": "45:00"},
+                            {"name": "三体 第02集", "pID": "760835537", "duration": "45:00"},
+                        ],
+                    }
+                }
+            },
+        )
+
+    provider = MiguDanmakuProvider(get=fake_get, post=lambda *a, **k: None)
+    items = provider.expand_page_url(
+        "https://v3-sc.miguvideo.com/program/v4/cont/content-info/665602579/1", "三体"
+    )
+
+    assert [it.name for it in items] == ["三体 第01集", "三体 第02集"]
+    assert items[0].url.endswith("/list/760834922/760835542")

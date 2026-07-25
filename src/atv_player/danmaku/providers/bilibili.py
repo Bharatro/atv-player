@@ -6,6 +6,7 @@ import json
 import math
 import re
 import time
+from dataclasses import replace
 from urllib.parse import urlencode
 import xml.etree.ElementTree as ET
 
@@ -117,6 +118,19 @@ class BilibiliDanmakuProvider:
         #     items.extend(self._parse_search_results(payload, normalized, "video"))
         items = self._expand_season_search_items(items, normalized)
         items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY.get(item.search_type, 99), -item.ratio, -item.simi))
+        for item in items:
+            self._metadata_by_url[item.url] = item
+        return items
+
+    def expand_page_url(self, page_url: str, query_name: str) -> list[DanmakuSearchItem]:
+        # Douban discovery gives a bangumi season URL (.../play/ss{id}); expand it
+        # into per-episode candidates by reusing the season API path. No wbi/SPI
+        # priming is needed — only the search endpoint requires it.
+        candidate = self._candidate_from_page_url(page_url)
+        if candidate.season_id is None and candidate.ep_id is None:
+            return []
+        candidate = replace(candidate, name=normalize_name(query_name) or candidate.name)
+        items = self._expand_season_search_items([candidate], normalize_name(query_name))
         for item in items:
             self._metadata_by_url[item.url] = item
         return items

@@ -171,6 +171,51 @@ class MiguDanmakuProvider:
                 )
         return results
 
+    def expand_page_url(self, page_url: str, query_name: str) -> list[DanmakuSearchItem]:
+        # Douban gives a content-info URL; expand into per-episode barrage candidates.
+        match = re.search(r"/content-info/([^/?#]+)/1", page_url)
+        if match is None:
+            return []
+        item_id = match.group(1)
+        detail = self._detail(item_id)
+        if not detail:
+            return []
+        album_id = str(detail.get("epsID") or item_id).strip()
+        title = str(detail.get("name") or query_name or "").strip()
+        episodes = detail.get("datas")
+        if not isinstance(episodes, list) or not episodes:
+            playing = detail.get("playing")
+            if isinstance(playing, dict) and str(playing.get("pID") or "").strip():
+                episodes = [{"name": title, "pID": playing.get("pID"), "duration": playing.get("duration")}]
+            else:
+                return []
+        results: list[DanmakuSearchItem] = []
+        seen: set[str] = set()
+        for episode in episodes:
+            if not isinstance(episode, dict):
+                continue
+            episode_id = str(episode.get("pID") or "").strip()
+            if not episode_id or episode_id in seen:
+                continue
+            seen.add(episode_id)
+            episode_name = str(episode.get("name") or "").strip()
+            duration = _time_to_seconds(episode.get("duration"))
+            url = self._barrage_url(album_id, episode_id)
+            results.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=(episode_name or f"{title}").strip(),
+                    url=url,
+                    duration_seconds=duration,
+                    resolve_context={
+                        "album_id": album_id,
+                        "episode_id": episode_id,
+                        "duration_seconds": duration,
+                    },
+                )
+            )
+        return results
+
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         album_id, episode_id = self._parse_barrage_url(page_url)
         context = dict(self._resolve_context_by_url.get(page_url) or {})
