@@ -25,6 +25,7 @@ from atv_player.danmaku.utils import (
     build_xml,
     episode_matches_request,
     episode_title_matches,
+    extract_cover_id,
     extract_episode_number,
     extract_variety_issue_key,
     has_explicit_episode_marker,
@@ -457,6 +458,7 @@ class DanmakuService:
                 ranked_rows.append((group, option, stable_index))
                 stable_index += 1
         if media_duration_seconds > 0:
+            reg_src_cover_id = extract_cover_id(reg_src)
             ranked_rows.sort(
                 key=lambda row: self._danmaku_source_option_sort_key(
                     row[1],
@@ -464,6 +466,7 @@ class DanmakuService:
                     preferred_provider=preferred_provider,
                     preferred_page_url=preferred_page_url,
                     reg_src=reg_src,
+                    reg_src_cover_id=reg_src_cover_id,
                     media_duration_seconds=media_duration_seconds,
                     stable_index=row[2],
                 )
@@ -637,6 +640,7 @@ class DanmakuService:
         preferred_provider: str,
         preferred_page_url: str,
         reg_src: str,
+        reg_src_cover_id: str = "",
         media_duration_seconds: int,
         stable_index: int,
     ) -> tuple[int, ...]:
@@ -644,11 +648,17 @@ class DanmakuService:
         preferred_page = int(bool(preferred_page_url) and option.url == preferred_page_url)
         preferred_provider_match = int(bool(preferred_provider) and option.provider == preferred_provider)
         reg_src_provider_match = int(option.provider == self._preferred_provider_key(reg_src))
+        # Among same-named shows on the same provider, prefer the candidate whose
+        # cover id matches the user's playing URL (multi-show disambiguation).
+        reg_src_cover_match = int(
+            bool(reg_src_cover_id) and extract_cover_id(option.url) == reg_src_cover_id
+        )
         duration_known = int(option.duration_seconds > 0 and media_duration_seconds > 0)
         duration_gap = abs(option.duration_seconds - media_duration_seconds) if duration_known else 10**9
         return (
             -variety_issue_match,
             -exact_episode_match,
+            -reg_src_cover_match,
             -preferred_page,
             -preferred_provider_match,
             -reg_src_provider_match,

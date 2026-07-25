@@ -605,6 +605,46 @@ def test_rerank_danmaku_source_search_result_prefers_matching_episode_over_histo
     assert reranked.default_option_url == "https://www.iqiyi.com/v_ep8.html"
 
 
+def test_rerank_prefers_reg_src_cover_among_same_named_shows() -> None:
+    # Two same-named shows both have an ep13 candidate. reg_src identifies the
+    # user's show by Tencent cover id; its candidate must rank first even when the
+    # other show's candidate is listed first (multi-show disambiguation).
+    service = DanmakuService({}, provider_order=[])
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="百花杀 13集",
+                        url="https://v.qq.com/x/cover/mzc003wpj912rrn/ep13.html",
+                        duration_seconds=2800,
+                        episode_match=True,
+                    ),
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="百花杀 13集",
+                        url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep13.html",
+                        duration_seconds=2800,
+                        episode_match=True,
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="百花杀 13集",
+        reg_src="https://v.qq.com/x/cover/mzc00200nfe7al6/y4102qxof84.html",
+        media_duration_seconds=2800,
+    )
+
+    assert "mzc00200nfe7al6" in reranked.default_option_url
+
+
 def test_rerank_danmaku_source_search_result_drops_promotional_no_episode_items_for_explicit_episode_query() -> None:
     service = DanmakuService({}, provider_order=[])
 

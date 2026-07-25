@@ -483,6 +483,17 @@ def match_provider(reg_src: str) -> str | None:
     return None
 
 
+def extract_cover_id(url: str) -> str:
+    """Tencent (v.qq.com) cover id from an episode/cover URL, else empty.
+
+    Used to disambiguate same-named shows: the user's playing URL (reg_src) carries
+    the authoritative cover id, so a candidate whose cover id matches is the user's
+    show, not a different same-named title.
+    """
+    match = re.search(r"/x/cover(?:_seo)?/([^/]+)/", url or "")
+    return match.group(1) if match is not None else ""
+
+
 def _simplify_name(name: str) -> str:
     value = normalize_name(name).casefold()
     value = re.sub(
