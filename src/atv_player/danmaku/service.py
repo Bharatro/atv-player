@@ -39,6 +39,7 @@ from atv_player.danmaku.utils import (
 )
 
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
+from atv_player.danmaku.processing import filter_blocked_words, group_by_time_window, convert_top_bottom_to_scroll
 from atv_player.danmaku.providers.other import OtherDanmakuProvider
 
 
@@ -866,6 +867,37 @@ class DanmakuService:
             resolve_context=merged_context,
         )
 
+    def _process_records(self, records):
+        """Apply user-configured danmaku cleaning (blocked words / dedupe / top-bottom).
+
+        Config is read from environment variables (UI settings entry is a follow-up):
+        ATV_DANMU_BLOCKED_WORDS (``/regex/,/regex/``), ATV_DANMU_GROUP_MINUTE (int),
+        ATV_DANMU_CONVERT_TOP_BOTTOM (1/0).
+        """
+        import os
+        blocked = os.environ.get("ATV_DANMU_BLOCKED_WORDS", "").strip()
+        if blocked:
+            import re as _re
+            patterns = []
+            for raw in _re.split(r"(?<=/),(?=/)", blocked):
+                token = raw.strip()
+                if token.startswith("/") and token.endswith("/") and len(token) > 1:
+                    try:
+                        patterns.append(_re.compile(token[1:-1]))
+                    except _re.reerror:
+                        pass
+            if patterns:
+                records = filter_blocked_words(records, patterns)
+        try:
+            minutes = int(os.environ.get("ATV_DANMU_GROUP_MINUTE", "0") or 0)
+        except ValueError:
+            minutes = 0
+        if minutes > 0:
+            records = group_by_time_window(records, minutes)
+        if os.environ.get("ATV_DANMU_CONVERT_TOP_BOTTOM", "0").strip() in ("1", "true", "yes"):
+            records = convert_top_bottom_to_scroll(records)
+        return records
+
     def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         provider_keys = list(self._provider_order)
         selected_option_matches = option is not None and option.url == page_url and bool(option.provider)
@@ -887,6 +919,7 @@ class DanmakuService:
             records = provider.resolve(page_url)
             if not records:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+            records = self._process_records(records)
             return build_xml(records)
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
