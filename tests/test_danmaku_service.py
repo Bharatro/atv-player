@@ -1695,3 +1695,70 @@ def test_search_danmu_falls_back_to_douban_discovery_when_builtin_search_empty()
     assert any(item.url == ep13.url for item in results)
     assert discovery.search_calls == ["百花杀"]
     assert tencent.expand_calls == ["https://v.qq.com/x/cover/mzc00200nfe7al6/"]
+
+
+class _EmptySearchTencent:
+    key = "tencent"
+
+    def search(self, name, original_name=None):
+        return []
+
+    def resolve(self, page_url):
+        return []
+
+    def supports(self, page_url):
+        return "qq.com" in page_url
+
+
+class _EmptyDiscovery:
+    def search_subjects(self, keyword):
+        return []
+
+    def fetch_vendors(self, douban_id):
+        return []
+
+
+def test_search_danmu_falls_back_to_other_when_builtin_and_douban_miss() -> None:
+    from atv_player.danmaku.providers.other import OtherDanmakuProvider
+
+    other = OtherDanmakuProvider(get=lambda *a, **k: None, server="https://dmku.hls.one/")
+    service = DanmakuService(
+        {"tencent": _EmptySearchTencent()},
+        provider_order=["tencent"],
+        douban_discovery=_EmptyDiscovery(),
+        other_provider=other,
+    )
+
+    results = service.search_danmu("冷门剧 5集", "https://v.qq.com/x/cover/xyz/abc.html")
+
+    assert any(it.provider == "other" for it in results)
+    assert results[0].url == "https://v.qq.com/x/cover/xyz/abc.html"
+
+
+def test_resolve_danmu_routes_to_other_when_selected() -> None:
+    from atv_player.danmaku.models import DanmakuSourceOption
+    from atv_player.danmaku.providers.other import OtherDanmakuProvider
+
+    class FakeOther(OtherDanmakuProvider):
+        def __init__(self):
+            super().__init__(get=lambda *a, **k: None, server="x")
+            self.resolved = []
+
+        def resolve(self, page_url):
+            self.resolved.append(page_url)
+            from atv_player.danmaku.models import DanmakuRecord
+
+            return [DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="x")]
+
+    other = FakeOther()
+    service = DanmakuService(
+        {"tencent": _EmptySearchTencent()},
+        provider_order=["tencent"],
+        other_provider=other,
+    )
+    option = DanmakuSourceOption(provider="other", name="冷门剧 5集", url="https://v.qq.com/x/cover/xyz/abc.html")
+
+    xml = service.resolve_danmu("https://v.qq.com/x/cover/xyz/abc.html", option)
+
+    assert other.resolved == ["https://v.qq.com/x/cover/xyz/abc.html"]
+    assert "<d " in xml

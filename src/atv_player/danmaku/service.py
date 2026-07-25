@@ -39,6 +39,7 @@ from atv_player.danmaku.utils import (
 )
 
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
+from atv_player.danmaku.providers.other import OtherDanmakuProvider
 
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,7 @@ class DanmakuService:
         disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
         ai_enrichment_service=None,
         douban_discovery=None,
+        other_provider=None,
     ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
@@ -327,6 +329,8 @@ class DanmakuService:
         self._disabled_provider_ids_loader = disabled_provider_ids_loader
         self._ai_enrichment_service = ai_enrichment_service
         self._douban_discovery = douban_discovery
+        if other_provider is not None:
+            self._providers['other'] = other_provider
 
     def _disabled_provider_ids(self) -> set[str]:
         if self._disabled_provider_ids_loader is None:
@@ -610,6 +614,19 @@ class DanmakuService:
             discovered = self._discover_via_douban(match_query, normalized, provider_filter)
             if discovered:
                 results = discovered
+            elif (
+                "other" in self._providers
+                and reg_src.startswith("http")
+                and not provider_filter
+            ):
+                results = [
+                    DanmakuSearchItem(
+                        provider="other",
+                        name=normalized or match_query,
+                        url=reg_src,
+                        duration_seconds=0,
+                    )
+                ]
 
         return sorted(
             results,
@@ -900,10 +917,12 @@ def create_default_danmaku_service(
     if disabled_provider_ids_loader is None and disabled:
         disabled_provider_ids_loader = lambda: list(disabled)
     douban_discovery = DoubanDiscovery(get=get, post=post)
+    other_provider = OtherDanmakuProvider(get=get, server="https://dmku.hls.one/")
     return DanmakuService(
         providers,
         provider_order=provider_order,
         disabled_provider_ids_loader=disabled_provider_ids_loader,
         ai_enrichment_service=ai_enrichment_service,
         douban_discovery=douban_discovery,
+        other_provider=other_provider,
     )
