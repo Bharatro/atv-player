@@ -7,6 +7,16 @@ from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
 
 
+class JsonResponse:
+    def __init__(self, payload=None, text: str = "", status_code: int = 200) -> None:
+        self._payload = payload
+        self.text = text
+        self.status_code = status_code
+
+    def json(self):
+        return self._payload
+
+
 def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
     def fake_get(
         url: str,
@@ -1421,3 +1431,38 @@ def test_extract_video_id_falls_back_to_html_vid_when_url_has_none() -> None:
     html = '"vid":"covervid999"'
 
     assert provider._extract_video_id(url, html) == "covervid999"
+
+
+def test_expand_page_url_delegates_to_page_data_expansion() -> None:
+    # 豆瓣发现路径复用腾讯已有的分集展开：expand_page_url 应从 cover 页拉全部分集。
+    calls = []
+
+    def fake_post(url: str, **kwargs):
+        calls.append(url)
+        return JsonResponse(
+            {
+                "ret": 0,
+                "data": {
+                    "module_list_datas": [
+                        {
+                            "module_datas": [
+                                {
+                                    "item_data_lists": {
+                                        "item_datas": [
+                                            {"item_params": {"vid": "ep13vid", "title": "13", "play_title": "百花杀 第13集", "is_trailer": "0"}},
+                                        ]
+                                    },
+                                    "module_params": {},
+                                }
+                            ]
+                        }
+                    ]
+                },
+            }
+        )
+
+    provider = TencentDanmakuProvider(get=lambda *a, **k: JsonResponse({}), post=fake_post)
+
+    items = provider.expand_page_url("https://v.qq.com/x/cover/mzc00200nfe7al6/", "百花杀 13集")
+
+    assert any(item.url == "https://v.qq.com/x/cover/mzc00200nfe7al6/ep13vid.html" for item in items)

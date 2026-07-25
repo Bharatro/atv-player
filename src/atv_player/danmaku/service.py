@@ -38,6 +38,8 @@ from atv_player.danmaku.utils import (
     strip_variety_issue_suffix,
 )
 
+from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
+
 
 logger = logging.getLogger(__name__)
 
@@ -317,12 +319,14 @@ class DanmakuService:
         provider_order: list[str],
         disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
         ai_enrichment_service=None,
+        douban_discovery=None,
     ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
         self._disabled_provider_ids_loader = disabled_provider_ids_loader
         self._ai_enrichment_service = ai_enrichment_service
+        self._douban_discovery = douban_discovery
 
     def _disabled_provider_ids(self) -> set[str]:
         if self._disabled_provider_ids_loader is None:
@@ -602,6 +606,11 @@ class DanmakuService:
                 self._provider_rank.get(item.provider, len(self._provider_order)),
             )
 
+        if not results:
+            discovered = self._discover_via_douban(match_query, normalized, provider_filter)
+            if discovered:
+                results = discovered
+
         return sorted(
             results,
             key=sort_key,
@@ -631,6 +640,55 @@ class DanmakuService:
                     simi = item.simi or ratio
                     results.append(replace(item, ratio=ratio, simi=simi))
         return results
+
+    def _discover_via_douban(
+        self, match_query: str, normalized: str, provider_filter: str
+    ) -> list[DanmakuSearchItem]:
+        if self._douban_discovery is None:
+            return []
+        keyword = strip_episode_suffix(strip_variety_issue_suffix(match_query)) or match_query
+        if not keyword:
+            return []
+        try:
+            subjects = self._douban_discovery.search_subjects(keyword)
+        except Exception:
+            logger.exception("Douban discovery search failed keyword=%s", keyword)
+            return []
+        discovered: list[DanmakuSearchItem] = []
+        seen_urls: set[str] = set()
+        for subject in subjects:
+            if should_filter_name(keyword, subject.title):
+                continue
+            try:
+                vendors = self._douban_discovery.fetch_vendors(subject.douban_id)
+            except Exception:
+                logger.exception("Douban fetch_vendors failed id=%s", subject.douban_id)
+                continue
+            for vendor in vendors:
+                if provider_filter and vendor.provider != provider_filter:
+                    continue
+                provider = self._providers.get(vendor.provider)
+                if provider is None or not self._provider_enabled(vendor.provider):
+                    continue
+                expand = getattr(provider, 'expand_page_url', None)
+                if not callable(expand):
+                    continue
+                page_url = vendor_to_page_url(vendor)
+                if not page_url:
+                    continue
+                try:
+                    items = expand(page_url, normalized)
+                except Exception:
+                    logger.exception("Douban expand failed provider=%s url=%s", vendor.provider, page_url)
+                    continue
+                for item in items or []:
+                    if item.url in seen_urls:
+                        continue
+                    seen_urls.add(item.url)
+                    discovered.append(item)
+            if discovered:
+                break
+        return discovered
 
     def _danmaku_source_option_sort_key(
         self,
@@ -841,9 +899,11 @@ def create_default_danmaku_service(
     ]
     if disabled_provider_ids_loader is None and disabled:
         disabled_provider_ids_loader = lambda: list(disabled)
+    douban_discovery = DoubanDiscovery(get=get, post=post)
     return DanmakuService(
         providers,
         provider_order=provider_order,
         disabled_provider_ids_loader=disabled_provider_ids_loader,
         ai_enrichment_service=ai_enrichment_service,
+        douban_discovery=douban_discovery,
     )

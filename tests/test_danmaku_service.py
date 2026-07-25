@@ -1634,3 +1634,64 @@ def test_default_service_still_rejects_unknown_urls() -> None:
 
     with pytest.raises(ProviderNotSupportedError):
         service.resolve_danmu("https://unknown.example/video/1")
+
+
+class FakeDoubanDiscovery:
+    def __init__(self, subjects, vendors_by_id) -> None:
+        self._subjects = subjects
+        self._vendors_by_id = vendors_by_id
+        self.search_calls: list[str] = []
+        self.vendor_calls: list[str] = []
+
+    def search_subjects(self, keyword: str):
+        self.search_calls.append(keyword)
+        return list(self._subjects)
+
+    def fetch_vendors(self, douban_id: str):
+        self.vendor_calls.append(douban_id)
+        return list(self._vendors_by_id.get(douban_id, []))
+
+
+class ExpandableFakeProvider(FakeProvider):
+    """A provider whose MbSearch returns nothing, but can expand a douban page URL."""
+
+    def __init__(self, key, expand_items):
+        super().__init__(key, [], [])
+        self._expand_items = expand_items
+        self.expand_calls: list[str] = []
+
+    def search(self, name, original_name=None):
+        self.search_calls.append(name)
+        self.original_name_calls.append(original_name)
+        return []
+
+    def expand_page_url(self, page_url, query_name):
+        self.expand_calls.append(page_url)
+        return list(self._expand_items)
+
+
+def test_search_danmu_falls_back_to_douban_discovery_when_builtin_search_empty() -> None:
+    from atv_player.danmaku.discovery.douban import DoubanSubject, DoubanVendor
+
+    ep13 = DanmakuSearchItem(
+        provider="tencent",
+        name="百花杀 13集",
+        url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep13.html",
+        duration_seconds=2700,
+    )
+    tencent = ExpandableFakeProvider("tencent", [ep13])
+    discovery = FakeDoubanDiscovery(
+        subjects=[DoubanSubject(douban_id="35876897", title="百花杀", year="2024", type_name="电视剧")],
+        vendors_by_id={"35876897": [DoubanVendor(provider="tencent", media_id="mzc00200nfe7al6")]},
+    )
+    service = DanmakuService(
+        {"tencent": tencent},
+        provider_order=["tencent"],
+        douban_discovery=discovery,
+    )
+
+    results = service.search_danmu("百花杀 13集")
+
+    assert any(item.url == ep13.url for item in results)
+    assert discovery.search_calls == ["百花杀"]
+    assert tencent.expand_calls == ["https://v.qq.com/x/cover/mzc00200nfe7al6/"]

@@ -100,6 +100,14 @@ class TencentDanmakuProvider:
             return []
         return self._expand_items_from_candidate_pages(name, items, original_name=original_name)
 
+    def expand_page_url(self, page_url: str, query_name: str) -> list[DanmakuSearchItem]:
+        """Expand a platform cover/detail page URL into episode candidates.
+
+        Used by douban discovery: the vendor gives us a cover URL (only cid),
+        and PageData expansion turns it into the full episode list.
+        """
+        return self._fetch_page_data_episode_items(page_url, query_name)
+
     def _expand_items_from_candidate_pages(
         self, query_name: str, items: list[DanmakuSearchItem], original_name: str | None = None
     ) -> list[DanmakuSearchItem]:
