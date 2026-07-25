@@ -3,6 +3,7 @@ import time
 
 import httpx
 
+from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
 
 
@@ -1364,3 +1365,59 @@ def test_tencent_provider_raises_when_video_id_is_missing() -> None:
         assert "videoId" in str(exc)
     else:
         raise AssertionError("Expected Tencent provider to reject pages without videoId")
+
+
+def test_expand_does_not_short_circuit_on_different_show_with_same_episode_number() -> None:
+    # MbSearch returns two same-named shows; the short drama (cover B) already has
+    # ep13 in its snapshot. Expansion must NOT short-circuit on a different show's
+    # episode — it must expand the primary show (cover A) so its real ep13 is
+    # returned (regression: 《百花杀》第13集 搜不到).
+    provider = TencentDanmakuProvider()
+    items = [
+        DanmakuSearchItem(provider="tencent", name="百花杀", url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep1.html"),
+        DanmakuSearchItem(provider="tencent", name="百花杀 2集", url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep2.html"),
+        DanmakuSearchItem(provider="tencent", name="第十三集 短剧剧情字幕", url="https://v.qq.com/x/cover/mzc003wpj912rrn/ep13.html"),
+    ]
+
+    def fake_fetch(url: str, query_name: str):
+        if "mzc00200nfe7al6" in url:
+            return [
+                DanmakuSearchItem(
+                    provider="tencent",
+                    name=f"百花杀 {n}集",
+                    url=f"https://v.qq.com/x/cover/mzc00200nfe7al6/ep{n}.html",
+                )
+                for n in range(1, 30)
+            ]
+        return []
+
+    provider._fetch_page_data_episode_items = fake_fetch  # type: ignore[assignment]
+
+    result = provider._expand_items_from_candidate_pages("百花杀 13集", items, original_name=None)
+
+    assert any("mzc00200nfe7al6/ep13" in item.url for item in result)
+
+
+def test_extract_video_id_prefers_url_path_over_html_promo_vid() -> None:
+    # Episode pages embed a promo/trailer vid ("videoId") that is identical across
+    # every episode. The URL path carries the authoritative episode vid and must win
+    # (regression: every episode resolved to the same promo vid -> unrelated danmaku).
+    provider = TencentDanmakuProvider()
+    url = "https://v.qq.com/x/cover/mzc00200nfe7al6/y4102qxof84.html"
+    html = '<script>{"videoId":"s00242sxrne","vid":"s00242sxrne"}</script>'
+
+    assert provider._extract_video_id(url, html) == "y4102qxof84"
+
+
+def test_extract_video_id_uses_query_vid_when_present() -> None:
+    provider = TencentDanmakuProvider()
+    assert provider._extract_video_id("https://m.v.qq.com/x/m/play?vid=qvid123", "") == "qvid123"
+
+
+def test_extract_video_id_falls_back_to_html_vid_when_url_has_none() -> None:
+    # Cover-overview pages have no vid in the URL; fall back to the embedded vid.
+    provider = TencentDanmakuProvider()
+    url = "https://v.qq.com/x/cover/mzc00200nfe7al6.html"
+    html = '"vid":"covervid999"'
+
+    assert provider._extract_video_id(url, html) == "covervid999"

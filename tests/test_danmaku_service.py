@@ -105,6 +105,26 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert youku.search_calls == []
 
 
+def test_search_danmu_keeps_subtitle_named_episode_for_explicit_request() -> None:
+    # Tencent names episodes by plot subtitle without the show name, e.g.
+    # "第十三集 <剧情>". Such a real episode must still match an explicit
+    # "<剧名> 13集" request instead of being dropped (regression: 《百花杀》第13集
+    # 搜不到，返回了其它集数却没有13集).
+    ep13 = DanmakuSearchItem(
+        provider="tencent",
+        name="第十三集 朱字当众揭穿我藏在凤椅下，皇后一句谁先取她的命",
+        url="https://v.qq.com/x/cover/mzc003wpj912rrn/l3285j9s4lh.html",
+        ratio=0.9,
+        simi=0.8,
+    )
+    tencent = FakeProvider("tencent", [ep13], [])
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("百花杀 13集", "https://v.qq.com/x/cover/mzc003wpj912rrn/l3285j9s4lh.html")
+
+    assert any(item.url == ep13.url for item in results)
+
+
 def test_danmaku_service_uses_ai_refined_query_before_original() -> None:
     tencent = FakeProvider(
         "tencent",

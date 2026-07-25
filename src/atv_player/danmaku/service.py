@@ -23,6 +23,7 @@ from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.providers.base import DanmakuProvider
 from atv_player.danmaku.utils import (
     build_xml,
+    episode_matches_request,
     episode_title_matches,
     extract_episode_number,
     extract_variety_issue_key,
@@ -211,13 +212,13 @@ def _filter_search_items_by_media_duration_gap(
         item
         for item in items
         if extract_episode_number(item.name) == requested_episode
-        and episode_title_matches(normalized_query, item.name)
+        and episode_matches_request(item.name, requested_episode, normalized_query)
     ]
     if not preserved_exact_matches:
         return filtered
     if any(
         extract_episode_number(item.name) == requested_episode
-        and episode_title_matches(normalized_query, item.name)
+        and episode_matches_request(item.name, requested_episode, normalized_query)
         for item in filtered
     ):
         return filtered
@@ -253,13 +254,13 @@ def _filter_source_options_by_media_duration_gap(
         option
         for option in options
         if extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
     ]
     if not preserved_exact_matches:
         return filtered
     if any(
         extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
         for option in filtered
     ):
         return filtered
@@ -303,7 +304,7 @@ def _source_option_query_match_priority(query_name: str, option: DanmakuSourceOp
     exact_episode_match = int(
         requested_episode is not None
         and extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
     )
     return variety_issue_match, exact_episode_match
 
@@ -442,7 +443,7 @@ class DanmakuService:
             if explicit_episode_request and requested_episode is not None:
                 has_matching_episode = any(
                     extract_episode_number(option.name) == requested_episode
-                    and episode_title_matches(normalized_query, option.name)
+                    and episode_matches_request(option.name, requested_episode, normalized_query)
                     for option in options
                 )
                 if has_matching_episode:
@@ -527,7 +528,7 @@ class DanmakuService:
                 item
                 for item in results
                 if extract_episode_number(item.name) == requested_episode
-                and episode_title_matches(match_query, item.name)
+                and episode_matches_request(item.name, requested_episode, match_query)
             ]
             if not matching and preferred_key is not None and not provider_filter:
                 fallback_keys = [
@@ -540,7 +541,7 @@ class DanmakuService:
                         item
                         for item in results
                         if extract_episode_number(item.name) == requested_episode
-                        and episode_title_matches(match_query, item.name)
+                        and episode_matches_request(item.name, requested_episode, match_query)
                     ]
             no_episode = [
                 item

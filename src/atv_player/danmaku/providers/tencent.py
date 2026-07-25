@@ -108,8 +108,16 @@ class TencentDanmakuProvider:
             return items
         if requested_episode is None and any(extract_episode_number(item.name) is not None for item in items):
             return items
-        if requested_episode is not None and any(
-            self._matches_requested_episode_item(item, requested_episode) for item in items
+        cover_ids = {self._extract_cover_id(item.url) for item in items}
+        cover_ids.discard("")
+        # Only short-circuit when all candidates belong to one show. With multiple
+        # same-named shows, a different show's matching episode must NOT short-circuit
+        # expansion — otherwise the user's show never gets expanded (regression:
+        # 《百花杀》第13集 搜不到，被同名短剧的 13 集抢占了早退).
+        if (
+            requested_episode is not None
+            and len(cover_ids) <= 1
+            and any(self._matches_requested_episode_item(item, requested_episode) for item in items)
         ):
             return items
         expanded: list[DanmakuSearchItem] = []
@@ -1013,18 +1021,11 @@ class TencentDanmakuProvider:
         return 0
 
     def _extract_video_id(self, page_url: str, html_text: str) -> str:
-        video_id = self._match_first(
-            html_text,
-            (
-                r'"videoId":"([^"]+)"',
-                r'"vid":"([^"]+)"',
-                r'"vid"\s*:\s*"([^"]+)"',
-                r'https://m\.v\.qq\.com/x/m/play\?[^"\']*vid=([\w]+)',
-            ),
-        )
-        if video_id:
-            return video_id
         parsed = urlparse(page_url)
+        # The URL carries the authoritative episode vid. Prefer it over any vid
+        # embedded in the HTML body: episode pages all embed the same promo/trailer
+        # "videoId", so scraping HTML first made every episode resolve to that promo
+        # (regression: 弹幕内容与当前剧集完全无关). Mirrors danmu_api's extractVid.
         query_vid = parse_qs(parsed.query).get("vid", [""])[0].strip()
         if query_vid:
             return query_vid
@@ -1034,7 +1035,16 @@ class TencentDanmakuProvider:
         page_match = re.search(r"/x/page(?:_seo)?/([\w]+)\.html", parsed.path)
         if page_match is not None:
             return page_match.group(1)
-        return ""
+        # Fallback for pages without a vid in the URL (e.g. cover-overview pages).
+        return self._match_first(
+            html_text,
+            (
+                r'"videoId":"([^"]+)"',
+                r'"vid":"([^"]+)"',
+                r'"vid"\s*:\s*"([^"]+)"',
+                r'https://m\.v\.qq\.com/x/m/play\?[^"\']*vid=([\w]+)',
+            ),
+        )
 
     def _extract_duration_seconds(self, html_text: str) -> int:
         duration_text = self._match_first(

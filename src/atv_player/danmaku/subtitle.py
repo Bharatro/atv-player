@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from xml.etree import ElementTree
 
@@ -121,9 +122,17 @@ def _position_band_start(position_preset: str) -> int:
     }.get(position_preset, 30)
 
 
+_XML_ILLEGAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
 def _parse_danmaku_xml_records(xml_text: str) -> list[_ParsedDanmaku]:
     if not xml_text.strip():
         return []
+    # Tolerate XML-1.0-illegal control chars (e.g. \x08 inside a danmaku) so a
+    # single bad entry — including in stale/external cached XML — doesn't make the
+    # whole document unparseable and render empty. See build_xml for the producer
+    # side of the same guard.
+    xml_text = _XML_ILLEGAL_CONTROL_RE.sub("", xml_text)
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:

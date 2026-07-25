@@ -1,6 +1,7 @@
 from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.utils import (
     build_xml,
+    episode_matches_request,
     extract_episode_number,
     extract_variety_issue_key,
     infer_playlist_episode_number,
@@ -42,12 +43,39 @@ def test_should_filter_name_accepts_season_number_format_variants() -> None:
     assert should_filter_name(target, "哈哈哈哈哈第6季 第1期上 邓超陈赫癫狂式唱山歌") is False
 
 
+def test_should_filter_name_keeps_marker_led_episode_subtitle() -> None:
+    # Tencent-style "第N集 <剧情>" carries no show name; it must not be dropped by
+    # name-similarity against the show query (regression: 《百花杀》第13集 搜不到).
+    target = normalize_name("百花杀 13集")
+    assert should_filter_name(target, "第十三集 朱字当众揭穿我藏在凤椅下，皇后一句谁先取她的命") is False
+
+
+def test_episode_matches_request_rejects_different_show_with_same_episode_number() -> None:
+    # A candidate carrying a different show-name prefix must still be rejected even
+    # when its episode number equals the request (guard against over-relaxation).
+    assert episode_matches_request("隆行天下之重走八千里路云和月 第16集", 16, "八千里路云和月 16集") is False
+
+
 def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> None:
     assert extract_episode_number("12(1.26 GB)") == 12
 
 
 def test_extract_episode_number_supports_chinese_numerals() -> None:
     assert extract_episode_number("第十二集") == 12
+
+
+def test_episode_matches_request_accepts_subtitle_only_episode_name() -> None:
+    # Tencent names episodes by plot subtitle without the show name ("第十三集 <剧情>");
+    # the number match alone must count as a match for an explicit episode request.
+    assert episode_matches_request("第十三集 朱字当众揭穿我藏在凤椅下", 13, "百花杀 13集") is True
+
+
+def test_episode_matches_request_accepts_show_prefixed_episode_name() -> None:
+    assert episode_matches_request("百花杀 第13集", 13, "百花杀 13集") is True
+
+
+def test_episode_matches_request_rejects_wrong_episode_number() -> None:
+    assert episode_matches_request("第十二集 剧情字幕", 13, "百花杀 13集") is False
 
 
 def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
@@ -262,3 +290,17 @@ def test_build_xml_escapes_content_and_keeps_expected_shape() -> None:
     assert '<d p="1.5,1,25,16777215">a &lt; b &amp; c</d>' in xml
     assert '<d p="3.0,4,25,255">"quoted"</d>' in xml
     assert xml.endswith("</i>")
+
+
+def test_build_xml_strips_xml_illegal_control_characters() -> None:
+    # A danmaku carrying an XML-1.0-illegal control char (\x08) must not corrupt the
+    # whole document — otherwise the entire payload fails to parse and renders empty
+    # (regression: 12万+弹幕因单条含 \x08 导致 "弹幕加载失败: 弹幕为空").
+    from xml.etree import ElementTree
+
+    xml = build_xml([DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="护照上\x08不是吗")])
+
+    root = ElementTree.fromstring(xml)  # must not raise
+    nodes = root.findall(".//d")
+    assert len(nodes) == 1
+    assert nodes[0].text == "护照上不是吗"
