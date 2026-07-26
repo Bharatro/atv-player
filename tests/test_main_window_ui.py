@@ -7637,6 +7637,41 @@ def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_populates_danmaku_cleaning(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        danmaku_blocked_words=["广告", "剧透"],
+        danmaku_duplicate_window_minutes=5,
+        danmaku_convert_top_bottom_to_scroll=True,
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.danmaku_blocked_words_edit.toPlainText() == "广告\n剧透"
+    assert dialog.danmaku_duplicate_window_spinbox.value() == 5
+    assert dialog.danmaku_convert_top_bottom_checkbox.isChecked() is True
+
+
+def test_advanced_settings_dialog_saves_normalized_danmaku_cleaning(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.danmaku_blocked_words_edit.setPlainText(" 广告 \n剧透\n广告\n")
+    dialog.danmaku_duplicate_window_spinbox.setValue(3)
+    dialog.danmaku_convert_top_bottom_checkbox.setChecked(True)
+    dialog._save()
+
+    assert config.danmaku_blocked_words == ["广告", "剧透"]
+    assert config.danmaku_duplicate_window_minutes == 3
+    assert config.danmaku_convert_top_bottom_to_scroll is True
+    assert saved == [config]
+
+
 def test_advanced_settings_dialog_exposes_migu_danmaku_source_only(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

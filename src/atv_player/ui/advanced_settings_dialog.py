@@ -143,10 +143,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_group = QGroupBox("元数据增强配置")
         self.metadata_source_group = QGroupBox("刮削源")
         self.danmaku_source_group = QGroupBox("弹幕源")
+        self.danmaku_cleaning_group = QGroupBox("弹幕清洗")
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.metadata_source_checkboxes: dict[str, QCheckBox] = {}
         self.danmaku_source_checkboxes: dict[str, QCheckBox] = {}
+        self.danmaku_blocked_words_edit = QPlainTextEdit()
+        self.danmaku_duplicate_window_spinbox = QSpinBox()
+        self.danmaku_duplicate_window_spinbox.setRange(0, 60)
+        self.danmaku_duplicate_window_spinbox.setSuffix(" 分钟")
+        self.danmaku_convert_top_bottom_checkbox = QCheckBox("顶部/底部弹幕转为滚动弹幕")
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -344,6 +350,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             checkbox = QCheckBox(source.label)
             checkbox.setChecked(source.id not in disabled_danmaku_sources)
             self.danmaku_source_checkboxes[source.id] = checkbox
+        self.danmaku_blocked_words_edit.setPlainText("\n".join(config.danmaku_blocked_words))
+        self.danmaku_duplicate_window_spinbox.setValue(config.danmaku_duplicate_window_minutes)
+        self.danmaku_convert_top_bottom_checkbox.setChecked(config.danmaku_convert_top_bottom_to_scroll)
         self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
         self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
@@ -443,10 +452,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.danmaku_source_group.setLayout(
             _build_source_checkbox_layout(list(self.danmaku_source_checkboxes.values()))
         )
+        danmaku_cleaning_layout = QFormLayout()
+        danmaku_cleaning_layout.addRow("屏蔽词（每行一个）", self.danmaku_blocked_words_edit)
+        danmaku_cleaning_layout.addRow("重复内容窗口", self.danmaku_duplicate_window_spinbox)
+        danmaku_cleaning_layout.addRow(self.danmaku_convert_top_bottom_checkbox)
+        self.danmaku_cleaning_group.setLayout(danmaku_cleaning_layout)
         metadata_tab_layout = QVBoxLayout(self.metadata_tab)
         metadata_tab_layout.addWidget(self.metadata_group)
         metadata_tab_layout.addWidget(self.metadata_source_group)
         metadata_tab_layout.addWidget(self.danmaku_source_group)
+        metadata_tab_layout.addWidget(self.danmaku_cleaning_group)
         metadata_tab_layout.addStretch(1)
 
         ai_layout = QFormLayout()
@@ -1283,6 +1298,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             for provider_id, checkbox in self.metadata_source_checkboxes.items()
             if not checkbox.isChecked()
         ]
+        words = [line.strip() for line in self.danmaku_blocked_words_edit.toPlainText().splitlines()]
+        self._config.danmaku_blocked_words = list(dict.fromkeys(word for word in words if word))
+        self._config.danmaku_duplicate_window_minutes = self.danmaku_duplicate_window_spinbox.value()
+        self._config.danmaku_convert_top_bottom_to_scroll = self.danmaku_convert_top_bottom_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_tmdb_proxy_base_url = self._current_tmdb_proxy_base_url()
