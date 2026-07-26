@@ -1,6 +1,8 @@
+import json
 import threading
 import time
 
+import httpx
 import pytest
 
 from atv_player.ai.enrichment import DanmakuQueryRefinement
@@ -12,6 +14,7 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
+from atv_player.danmaku.providers.youku import YoukuDanmakuProvider
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 from atv_player.models import AppConfig
 
@@ -124,6 +127,78 @@ def test_search_danmu_keeps_subtitle_named_episode_for_explicit_request() -> Non
     results = service.search_danmu("百花杀 13集", "https://v.qq.com/x/cover/mzc003wpj912rrn/l3285j9s4lh.html")
 
     assert any(item.url == ep13.url for item in results)
+
+
+def test_search_danmu_finds_youku_suspense_episode_four() -> None:
+    detail_payload = {
+        "moduleList": [
+            {
+                "components": [
+                    {
+                        "type": 10013,
+                        "itemList": [
+                            {
+                                "action_value": "XNjUxODE2NjYyNA==",
+                                "title": "第1集 矢量",
+                                "stage": 1,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "XNjUxODE2NjYyOA==",
+                                "title": "第4集 专线",
+                                "stage": 4,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "preview04",
+                                "title": "第4集 专线（预告）",
+                                "stage": 4,
+                                "videoType": "预告片",
+                            },
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    def fake_get(url: str, **kwargs):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "悬案"},
+                                "videoLink": (
+                                    "https://v.youku.com/v_show/"
+                                    "id_XNjUxODE2NjYyNA==.html"
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        detail_text = json.dumps(detail_payload, ensure_ascii=False)
+        return httpx.Response(
+            200,
+            text=f"<script>window.__INITIAL_DATA__ ={detail_text};</script>",
+        )
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+    service = DanmakuService({"youku": provider}, provider_order=["youku"])
+
+    results = service.search_danmu("悬案 4集", provider_filter="youku")
+
+    assert [(item.name, item.url) for item in results] == [
+        (
+            "悬案 第4集 专线",
+            "https://v.youku.com/v_show/id_XNjUxODE2NjYyOA==.html",
+        ),
+    ]
 
 
 def test_danmaku_service_uses_ai_refined_query_before_original() -> None:
