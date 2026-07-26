@@ -2120,7 +2120,10 @@ class SpiderPluginController:
 
     def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
         normalized_url = normalize_danmaku_episode_url(page_url)
-        provider_key = self._danmaku_service.provider_key_for_url(normalized_url)
+        danmaku_service = self._danmaku_service
+        if danmaku_service is None:
+            raise RuntimeError("弹幕服务不可用")
+        provider_key = danmaku_service.provider_key_for_url(normalized_url)
         source_title = (item.title or item.media_title or "单集弹幕").strip()
         self._log_danmaku_event("弹幕下载中", detail=f"{provider_key} - {source_title}")
         query_name = (item.danmaku_search_query or _build_danmaku_search_name(item)).strip()

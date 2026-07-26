@@ -9206,10 +9206,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         edit.setText(page_url)
         current_item.danmaku_status_text = "下载中（单集链接）..."
+
+        def run_download() -> None:
+            download(current_item, page_url)
+
         self._start_danmaku_source_task(
             current_item,
             error_prefix="单集链接弹幕下载失败",
-            task=lambda: download(current_item, page_url),
+            task=run_download,
             configure_danmaku_on_success=True,
             debug_label="单集链接下载",
             status_error_prefix="单集链接弹幕下载失败",
