@@ -18472,7 +18472,14 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
     qtbot.addWidget(window)
     window.session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="红果短剧"),
-        playlist=[PlayItem(title="随便起名", original_title="第1集", url="https://media.example/1.mp4")],
+        playlist=[
+            PlayItem(
+                title="随便起名",
+                original_title="第1集",
+                url="https://media.example/1.mp4",
+                danmaku_offset_seconds=-3.0,
+            )
+        ],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
@@ -18492,6 +18499,7 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
 
     assert path == tmp_path / "demo.ass"
     assert captured["intro_episode_label"] == "第1集"
+    assert captured["time_offset_seconds"] == -3.0
 
 
 def test_player_window_build_danmaku_subtitle_file_passes_readability_settings(qtbot, monkeypatch, tmp_path) -> None:

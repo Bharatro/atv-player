@@ -1,6 +1,17 @@
 from atv_player.danmaku.subtitle import _parse_danmaku_xml_records, render_danmaku_ass, render_danmaku_srt
 
 
+def test_render_danmaku_ass_applies_fixed_offset_without_mutating_xml() -> None:
+    xml = '<i><d p="5,1,25,16777215">晚三秒</d></i>'
+
+    shifted = render_danmaku_ass(xml, time_offset_seconds=-3.0)
+    repeated = render_danmaku_ass(xml, time_offset_seconds=-3.0)
+
+    assert "Dialogue: 0,0:00:02.00" in shifted
+    assert repeated == shifted
+    assert 'p="5' in xml
+
+
 def test_parse_danmaku_xml_records_recovers_from_illegal_control_chars() -> None:
     # Cached/external XML may carry XML-1.0-illegal control chars (e.g. \x08 inside
     # a danmaku). The parser must recover instead of dropping the whole document

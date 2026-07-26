@@ -6851,6 +6851,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             font_size=font_size,
             opacity=opacity,
             outline_strength=outline_strength,
+            time_offset_seconds=current_item.danmaku_offset_seconds if current_item is not None else 0.0,
         )
 
     def _current_danmaku_render_settings(self) -> dict[str, object]:

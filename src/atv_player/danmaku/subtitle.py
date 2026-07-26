@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass
 from xml.etree import ElementTree
 
+from atv_player.danmaku.models import DanmakuRecord
+from atv_player.danmaku.processing import apply_time_offset
+
 _VALID_RENDER_MODES = {"static", "scroll_only", "mixed"}
 _VALID_COLOR_MODES = {"uniform", "source"}
 _VALID_POSITION_PRESETS = {"top", "upper", "mid_upper", "bottom"}
@@ -20,14 +23,6 @@ _SCROLL_MIN_DURATION_SECONDS = 12.0
 _DEFAULT_SCROLL_SPEED = 1.0
 _INTRO_LEAD_SECONDS = 1.0
 _INTRO_MIN_DURATION_SECONDS = 6.0
-
-
-@dataclass(frozen=True, slots=True)
-class _ParsedDanmaku:
-    time_offset: float
-    pos: int
-    color: str
-    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +43,7 @@ class _SubtitleCue:
 
 @dataclass(frozen=True, slots=True)
 class _TimedDanmaku:
-    record: _ParsedDanmaku
+    record: DanmakuRecord
     line_index: int
     start: float
     end: float
@@ -125,7 +120,7 @@ def _position_band_start(position_preset: str) -> int:
 _XML_ILLEGAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
-def _parse_danmaku_xml_records(xml_text: str) -> list[_ParsedDanmaku]:
+def _parse_danmaku_xml_records(xml_text: str) -> list[DanmakuRecord]:
     if not xml_text.strip():
         return []
     # Tolerate XML-1.0-illegal control chars (e.g. \x08 inside a danmaku) so a
@@ -137,7 +132,7 @@ def _parse_danmaku_xml_records(xml_text: str) -> list[_ParsedDanmaku]:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:
         return []
-    records: list[_ParsedDanmaku] = []
+    records: list[DanmakuRecord] = []
     for node in root.findall(".//d"):
         payload = str(node.attrib.get("p") or "")
         pieces = payload.split(",")
@@ -155,7 +150,7 @@ def _parse_danmaku_xml_records(xml_text: str) -> list[_ParsedDanmaku]:
         content = "".join(node.itertext()).strip()
         if not content:
             continue
-        records.append(_ParsedDanmaku(time_offset=time_offset, pos=pos, color=color, content=content))
+        records.append(DanmakuRecord(time_offset=time_offset, pos=pos, color=color, content=content))
     records.sort(key=lambda item: item.time_offset)
     return records
 
@@ -185,21 +180,21 @@ def _assign_lines(records: list[tuple[float, str]], line_count: int, duration_se
     return lines
 
 
-def _assign_static_lines(records: list[_ParsedDanmaku], line_count: int, duration_seconds: float) -> list[_SubtitleLine]:
+def _assign_static_lines(records: list[DanmakuRecord], line_count: int, duration_seconds: float) -> list[_SubtitleLine]:
     return _assign_static_lines_with_priority(records, line_count, duration_seconds, prioritize_colored=False)
 
 
-def _record_uses_non_default_source_color(record: _ParsedDanmaku) -> bool:
+def _record_uses_non_default_source_color(record: DanmakuRecord) -> bool:
     return _source_color_to_ass(record.color) != _hex_color_to_ass(_DEFAULT_UNIFORM_COLOR)
 
 
 def _assign_record_windows(
-    records: list[_ParsedDanmaku],
+    records: list[DanmakuRecord],
     line_count: int,
     duration_seconds: float,
     *,
     prioritize_colored: bool,
-) -> list[tuple[_ParsedDanmaku, int, float, float]]:
+) -> list[tuple[DanmakuRecord, int, float, float]]:
     available_at = [0.0] * line_count
     active_indices: list[int | None] = [None] * line_count
     windows: list[dict[str, object]] = []
@@ -251,7 +246,7 @@ def _assign_record_windows(
 
 
 def _assign_static_lines_with_priority(
-    records: list[_ParsedDanmaku],
+    records: list[DanmakuRecord],
     line_count: int,
     duration_seconds: float,
     *,
@@ -300,7 +295,7 @@ def _build_cues(lines: list[_SubtitleLine], line_count: int) -> list[_SubtitleCu
 
 
 def _assign_timed_records(
-    records: list[_ParsedDanmaku],
+    records: list[DanmakuRecord],
     line_count: int,
     duration_seconds: float,
     *,
@@ -460,7 +455,7 @@ def _event_override(mode: str, y: int, color: str, opacity: int) -> str:
 
 
 def _build_intro_event(
-    records: list[_ParsedDanmaku],
+    records: list[DanmakuRecord],
     *,
     intro_episode_label: str,
     render_mode: str,
@@ -491,7 +486,7 @@ def _build_intro_event(
 
 
 def _build_dynamic_events(
-    records: list[_ParsedDanmaku],
+    records: list[DanmakuRecord],
     *,
     line_count: int,
     duration_seconds: float,
@@ -559,6 +554,7 @@ def render_danmaku_ass(
     font_size: int = _DEFAULT_FONT_SIZE,
     opacity: int = _DEFAULT_OPACITY,
     outline_strength: str = _DEFAULT_OUTLINE_STRENGTH,
+    time_offset_seconds: float = 0.0,
 ) -> str:
     normalized_line_count = max(1, min(int(line_count), 10))
     normalized_duration = max(1.0, float(duration_seconds))
@@ -570,7 +566,7 @@ def render_danmaku_ass(
     normalized_font_size = _normalize_font_size(font_size)
     normalized_opacity = _normalize_opacity(opacity)
     normalized_outline_strength = _normalize_outline_strength(outline_strength)
-    records = _parse_danmaku_xml_records(xml_text)
+    records = apply_time_offset(_parse_danmaku_xml_records(xml_text), time_offset_seconds)
     if not records:
         return ""
 
