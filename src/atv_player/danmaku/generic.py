@@ -13,6 +13,11 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_xml,
 )
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.preferences import (
+    DanmakuSeriesPreferenceStore,
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
 from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist_episode_number
 from atv_player.models import PlayItem
 
@@ -57,9 +62,40 @@ def _find_selected_option(item: PlayItem, page_url: str) -> DanmakuSourceOption 
 
 
 class GenericDanmakuController:
-    def __init__(self, danmaku_service: Any) -> None:
+    def __init__(
+        self,
+        danmaku_service: Any,
+        danmaku_preference_store: DanmakuSeriesPreferenceStore | None = None,
+    ) -> None:
         self._danmaku_service = danmaku_service
+        self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_log_handler: Callable[[str], None] | None = None
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
 
     def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
         self._danmaku_log_handler = handler

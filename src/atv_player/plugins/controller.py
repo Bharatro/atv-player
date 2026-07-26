@@ -24,6 +24,10 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_xml,
 )
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
+from atv_player.danmaku.preferences import (
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import (
     episode_title_matches,
@@ -796,6 +800,32 @@ class SpiderPluginController:
         self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
 
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
+
     def _ensure_spider_initialized(self) -> None:
         if self._spider_initialized:
             return
@@ -1430,6 +1460,9 @@ class SpiderPluginController:
                 title=existing.title if existing is not None else "",
                 search_title=item.danmaku_search_title,
                 updated_at=int(time.time()),
+                episode_source_offsets=(
+                    existing.episode_source_offsets if existing is not None else {}
+                ),
             )
         )
 
@@ -1574,6 +1607,9 @@ class SpiderPluginController:
                 title=item.selected_danmaku_title or (existing.title if existing is not None else ""),
                 search_title=item.danmaku_search_title or (existing.search_title if existing is not None else ""),
                 updated_at=int(time.time()),
+                episode_source_offsets=(
+                    existing.episode_source_offsets if existing is not None else {}
+                ),
             )
         )
 

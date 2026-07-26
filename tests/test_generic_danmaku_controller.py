@@ -4,7 +4,24 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.generic as generic_danmaku_module
 from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.models import PlayItem
+
+
+def test_generic_danmaku_controller_delegates_episode_offset(tmp_path: Path) -> None:
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = GenericDanmakuController(object(), danmaku_preference_store=store)
+    item = PlayItem(
+        title="第12集",
+        url="",
+        media_title="剑来",
+        selected_danmaku_provider="tencent",
+    )
+
+    controller.save_danmaku_offset(item, -2.5, playlist=[item])
+
+    assert controller.load_danmaku_offset(item, playlist=[item]) == -2.5
+    assert item.danmaku_offset_seconds == -2.5
 
 
 def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episode(monkeypatch, tmp_path: Path) -> None:

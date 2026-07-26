@@ -27,6 +27,27 @@ from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, Pl
 from atv_player.plugins.controller import SpiderPluginController, _count_danmaku_entries
 
 
+def test_spider_plugin_controller_delegates_episode_offset(tmp_path: Path) -> None:
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = SpiderPluginController(
+        object(),
+        plugin_name="demo",
+        search_enabled=False,
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第12集",
+        url="",
+        media_title="剑来",
+        selected_danmaku_provider="tencent",
+    )
+
+    controller.save_danmaku_offset(item, -2.5, playlist=[item])
+
+    assert controller.load_danmaku_offset(item, playlist=[item]) == -2.5
+    assert item.danmaku_offset_seconds == -2.5
+
+
 class JsonResponse:
     def __init__(self, payload=None, text: str = "", status_code: int = 200, content: bytes = b"") -> None:
         self._payload = payload

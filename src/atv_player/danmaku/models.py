@@ -63,3 +63,4 @@ class DanmakuSeriesPreference:
     title: str
     search_title: str = ""
     updated_at: int = 0
+    episode_source_offsets: dict[str, dict[str, float]] = field(default_factory=dict)

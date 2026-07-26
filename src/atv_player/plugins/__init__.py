@@ -154,6 +154,7 @@ class SpiderPluginManager:
         loader: SpiderPluginLoader,
         playback_history_repository=None,
         *,
+        danmaku_preference_store: DanmakuSeriesPreferenceStore | None = None,
         get=httpx.get,
     ) -> None:
         self._repository = repository
@@ -165,7 +166,9 @@ class SpiderPluginManager:
         self._preferred_parse_key_loader = None
         self._base_url_loader = None
         self._danmaku_service = None
-        self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
+        self._danmaku_preference_store = (
+            danmaku_preference_store or DanmakuSeriesPreferenceStore()
+        )
         self._metadata_hydrator_factory = None
         self._metadata_scrape_service_factory = None
         self._episode_title_enhancer_factory = None

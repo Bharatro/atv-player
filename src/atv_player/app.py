@@ -26,6 +26,7 @@ from atv_player.ai import (
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
 from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
@@ -480,6 +481,7 @@ class AppCoordinator(QObject):
             disabled_provider_ids_loader=lambda: self.repo.load_config().disabled_danmaku_provider_ids,
             config_loader=self.repo.load_config,
         )
+        self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -494,6 +496,7 @@ class AppCoordinator(QObject):
                 self._plugin_repository,
                 self._plugin_loader,
                 self._playback_history_repository,
+                danmaku_preference_store=self._danmaku_preference_store,
             )
             setattr(self._plugin_manager, "_playback_parser_service", self._playback_parser_service)
             setattr(self._plugin_manager, "_yt_dlp_service", self._yt_dlp_service)
@@ -943,7 +946,10 @@ class AppCoordinator(QObject):
                 return None
             if self._danmaku_service is None:
                 return None
-            return GenericDanmakuController(self._danmaku_service)
+            return GenericDanmakuController(
+                self._danmaku_service,
+                danmaku_preference_store=self._danmaku_preference_store,
+            )
 
         return factory
 
@@ -2238,6 +2244,7 @@ class AppCoordinator(QObject):
             danmaku_controller_factory=danmaku_controller_factory,
             episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,
+            danmaku_preference_store=self._danmaku_preference_store,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if following_update_service is not None:

@@ -216,6 +216,7 @@ class PlayItem:
     danmaku_xml: str = ""
     danmaku_pending: bool = False
     danmaku_series_key: str = ""
+    danmaku_offset_seconds: float = 0.0
     danmaku_search_title: str = ""
     danmaku_search_episode: str = ""
     danmaku_search_query: str = ""

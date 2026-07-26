@@ -13,6 +13,11 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
 )
 from atv_player.danmaku.processing import clean_records
+from atv_player.danmaku.preferences import (
+    DanmakuSeriesPreferenceStore,
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
 from atv_player.danmaku.utils import build_xml
 from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
@@ -44,9 +49,37 @@ class DirectParseDanmakuController:
         self,
         load: Callable[[str], dict[str, Any]] = load_direct_parse_danmaku,
         config_loader: Callable[[], AppConfig] | None = None,
+        danmaku_preference_store: DanmakuSeriesPreferenceStore | None = None,
     ) -> None:
         self._load = load
         self._config_loader = config_loader or AppConfig
+        self._danmaku_preference_store = danmaku_preference_store
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
 
     def _page_url(self, item: PlayItem) -> str:
         return (item.original_url or item.vod_id or item.url).strip()

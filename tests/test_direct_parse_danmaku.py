@@ -1,8 +1,28 @@
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_module
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
+
+
+def test_direct_parse_danmaku_controller_delegates_episode_offset(tmp_path) -> None:
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = DirectParseDanmakuController(
+        load=lambda _url: {},
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第12集",
+        url="",
+        media_title="剑来",
+        selected_danmaku_provider="direct_parse",
+    )
+
+    controller.save_danmaku_offset(item, -2.5, playlist=[item])
+
+    assert controller.load_danmaku_offset(item, playlist=[item]) == -2.5
+    assert item.danmaku_offset_seconds == -2.5
 
 
 def test_direct_parse_danmaku_controller_refreshes_single_source_candidate() -> None:
