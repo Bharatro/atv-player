@@ -928,6 +928,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video = self.video_widget
         self._pending_post_load_item: PlayItem | None = None
         self._pending_post_load_pause = False
+        self._pending_file_loaded_danmaku_item: PlayItem | None = None
         self._pending_ytdlp_metadata_hydration: tuple[PlayItem, int] | None = None
         self._danmaku_render_request_id = 0
         self._pending_danmaku_render_item: PlayItem | None = None
@@ -3216,6 +3217,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._restore_video_cursor()
 
     def open_session(self, session, start_paused: bool = False) -> None:
+        self._pending_file_loaded_danmaku_item = None
         self._reset_auto_switched_failure_sources()
         self._invalidate_play_item_resolution()
         if session.source_groups:
@@ -3720,6 +3722,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause,
             len(current_item.external_subtitles),
         )
+        if self.video is self.video_widget:
+            self._pending_file_loaded_danmaku_item = current_item
         try:
             self._video_load(
                 current_item.url,
@@ -3731,6 +3735,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 ytdl_format=playback_ytdl_format,
             )
         except Exception:
+            if self._pending_file_loaded_danmaku_item is current_item:
+                self._pending_file_loaded_danmaku_item = None
             if defer_post_load_configuration:
                 self._pending_post_load_item = None
                 self._pending_post_load_pause = False
@@ -3790,7 +3796,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_video_file_loaded(self) -> None:
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
+        pending_danmaku_item = self._pending_file_loaded_danmaku_item
+        self._pending_file_loaded_danmaku_item = None
         pending_item = self._pending_post_load_item
+        if (
+            pending_danmaku_item is not None
+            and pending_item is not pending_danmaku_item
+            and self.session is not None
+            and 0 <= self.current_index < len(self.session.playlist)
+            and self.session.playlist[self.current_index] is pending_danmaku_item
+        ):
+            self._configure_danmaku_for_current_item()
         if pending_item is None:
             return
 

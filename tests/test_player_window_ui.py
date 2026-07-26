@@ -23060,6 +23060,86 @@ def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeyp
     )
 
 
+def test_player_window_reconfigures_danmaku_after_matching_video_file_loaded(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    current_item = window.session.playlist[0]
+
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        window.video_widget,
+        "load",
+        lambda url, pause=False, start_seconds=0, **_kwargs: calls.append(("load", url)),
+    )
+    monkeypatch.setattr(window.video_widget, "set_speed", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_volume", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_muted", lambda value: None)
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: calls.append(("danmaku", window.session.playlist[window.current_index])),
+    )
+
+    window._start_current_item_playback()
+
+    assert calls == [("load", current_item.url), ("danmaku", current_item)]
+    assert window._pending_file_loaded_danmaku_item is current_item
+
+    window._handle_video_file_loaded()
+
+    assert calls == [
+        ("load", current_item.url),
+        ("danmaku", current_item),
+        ("danmaku", current_item),
+    ]
+    assert window._pending_file_loaded_danmaku_item is None
+
+
+def test_player_window_ignores_stale_file_loaded_danmaku_item(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    original_item = window.session.playlist[0]
+
+    configure_items: list[PlayItem] = []
+    monkeypatch.setattr(window.video_widget, "load", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window.video_widget, "set_speed", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_volume", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_muted", lambda value: None)
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: configure_items.append(window.session.playlist[window.current_index]),
+    )
+
+    window._start_current_item_playback()
+    window.current_index = 1
+    window._handle_video_file_loaded()
+
+    assert configure_items == [original_item]
+    assert window._pending_file_loaded_danmaku_item is None
+
+
+def test_player_window_clears_pending_file_loaded_danmaku_item_when_video_load_fails(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+
+    def fail_load(*_args, **_kwargs) -> None:
+        raise RuntimeError("load failed")
+
+    monkeypatch.setattr(window, "_video_load", fail_load)
+
+    with pytest.raises(RuntimeError, match="load failed"):
+        window._start_current_item_playback()
+
+    assert window._pending_file_loaded_danmaku_item is None
+
+
 def test_player_window_applies_post_load_configuration_immediately_on_windows(qtbot, monkeypatch) -> None:
     window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
     qtbot.addWidget(window)
