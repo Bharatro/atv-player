@@ -13,6 +13,7 @@ from atv_player.danmaku.models import (
     DanmakuSourceSearchResult,
 )
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
+from atv_player.models import AppConfig
 
 
 class FakeProvider:
@@ -1764,32 +1765,52 @@ def test_resolve_danmu_routes_to_other_when_selected() -> None:
     assert "<d " in xml
 
 
-def test_resolve_danmu_applies_time_offset_from_context() -> None:
-    from atv_player.danmaku.models import DanmakuRecord
+def test_service_ignores_removed_danmaku_environment_variables(monkeypatch) -> None:
+    monkeypatch.setenv("ATV_DANMU_BLOCKED_WORDS", "/normal/")
+    monkeypatch.setenv("ATV_DANMU_GROUP_MINUTE", "5")
+    monkeypatch.setenv("ATV_DANMU_CONVERT_TOP_BOTTOM", "1")
+    monkeypatch.setenv("ATV_DANMU_OFFSET", "demo:99")
+    provider = FakeProvider(
+        "fake",
+        [],
+        [DanmakuRecord(time_offset=10.0, pos=5, color="16777215", content="normal")],
+    )
+    service = DanmakuService(
+        {"fake": provider},
+        provider_order=["fake"],
+        config_loader=lambda: AppConfig(),
+    )
 
-    class FakeProv:
-        key = "tencent"
+    xml = service.resolve_danmu("https://fake.example/video")
 
-        def supports(self, u):
-            return True
+    assert "normal" in xml
+    assert 'p="10.0,5,' in xml
 
-        def search(self, n, original_name=None):
-            return []
 
-        def resolve(self, page_url):
-            return [DanmakuRecord(time_offset=10.0, pos=1, color="16777215", content="x")]
+def test_service_applies_persisted_danmaku_cleaning_in_order() -> None:
+    provider = FakeProvider(
+        "fake",
+        [],
+        [
+            DanmakuRecord(time_offset=1.0, pos=5, color="16777215", content="SPAM duplicate"),
+            DanmakuRecord(time_offset=2.0, pos=5, color="16777215", content="duplicate"),
+            DanmakuRecord(time_offset=3.0, pos=4, color="16777215", content="duplicate"),
+            DanmakuRecord(time_offset=70.0, pos=4, color="16777215", content="duplicate"),
+        ],
+    )
+    service = DanmakuService(
+        {"fake": provider},
+        provider_order=["fake"],
+        config_loader=lambda: AppConfig(
+            danmaku_blocked_words=["spam"],
+            danmaku_duplicate_window_minutes=1,
+            danmaku_convert_top_bottom_to_scroll=True,
+        ),
+    )
 
-    import os
-    os.environ["ATV_DANMU_OFFSET"] = "百花杀:-3"
-    try:
-        svc = DanmakuService({"tencent": FakeProv()}, provider_order=["tencent"])
-        xml = svc.resolve_danmu(
-            "https://v.qq.com/x/cover/x/y.html",
-            offset_context={"anime": "百花杀"},
-        )
-    finally:
-        del os.environ["ATV_DANMU_OFFSET"]
-    from atv_player.danmaku.subtitle import _parse_danmaku_xml_records
+    xml = service.resolve_danmu("https://fake.example/video")
 
-    records = _parse_danmaku_xml_records(xml)
-    assert records[0].time_offset == 7.0
+    assert "SPAM" not in xml
+    assert xml.count(">duplicate</d>") == 2
+    assert 'p="2.0,1,' in xml
+    assert 'p="70.0,1,' in xml

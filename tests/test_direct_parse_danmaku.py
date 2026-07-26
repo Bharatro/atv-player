@@ -1,6 +1,7 @@
+import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_module
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
-from atv_player.models import PlayItem
+from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
@@ -55,6 +56,35 @@ def test_direct_parse_danmaku_controller_switch_source_converts_payload_to_xml()
     assert ">666</d>" in xml_text
     assert 'p="6,5,25,39244' in xml_text
     assert item.danmaku_xml == xml_text
+
+
+def test_direct_parse_controller_applies_persisted_cleaning_before_cache(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path)
+    controller = DirectParseDanmakuController(
+        load=lambda _url: {
+            "danmuku": [
+                [1, "top", "#ffffff", "", "广告"],
+                [2, "bottom", "#ffffff", "", "正常"],
+            ]
+        },
+        config_loader=lambda: AppConfig(
+            danmaku_blocked_words=["广告"],
+            danmaku_convert_top_bottom_to_scroll=True,
+        ),
+    )
+    item = PlayItem(
+        title="第1集",
+        url="",
+        original_url="https://example.test/1",
+    )
+
+    xml = controller.switch_danmaku_source(item, item.original_url)
+
+    assert "广告" not in xml
+    assert "正常" in xml
+    assert 'p="2,1,' in xml
 
 
 def test_direct_parse_danmaku_controller_uses_cached_xml_before_network(monkeypatch) -> None:

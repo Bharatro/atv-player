@@ -21,6 +21,7 @@ from atv_player.danmaku.providers import (
 )
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.providers.base import DanmakuProvider
+from atv_player.models import AppConfig
 from atv_player.danmaku.utils import (
     build_xml,
     episode_matches_request,
@@ -39,7 +40,7 @@ from atv_player.danmaku.utils import (
 )
 
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
-from atv_player.danmaku.processing import filter_blocked_words, group_by_time_window, convert_top_bottom_to_scroll, apply_time_offset, parse_offset_rules, resolve_offset_seconds
+from atv_player.danmaku.processing import clean_records
 from atv_player.danmaku.providers.other import OtherDanmakuProvider
 
 
@@ -320,6 +321,7 @@ class DanmakuService:
         providers: dict[str, DanmakuProvider],
         provider_order: list[str],
         disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+        config_loader: Callable[[], AppConfig] | None = None,
         ai_enrichment_service=None,
         douban_discovery=None,
         other_provider=None,
@@ -328,6 +330,7 @@ class DanmakuService:
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
         self._disabled_provider_ids_loader = disabled_provider_ids_loader
+        self._config_loader = config_loader or AppConfig
         self._ai_enrichment_service = ai_enrichment_service
         self._douban_discovery = douban_discovery
         if other_provider is not None:
@@ -868,62 +871,19 @@ class DanmakuService:
         )
 
     def _process_records(self, records):
-        """Apply user-configured danmaku cleaning (blocked words / dedupe / top-bottom).
-
-        Config is read from environment variables (UI settings entry is a follow-up):
-        ATV_DANMU_BLOCKED_WORDS (``/regex/,/regex/``), ATV_DANMU_GROUP_MINUTE (int),
-        ATV_DANMU_CONVERT_TOP_BOTTOM (1/0).
-        """
-        import os
-        blocked = os.environ.get("ATV_DANMU_BLOCKED_WORDS", "").strip()
-        if blocked:
-            import re as _re
-            patterns = []
-            for raw in _re.split(r"(?<=/),(?=/)", blocked):
-                token = raw.strip()
-                if token.startswith("/") and token.endswith("/") and len(token) > 1:
-                    try:
-                        patterns.append(_re.compile(token[1:-1]))
-                    except _re.reerror:
-                        pass
-            if patterns:
-                records = filter_blocked_words(records, patterns)
         try:
-            minutes = int(os.environ.get("ATV_DANMU_GROUP_MINUTE", "0") or 0)
-        except ValueError:
-            minutes = 0
-        if minutes > 0:
-            records = group_by_time_window(records, minutes)
-        if os.environ.get("ATV_DANMU_CONVERT_TOP_BOTTOM", "0").strip() in ("1", "true", "yes"):
-            records = convert_top_bottom_to_scroll(records)
-        return records
-
-    def _apply_time_offset(self, records, offset_context):
-        """Apply DANMU_OFFSET rules (env ATV_DANMU_OFFSET) matched against the context.
-
-        Context keys: anime (required), season, episode, source. No env or no anime -> noop.
-        """
-        if not offset_context:
-            return records
-        anime = str(offset_context.get("anime") or "").strip()
-        if not anime:
-            return records
-        import os
-        rules = parse_offset_rules(os.environ.get("ATV_DANMU_OFFSET", ""))
-        if not rules:
-            return records
-        offset = resolve_offset_seconds(
-            rules,
-            anime=anime,
-            season=offset_context.get("season"),
-            episode=offset_context.get("episode"),
-            source=str(offset_context.get("source") or ""),
+            config = self._config_loader()
+        except Exception:
+            logger.exception("Failed to load danmaku cleaning config")
+            return list(records)
+        return clean_records(
+            records,
+            blocked_words=config.danmaku_blocked_words,
+            duplicate_window_minutes=config.danmaku_duplicate_window_minutes,
+            convert_top_bottom=config.danmaku_convert_top_bottom_to_scroll,
         )
-        if offset == 0:
-            return records
-        return apply_time_offset(records, offset)
 
-    def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None, offset_context: dict | None = None) -> str:
+    def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         provider_keys = list(self._provider_order)
         selected_option_matches = option is not None and option.url == page_url and bool(option.provider)
         if selected_option_matches:
@@ -945,7 +905,6 @@ class DanmakuService:
             if not records:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
             records = self._process_records(records)
-            records = self._apply_time_offset(records, offset_context)
             return build_xml(records)
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
@@ -955,6 +914,7 @@ def create_default_danmaku_service(
     post=httpx.post,
     disabled_provider_ids: list[str] | None = None,
     disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+    config_loader: Callable[[], AppConfig] | None = None,
     ai_enrichment_service=None,
 ) -> DanmakuService:
     disabled = {str(item or "").strip() for item in (disabled_provider_ids or [])}
@@ -981,6 +941,7 @@ def create_default_danmaku_service(
         providers,
         provider_order=provider_order,
         disabled_provider_ids_loader=disabled_provider_ids_loader,
+        config_loader=config_loader,
         ai_enrichment_service=ai_enrichment_service,
         douban_discovery=douban_discovery,
         other_provider=other_provider,

@@ -6857,6 +6857,30 @@ def test_main_window_global_search_offline_download_opens_placeholder_player_imm
     assert real_request.source_vod_id == magnet
 
 
+def test_main_window_direct_parse_danmaku_controller_uses_current_cleaning_config(qtbot) -> None:
+    config = AppConfig(danmaku_blocked_words=["广告"])
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+        direct_parse_danmaku_loader=lambda _url: {},
+    )
+    qtbot.addWidget(window)
+
+    controller = window._build_direct_parse_danmaku_controller()
+
+    assert controller is not None
+    assert controller._config_loader() is config
+
+
 def test_main_window_global_search_builds_episode_playlist_from_direct_parse_detail(qtbot, monkeypatch) -> None:
     class FakeParserService:
         def __init__(self) -> None:

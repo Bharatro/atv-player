@@ -4755,7 +4755,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _build_direct_parse_danmaku_controller(self) -> object | None:
         if self._direct_parse_danmaku_loader is None:
             return None
-        return DirectParseDanmakuController(load=self._direct_parse_danmaku_loader)
+        return DirectParseDanmakuController(
+            load=self._direct_parse_danmaku_loader,
+            config_loader=lambda: self.config,
+        )
 
     def _build_direct_parse_playlist(self, payload: dict[str, Any]) -> list[PlayItem]:
         playlist: list[PlayItem] = []

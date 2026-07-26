@@ -3,13 +3,18 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from typing import Any
-from xml.sax.saxutils import escape
 
 import httpx
 
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import PlayItem
+from atv_player.danmaku.models import (
+    DanmakuRecord,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+)
+from atv_player.danmaku.processing import clean_records
+from atv_player.danmaku.utils import build_xml
+from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 _DIRECT_PARSE_DANMAKU_API = "https://dmku.hls.one/"
@@ -35,8 +40,13 @@ def load_direct_parse_danmaku(
 
 
 class DirectParseDanmakuController:
-    def __init__(self, load: Callable[[str], dict[str, Any]] = load_direct_parse_danmaku) -> None:
+    def __init__(
+        self,
+        load: Callable[[str], dict[str, Any]] = load_direct_parse_danmaku,
+        config_loader: Callable[[], AppConfig] | None = None,
+    ) -> None:
         self._load = load
+        self._config_loader = config_loader or AppConfig
 
     def _page_url(self, item: PlayItem) -> str:
         return (item.original_url or item.vod_id or item.url).strip()
@@ -136,24 +146,41 @@ class DirectParseDanmakuController:
         threading.Thread(target=run, daemon=True).start()
 
     def _payload_to_xml(self, payload: dict[str, Any]) -> str:
-        lines = ['<?xml version="1.0" encoding="UTF-8"?><i>']
+        records: list[DanmakuRecord] = []
         for entry in payload.get("danmuku") or []:
             if not isinstance(entry, list) or len(entry) < 5:
                 continue
             try:
-                time_offset = max(0.0, float(entry[0]))
+                parsed_time_offset = max(0.0, float(entry[0]))
             except (TypeError, ValueError):
                 continue
+            time_offset = (
+                int(parsed_time_offset)
+                if parsed_time_offset.is_integer()
+                else parsed_time_offset
+            )
             mode = self._danmaku_mode(entry[1] if len(entry) > 1 else "")
             color = self._danmaku_color(entry[2] if len(entry) > 2 else "")
             content = str(entry[4] or "").strip()
             if not content:
                 continue
-            lines.append(
-                f'<d p="{time_offset:g},{mode},25,{color},0,0,0,0">{escape(content)}</d>'
+            records.append(
+                DanmakuRecord(
+                    time_offset=time_offset,
+                    pos=mode,
+                    color=str(color),
+                    content=content,
+                )
             )
-        lines.append("</i>")
-        return "".join(lines)
+        config = self._config_loader()
+        return build_xml(
+            clean_records(
+                records,
+                blocked_words=config.danmaku_blocked_words,
+                duplicate_window_minutes=config.danmaku_duplicate_window_minutes,
+                convert_top_bottom=config.danmaku_convert_top_bottom_to_scroll,
+            )
+        )
 
     def _danmaku_mode(self, value: object) -> int:
         normalized = str(value or "").strip().lower()

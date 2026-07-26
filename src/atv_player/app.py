@@ -478,6 +478,7 @@ class AppCoordinator(QObject):
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),
             disabled_provider_ids_loader=lambda: self.repo.load_config().disabled_danmaku_provider_ids,
+            config_loader=self.repo.load_config,
         )
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
