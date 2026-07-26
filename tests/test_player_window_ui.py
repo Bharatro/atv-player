@@ -20756,6 +20756,50 @@ def test_player_window_hydrate_only_loader_refreshes_media_controls(qtbot, monke
     ]
 
 
+@pytest.mark.parametrize(
+    ("pending_prepare_index", "expected_configure_calls"),
+    [
+        (0, []),
+        (1, ["configure-danmaku"]),
+    ],
+)
+def test_player_window_hydrate_only_defers_danmaku_during_matching_prepare(
+    qtbot,
+    monkeypatch,
+    pending_prepare_index: int,
+    expected_configure_calls: list[str],
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    window._playback_loader_request_id = 7
+    window._pending_playback_loader = player_window_module._PendingPlaybackLoader(
+        index=0,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        hydrate_only=True,
+    )
+    window._pending_playback_prepare = player_window_module._PendingPlaybackPrepare(
+        index=pending_prepare_index,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        source_url="http://m/1.m3u8",
+    )
+    configure_calls: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: configure_calls.append("configure-danmaku"),
+    )
+
+    window._handle_playback_loader_succeeded(window._playback_loader_request_id, None)
+
+    assert configure_calls == expected_configure_calls
+
+
 def test_player_window_ignores_stale_async_loader_result_after_switching_items(qtbot) -> None:
     ready = threading.Event()
     session = PlayerSession(
