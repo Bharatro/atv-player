@@ -1498,6 +1498,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         dialog_line_edit_qss = build_form_line_edit_qss(tokens)
         dialog_spinbox_qss = build_form_spinbox_qss(tokens)
+        compact_dialog_spinbox_qss = build_form_spinbox_qss(
+            tokens,
+            border_radius=10,
+            min_height=30,
+        )
         skip_spinbox_qss = build_player_spinbox_qss(player_tokens)
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
@@ -1546,7 +1551,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         for edit in self._dialog_line_edits():
             edit.setStyleSheet(dialog_line_edit_qss)
         for spinbox in self._dialog_spinboxes():
-            spinbox.setStyleSheet(dialog_spinbox_qss)
+            spinbox.setStyleSheet(
+                compact_dialog_spinbox_qss
+                if spinbox is self._danmaku_source_offset_spin
+                else dialog_spinbox_qss
+            )
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
         self.progress.setProperty("track_height", 4)
@@ -1635,6 +1644,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             edits.append(self._danmaku_source_title_edit)
         if self._danmaku_source_episode_edit is not None:
             edits.append(self._danmaku_source_episode_edit)
+        if self._danmaku_source_url_edit is not None:
+            edits.append(self._danmaku_source_url_edit)
         return edits
 
     def _dialog_spinboxes(self) -> list[QWidget]:
@@ -1665,6 +1676,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _refresh_danmaku_source_search_row_heights(self) -> None:
         self._set_fixed_control_height(self._danmaku_source_title_edit, 40)
         self._set_fixed_control_height(self._danmaku_source_episode_edit, 40)
+        self._set_fixed_control_height(self._danmaku_source_url_edit, 40)
         self._set_fixed_control_height(self._danmaku_source_search_provider_combo, 42)
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
@@ -8660,6 +8672,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_offset_spin.setDecimals(1)
         self._danmaku_source_offset_spin.setSingleStep(0.5)
         self._danmaku_source_offset_spin.setSuffix(" 秒")
+        self._danmaku_source_offset_spin.setFixedHeight(32)
         offset_row.addWidget(self._danmaku_source_offset_spin)
         self._danmaku_source_offset_reset_button = QPushButton("重置", host)
         offset_row.addWidget(self._danmaku_source_offset_reset_button)

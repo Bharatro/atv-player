@@ -3269,6 +3269,7 @@ def test_danmaku_source_dialog_shows_saved_episode_offset(qtbot) -> None:
     assert window._danmaku_source_offset_spin.singleStep() == 0.5
     assert window._danmaku_source_offset_spin.value() == -3.0
     assert window._danmaku_source_offset_spin.isEnabled() is True
+    assert window._danmaku_source_offset_spin.height() == 32
 
 
 def test_danmaku_source_offset_change_debounces_save_and_rerender(qtbot, monkeypatch) -> None:
@@ -4228,6 +4229,13 @@ def test_player_window_danmaku_source_dialog_has_episode_url_download_controls(q
     assert window._danmaku_source_url_edit is not None
     assert window._danmaku_source_url_download_button is not None
     assert window._danmaku_source_url_download_button.text() == "下载"
+    assert window._danmaku_source_title_edit is not None
+    assert window._danmaku_source_episode_edit is not None
+    assert (
+        window._danmaku_source_url_edit.height()
+        == window._danmaku_source_title_edit.height()
+        == window._danmaku_source_episode_edit.height()
+    )
 
 
 @pytest.mark.parametrize(
