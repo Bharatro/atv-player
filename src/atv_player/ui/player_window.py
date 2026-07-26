@@ -778,6 +778,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_rerun_button: QPushButton | None = None
         self._danmaku_source_clear_button: QPushButton | None = None
         self._danmaku_source_switch_button: QPushButton | None = None
+        self._danmaku_source_offset_spin: QDoubleSpinBox | None = None
+        self._danmaku_source_offset_reset_button: QPushButton | None = None
+        self._pending_danmaku_offset_item: PlayItem | None = None
         self._metadata_scrape_title_edit: QLineEdit | None = None
         self._metadata_scrape_year_edit: QLineEdit | None = None
         self._metadata_scrape_category_combo: QComboBox | None = None
@@ -897,6 +900,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
+        self._danmaku_offset_save_timer = QTimer(self)
+        self._danmaku_offset_save_timer.setSingleShot(True)
+        self._danmaku_offset_save_timer.setInterval(250)
+        self._danmaku_offset_save_timer.timeout.connect(self._apply_pending_danmaku_offset)
         self._primary_external_subtitle_retry_timer = QTimer(self)
         self._primary_external_subtitle_retry_timer.setSingleShot(True)
         self._primary_external_subtitle_retry_timer.timeout.connect(self._retry_apply_primary_external_subtitle)
@@ -1637,6 +1644,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             spinboxes.append(self._danmaku_opacity_spin)
         if self._danmaku_scroll_speed_spin is not None:
             spinboxes.append(self._danmaku_scroll_speed_spin)
+        if self._danmaku_source_offset_spin is not None:
+            spinboxes.append(self._danmaku_source_offset_spin)
         return spinboxes
 
     def _set_fixed_control_height(self, widget: QWidget | None, height: int) -> None:
@@ -4041,6 +4050,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if callable(reset_prefetch):
                 reset_prefetch(self.session)
         self.current_index = index
+        self._sync_danmaku_offset_controls(self.session.playlist[self.current_index])
         self._sync_bilibili_tree_active_group_from_current_index()
         try:
             self.playlist.setCurrentRow(self.current_index)
@@ -8630,6 +8640,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         columns.addWidget(self._danmaku_source_provider_list, 1)
         columns.addWidget(self._danmaku_source_option_list, 2)
         layout.addLayout(columns)
+        offset_row = QHBoxLayout()
+        offset_row.addWidget(QLabel("弹幕偏移", host))
+        self._danmaku_source_offset_spin = QDoubleSpinBox(host)
+        self._danmaku_source_offset_spin.setRange(-600.0, 600.0)
+        self._danmaku_source_offset_spin.setDecimals(1)
+        self._danmaku_source_offset_spin.setSingleStep(0.5)
+        self._danmaku_source_offset_spin.setSuffix(" 秒")
+        offset_row.addWidget(self._danmaku_source_offset_spin)
+        self._danmaku_source_offset_reset_button = QPushButton("重置", host)
+        offset_row.addWidget(self._danmaku_source_offset_reset_button)
+        offset_row.addStretch(1)
+        layout.addLayout(offset_row)
         self._danmaku_source_status_label = QLabel("", host)
         layout.addWidget(self._danmaku_source_status_label)
         actions = QHBoxLayout()
@@ -8652,6 +8674,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_provider_list.currentRowChanged.connect(self._handle_danmaku_source_provider_changed)
         self._danmaku_source_search_provider_combo.currentIndexChanged.connect(
             self._handle_danmaku_search_provider_changed
+        )
+        self._danmaku_source_offset_spin.valueChanged.connect(self._queue_danmaku_offset_save)
+        self._danmaku_source_offset_reset_button.clicked.connect(
+            lambda: self._danmaku_source_offset_spin.setValue(0.0)
         )
         self._danmaku_source_dialog = dialog
         self._apply_theme()
@@ -8787,6 +8813,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        self._sync_danmaku_offset_controls(current_item)
         self._refresh_danmaku_source_dialog_actions(current_item)
         dialog.show()
         self._refresh_danmaku_source_search_row_heights()
@@ -8842,11 +8869,84 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        if self._current_play_item() is current_item:
+            self._sync_danmaku_offset_controls(current_item)
         self._refresh_danmaku_source_dialog_actions(current_item)
         self._refresh_danmaku_source_entry_points()
 
     def _has_active_danmaku_source_task(self, item: PlayItem | None) -> bool:
         return item is not None and self._active_danmaku_source_task_counts.get(id(item), 0) > 0
+
+    def _load_current_danmaku_offset(self, current_item: PlayItem | None = None) -> float:
+        item = current_item or self._current_play_item()
+        if item is None:
+            return 0.0
+        value = 0.0
+        session = self.session
+        controller = session.danmaku_controller if session is not None else None
+        loader = getattr(controller, "load_danmaku_offset", None)
+        if session is not None and item.selected_danmaku_provider and callable(loader):
+            try:
+                value = float(loader(item, session.playlist))
+            except Exception as exc:
+                self._append_log(f"弹幕偏移读取失败: {exc}")
+                value = 0.0
+        value = max(-600.0, min(value, 600.0))
+        item.danmaku_offset_seconds = value
+        return value
+
+    def _set_danmaku_offset_controls_enabled(self, current_item: PlayItem | None) -> None:
+        enabled = bool(
+            current_item is not None
+            and current_item.danmaku_xml
+            and current_item.selected_danmaku_provider
+            and not self._has_active_danmaku_source_task(current_item)
+        )
+        if self._danmaku_source_offset_spin is not None:
+            self._danmaku_source_offset_spin.setEnabled(enabled)
+        if self._danmaku_source_offset_reset_button is not None:
+            self._danmaku_source_offset_reset_button.setEnabled(enabled)
+
+    def _sync_danmaku_offset_controls(self, current_item: PlayItem | None = None) -> None:
+        item = current_item or self._current_play_item()
+        self._danmaku_offset_save_timer.stop()
+        self._pending_danmaku_offset_item = None
+        value = self._load_current_danmaku_offset(item)
+        if self._danmaku_source_offset_spin is not None:
+            self._danmaku_source_offset_spin.blockSignals(True)
+            self._danmaku_source_offset_spin.setValue(value)
+            self._danmaku_source_offset_spin.blockSignals(False)
+        self._set_danmaku_offset_controls_enabled(item)
+
+    def _queue_danmaku_offset_save(self, _value: float) -> None:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return
+        self._pending_danmaku_offset_item = current_item
+        self._danmaku_offset_save_timer.start()
+
+    def _apply_pending_danmaku_offset(self) -> None:
+        current_item = self._current_play_item()
+        pending_item = self._pending_danmaku_offset_item
+        self._pending_danmaku_offset_item = None
+        if (
+            current_item is None
+            or current_item is not pending_item
+            or self._danmaku_source_offset_spin is None
+        ):
+            return
+        value = self._danmaku_source_offset_spin.value()
+        current_item.danmaku_offset_seconds = value
+        session = self.session
+        controller = session.danmaku_controller if session is not None else None
+        saver = getattr(controller, "save_danmaku_offset", None)
+        if session is not None and callable(saver):
+            try:
+                saver(current_item, value, session.playlist)
+            except Exception as exc:
+                self._append_log(f"弹幕偏移保存失败: {exc}")
+        if current_item.danmaku_xml:
+            self._configure_danmaku_for_current_item()
 
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
         if self._danmaku_source_rerun_button is not None:
@@ -8869,6 +8969,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         if self._danmaku_source_status_label is not None:
             self._danmaku_source_status_label.setText(current_item.danmaku_status_text if current_item is not None else "")
+        self._set_danmaku_offset_controls_enabled(current_item)
 
     def _start_danmaku_source_task(
         self,

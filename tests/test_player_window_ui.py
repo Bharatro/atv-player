@@ -3201,6 +3201,196 @@ def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> No
     assert window._danmaku_source_provider_list.count() == 1
 
 
+class FakeOffsetDanmakuController:
+    def __init__(self, offsets: dict[tuple[str, str], float] | None = None) -> None:
+        self.offsets = dict(offsets or {})
+        self.saved: list[float] = []
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        del playlist
+        return self.offsets.get((item.title, item.selected_danmaku_provider), 0.0)
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        del playlist
+        normalized = float(value)
+        self.offsets[(item.title, item.selected_danmaku_provider)] = normalized
+        self.saved.append(normalized)
+
+
+def build_window_with_loaded_danmaku(
+    qtbot,
+    controller: object,
+    *,
+    items: list[PlayItem] | None = None,
+) -> tuple[PlayerWindow, list[PlayItem]]:
+    playlist = items or [
+        PlayItem(
+            title="第1集",
+            url="https://stream.example/1.m3u8",
+            media_title="红果短剧",
+            danmaku_xml='<i><d p="5,1,25,16777215">ok</d></i>',
+            selected_danmaku_provider="tencent",
+            selected_danmaku_url="https://v.qq.com/1",
+        )
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=playlist,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = session
+    window.current_index = 0
+    return window, playlist
+
+
+def test_danmaku_source_dialog_shows_saved_episode_offset(qtbot) -> None:
+    controller = FakeOffsetDanmakuController({("第1集", "tencent"): -3.0})
+    window, _items = build_window_with_loaded_danmaku(qtbot, controller)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_offset_spin is not None
+    assert window._danmaku_source_offset_spin.minimum() == -600.0
+    assert window._danmaku_source_offset_spin.maximum() == 600.0
+    assert window._danmaku_source_offset_spin.singleStep() == 0.5
+    assert window._danmaku_source_offset_spin.value() == -3.0
+    assert window._danmaku_source_offset_spin.isEnabled() is True
+
+
+def test_danmaku_source_offset_change_debounces_save_and_rerender(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController()
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(items[0].danmaku_offset_seconds),
+    )
+
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_offset_spin.setValue(-2.0)
+    window._danmaku_source_offset_spin.setValue(-3.0)
+
+    qtbot.waitUntil(lambda: controller.saved == [-3.0], timeout=1000)
+    assert renders == [-3.0]
+
+
+def test_danmaku_source_offset_controls_disable_without_xml_provider_or_while_loading(qtbot) -> None:
+    controller = FakeOffsetDanmakuController()
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    item = items[0]
+    item.danmaku_xml = ""
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+    item.danmaku_xml = '<i><d p="5,1,25,16777215">ok</d></i>'
+    item.selected_danmaku_provider = ""
+    window._sync_danmaku_offset_controls(item)
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+    item.selected_danmaku_provider = "tencent"
+    window._active_danmaku_source_task_counts[id(item)] = 1
+    window._sync_danmaku_offset_controls(item)
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+
+
+def test_danmaku_source_offset_reset_saves_zero_and_rerenders(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController({("第1集", "tencent"): -3.0})
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(items[0].danmaku_offset_seconds),
+    )
+
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_offset_reset_button.click()
+
+    qtbot.waitUntil(lambda: controller.saved == [0.0], timeout=1000)
+    assert renders == [0.0]
+
+
+def test_danmaku_source_switch_loads_provider_offset_before_rerender(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController(
+        {
+            ("第1集", "tencent"): -3.0,
+            ("第1集", "youku"): 2.5,
+        }
+    )
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    item = items[0]
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(item.danmaku_offset_seconds),
+    )
+    window._open_danmaku_source_dialog()
+
+    item.selected_danmaku_provider = "youku"
+    window._handle_danmaku_source_task_finished(item, configure_danmaku=True)
+
+    assert item.danmaku_offset_seconds == 2.5
+    assert window._danmaku_source_offset_spin.value() == 2.5
+    assert renders == [2.5]
+
+
+def test_danmaku_source_episode_change_restores_episode_offset(qtbot, monkeypatch) -> None:
+    items = [
+        PlayItem(
+            title="第1集",
+            url="https://stream.example/1.m3u8",
+            danmaku_xml='<i><d p="5,1,25,16777215">one</d></i>',
+            selected_danmaku_provider="tencent",
+        ),
+        PlayItem(
+            title="第2集",
+            url="https://stream.example/2.m3u8",
+            danmaku_xml='<i><d p="5,1,25,16777215">two</d></i>',
+            selected_danmaku_provider="tencent",
+        ),
+    ]
+    controller = FakeOffsetDanmakuController(
+        {
+            ("第1集", "tencent"): -3.0,
+            ("第2集", "tencent"): 4.0,
+        }
+    )
+    window, _items = build_window_with_loaded_danmaku(qtbot, controller, items=items)
+    window._open_danmaku_source_dialog()
+    monkeypatch.setattr(window, "_load_current_item", lambda **_kwargs: None)
+
+    window._play_item_at_index(1)
+
+    assert items[1].danmaku_offset_seconds == 4.0
+    assert window._danmaku_source_offset_spin.value() == 4.0
+
+
+def test_danmaku_source_offset_missing_controller_apis_falls_back_to_zero(qtbot) -> None:
+    window, items = build_window_with_loaded_danmaku(qtbot, object())
+    items[0].danmaku_offset_seconds = 9.0
+
+    window._open_danmaku_source_dialog()
+
+    assert items[0].danmaku_offset_seconds == 0.0
+    assert window._danmaku_source_offset_spin.value() == 0.0
+
+
 def test_player_window_saves_danmaku_render_mode_from_dialog(qtbot) -> None:
     saved = {"called": 0}
     config = AppConfig()
