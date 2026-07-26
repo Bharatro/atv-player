@@ -1,20 +1,43 @@
 from __future__ import annotations
 
 import base64
-import html
 import hashlib
+import html
 import json
 import math
 import re
 import time
-from urllib.parse import parse_qs, urlencode, urlparse
+from dataclasses import replace
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
-from atv_player.danmaku.utils import extract_episode_number, normalize_name, strip_episode_suffix
+from atv_player.danmaku.utils import (
+    extract_episode_number,
+    normalize_name,
+    strip_episode_suffix,
+)
+
+
+class _YoukuAnthologyLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "a":
+            return
+        values = {key.casefold(): str(value or "") for key, value in attrs}
+        if "box-anthology-item" not in values.get("class", "").split():
+            return
+        href = values.get("href", "").strip()
+        label = values.get("aria-label", "").strip()
+        if href and label:
+            self.links.append((href, label))
 
 
 class YoukuDanmakuProvider:
@@ -247,10 +270,10 @@ class YoukuDanmakuProvider:
             return []
         expanded: list[DanmakuSearchItem] = []
         seen_groups: set[str] = set()
+        authoritative_groups: set[str] = set()
         for item in items:
             parent_title = str(item.resolve_context.get("parent_title") or "").strip()
-            group_title = parent_title or strip_episode_suffix(item.name)
-            group_key = normalize_name(group_title) or item.url
+            group_key = self._search_item_group_key(item)
             if group_key in seen_groups:
                 continue
             seen_groups.add(group_key)
@@ -265,15 +288,38 @@ class YoukuDanmakuProvider:
                 )
             except Exception:
                 continue
+            structured = self._extract_initial_data_episode_items(
+                response.text,
+                parent_title=parent_title,
+            )
+            if structured:
+                authoritative_groups.add(group_key)
+                group_items = [
+                    candidate
+                    for candidate in items
+                    if self._search_item_group_key(candidate) == group_key
+                ]
+                expanded.extend(self._merge_detail_metadata(structured, group_items))
+                continue
             expanded.extend(
-                self._extract_detail_episode_items(
+                self._extract_legacy_detail_episode_items(
                     response.text,
                     parent_title=parent_title,
                 )
             )
+        fallback_items = [
+            item
+            for item in items
+            if self._search_item_group_key(item) not in authoritative_groups
+        ]
         if not expanded:
-            return items
-        return self._merge_search_items(expanded, items)
+            return fallback_items
+        return self._merge_search_items(expanded, fallback_items)
+
+    def _search_item_group_key(self, item: DanmakuSearchItem) -> str:
+        parent_title = str(item.resolve_context.get("parent_title") or "").strip()
+        group_title = parent_title or strip_episode_suffix(item.name)
+        return normalize_name(group_title) or item.url
 
     def _extract_page_component_items(self, items: list[dict]) -> list[DanmakuSearchItem]:
         results: list[DanmakuSearchItem] = []
@@ -383,7 +429,7 @@ class YoukuDanmakuProvider:
         marker_text = " ".join(
             (
                 title,
-                str(((episode.get("iconCorner") or {}).get("tagText") or "")),
+                str((episode.get("iconCorner") or {}).get("tagText") or ""),
             )
         )
         return any(marker in marker_text for marker in self._NON_MAIN_EPISODE_MARKERS)
@@ -431,19 +477,85 @@ class YoukuDanmakuProvider:
             return episode
         return f"{parent} {episode}"
 
-    def _extract_detail_episode_items(
+    def _extract_initial_data(self, html_text: str) -> dict:
+        marker = re.search(r"window\.__INITIAL_DATA__\s*=\s*", html_text)
+        if marker is None:
+            return {}
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(html_text[marker.end() :])
+        except (TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _extract_initial_data_episode_items(
+        self,
+        html_text: str,
+        parent_title: str = "",
+    ) -> list[DanmakuSearchItem]:
+        payload = self._extract_initial_data(html_text)
+        output: list[DanmakuSearchItem] = []
+        for module in payload.get("moduleList") or []:
+            if not isinstance(module, dict):
+                continue
+            for component in module.get("components") or []:
+                if (
+                    not isinstance(component, dict)
+                    or not self._is_episode_component(component)
+                ):
+                    continue
+                for episode in component.get("itemList") or []:
+                    if not isinstance(episode, dict):
+                        continue
+                    if str(episode.get("videoType") or "").strip() != "正片":
+                        continue
+                    episode_number = extract_episode_number(
+                        str(episode.get("stage") or "")
+                    )
+                    raw_title = str(episode.get("title") or "").strip()
+                    url = self._component_episode_url(episode)
+                    if episode_number is None or not raw_title or not url:
+                        continue
+                    episode_title = self._episode_title_with_number(
+                        raw_title, episode_number
+                    )
+                    output.append(
+                        DanmakuSearchItem(
+                            provider=self.key,
+                            name=self._episode_candidate_title(
+                                parent_title, episode_title
+                            ),
+                            url=url,
+                            resolve_context=(
+                                {"parent_title": parent_title} if parent_title else {}
+                            ),
+                        )
+                    )
+        return output
+
+    def _is_episode_component(self, component: dict) -> bool:
+        try:
+            return int(component.get("type") or 0) == 10013
+        except (TypeError, ValueError):
+            return False
+
+    def _extract_legacy_detail_episode_items(
         self,
         html_text: str,
         parent_title: str = "",
     ) -> list[DanmakuSearchItem]:
         output: list[DanmakuSearchItem] = []
-        pattern = r'<a[^>]+href="([^"]+)"[^>]+aria-label="([^"]+)"'
-        for match in re.finditer(pattern, html_text, re.I):
-            url = self._normalize_youku_url(html.unescape(match.group(1)))
+        parser = _YoukuAnthologyLinkParser()
+        parser.feed(html_text)
+        for raw_url, raw_title in parser.links:
+            url = self._normalize_youku_url(html.unescape(raw_url))
             episode_title = self._clean_detail_episode_title(
-                html.unescape(match.group(2)).strip()
+                html.unescape(raw_title).strip()
             )
-            if not url or not episode_title:
+            if (
+                not url
+                or extract_episode_number(episode_title) is None
+                or self._is_non_main_episode_candidate({}, raw_title)
+            ):
                 continue
             output.append(
                 DanmakuSearchItem(
@@ -456,6 +568,23 @@ class YoukuDanmakuProvider:
                 )
             )
         return output
+
+    def _merge_detail_metadata(
+        self,
+        detail_items: list[DanmakuSearchItem],
+        search_items: list[DanmakuSearchItem],
+    ) -> list[DanmakuSearchItem]:
+        search_by_url = {item.url: item for item in search_items}
+        return [
+            replace(
+                item,
+                duration_seconds=max(
+                    item.duration_seconds,
+                    search_by_url.get(item.url, item).duration_seconds,
+                ),
+            )
+            for item in detail_items
+        ]
 
     def _to_duration_seconds(self, value) -> int:
         try:
@@ -483,11 +612,17 @@ class YoukuDanmakuProvider:
         return [merged_by_key[key] for key in ordered_keys]
 
     def _component_episode_url(self, episode: dict) -> str:
-        video_id = str(episode.get("videoId") or "").strip()
-        if video_id:
+        action_value = str(
+            episode.get("action_value")
+            or ((episode.get("action") or {}).get("value") or "")
+        ).strip()
+        normalized_action_url = self._normalize_youku_url(action_value)
+        if normalized_action_url:
+            return normalized_action_url
+        video_id = str(episode.get("videoId") or action_value).strip()
+        if re.fullmatch(r"[A-Za-z0-9_=+-]+", video_id):
             return f"https://v.youku.com/v_show/id_{video_id}.html"
-        action_value = str(((episode.get("action") or {}).get("value") or "")).strip()
-        return self._normalize_youku_url(action_value)
+        return ""
 
     def _series_item_url(self, item: dict) -> str:
         video_id = str(item.get("videoId") or "").strip()

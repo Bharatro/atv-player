@@ -7,6 +7,61 @@ import httpx
 from atv_player.danmaku.providers.youku import YoukuDanmakuProvider
 
 
+def _suspense_initial_data_html() -> str:
+    payload = {
+        "moduleList": [
+            {
+                "components": [
+                    {
+                        "type": 10013,
+                        "title": "选集",
+                        "itemList": [
+                            {
+                                "action_value": "XNjUxODE2NjYyNA==",
+                                "title": "第1集 矢量",
+                                "stage": 1,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "XNjUxODE2NjYyOA==",
+                                "title": "第4集 专线",
+                                "stage": 4,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "preview04",
+                                "title": "第4集 专线（预告）",
+                                "stage": 4,
+                                "videoType": "预告片",
+                            },
+                            {
+                                "action_value": "highlight04",
+                                "title": "第4集 看点",
+                                "stage": 4,
+                                "videoType": "剧集看点",
+                            },
+                        ],
+                    },
+                    {
+                        "type": 10322,
+                        "title": "精彩推荐",
+                        "itemList": [
+                            {
+                                "action_value": "recommended",
+                                "title": "悬案凶手",
+                                "stage": 4,
+                                "videoType": "正片",
+                            }
+                        ],
+                    },
+                ]
+            }
+        ]
+    }
+    payload_text = json.dumps(payload, ensure_ascii=False)
+    return f"<script>window.__INITIAL_DATA__ ={payload_text};</script>"
+
+
 def test_youku_provider_search_maps_candidates_from_search_payload() -> None:
     def fake_get(
         url: str,
@@ -196,6 +251,60 @@ def test_youku_search_uses_stage_for_subtitle_and_filters_preview() -> None:
     ]
 
 
+def test_youku_search_uses_structured_main_episode_list() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "悬案"},
+                                "videoLink": "https://v.youku.com/v_show/id_XNjUxODE2NjYyNA==.html",
+                            },
+                            "componentMap": {
+                                "1035": {
+                                    "data": [
+                                        {
+                                            "videoId": "XNjUxODE2NjYyNA==",
+                                            "title": "矢量",
+                                            "displayName": "1",
+                                            "showVideoStage": "1",
+                                        },
+                                        {
+                                            "videoId": "preview04",
+                                            "title": "专线（预告）",
+                                            "displayName": "4",
+                                            "iconCorner": {"tagText": "预告"},
+                                        },
+                                    ]
+                                }
+                            },
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_XNjUxODE2NjYyNA==.html":
+            return httpx.Response(200, text=_suspense_initial_data_html())
+        raise AssertionError(url)
+
+    items = YoukuDanmakuProvider(get=fake_get).search("悬案")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("悬案 第1集 矢量", "https://v.youku.com/v_show/id_XNjUxODE2NjYyNA==.html"),
+        ("悬案 第4集 专线", "https://v.youku.com/v_show/id_XNjUxODE2NjYyOA==.html"),
+    ]
+
+
 def test_youku_search_prefixes_parent_title_for_bare_episode_titles() -> None:
     def fake_get(
         url: str,
@@ -238,10 +347,14 @@ def test_youku_search_prefixes_parent_title_for_bare_episode_titles() -> None:
             return httpx.Response(
                 200,
                 text=(
-                    '<a href="//v.youku.com/video?vid=episode01" '
+                    '<a class="box-anthology-item" '
+                    'href="//v.youku.com/video?vid=episode01" '
                     'aria-label="第1集 矢量"></a>'
-                    '<a href="//v.youku.com/video?vid=episode02" '
+                    '<a class="box-anthology-item" '
+                    'href="//v.youku.com/video?vid=episode02" '
                     'aria-label="第2集 打砸抢杀"></a>'
+                    '<a href="//v.youku.com/video?vid=recommended04" '
+                    'aria-label="第4集 推荐内容"></a>'
                 ),
             )
         raise AssertionError(url)
