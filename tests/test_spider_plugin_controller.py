@@ -4402,6 +4402,114 @@ def test_controller_uses_cached_danmaku_xml_without_network_lookup(monkeypatch) 
     assert calls == []
 
 
+def test_spider_controller_downloads_episode_url_without_replacing_candidates(
+    monkeypatch,
+) -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+
+        def provider_key_for_url(self, page_url: str) -> str:
+            assert page_url == "https://v.qq.com/x/cover/demo/ep1.html"
+            return "tencent"
+
+        def resolve_danmu(self, page_url: str) -> str:
+            self.resolve_calls.append(page_url)
+            return '<i><d p="1,1,25,16777215">manual</d></i>'
+
+    saved: list[tuple[str, str]] = []
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", lambda _name, _url: "")
+    monkeypatch.setattr(
+        controller_module,
+        "save_cached_danmaku_xml",
+        lambda name, url, _xml: saved.append((name, url)),
+    )
+    service = RecordingService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    candidates = [
+        DanmakuSourceGroup(
+            provider="youku",
+            provider_label="优酷",
+            options=[
+                DanmakuSourceOption(
+                    provider="youku",
+                    name="旧候选",
+                    url="https://youku/old",
+                )
+            ],
+        )
+    ]
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        vod_id="item-1",
+        media_title="红果短剧",
+        danmaku_search_query="红果短剧 1集",
+        danmaku_candidates=candidates,
+    )
+
+    xml = controller.download_danmaku_from_url(
+        item,
+        " https://v.qq.com/x/cover/demo/ep1.html ",
+    )
+
+    assert "manual" in xml
+    assert service.resolve_calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    assert item.danmaku_candidates is candidates
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep1.html"
+    assert item.selected_danmaku_title == "第1集"
+    assert ("红果短剧 1集", "https://v.qq.com/x/cover/demo/ep1.html") in saved
+
+
+def test_spider_controller_episode_url_failure_preserves_loaded_source(
+    monkeypatch,
+) -> None:
+    class FailingService:
+        def provider_key_for_url(self, _page_url: str) -> str:
+            return "tencent"
+
+        def resolve_danmu(self, _page_url: str) -> str:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", lambda _name, _url: "")
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FailingService(),
+    )
+    candidates = [DanmakuSourceGroup(provider="youku", provider_label="优酷", options=[])]
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_query="红果短剧 1集",
+        danmaku_candidates=candidates,
+        danmaku_xml="<i>old</i>",
+        selected_danmaku_provider="youku",
+        selected_danmaku_url="https://youku/old",
+        selected_danmaku_title="旧来源",
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        controller.download_danmaku_from_url(
+            item,
+            "https://v.qq.com/x/cover/demo/ep1.html",
+        )
+
+    assert item.danmaku_candidates is candidates
+    assert item.danmaku_xml == "<i>old</i>"
+    assert item.selected_danmaku_provider == "youku"
+    assert item.selected_danmaku_url == "https://youku/old"
+    assert item.selected_danmaku_title == "旧来源"
+
+
 def test_controller_uses_default_query_xml_cache_alias_after_manual_override_restart(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)

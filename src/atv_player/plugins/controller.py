@@ -23,6 +23,7 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_source_search_result,
     save_cached_danmaku_xml,
 )
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.preferences import (
     load_item_danmaku_offset,
@@ -2115,6 +2116,36 @@ class SpiderPluginController:
         self._schedule_series_level_danmaku_source_cache_warm(item, reg_src)
         danmaku_count = _count_danmaku_entries(xml_text)
         self._log_danmaku_event("弹幕下载成功", detail=_build_danmaku_success_detail(item, danmaku_count))
+        return xml_text
+
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        provider_key = self._danmaku_service.provider_key_for_url(normalized_url)
+        source_title = (item.title or item.media_title or "单集弹幕").strip()
+        self._log_danmaku_event("弹幕下载中", detail=f"{provider_key} - {source_title}")
+        query_name = (item.danmaku_search_query or _build_danmaku_search_name(item)).strip()
+        reg_src = str(item.vod_id or item.url or "").strip()
+        xml_text = load_cached_danmaku_xml(query_name, normalized_url)
+        if not xml_text:
+            xml_text = self._resolve_danmaku_xml(normalized_url)
+        self._save_danmaku_xml_cache(
+            item,
+            query_name,
+            reg_src,
+            xml_text,
+            page_url=normalized_url,
+        )
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = provider_key
+        item.selected_danmaku_url = normalized_url
+        item.selected_danmaku_title = source_title
+        item.danmaku_error = ""
+        self._save_danmaku_source_preference(item)
+        danmaku_count = _count_danmaku_entries(xml_text)
+        self._log_danmaku_event(
+            "弹幕下载成功",
+            detail=_build_danmaku_success_detail(item, danmaku_count),
+        )
         return xml_text
 
     def prefetch_next_episode_danmaku(
