@@ -8675,9 +8675,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_search_provider_combo.currentIndexChanged.connect(
             self._handle_danmaku_search_provider_changed
         )
-        self._danmaku_source_offset_spin.valueChanged.connect(self._queue_danmaku_offset_save)
+        offset_spin = self._danmaku_source_offset_spin
+        offset_spin.valueChanged.connect(self._queue_danmaku_offset_save)
         self._danmaku_source_offset_reset_button.clicked.connect(
-            lambda: self._danmaku_source_offset_spin.setValue(0.0)
+            lambda: offset_spin.setValue(0.0)
         )
         self._danmaku_source_dialog = dialog
         self._apply_theme()
@@ -8887,7 +8888,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         loader = getattr(controller, "load_danmaku_offset", None)
         if session is not None and item.selected_danmaku_provider and callable(loader):
             try:
-                value = float(loader(item, session.playlist))
+                value = float(cast(float | int | str, loader(item, session.playlist)))
             except Exception as exc:
                 self._append_log(f"弹幕偏移读取失败: {exc}")
                 value = 0.0

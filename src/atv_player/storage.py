@@ -4,6 +4,7 @@ import platform
 from pathlib import Path
 import sys
 import time
+from typing import Any, cast
 import uuid
 
 from atv_player.models import AppConfig, AppIdentity
@@ -79,7 +80,7 @@ def _normalize_danmaku_blocked_words(value: object) -> list[str]:
 
 def _normalize_danmaku_duplicate_window_minutes(value: object) -> int:
     try:
-        return max(0, min(int(value), 60))
+        return max(0, min(int(cast(Any, value)), 60))
     except (TypeError, ValueError):
         return 0
 

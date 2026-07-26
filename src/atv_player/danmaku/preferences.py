@@ -9,6 +9,7 @@ import re
 from tempfile import NamedTemporaryFile
 from threading import RLock
 import time
+from typing import Any, cast
 
 from atv_player.danmaku.models import DanmakuSeriesPreference
 from atv_player.danmaku.utils import infer_playlist_episode_number
@@ -51,7 +52,7 @@ def _normalize_persisted_offsets(value: object) -> dict[str, dict[str, float]]:
         for raw_provider, raw_value in raw_providers.items():
             provider = str(raw_provider or "").strip()
             try:
-                offset = float(raw_value)
+                offset = float(cast(Any, raw_value))
             except (TypeError, ValueError):
                 continue
             if not provider or not math.isfinite(offset) or not -600.0 <= offset <= 600.0:
@@ -65,7 +66,7 @@ def _normalize_persisted_offsets(value: object) -> dict[str, dict[str, float]]:
 
 def _normalize_offset_for_save(value: object) -> float:
     try:
-        offset = float(value)
+        offset = float(cast(Any, value))
     except (TypeError, ValueError):
         return 0.0
     if not math.isfinite(offset):
@@ -84,7 +85,7 @@ class DanmakuSeriesPreferenceStore:
             if not isinstance(raw, dict):
                 return None
             try:
-                updated_at = int(raw.get("updated_at") or 0)
+                updated_at = int(cast(Any, raw.get("updated_at") or 0))
             except (TypeError, ValueError):
                 updated_at = 0
             return DanmakuSeriesPreference(
