@@ -1,3 +1,5 @@
+import pytest
+
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.direct_parse as direct_parse_module
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
@@ -45,6 +47,75 @@ def test_direct_parse_danmaku_controller_refreshes_single_source_candidate() -> 
     assert item.danmaku_candidates[0].options[0].url == "https://v.qq.com/x/cover/demo/ep10.html"
     assert item.selected_danmaku_provider == "direct_parse"
     assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep10.html"
+
+
+def test_direct_parse_controller_downloads_manual_episode_url(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        direct_parse_module,
+        "load_cached_danmaku_xml",
+        lambda _name, _url: "",
+    )
+    monkeypatch.setattr(
+        direct_parse_module,
+        "save_cached_danmaku_xml",
+        lambda _name, _url, _xml: None,
+    )
+    controller = DirectParseDanmakuController(
+        load=lambda url: calls.append(url)
+        or {"danmuku": [[1, "right", "ffffff", "", "manual"]]}
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="成何体统",
+    )
+
+    xml = controller.download_danmaku_from_url(
+        item,
+        "https://v.qq.com/x/cover/demo/ep1.html",
+    )
+
+    assert calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    assert "manual" in xml
+    assert item.selected_danmaku_provider == "direct_parse"
+    assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep1.html"
+
+
+def test_direct_parse_episode_url_failure_restores_loaded_source(monkeypatch) -> None:
+    monkeypatch.setattr(
+        direct_parse_module,
+        "load_cached_danmaku_xml",
+        lambda _name, _url: "",
+    )
+    controller = DirectParseDanmakuController(
+        load=lambda _url: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    old_candidates = []
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="成何体统",
+        danmaku_candidates=old_candidates,
+        danmaku_xml="<i>old</i>",
+        selected_danmaku_provider="youku",
+        selected_danmaku_url="https://youku/old",
+        selected_danmaku_title="旧来源",
+        danmaku_error="旧错误",
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        controller.download_danmaku_from_url(
+            item,
+            "https://v.qq.com/x/cover/demo/ep1.html",
+        )
+
+    assert item.danmaku_candidates is old_candidates
+    assert item.danmaku_xml == "<i>old</i>"
+    assert item.selected_danmaku_provider == "youku"
+    assert item.selected_danmaku_url == "https://youku/old"
+    assert item.selected_danmaku_title == "旧来源"
+    assert item.danmaku_error == "旧错误"
 
 
 def test_direct_parse_danmaku_controller_switch_source_converts_payload_to_xml() -> None:

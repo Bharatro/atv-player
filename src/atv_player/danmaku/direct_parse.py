@@ -7,17 +7,18 @@ from typing import Any
 import httpx
 
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.models import (
     DanmakuRecord,
     DanmakuSourceGroup,
     DanmakuSourceOption,
 )
-from atv_player.danmaku.processing import clean_records
 from atv_player.danmaku.preferences import (
     DanmakuSeriesPreferenceStore,
     load_item_danmaku_offset,
     save_item_danmaku_offset,
 )
+from atv_player.danmaku.processing import clean_records
 from atv_player.danmaku.utils import build_xml
 from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
@@ -155,6 +156,29 @@ class DirectParseDanmakuController:
         item.danmaku_xml = xml_text
         save_cached_danmaku_xml(query_name, page_url, xml_text)
         return xml_text
+
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        previous_source_state = (
+            item.danmaku_candidates,
+            item.danmaku_xml,
+            item.selected_danmaku_provider,
+            item.selected_danmaku_url,
+            item.selected_danmaku_title,
+            item.danmaku_error,
+        )
+        try:
+            return self.switch_danmaku_source(item, normalized_url)
+        except Exception:
+            (
+                item.danmaku_candidates,
+                item.danmaku_xml,
+                item.selected_danmaku_provider,
+                item.selected_danmaku_url,
+                item.selected_danmaku_title,
+                item.danmaku_error,
+            ) = previous_source_state
+            raise
 
     def maybe_resolve(self, item: PlayItem) -> None:
         if item.danmaku_xml or item.danmaku_pending:

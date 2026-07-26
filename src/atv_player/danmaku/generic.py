@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from atv_player.danmaku.cache import (
     load_cached_danmaku_source_search_result,
@@ -12,13 +13,20 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_source_search_result,
     save_cached_danmaku_xml,
 )
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.models import (
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
 from atv_player.danmaku.preferences import (
     DanmakuSeriesPreferenceStore,
     load_item_danmaku_offset,
     save_item_danmaku_offset,
 )
-from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist_episode_number
+from atv_player.danmaku.utils import (
+    has_explicit_episode_marker,
+    infer_playlist_episode_number,
+)
 from atv_player.models import PlayItem
 
 _TITLE_ONLY_ITEM_TITLES = {
@@ -30,6 +38,14 @@ _TITLE_ONLY_ITEM_TITLES = {
 }
 _DANMAKU_ENTRY_RE = re.compile(r"<d\b")
 logger = logging.getLogger(__name__)
+
+
+def normalize_danmaku_episode_url(value: str) -> str:
+    normalized = str(value or "").strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("请输入完整的 http(s) 单集链接")
+    return normalized
 
 
 def _compose_danmaku_search_query(title: str, episode: str) -> str:
@@ -347,4 +363,28 @@ class GenericDanmakuController:
             item.selected_danmaku_title = selected_option.name
         item.danmaku_error = ""
         self._log_danmaku_event("弹幕下载成功", detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕")
+        return xml_text
+
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        provider_key = self._danmaku_service.provider_key_for_url(normalized_url)
+        source_title = (item.title or item.media_title or "单集弹幕").strip()
+        self._log_danmaku_event("弹幕下载中", detail=f"{provider_key} - {source_title}")
+        query_name = item.danmaku_search_query.strip() or self._search_query(item)
+        reg_src = self._reg_src(item)
+        xml_text = load_cached_danmaku_xml(query_name, normalized_url)
+        if not xml_text:
+            xml_text = self._danmaku_service.resolve_danmu(normalized_url)
+            save_cached_danmaku_xml(query_name, normalized_url, xml_text)
+        if reg_src:
+            save_cached_danmaku_xml(query_name, reg_src, xml_text)
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = provider_key
+        item.selected_danmaku_url = normalized_url
+        item.selected_danmaku_title = source_title
+        item.danmaku_error = ""
+        self._log_danmaku_event(
+            "弹幕下载成功",
+            detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕",
+        )
         return xml_text
