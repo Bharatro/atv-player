@@ -142,6 +142,66 @@ def test_youku_provider_search_maps_episode_candidates_from_page_component_paylo
     ]
 
 
+def test_youku_search_prefixes_parent_title_for_bare_episode_titles() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "悬案"},
+                                "videoLink": "https://v.youku.com/v_show/id_episode01.html",
+                            },
+                            "componentMap": {
+                                "1035": {
+                                    "data": [
+                                        {
+                                            "videoId": "episode01",
+                                            "title": "第1集 矢量",
+                                        },
+                                        {
+                                            "videoId": "episode02",
+                                            "title": "第2集 打砸抢杀",
+                                        },
+                                    ]
+                                }
+                            },
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_episode01.html":
+            return httpx.Response(
+                200,
+                text=(
+                    '<a href="//v.youku.com/video?vid=episode01" '
+                    'aria-label="第1集 矢量"></a>'
+                    '<a href="//v.youku.com/video?vid=episode02" '
+                    'aria-label="第2集 打砸抢杀"></a>'
+                ),
+            )
+        raise AssertionError(url)
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("悬案")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("悬案 第1集 矢量", "https://v.youku.com/v_show/id_episode01.html"),
+        ("悬案 第2集 打砸抢杀", "https://v.youku.com/v_show/id_episode02.html"),
+    ]
+
+
 def test_youku_provider_search_expands_full_episode_list_from_candidate_detail_page() -> None:
     def fake_get(
         url: str,

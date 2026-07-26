@@ -247,7 +247,9 @@ class YoukuDanmakuProvider:
         expanded: list[DanmakuSearchItem] = []
         seen_groups: set[str] = set()
         for item in items:
-            group_key = normalize_name(strip_episode_suffix(item.name)) or item.url
+            parent_title = str(item.resolve_context.get("parent_title") or "").strip()
+            group_title = parent_title or strip_episode_suffix(item.name)
+            group_key = normalize_name(group_title) or item.url
             if group_key in seen_groups:
                 continue
             seen_groups.add(group_key)
@@ -262,7 +264,12 @@ class YoukuDanmakuProvider:
                 )
             except Exception:
                 continue
-            expanded.extend(self._extract_detail_episode_items(response.text))
+            expanded.extend(
+                self._extract_detail_episode_items(
+                    response.text,
+                    parent_title=parent_title,
+                )
+            )
         if not expanded:
             return items
         return self._merge_search_items(expanded, items)
@@ -273,9 +280,11 @@ class YoukuDanmakuProvider:
             common = item.get("commonData") or {}
             if not self._is_youku_common_data(common):
                 continue
-            component_results: list[DanmakuSearchItem] = []
-            for episode in self._component_episode_items(item):
-                component_results.append(episode)
+            parent_title = self._component_parent_title(common)
+            component_results = self._component_episode_items(
+                item,
+                parent_title=parent_title,
+            )
             title = self._component_primary_title(common)
             url = self._component_primary_url(common)
             if title and url and not component_results:
@@ -285,6 +294,9 @@ class YoukuDanmakuProvider:
                         name=title,
                         url=url,
                         duration_seconds=self._to_duration_seconds(common.get("duration")),
+                        resolve_context=(
+                            {"parent_title": parent_title} if parent_title else {}
+                        ),
                     )
                 )
             results.extend(component_results)
@@ -318,23 +330,30 @@ class YoukuDanmakuProvider:
                 return True
         return False
 
-    def _component_episode_items(self, item: dict) -> list[DanmakuSearchItem]:
+    def _component_episode_items(
+        self,
+        item: dict,
+        parent_title: str = "",
+    ) -> list[DanmakuSearchItem]:
         component_map = item.get("componentMap") or {}
         episodes = (component_map.get("1035") or {}).get("data") or []
         output: list[DanmakuSearchItem] = []
         for episode in episodes:
             if not isinstance(episode, dict):
                 continue
-            title = str(episode.get("title") or "").strip()
+            episode_title = str(episode.get("title") or "").strip()
             url = self._component_episode_url(episode)
-            if not title or not url:
+            if not episode_title or not url:
                 continue
             output.append(
                 DanmakuSearchItem(
                     provider=self.key,
-                    name=title,
+                    name=self._episode_candidate_title(parent_title, episode_title),
                     url=url,
                     duration_seconds=self._to_duration_seconds(episode.get("duration")),
+                    resolve_context=(
+                        {"parent_title": parent_title} if parent_title else {}
+                    ),
                 )
             )
         return output
@@ -351,7 +370,7 @@ class YoukuDanmakuProvider:
         return ""
 
     def _component_primary_title(self, common: dict) -> str:
-        title = str((common.get("titleDTO") or {}).get("displayName") or "").strip()
+        title = self._component_parent_title(common)
         if not title or extract_episode_number(title) is not None:
             return title
         update_notice = str(common.get("updateNotice") or "").strip()
@@ -360,14 +379,46 @@ class YoukuDanmakuProvider:
             return title
         return f"{title} 第{episode}集"
 
-    def _extract_detail_episode_items(self, html_text: str) -> list[DanmakuSearchItem]:
+    def _component_parent_title(self, common: dict) -> str:
+        return str((common.get("titleDTO") or {}).get("displayName") or "").strip()
+
+    def _episode_candidate_title(self, parent_title: str, episode_title: str) -> str:
+        parent = str(parent_title or "").strip()
+        episode = str(episode_title or "").strip()
+        if not parent:
+            return episode
+        if not episode:
+            return parent
+        compact_parent = re.sub(r"[\W_]+", "", normalize_name(parent).casefold())
+        compact_episode = re.sub(r"[\W_]+", "", normalize_name(episode).casefold())
+        if compact_parent and compact_parent in compact_episode:
+            return episode
+        return f"{parent} {episode}"
+
+    def _extract_detail_episode_items(
+        self,
+        html_text: str,
+        parent_title: str = "",
+    ) -> list[DanmakuSearchItem]:
         output: list[DanmakuSearchItem] = []
-        for match in re.finditer(r'<a[^>]+href="([^"]+)"[^>]+aria-label="([^"]+)"', html_text, re.I):
+        pattern = r'<a[^>]+href="([^"]+)"[^>]+aria-label="([^"]+)"'
+        for match in re.finditer(pattern, html_text, re.I):
             url = self._normalize_youku_url(html.unescape(match.group(1)))
-            title = self._clean_detail_episode_title(html.unescape(match.group(2)).strip())
-            if not url or not title:
+            episode_title = self._clean_detail_episode_title(
+                html.unescape(match.group(2)).strip()
+            )
+            if not url or not episode_title:
                 continue
-            output.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+            output.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=self._episode_candidate_title(parent_title, episode_title),
+                    url=url,
+                    resolve_context=(
+                        {"parent_title": parent_title} if parent_title else {}
+                    ),
+                )
+            )
         return output
 
     def _to_duration_seconds(self, value) -> int:
