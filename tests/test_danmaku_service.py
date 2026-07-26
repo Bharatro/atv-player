@@ -184,6 +184,16 @@ def test_create_default_danmaku_service_excludes_disabled_providers() -> None:
     ]
 
 
+def test_default_service_can_disable_new_anime_providers() -> None:
+    service = create_default_danmaku_service(
+        disabled_provider_ids=["dandan", "bahamut", "animeko"]
+    )
+
+    assert "dandan" not in service.provider_order
+    assert "bahamut" not in service.provider_order
+    assert "animeko" not in service.provider_order
+
+
 def test_create_default_danmaku_service_can_disable_renren_provider() -> None:
     service = create_default_danmaku_service(disabled_provider_ids=["renren"])
 
