@@ -8119,19 +8119,6 @@ def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loade
     assert window.video_poster_overlay.isHidden() is True
 
 
-def _run_player_window_background_tasks_inline(monkeypatch) -> None:
-    class InlineThread:
-        def __init__(self, *, target, args=(), kwargs=None, **_options) -> None:
-            self._target = target
-            self._args = args
-            self._kwargs = kwargs or {}
-
-        def start(self) -> None:
-            self._target(*self._args, **self._kwargs)
-
-    monkeypatch.setattr(player_window_module.threading, "Thread", InlineThread)
-
-
 def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     poster_path = tmp_path / "poster.png"
@@ -8191,7 +8178,6 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requests) >= 1)
@@ -8264,7 +8250,6 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_timeouts) >= 1)
@@ -8322,7 +8307,6 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_headers) >= 1)
@@ -8384,7 +8368,6 @@ def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypat
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
-    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_headers) >= 1)
