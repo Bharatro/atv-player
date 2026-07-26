@@ -1762,3 +1762,34 @@ def test_resolve_danmu_routes_to_other_when_selected() -> None:
 
     assert other.resolved == ["https://v.qq.com/x/cover/xyz/abc.html"]
     assert "<d " in xml
+
+
+def test_resolve_danmu_applies_time_offset_from_context() -> None:
+    from atv_player.danmaku.models import DanmakuRecord
+
+    class FakeProv:
+        key = "tencent"
+
+        def supports(self, u):
+            return True
+
+        def search(self, n, original_name=None):
+            return []
+
+        def resolve(self, page_url):
+            return [DanmakuRecord(time_offset=10.0, pos=1, color="16777215", content="x")]
+
+    import os
+    os.environ["ATV_DANMU_OFFSET"] = "百花杀:-3"
+    try:
+        svc = DanmakuService({"tencent": FakeProv()}, provider_order=["tencent"])
+        xml = svc.resolve_danmu(
+            "https://v.qq.com/x/cover/x/y.html",
+            offset_context={"anime": "百花杀"},
+        )
+    finally:
+        del os.environ["ATV_DANMU_OFFSET"]
+    from atv_player.danmaku.subtitle import _parse_danmaku_xml_records
+
+    records = _parse_danmaku_xml_records(xml)
+    assert records[0].time_offset == 7.0

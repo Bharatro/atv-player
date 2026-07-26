@@ -39,7 +39,7 @@ from atv_player.danmaku.utils import (
 )
 
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
-from atv_player.danmaku.processing import filter_blocked_words, group_by_time_window, convert_top_bottom_to_scroll
+from atv_player.danmaku.processing import filter_blocked_words, group_by_time_window, convert_top_bottom_to_scroll, apply_time_offset, parse_offset_rules, resolve_offset_seconds
 from atv_player.danmaku.providers.other import OtherDanmakuProvider
 
 
@@ -898,7 +898,32 @@ class DanmakuService:
             records = convert_top_bottom_to_scroll(records)
         return records
 
-    def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
+    def _apply_time_offset(self, records, offset_context):
+        """Apply DANMU_OFFSET rules (env ATV_DANMU_OFFSET) matched against the context.
+
+        Context keys: anime (required), season, episode, source. No env or no anime -> noop.
+        """
+        if not offset_context:
+            return records
+        anime = str(offset_context.get("anime") or "").strip()
+        if not anime:
+            return records
+        import os
+        rules = parse_offset_rules(os.environ.get("ATV_DANMU_OFFSET", ""))
+        if not rules:
+            return records
+        offset = resolve_offset_seconds(
+            rules,
+            anime=anime,
+            season=offset_context.get("season"),
+            episode=offset_context.get("episode"),
+            source=str(offset_context.get("source") or ""),
+        )
+        if offset == 0:
+            return records
+        return apply_time_offset(records, offset)
+
+    def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None, offset_context: dict | None = None) -> str:
         provider_keys = list(self._provider_order)
         selected_option_matches = option is not None and option.url == page_url and bool(option.provider)
         if selected_option_matches:
@@ -920,6 +945,7 @@ class DanmakuService:
             if not records:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
             records = self._process_records(records)
+            records = self._apply_time_offset(records, offset_context)
             return build_xml(records)
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 

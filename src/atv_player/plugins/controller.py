@@ -1345,7 +1345,13 @@ class SpiderPluginController:
                 if not is_prefetch:
                     self._log_danmaku_event("弹幕下载中", detail=download_detail)
                 cached_candidate_xml = load_cached_danmaku_xml(search_name, candidate.url)
-                resolved_xml = cached_candidate_xml or self._resolve_danmaku_xml(candidate.url, candidate)
+                offset_context = {
+                    "anime": str(item.danmaku_search_title or "").strip(),
+                    "source": str(candidate.provider or "").strip(),
+                }
+                resolved_xml = cached_candidate_xml or self._resolve_danmaku_xml(
+                    candidate.url, candidate, offset_context=offset_context
+                )
                 if not is_prefetch_valid():
                     return
                 item.danmaku_xml = resolved_xml
@@ -1841,11 +1847,19 @@ class SpiderPluginController:
             if page_url:
                 save_cached_danmaku_xml(cache_query_name, page_url, xml_text)
 
-    def _resolve_danmaku_xml(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
+    def _resolve_danmaku_xml(
+        self,
+        page_url: str,
+        option: DanmakuSourceOption | None = None,
+        offset_context: dict | None = None,
+    ) -> str:
         resolve_method = self._danmaku_service.resolve_danmu
+        kwargs = {}
         if option is not None and "option" in inspect.signature(resolve_method).parameters:
-            return resolve_method(page_url, option=option)
-        return resolve_method(page_url)
+            kwargs["option"] = option
+        if offset_context and "offset_context" in inspect.signature(resolve_method).parameters:
+            kwargs["offset_context"] = offset_context
+        return resolve_method(page_url, **kwargs)
 
     def _apply_danmaku_source_search_result(self, item: PlayItem, result) -> None:
         item.danmaku_candidates = result.groups
