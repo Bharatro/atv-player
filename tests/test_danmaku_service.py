@@ -1566,6 +1566,36 @@ def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:
     assert tencent.resolve_calls == ["https://video.tencent/item"]
 
 
+def test_provider_key_for_url_returns_first_enabled_supporting_provider() -> None:
+    tencent = FakeProvider("tencent", [], [])
+    youku = FakeProvider("youku", [], [])
+    service = DanmakuService(
+        {"tencent": tencent, "youku": youku},
+        provider_order=["tencent", "youku"],
+    )
+
+    assert service.provider_key_for_url("https://video.youku/item") == "youku"
+
+
+def test_provider_key_for_url_rejects_dynamically_disabled_provider() -> None:
+    disabled = ["youku"]
+    service = DanmakuService(
+        {"youku": FakeProvider("youku", [], [])},
+        provider_order=["youku"],
+        disabled_provider_ids_loader=lambda: disabled,
+    )
+
+    with pytest.raises(ProviderNotSupportedError, match="不支持的弹幕来源"):
+        service.provider_key_for_url("https://video.youku/item")
+
+
+def test_provider_key_for_url_rejects_unknown_url() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    with pytest.raises(ProviderNotSupportedError, match="不支持的弹幕来源"):
+        service.provider_key_for_url("https://unknown.example/video/1")
+
+
 def test_resolve_danmu_prefers_selected_option_provider_when_url_is_ambiguous() -> None:
     class AmbiguousProvider(FakeProvider):
         def supports(self, page_url: str) -> bool:

@@ -366,6 +366,15 @@ class DanmakuService:
             return [matched]
         return [key for key in self._provider_order if self._provider_enabled(key)]
 
+    def provider_key_for_url(self, page_url: str) -> str:
+        for key in self._provider_order:
+            if not self._provider_enabled(key):
+                continue
+            provider = self._providers.get(key)
+            if provider is not None and provider.supports(page_url):
+                return key
+        raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
+
     @property
     def provider_order(self) -> list[str]:
         return [key for key in self._provider_order if self._provider_enabled(key)]
