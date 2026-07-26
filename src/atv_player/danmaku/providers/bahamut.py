@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from math import isfinite
 from urllib.parse import urlparse
 
 import httpx
@@ -8,6 +9,7 @@ from opencc import OpenCC
 
 from atv_player.danmaku.errors import DanmakuResolveError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number, should_filter_name
 
 _SEARCH_URL = "https://api.gamer.com.tw/mobile_app/anime/v1/search.php"
@@ -57,53 +59,21 @@ class BahamutDanmakuProvider:
                 _SEARCH_URL,
                 params={"kw": traditional_name},
             )
-            animes = (
-                search_payload.get("anime")
-                if isinstance(search_payload, dict)
-                else None
-            )
-            if not isinstance(animes, list):
-                return []
-            items: list[DanmakuSearchItem] = []
-            for anime in animes[:_MAX_SERIES]:
-                if not isinstance(anime, dict):
-                    continue
-                source_title = str(anime.get("title") or "").strip()
-                video_sn = str(
-                    anime.get("video_sn") or anime.get("videoSn") or ""
-                ).strip()
-                if not source_title or not video_sn:
-                    continue
-                if should_filter_name(traditional_name, source_title):
-                    continue
-                detail_payload = self._get_json(
-                    _DETAIL_URL,
-                    params={"videoSn": video_sn},
-                )
-                data = (
-                    detail_payload.get("data")
-                    if isinstance(detail_payload, dict)
-                    else None
-                )
-                series = data.get("anime") if isinstance(data, dict) else None
-                for episode in self._episodes(series):
-                    episode_no = str(episode.get("episode") or "").strip()
-                    episode_video_sn = str(episode.get("videoSn") or "").strip()
-                    if not episode_no or not episode_video_sn:
-                        continue
-                    items.append(
-                        DanmakuSearchItem(
-                            provider=self.key,
-                            name=f"{name} 第{episode_no}集",
-                            url=f"bahamut://episode/{episode_video_sn}",
-                            resolve_context={
-                                "series_video_sn": video_sn,
-                                "source_title": source_title,
-                            },
-                        )
-                    )
         except (httpx.HTTPError, TypeError, ValueError):
             return []
+        animes = (
+            search_payload.get("anime") if isinstance(search_payload, dict) else None
+        )
+        if not isinstance(animes, list):
+            return []
+        items: list[DanmakuSearchItem] = []
+        for batch in iter_bounded_settled(
+            animes[:_MAX_SERIES],
+            lambda anime: self._expand_anime(name, traditional_name, anime),
+        ):
+            for settled in batch:
+                if settled.error is None and settled.value is not None:
+                    items.extend(settled.value)
         return self._prefer_requested_episode(items, requested_episode)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
@@ -149,6 +119,47 @@ class BahamutDanmakuProvider:
             if isinstance(item, dict)
         ]
 
+    def _expand_anime(
+        self,
+        query_name: str,
+        traditional_name: str,
+        anime: object,
+    ) -> list[DanmakuSearchItem]:
+        if not isinstance(anime, dict):
+            return []
+        source_title = str(anime.get("title") or "").strip()
+        video_sn = str(anime.get("video_sn") or anime.get("videoSn") or "").strip()
+        if (
+            not source_title
+            or not video_sn
+            or should_filter_name(traditional_name, source_title)
+        ):
+            return []
+        detail_payload = self._get_json(
+            _DETAIL_URL,
+            params={"videoSn": video_sn},
+        )
+        data = detail_payload.get("data") if isinstance(detail_payload, dict) else None
+        series = data.get("anime") if isinstance(data, dict) else None
+        items: list[DanmakuSearchItem] = []
+        for episode in self._episodes(series):
+            episode_no = str(episode.get("episode") or "").strip()
+            episode_video_sn = str(episode.get("videoSn") or "").strip()
+            if not episode_no or not episode_video_sn:
+                continue
+            items.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=f"{query_name} 第{episode_no}集",
+                    url=f"bahamut://episode/{episode_video_sn}",
+                    resolve_context={
+                        "series_video_sn": video_sn,
+                        "source_title": source_title,
+                    },
+                )
+            )
+        return items
+
     def _prefer_requested_episode(
         self,
         items: list[DanmakuSearchItem],
@@ -175,8 +186,10 @@ class BahamutDanmakuProvider:
         if not content:
             return None
         try:
-            time_offset = max(0.0, float(str(row.get("time"))) / 10.0)
+            raw_time = float(str(row.get("time"))) / 10.0
         except (TypeError, ValueError):
+            return None
+        if not isfinite(raw_time):
             return None
         try:
             position_key = int(str(row.get("position")))
@@ -189,7 +202,7 @@ class BahamutDanmakuProvider:
         except ValueError:
             color = 0xFFFFFF
         return DanmakuRecord(
-            time_offset=time_offset,
+            time_offset=max(0.0, raw_time),
             pos=position,
             color=str(color if 0 <= color <= 0xFFFFFF else 0xFFFFFF),
             content=content,

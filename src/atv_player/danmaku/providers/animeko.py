@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
+from math import isfinite
 from urllib.parse import urlparse
 
 import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number, should_filter_name
 
 _HEADERS = {
@@ -71,49 +73,13 @@ class AnimekoDanmakuProvider:
         requested_episode = extract_episode_number(original_name or name)
         subjects = self._search_subjects(name)
         items: list[DanmakuSearchItem] = []
-        for subject in subjects[:_MAX_SUBJECTS]:
-            if not isinstance(subject, dict):
-                continue
-            subject_id = str(subject.get("id") or "").strip()
-            titles = [
-                str(subject.get("name_cn") or "").strip(),
-                str(subject.get("name") or "").strip(),
-            ]
-            title = next(
-                (
-                    candidate
-                    for candidate in titles
-                    if candidate and not should_filter_name(name, candidate)
-                ),
-                "",
-            )
-            if not subject_id or not title:
-                continue
-            details = self._subject(subject_id)
-            episodes = details.get("episodes") if isinstance(details, dict) else None
-            if not isinstance(episodes, list):
-                continue
-            for episode in episodes:
-                if not isinstance(episode, dict) or episode.get("type") != "MAIN":
-                    continue
-                episode_id = str(episode.get("episodeId") or "").strip()
-                episode_no = str(episode.get("sort") or episode.get("ep") or "").strip()
-                if not episode_id or not episode_no:
-                    continue
-                episode_title = str(
-                    episode.get("nameCn") or episode.get("name") or ""
-                ).strip()
-                items.append(
-                    DanmakuSearchItem(
-                        provider=self.key,
-                        name=f"{title} 第{episode_no}集 {episode_title}".strip(),
-                        url=f"animeko://episode/{episode_id}",
-                        resolve_context={
-                            "subject_id": subject_id,
-                            "episode_id": episode_id,
-                        },
-                    )
-                )
+        for batch in iter_bounded_settled(
+            subjects[:_MAX_SUBJECTS],
+            lambda subject: self._expand_subject(name, subject),
+        ):
+            for settled in batch:
+                if settled.error is None and settled.value is not None:
+                    items.extend(settled.value)
         if requested_episode is None:
             return items
         matched = [
@@ -122,6 +88,56 @@ class AnimekoDanmakuProvider:
             if extract_episode_number(item.name) == requested_episode
         ]
         return matched if matched else items[:3]
+
+    def _expand_subject(
+        self,
+        query_name: str,
+        subject: object,
+    ) -> list[DanmakuSearchItem]:
+        if not isinstance(subject, dict):
+            return []
+        subject_id = str(subject.get("id") or "").strip()
+        titles = [
+            str(subject.get("name_cn") or "").strip(),
+            str(subject.get("name") or "").strip(),
+        ]
+        title = next(
+            (
+                candidate
+                for candidate in titles
+                if candidate and not should_filter_name(query_name, candidate)
+            ),
+            "",
+        )
+        if not subject_id or not title:
+            return []
+        details = self._subject(subject_id)
+        episodes = details.get("episodes") if isinstance(details, dict) else None
+        if not isinstance(episodes, list):
+            return []
+        items: list[DanmakuSearchItem] = []
+        for episode in episodes:
+            if not isinstance(episode, dict) or episode.get("type") != "MAIN":
+                continue
+            episode_id = str(episode.get("episodeId") or "").strip()
+            episode_no = str(episode.get("sort") or episode.get("ep") or "").strip()
+            if not episode_id or not episode_no:
+                continue
+            episode_title = str(
+                episode.get("nameCn") or episode.get("name") or ""
+            ).strip()
+            items.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=f"{title} 第{episode_no}集 {episode_title}".strip(),
+                    url=f"animeko://episode/{episode_id}",
+                    resolve_context={
+                        "subject_id": subject_id,
+                        "episode_id": episode_id,
+                    },
+                )
+            )
+        return items
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         episode_id = self._episode_id(page_url)
@@ -208,14 +224,16 @@ class AnimekoDanmakuProvider:
         if not content:
             return None
         try:
-            time_offset = max(0.0, float(str(info.get("playTime"))) / 1000.0)
+            raw_time = float(str(info.get("playTime"))) / 1000.0
             color = int(str(info.get("color")))
         except (TypeError, ValueError):
+            return None
+        if not isfinite(raw_time):
             return None
         if color < 0 or color > 0xFFFFFF:
             color = 0xFFFFFF
         return DanmakuRecord(
-            time_offset=time_offset,
+            time_offset=max(0.0, raw_time),
             pos={"NORMAL": 1, "TOP": 5, "BOTTOM": 4}.get(
                 str(info.get("location") or "").upper(),
                 1,

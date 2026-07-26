@@ -1,3 +1,6 @@
+import threading
+import time
+
 import httpx
 import pytest
 
@@ -115,6 +118,95 @@ def test_bahamut_search_failure_is_isolated() -> None:
     )
 
     assert provider.search("葬送的芙莉莲") == []
+
+
+def test_bahamut_search_keeps_results_when_another_series_detail_fails() -> None:
+    def fake_get(url: str, **kwargs):
+        if url.endswith("/search.php"):
+            return httpx.Response(
+                200,
+                json={
+                    "anime": [
+                        {"title": "迷宫饭", "video_sn": 100},
+                        {"title": "迷宫饭", "video_sn": 200},
+                    ]
+                },
+            )
+        if kwargs["params"]["videoSn"] == "100":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"anime": {"episodes": [{"episode": "1", "videoSn": 101}]}}
+                },
+            )
+        raise httpx.HTTPError("second detail failed")
+
+    items = BahamutDanmakuProvider(
+        get=fake_get,
+        traditionalize=lambda value: value,
+    ).search("迷宫饭")
+
+    assert [item.url for item in items] == ["bahamut://episode/101"]
+
+
+def test_bahamut_search_expands_series_details_concurrently() -> None:
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_get(url: str, **kwargs):
+        nonlocal active, max_active
+        if url.endswith("/search.php"):
+            return httpx.Response(
+                200,
+                json={
+                    "anime": [
+                        {"title": "迷宫饭", "video_sn": video_sn}
+                        for video_sn in range(1, 5)
+                    ]
+                },
+            )
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        video_sn = kwargs["params"]["videoSn"]
+        return httpx.Response(
+            200,
+            json={
+                "data": {"anime": {"episodes": [{"episode": "1", "videoSn": video_sn}]}}
+            },
+        )
+
+    BahamutDanmakuProvider(
+        get=fake_get,
+        traditionalize=lambda value: value,
+    ).search("迷宫饭")
+
+    assert max_active > 1
+
+
+def test_bahamut_resolve_skips_non_finite_timestamps() -> None:
+    provider = BahamutDanmakuProvider(
+        get=lambda *args, **kwargs: httpx.Response(
+            200,
+            json={
+                "data": {
+                    "danmu": [
+                        {"time": "nan", "text": "NaN"},
+                        {"time": "inf", "text": "Infinity"},
+                        {"time": 10, "text": "valid"},
+                    ]
+                }
+            },
+        )
+    )
+
+    assert [record.content for record in provider.resolve("bahamut://episode/1")] == [
+        "valid"
+    ]
 
 
 def test_bahamut_resolve_failure_names_the_source() -> None:

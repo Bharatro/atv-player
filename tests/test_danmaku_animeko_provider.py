@@ -1,3 +1,6 @@
+import threading
+import time
+
 import httpx
 import pytest
 
@@ -123,6 +126,92 @@ def test_animeko_valid_empty_comments_do_not_try_other_nodes() -> None:
 
     assert provider.resolve("animeko://episode/4201") == []
     assert calls == ["https://node-a.example/v1/danmaku/4201"]
+
+
+def test_animeko_search_expands_subject_details_concurrently() -> None:
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_post(url: str, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": subject_id, "name_cn": "迷宫饭"}
+                    for subject_id in range(1, 5)
+                ]
+            },
+        )
+
+    def fake_get(url: str, **kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        subject_id = url.rsplit("/", 1)[-1]
+        return httpx.Response(
+            200,
+            json={
+                "id": subject_id,
+                "episodes": [
+                    {
+                        "episodeId": f"{subject_id}01",
+                        "sort": 1,
+                        "type": "MAIN",
+                    }
+                ],
+            },
+        )
+
+    AnimekoDanmakuProvider(
+        get=fake_get,
+        post=fake_post,
+        nodes=("https://node.example",),
+    ).search("迷宫饭")
+
+    assert max_active > 1
+
+
+def test_animeko_resolve_skips_non_finite_timestamps() -> None:
+    provider = AnimekoDanmakuProvider(
+        get=lambda *args, **kwargs: httpx.Response(
+            200,
+            json={
+                "danmakuList": [
+                    {
+                        "danmakuInfo": {
+                            "playTime": "nan",
+                            "color": 16777215,
+                            "text": "NaN",
+                        }
+                    },
+                    {
+                        "danmakuInfo": {
+                            "playTime": "inf",
+                            "color": 16777215,
+                            "text": "Infinity",
+                        }
+                    },
+                    {
+                        "danmakuInfo": {
+                            "playTime": 1000,
+                            "color": 16777215,
+                            "text": "valid",
+                        }
+                    },
+                ]
+            },
+        ),
+        nodes=("https://node.example",),
+    )
+
+    assert [record.content for record in provider.resolve("animeko://episode/1")] == [
+        "valid"
+    ]
 
 
 def test_animeko_supports_only_valid_internal_episode_urls() -> None:
