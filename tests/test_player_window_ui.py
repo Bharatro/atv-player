@@ -5204,7 +5204,7 @@ def test_player_window_skips_mpv_warmup_when_async_playback_loader_returns_quick
     assert video.warm_up_calls == 0
 
 
-def test_player_window_preloads_ytdlp_passthrough_before_initial_load(qtbot) -> None:
+def test_player_window_preloads_ytdlp_passthrough_without_redundant_metadata_hydration(qtbot) -> None:
     class PassThroughM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:
             return False
@@ -5286,7 +5286,9 @@ def test_player_window_preloads_ytdlp_passthrough_before_initial_load(qtbot) -> 
     qtbot.waitUntil(lambda: loader_calls == ["https://www.youtube.com/watch?v=abc123xyz89"])
     qtbot.waitUntil(lambda: video.load_calls == [("https://stream.test/1080/video.mp4", "")])
     window._handle_video_file_loaded()
-    qtbot.waitUntil(lambda: hydration_calls == ["https://stream.test/1080/video.mp4"], timeout=3000)
+    assert window._pending_ytdlp_metadata_hydration is None
+    window._start_pending_ytdlp_metadata_hydration_if_current()
+    assert hydration_calls == []
 
 
 def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
@@ -8117,6 +8119,19 @@ def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loade
     assert window.video_poster_overlay.isHidden() is True
 
 
+def _run_player_window_background_tasks_inline(monkeypatch) -> None:
+    class InlineThread:
+        def __init__(self, *, target, args=(), kwargs=None, **_options) -> None:
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+
+        def start(self) -> None:
+            self._target(*self._args, **self._kwargs)
+
+    monkeypatch.setattr(player_window_module.threading, "Thread", InlineThread)
+
+
 def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     poster_path = tmp_path / "poster.png"
@@ -8176,6 +8191,7 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requests) >= 1)
@@ -8248,6 +8264,7 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_timeouts) >= 1)
@@ -8305,6 +8322,7 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_headers) >= 1)
@@ -8366,6 +8384,7 @@ def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypat
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
+    _run_player_window_background_tasks_inline(monkeypatch)
 
     window.open_session(session)
     qtbot.waitUntil(lambda: len(requested_headers) >= 1)
@@ -20443,7 +20462,7 @@ def test_player_window_async_session_loader_preserves_resume_offset(qtbot) -> No
     )
 
 
-def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_does_not_restart_on_hydration(qtbot) -> None:
+def test_player_window_async_loader_preloads_prefilled_ytdlp_url_before_initial_playback(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self.load_calls: list[tuple[str, bool, int, dict[str, str], str]] = []
@@ -20503,20 +20522,20 @@ def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_do
 
     window.open_session(session)
 
+    assert window.video.load_calls == []
+
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
     assert window.video.load_calls == [
         (
             "https://www.youtube.com/watch?v=test123",
             False,
             0,
-            {},
+            {"Referer": "https://www.youtube.com/"},
             "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
         )
     ]
-
-    ready.set()
-
-    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
-    assert len(window.video.load_calls) == 1
 
 
 def test_player_window_async_loader_does_not_play_plain_youtube_page_url_before_resolution(qtbot) -> None:

@@ -2511,12 +2511,7 @@ def test_main_window_does_not_precreate_global_search_popup_during_startup_plugi
     assert load_started.wait(timeout=1)
     QApplication.processEvents()
 
-    top_level_popups = [
-        widget
-        for widget in QApplication.topLevelWidgets()
-        if isinstance(widget, main_window_module.GlobalSearchPopup)
-    ]
-    assert top_level_popups == []
+    assert window._global_search_popup is None
 
     release_load.set()
 
@@ -4369,9 +4364,9 @@ def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) 
     window.show()
 
     assert window.global_search_edit.parentWidget() is not None
-    assert window.global_search_container.width() == 400
-    assert window.global_search_container.minimumWidth() == 400
-    assert window.global_search_container.maximumWidth() == 400
+    assert window.global_search_container.width() == 444
+    assert window.global_search_container.minimumWidth() == 444
+    assert window.global_search_container.maximumWidth() == 444
     assert window.global_search_edit.placeholderText() == "搜索"
     assert window.global_search_edit.isClearButtonEnabled() is True
     assert window.global_search_edit.styleSheet()

@@ -2274,6 +2274,12 @@ def test_main_window_help_dialog_opens_system_info_links_except_platform(qtbot, 
 
     qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
     dialog = visible_shortcut_help_dialogs()[0]
+    qtbot.waitUntil(
+        lambda: (
+            (table := dialog.findChild(QTableWidget, "systemInfoTable")) is not None
+            and table.rowCount() == 7
+        )
+    )
 
     click_system_info_value_cell(qtbot, dialog, 0)
     click_system_info_value_cell(qtbot, dialog, 1)
@@ -2322,6 +2328,7 @@ def test_main_window_help_dialog_renders_system_info_links_like_player_metadata(
 
     qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
     dialog = visible_shortcut_help_dialogs()[0]
+    qtbot.waitUntil(lambda: isinstance(system_info_value_widget(dialog, 0), QLabel))
     link_widget = system_info_value_widget(dialog, 0)
     plain_widget = system_info_value_widget(dialog, 1)
     table = dialog.findChild(QTableWidget, "systemInfoTable")
@@ -2455,6 +2462,9 @@ def test_main_window_help_dialog_copy_diagnostics_button_copies_text(qtbot) -> N
     dialog = visible_shortcut_help_dialogs()[0]
     copy_button = dialog.findChild(QPushButton, "copyDiagnosticsButton")
     assert copy_button is not None
+    qtbot.waitUntil(
+        lambda: dialog._diagnostics_text == "atv-player: 0.8.2\nPython: 3.12.8"
+    )
 
     QTest.mouseClick(copy_button, Qt.MouseButton.LeftButton)
 
@@ -2495,6 +2505,9 @@ def test_main_window_help_dialog_export_diagnostics_button_writes_file(qtbot, mo
     dialog = visible_shortcut_help_dialogs()[0]
     export_button = dialog.findChild(QPushButton, "exportDiagnosticsButton")
     assert export_button is not None
+    qtbot.waitUntil(
+        lambda: dialog._diagnostics_text == "atv-player: 0.8.2\nPython: 3.12.8"
+    )
 
     QTest.mouseClick(export_button, Qt.MouseButton.LeftButton)
 
@@ -2548,6 +2561,7 @@ def test_main_window_help_dialog_export_detailed_diagnostics_button_writes_file(
     dialog = visible_shortcut_help_dialogs()[0]
     export_button = dialog.findChild(QPushButton, "exportDetailedDiagnosticsButton")
     assert export_button is not None
+    qtbot.waitUntil(lambda: "Qt 平台: xcb" in dialog._detailed_diagnostics_text)
 
     QTest.mouseClick(export_button, Qt.MouseButton.LeftButton)
 
