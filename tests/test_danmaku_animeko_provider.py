@@ -16,9 +16,7 @@ def test_animeko_search_expands_main_episode_from_fallback_subject_node() -> Non
         }
         return httpx.Response(
             200,
-            json={
-                "data": [{"id": 42, "name": "ダンジョン飯", "name_cn": "迷宫饭"}]
-            },
+            json={"data": [{"id": 42, "name": "ダンジョン飯", "name_cn": "迷宫饭"}]},
         )
 
     def fake_get(url: str, **kwargs):

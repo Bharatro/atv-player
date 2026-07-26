@@ -53,9 +53,7 @@ class DandanDanmakuProvider:
                 if not anime_id or not title or should_filter_name(name, title):
                     continue
                 details = self._request_json(f"/v2/bangumi/{anime_id}")
-                bangumi = (
-                    details.get("bangumi") if isinstance(details, dict) else None
-                )
+                bangumi = details.get("bangumi") if isinstance(details, dict) else None
                 episodes = (
                     bangumi.get("episodes") if isinstance(bangumi, dict) else None
                 )
@@ -80,11 +78,7 @@ class DandanDanmakuProvider:
         comments = payload.get("comments") if isinstance(payload, dict) else None
         if not isinstance(comments, list):
             raise DanmakuResolveError("弹弹Play弹幕响应解析失败")
-        return [
-            record
-            for row in comments
-            if (record := self._record(row)) is not None
-        ]
+        return [record for row in comments if (record := self._record(row)) is not None]
 
     def _request_json(self, path: str) -> object:
         response = self._get(

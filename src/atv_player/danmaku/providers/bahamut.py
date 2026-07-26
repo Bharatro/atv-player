@@ -119,11 +119,7 @@ class BahamutDanmakuProvider:
         comments = data.get("danmu") if isinstance(data, dict) else None
         if not isinstance(comments, list):
             raise DanmakuResolveError("巴哈姆特弹幕响应解析失败")
-        return [
-            record
-            for row in comments
-            if (record := self._record(row)) is not None
-        ]
+        return [record for row in comments if (record := self._record(row)) is not None]
 
     def _get_json(self, url: str, *, params: dict[str, str]) -> object:
         response = self._get(
@@ -179,10 +175,14 @@ class BahamutDanmakuProvider:
         if not content:
             return None
         try:
-            time_offset = max(0.0, float(row.get("time")) / 10.0)
+            time_offset = max(0.0, float(str(row.get("time"))) / 10.0)
         except (TypeError, ValueError):
             return None
-        position = {0: 1, 1: 5, 2: 4}.get(row.get("position"), 1)
+        try:
+            position_key = int(str(row.get("position")))
+        except ValueError:
+            position_key = -1
+        position = {0: 1, 1: 5, 2: 4}.get(position_key, 1)
         color_text = str(row.get("color") or "").strip().lstrip("#")
         try:
             color = int(color_text, 16)

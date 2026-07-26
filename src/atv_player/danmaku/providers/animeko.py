@@ -90,18 +90,14 @@ class AnimekoDanmakuProvider:
             if not subject_id or not title:
                 continue
             details = self._subject(subject_id)
-            episodes = (
-                details.get("episodes") if isinstance(details, dict) else None
-            )
+            episodes = details.get("episodes") if isinstance(details, dict) else None
             if not isinstance(episodes, list):
                 continue
             for episode in episodes:
                 if not isinstance(episode, dict) or episode.get("type") != "MAIN":
                     continue
                 episode_id = str(episode.get("episodeId") or "").strip()
-                episode_no = str(
-                    episode.get("sort") or episode.get("ep") or ""
-                ).strip()
+                episode_no = str(episode.get("sort") or episode.get("ep") or "").strip()
                 if not episode_id or not episode_no:
                     continue
                 episode_title = str(
@@ -136,17 +132,13 @@ class AnimekoDanmakuProvider:
             except (httpx.HTTPError, TypeError, ValueError) as exc:
                 failures.append(exc)
                 continue
-            comments = (
-                payload.get("danmakuList") if isinstance(payload, dict) else None
-            )
+            comments = payload.get("danmakuList") if isinstance(payload, dict) else None
             if not isinstance(comments, list):
                 failures.append(ValueError("missing danmakuList"))
                 continue
             self._danmaku_host = host
             return [
-                record
-                for row in comments
-                if (record := self._record(row)) is not None
+                record for row in comments if (record := self._record(row)) is not None
             ]
         error = DanmakuResolveError("Animeko弹幕获取失败")
         if failures:
@@ -216,8 +208,8 @@ class AnimekoDanmakuProvider:
         if not content:
             return None
         try:
-            time_offset = max(0.0, float(info.get("playTime")) / 1000.0)
-            color = int(info.get("color"))
+            time_offset = max(0.0, float(str(info.get("playTime"))) / 1000.0)
+            color = int(str(info.get("color")))
         except (TypeError, ValueError):
             return None
         if color < 0 or color > 0xFFFFFF:
