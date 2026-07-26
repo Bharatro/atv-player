@@ -918,7 +918,7 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -967,7 +967,7 @@ def test_app_coordinator_shows_main_window_before_startup_plugins_finish_loading
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1014,7 +1014,7 @@ def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, 
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1056,7 +1056,7 @@ def test_app_coordinator_passes_startup_plugin_loader_task_into_main_window(monk
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1110,7 +1110,7 @@ def test_app_coordinator_wires_fixed_heat_controller_into_main_window(monkeypatc
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1172,7 +1172,7 @@ def test_app_coordinator_startup_plugin_loader_prioritizes_last_plugin_restore_t
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1229,7 +1229,7 @@ def test_app_coordinator_classic_mode_startup_plugin_loader_only_loads_selected_
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
@@ -1246,24 +1246,34 @@ def test_app_coordinator_classic_mode_startup_plugin_loader_only_loads_selected_
 def test_app_coordinator_wires_danmaku_service_into_plugin_manager(monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))
-    captured = {"manager": None}
+    captured = {"manager": None, "preference_store": None}
 
     class FakePluginManager:
         def __init__(self) -> None:
             captured["manager"] = self
 
+    def plugin_manager_factory(
+        repository,
+        loader,
+        playback_history_repository,
+        **kwargs,
+    ) -> FakePluginManager:
+        captured["preference_store"] = kwargs.get("danmaku_preference_store")
+        return FakePluginManager()
+
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        plugin_manager_factory,
     )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
     monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
 
-    app_module.AppCoordinator(repo)
+    coordinator = app_module.AppCoordinator(repo)
 
     assert getattr(captured["manager"], "_danmaku_service", None) is not None
+    assert captured["preference_store"] is coordinator._danmaku_preference_store
 
 
 def test_http_text_client_follows_redirects_for_live_source_text_requests() -> None:
@@ -5193,7 +5203,7 @@ def test_app_coordinator_injects_smart_search_controller_when_ai_enabled(monkeyp
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
     repo = app_module.SettingsRepository(tmp_path / "app.db")
@@ -5859,7 +5869,13 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     captured: dict[str, object] = {}
 
     class RecordingSpiderPluginManager:
-        def __init__(self, repository, loader, playback_history_repository=None) -> None:
+        def __init__(
+            self,
+            repository,
+            loader,
+            playback_history_repository=None,
+            **_kwargs,
+        ) -> None:
             captured["plugin_repository"] = playback_history_repository
 
         def load_enabled_plugins(self, drive_detail_loader=None):
@@ -9696,7 +9712,7 @@ def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkey
     monkeypatch.setattr(
         app_module,
         "SpiderPluginManager",
-        lambda repository, loader, playback_history_repository: FakePluginManager(),
+        lambda repository, loader, playback_history_repository, **_kwargs: FakePluginManager(),
     )
     monkeypatch.setattr(app_module, "LiveEpgService", lambda repository, http_client: fake_epg_service)
     monkeypatch.setattr(
